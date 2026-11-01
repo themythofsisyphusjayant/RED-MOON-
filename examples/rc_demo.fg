@@ -1,0 +1,16 @@
+// Top-500 #25: reference counting v1 demo.
+// Counts are read off r.data directly (no call in the
+// measured expression), so they are the persistent holder
+// counts, not transient call temporaries.
+
+import "rc.fg";
+
+fn main() {
+  let r = rc_new([10, 20]);
+  println(refcount(r.data));
+  let c = rc_clone(r);
+  println(refcount(r.data));
+  let r2 = rc_set(c, 0, 99);
+  println(r.data[0]);
+  println(rc_len(r2));
+}

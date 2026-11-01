@@ -1,0 +1,39 @@
+// LED/GPIO driver kernel (Phase F, bit-pattern LED-lite).
+//
+// State word at 0x8000 holds two LED bits. The demo walks
+// set-bit0 (1), set-bit1 (3), toggle-bit0 (2), clear-bit1 (0);
+// the arithmetic is exact for this known sequence, so no
+// bitwise ops are needed. Each state is printed.
+//
+// Expected model UART transcript:
+//   LED\n1\n3\n2\n0\nDONE, halted.
+// Final state word at 0x8000 is 0.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn led_show() {
+  put(48 + peek32(32768));
+  put(10);
+}
+
+fn main() {
+  poke32(32768, 0);
+  put(76);
+  put(69);
+  put(68);
+  put(10);
+  poke32(32768, peek32(32768) + 1);
+  led_show();
+  poke32(32768, peek32(32768) + 2);
+  led_show();
+  poke32(32768, peek32(32768) - 1);
+  led_show();
+  poke32(32768, peek32(32768) - 2);
+  led_show();
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}

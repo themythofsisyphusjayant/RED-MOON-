@@ -1,0 +1,24 @@
+import "ecs.fg";
+
+fn main() {
+    let mut w = ecs_new();
+    let r0 = ecs_spawn(w, 0.0, 0.0);
+    w = r0.0;
+    let r1 = ecs_spawn(w, 10.0, 10.0);
+    w = r1.0;
+    let r2 = ecs_spawn(w, 20.0, 20.0);
+    w = r2.0;
+    println(r0.1);
+    println(r1.1);
+    println(r2.1);
+    w = ecs_set_vel(w, r0.1, 1.0, 2.0);
+    w = ecs_set_vel(w, r1.1, 0.0, 0.0);
+    w = ecs_step(w, 3.0);
+    println(w.px[0]);
+    println(w.py[0]);
+    println(w.px[1]);
+    w = ecs_despawn(w, r1.1);
+    println(ecs_count(w));
+    w = ecs_step(w, 1.0);
+    println(w.px[1]);
+}

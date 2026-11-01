@@ -23,6 +23,11 @@ class Infer:
             self.enum_params[ed.name] = list(getattr(ed, "type_params", None) or [])
             payloads = getattr(ed, "variant_payloads", None) or {}
             self.enum_payloads[ed.name] = {v: payloads.get(v) for v in ed.variants}
+        traits = getattr(program, "traits", None) or []
+        self.trait_sigs = {}
+        for td in traits:
+            self.trait_sigs[td.name] = {m: (params, ret)
+                                        for (m, params, ret, _l, _c) in td.methods}
         self.types = {}
         self.scopes = []
         self.current_ret = "void"
@@ -78,6 +83,21 @@ class Infer:
         elif isinstance(stmt, A.Match):
             et = self.walk_expr(stmt.expr)
             from .generics import parse_generic, substitute_type
+            from .unions import is_union_type, union_members
+            if is_union_type(et):
+                # A union arm binds the narrowed member value: the
+                # arm pattern IS the member type.
+                members = set(union_members(et))
+                for pat, binding, body in stmt.arms:
+                    if binding is not None and pat in members:
+                        self.scopes.append({binding: pat})
+                        try:
+                            self.walk_block(body)
+                        finally:
+                            self.scopes.pop()
+                    else:
+                        self.walk_block(body)
+                return
             g = parse_generic(et)
             base = g[0] if g else et
             bindings = {}
@@ -97,6 +117,8 @@ class Infer:
                 else:
                     self.walk_block(body)
         elif isinstance(stmt, A.Spawn):
+            self.walk_expr(stmt.call)
+        elif isinstance(stmt, A.Defer):
             self.walk_expr(stmt.call)
         elif isinstance(stmt, A.FieldAssign):
             self.walk_expr(stmt.target)
@@ -148,6 +170,21 @@ class Infer:
                     self.walk_expr(e)
                 return self.set(expr, f"[{t0}]")
             return self.set(expr, "[?]")
+        if isinstance(expr, A.TupleLit):
+            types = [self.walk_expr(e) for e in expr.elems]
+            return self.set(expr, f"({', '.join(types)})")
+        if isinstance(expr, A.TupleIndex):
+            bt = self.walk_expr(expr.base)
+            from .tuples import is_tuple_type, tuple_elems
+            if is_tuple_type(bt):
+                elems = tuple_elems(bt)
+                if expr.index < len(elems):
+                    return self.set(expr, elems[expr.index])
+        if isinstance(expr, A.RangeLit):
+            self.walk_expr(expr.start)
+            self.walk_expr(expr.end)
+            return self.set(expr, "range")
+            return self.set(expr, "int")
         if isinstance(expr, A.StructLit):
             concrete = getattr(expr, "concrete_type", None) or expr.name
             mangled = self._mangle(concrete) if self._parse_generic(concrete) else concrete
@@ -168,7 +205,8 @@ class Infer:
             self.walk_expr(expr.index)
             if bt == "str":
                 return self.set(expr, "str")
-            et = bt[1:-1] if bt.startswith("[") else "int"
+            from .sizedarrays import array_elem
+            et = array_elem(bt) if bt.startswith("[") else "int"
             return self.set(expr, et)
         if isinstance(expr, A.Cast):
             self.walk_expr(expr.expr)
@@ -189,7 +227,52 @@ class Infer:
                 return self.set(expr, "bool")
             if expr.op == "+" and lt == "str":
                 return self.set(expr, "str")
+            # Literal adaptation mirrors the checker: a fitting
+            # literal takes the other operand's fixed type.
+            if lt != rt and expr.op not in ("<<", ">>"):
+                from .fixedints import is_fixed_int, fixed_range, literal_value
+                for fixed_t, lit_expr in ((lt, expr.right), (rt, expr.left)):
+                    if is_fixed_int(fixed_t):
+                        v = literal_value(lit_expr)
+                        if v is not None:
+                            lo, hi = fixed_range(fixed_t)
+                            if lo <= v <= hi and expr.op in ("+", "-", "*", "/", "%", "&", "|", "^"):
+                                return self.set(expr, fixed_t)
             return self.set(expr, lt)
+        if isinstance(expr, A.MethodCall):
+            # Receiver type -> mangled function (the checker already
+            # validated the call; this only assigns its type).
+            from .traits import mangle
+            from .opaques import is_opaque_type, opaque_trait
+            rt = self.walk_expr(expr.base)
+            if is_opaque_type(rt):
+                sigs = self.trait_sigs.get(opaque_trait(rt), {})
+                if expr.method in sigs:
+                    params, ret = sigs[expr.method]
+                    for arg, (_pn, pt) in zip(expr.args, params):
+                        if isinstance(arg, A.ArrayLit) and pt.startswith("["):
+                            self.set(arg, pt)
+                            for e in arg.elems:
+                                self.walk_expr(e)
+                        else:
+                            self.walk_expr(arg)
+                    return self.set(expr, ret)
+                for a in expr.args:
+                    self.walk_expr(a)
+                return self.set(expr, "int")
+            fn = self.funcs.get(mangle(rt, expr.method)) if rt in self.structs else None
+            if fn:
+                for arg, (_pn, pt) in zip(expr.args, fn.params[1:]):
+                    if isinstance(arg, A.ArrayLit) and pt.startswith("["):
+                        self.set(arg, pt)
+                        for e in arg.elems:
+                            self.walk_expr(e)
+                    else:
+                        self.walk_expr(arg)
+                return self.set(expr, fn.ret)
+            for a in expr.args:
+                self.walk_expr(a)
+            return self.set(expr, "int")
         if isinstance(expr, A.Call):
             if getattr(expr, "concrete_type", None):
                 for a in expr.args:
@@ -213,8 +296,12 @@ class Infer:
                     return self.set(expr, fn.ret)
             for a in expr.args:
                 self.walk_expr(a)
-            if expr.name in ("len", "clock_micros", "abs", "parse_int", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "peek32", "csr_read", "ecall", "ecall3"):
+            if expr.name in ("len", "clock_micros", "abs", "parse_int", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
                 return self.set(expr, "int")
+            if expr.name == "weak_upgrade":
+                for a in expr.args:
+                    self.walk_expr(a)
+                return self.set(expr, "(bool, [int])")
             if expr.name == "parallel_dot":
                 for a in expr.args:
                     self.walk_expr(a)

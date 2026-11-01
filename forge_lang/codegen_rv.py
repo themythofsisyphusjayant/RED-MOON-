@@ -84,6 +84,7 @@ class RVGen:
         self.init_lines = []          # _start static-string initialisation
         self.label_n = 0
         self.loop_ends = []
+        self.loop_conts = []
         self.free = list(TEMPS)
         self.live = []                # temps currently holding values
         self.funcs = {fn.name: fn for fn in program.funcs}
@@ -161,6 +162,52 @@ class RVGen:
 
     # ---------- top level ----------
     def generate(self):
+        # Unions need the tagged tag+payload representation, which
+        # the big32 backend does not have in v1: reject loudly
+        # rather than miscompiling a multi-word value into one slot.
+        from .unions import find_unions
+        unions = find_unions(self.program)
+        if unions:
+            raise ForgeError(f"big32: union types are not supported in v1 "
+                             f"(found {unions[0]})")
+        from .opaques import find_opaques
+        opaques = find_opaques(self.program)
+        if opaques:
+            raise ForgeError(f"big32: opaque types are not supported in v1 "
+                             f"(found {opaques[0]})")
+        from .fixedints import find_fixed
+        fixed = find_fixed(self.program)
+        if fixed:
+            raise ForgeError(f"big32: fixed-width integer types are "
+                             f"not supported in v1 (found {fixed[0]})")
+        from .sizedarrays import find_sized
+        sized = find_sized(self.program)
+        if sized:
+            raise ForgeError(f"big32: sized arrays are not supported in v1 "
+                             f"(found {sized[0]})")
+        from .readonly import find_readonly
+        readonly = find_readonly(self.program)
+        if readonly:
+            raise ForgeError(f"big32: readonly views are not supported in v1 "
+                             f"(found {readonly[0]})")
+        from .never import find_never
+        never = find_never(self.program)
+        if never:
+            raise ForgeError(f"big32: never types are not supported in v1 "
+                             f"(found {never[0]})")
+        from .tuples import find_tuples
+        tuples = find_tuples(self.program)
+        if tuples:
+            raise ForgeError(f"big32: tuples are not supported in v1 "
+                             f"(found {tuples[0]})")
+        from .ranges import find_ranges
+        ranges = find_ranges(self.program)
+        if ranges:
+            raise ForgeError("big32: ranges are not supported in v1 "
+                             "(found range)")
+        from .defers import find_defers
+        if find_defers(self.program):
+            raise ForgeError("big32: defer is not supported in v1")
         # Structs (0.7.0): a struct variable is consecutive
         # frame slots, one per field, in declaration
         # order. Fields must be scalar (int/bool/str);
@@ -852,6 +899,11 @@ class RVGen:
                 raise ForgeError("big32: break outside a loop", stmt.line, stmt.col)
             self.emit(f"    j {self.loop_ends[-1]}")
             return
+        if isinstance(stmt, A.Continue):
+            if not self.loop_conts:
+                raise ForgeError("big32: continue outside a loop", stmt.line, stmt.col)
+            self.emit(f"    j {self.loop_conts[-1]}")
+            return
         if isinstance(stmt, A.While):
             cond_l = self.label("while")
             end = self.label("wend")
@@ -860,7 +912,9 @@ class RVGen:
             self.emit(f"    beq {cond}, zero, {end}")
             self.free_reg(cond)
             self.loop_ends.append(end)
+            self.loop_conts.append(cond_l)
             self.gen_block(stmt.body)
+            self.loop_conts.pop()
             self.loop_ends.pop()
             self.emit(f"    j {cond_l}")
             self.emit(f"{end}:")
@@ -933,9 +987,13 @@ class RVGen:
             self.free_reg(val)
             self.env.append({stmt.name: (var_slot, "int")})
             self.loop_ends.append(end)
+            cont = self.label("forcont")
+            self.loop_conts.append(cont)
             self.gen_block(stmt.body)
+            self.loop_conts.pop()
             self.loop_ends.pop()
             self.env.pop()
+            self.emit(f"{cont}:")
             inc = self.alloc()
             self.emit(f"    lw {inc}, {self.slot_off(cnt_slot)}(s0)")
             self.emit(f"    addi {inc}, {inc}, 1")
@@ -984,9 +1042,13 @@ class RVGen:
         self.free_reg(addr)
         self.env.append({stmt.name: (var_slot, et)})
         self.loop_ends.append(end)
+        cont = self.label("forcont")
+        self.loop_conts.append(cont)
         self.gen_block(stmt.body)
+        self.loop_conts.pop()
         self.loop_ends.pop()
         self.env.pop()
+        self.emit(f"{cont}:")
         inc = self.alloc()
         self.emit(f"    lw {inc}, {self.slot_off(idx_slot)}(s0)")
         self.emit(f"    addi {inc}, {inc}, 1")
@@ -1032,6 +1094,10 @@ class RVGen:
 
     # ---------- expressions: returns a temp register ----------
     def gen_expr(self, expr):
+        if isinstance(expr, A.MethodCall):
+            raise ForgeError("big32: trait method calls need struct "
+                             "parameters, not supported in v1",
+                             expr.line, expr.col)
         if isinstance(expr, A.IntLit):
             r = self.alloc()
             v = expr.value & 0xFFFFFFFF
@@ -1284,6 +1350,19 @@ class RVGen:
             self.emit(f"    sw {v}, 0({a})")
             self.free_reg(a)
             return v
+        if name in ("wrapping_add", "wrapping_sub", "wrapping_mul"):
+            # 32-bit add/sub/mul wrap by nature on big32.
+            a = self.gen_expr(expr.args[0])
+            b = self.gen_expr(expr.args[1])
+            op = {"wrapping_add": "add", "wrapping_sub": "sub",
+                  "wrapping_mul": "mul"}[name]
+            self.emit(f"    {op} {a}, {a}, {b}")
+            self.free_reg(b)
+            return a
+        if name == "wrapping_neg":
+            a = self.gen_expr(expr.args[0])
+            self.emit(f"    sub {a}, zero, {a}")
+            return a
         if name == "csr_read":
             if not isinstance(expr.args[0], A.IntLit):
                 raise ForgeError("csr_read() takes a literal CSR number",

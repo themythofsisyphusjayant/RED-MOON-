@@ -16,8 +16,30 @@ from .errors import ForgeError
 from . import ast_nodes as A
 from .generics import (parse_generic, mangle_type, substitute_type,
                        unify, contains_type_param)
+from .unions import (is_union_type, union_members, UNION_MEMBERS_V1)
+from .opaques import is_opaque_type, opaque_trait
+from .fixedints import (is_fixed_int, is_int_type, fixed_range,
+                        literal_value)
+from .sizedarrays import is_sized_array, sized_len
+from .readonly import is_readonly, readonly_inner
+from .tuples import is_tuple_type, tuple_elems
 
-SCALARS = {"int", "float", "bool", "str"}
+
+def type_matches(value, expected):
+    """Value type accepted where an expected type is declared.
+
+    Exact equality, plus a member value where a union is expected:
+    an int is a valid `int | str`. A union value is never accepted
+    for a single member (it might hold the other member), and a
+    union is never accepted for a different union (subset
+    conversions are a later slice).
+    """
+    if value == expected:
+        return True
+    return is_union_type(expected) and value in union_members(expected)
+
+SCALARS = {"int", "float", "bool", "str", "range",
+           "i8", "i16", "i32", "u8", "u16", "u32", "u64", "never"}
 # C keywords that are not Jal Pari keywords: user names colliding
 # with these compile to invalid C on the native backend (e.g. a
 # function named `double` becomes `long long double(...)`), so
@@ -31,6 +53,7 @@ C_KEYWORDS = {"auto", "case", "char", "const", "continue", "default",
 STMT_BUILTINS = {"print", "println", "push", "fail", "assert", "poke32",
                  "csr_write", "csr_set", "csr_clear"}
 EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
+                 "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
                  "split", "join", "substr", "trim", "starts_with", "ends_with",
@@ -38,7 +61,8 @@ EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "a
                  "http_respond", "http_respond_status", "http_close",
                  "alloc_count", "free_count",
                  "parallel_dot", "parallel_matmul",
-                 "arr_alloc_count", "arr_free_count",
+                 "arr_alloc_count", "arr_free_count", "refcount",
+                 "weak_new", "weak_upgrade",
                  "peek32", "csr_read", "ecall", "ecall3"}
 BUILTINS = STMT_BUILTINS | EXPR_BUILTINS
 
@@ -59,6 +83,11 @@ def cast_hint(got, want):
 
 
 def elem_type(arr_type):
+    from .sizedarrays import is_sized_array, sized_elem
+    if is_readonly(arr_type):
+        return elem_type(readonly_inner(arr_type))
+    if is_sized_array(arr_type):
+        return sized_elem(arr_type)
     return arr_type[1:-1] if arr_type.startswith("[") else None
 
 
@@ -82,14 +111,73 @@ class Checker:
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
         self.struct_instantiations = {}  # concrete type -> {field: type}
         self._instantiating = set()
+        self.unresolved = {}  # (scope id, name) -> Let node, for empty
+        # array literals whose element type no later use has fixed yet.
+
+    def _is_concrete_array(self, t):
+        """A usable inference constraint: an array type with no
+        unknown element (no '?' anywhere in it)."""
+        return (isinstance(t, str) and t.startswith("[")
+                and t.endswith("]") and "?" not in t)
+
+    def _resolve_empty(self, name, concrete):
+        """Resolve an unresolved empty-array let to a concrete
+        array type: rewrite its scope entry and its AST annotation
+        (so later checks, and the infer pass that runs after this
+        one, see an ordinary annotated let). Returns True when
+        a resolution happened."""
+        if not self._is_concrete_array(concrete):
+            return False
+        scope = None
+        for sc in reversed(self.scopes):
+            if name in sc:
+                scope = sc
+                break
+        if scope is None:
+            return False
+        t, mutable = scope[name]
+        if t != "[?]":
+            return False
+        key = (id(scope), name)
+        let = self.unresolved.get(key)
+        if let is None:
+            return False
+        scope[name] = (concrete, mutable)
+        let.ann = concrete
+        del self.unresolved[key]
+        return True
 
     def valid_type(self, t):
-        if t in SCALARS or t == "void":
+        if t in SCALARS:
             return True
         if t in self.current_type_params:
             return True
         if t in self.structs or t in self.enums:
             return True
+        if t in getattr(self, "newtypes", set()):
+            return True
+        if is_union_type(t):
+            # v1 unions: at least two distinct scalar members.
+            members = union_members(t)
+            return (len(members) >= 2 and len(set(members)) == len(members)
+                    and all(m in UNION_MEMBERS_V1 for m in members))
+        if is_opaque_type(t):
+            # An opaque type needs a real trait with at least one
+            # implementation: otherwise no value of it can exist.
+            trait = opaque_trait(t)
+            return (trait in getattr(self, "trait_names", set())
+                    and len(getattr(self, "trait_impls", {}).get(trait, [])) >= 1)
+        if is_readonly(t):
+            # A readonly view needs a plain, valid array inside:
+            # no nesting, no non-arrays (the parser already
+            # rejects both, this is the safety net).
+            inner = readonly_inner(t)
+            return (not is_readonly(inner) and inner.startswith("[")
+                    and inner.endswith("]") and self.valid_type(inner))
+        if is_tuple_type(t):
+            # Every element type must itself be valid (recurses
+            # into nested tuples, arrays, unions, and generics).
+            return all(self.valid_type(e) for e in tuple_elems(t))
         g = parse_generic(t)
         if g is not None:
             base, args = g
@@ -103,6 +191,15 @@ class Checker:
                 return all(self.valid_type(a) for a in args)
             return False
         if t.startswith("[") and t.endswith("]"):
+            # Sized arrays: the element type recurses, and the
+            # size must be a non-negative integer literal.
+            from .sizedarrays import is_sized_array, sized_elem, sized_len
+            if is_sized_array(t):
+                try:
+                    n = sized_len(t)
+                except ValueError:
+                    return False
+                return n >= 0 and self.valid_type(sized_elem(t))
             # Element types recurse: structs, generics, and nested
             # arrays are all valid element types.
             return self.valid_type(t[1:-1])
@@ -188,6 +285,10 @@ class Checker:
                 if not self.valid_type(ftype):
                     raise ForgeError(f"unknown field type '{ftype}' in struct '{sd.name}'",
                                      sd.line, sd.col)
+                if is_opaque_type(ftype):
+                    raise ForgeError(f"opaque struct fields are not supported in v1; "
+                                     f"struct '{sd.name}' field '{fname}' cannot be "
+                                     f"'{ftype}'", sd.line, sd.col)
             self.current_type_params = []
             # Cycle check: follow struct-typed fields.
             stack = [sd.name]
@@ -227,9 +328,540 @@ class Checker:
                                      ed.line, ed.col)
             self.current_type_params = []
 
+    def collect_newtypes(self):
+        """Collect `newtype` declarations (v1).
+
+        A newtype is DISTINCT from its underlying type: only the
+        name is registered here (targets are validated after the
+        struct/enum tables exist, like alias targets). Chains are
+        allowed: newtype B = A where A is itself a newtype.
+        """
+        self.newtypes = set()
+        self.newtype_targets = {}
+        self.newtype_lines = {}
+        struct_names = {sd.name for sd in
+                        (getattr(self.program, "structs", None) or [])}
+        enum_names = {ed.name for ed in
+                      (getattr(self.program, "enums", None) or [])}
+        alias_names = {ad.name for ad in
+                       (getattr(self.program, "aliases", None) or [])}
+        generic_names = {}
+        for sd in (getattr(self.program, "structs", None) or []):
+            if getattr(sd, "type_params", None):
+                generic_names[sd.name] = "struct"
+        for ed in (getattr(self.program, "enums", None) or []):
+            if getattr(ed, "type_params", None):
+                generic_names[ed.name] = "enum"
+        for nd in (getattr(self.program, "newtypes", None) or []):
+            if nd.name in self.newtypes:
+                raise ForgeError(f"duplicate newtype '{nd.name}'",
+                                 nd.line, nd.col)
+            if nd.name in SCALARS:
+                raise ForgeError(f"newtype '{nd.name}' collides with the "
+                                 f"built-in type '{nd.name}'", nd.line, nd.col)
+            if (nd.name in struct_names or nd.name in enum_names
+                    or nd.name in alias_names):
+                raise ForgeError(f"newtype '{nd.name}' collides with an "
+                                 f"existing type of the same name",
+                                 nd.line, nd.col)
+            if nd.target in generic_names:
+                kind = generic_names[nd.target]
+                raise ForgeError(f"newtype '{nd.name}' cannot target "
+                                 f"generic {kind} '{nd.target}' without "
+                                 f"type arguments; write {nd.target}<...>",
+                                 nd.line, nd.col)
+            self.newtypes.add(nd.name)
+            self.newtype_targets[nd.name] = nd.target
+            self.newtype_lines[nd.name] = (nd.line, nd.col)
+
+    def validate_newtype_targets(self):
+        for name, target in self.newtype_targets.items():
+            if not self.valid_type(target):
+                line, col = self.newtype_lines[name]
+                raise ForgeError(f"newtype '{name}' targets unknown "
+                                 f"type '{target}'", line, col)
+
+    def collect_aliases(self):
+        """Collect `type` aliases and resolve their targets (v1).
+
+        Aliases are transparent shorthands: `type UserId = int`
+        means UserId IS int everywhere. Chains resolve here, once,
+        so later expansion is shallow. Cycles, collisions with
+        existing type names, and bare-generic targets are errors.
+        """
+        raw = {}
+        for ad in (getattr(self.program, "aliases", None) or []):
+            if ad.name in raw:
+                raise ForgeError(f"duplicate type alias '{ad.name}'",
+                                 ad.line, ad.col)
+            raw[ad.name] = ad
+        struct_names = {sd.name for sd in
+                        (getattr(self.program, "structs", None) or [])}
+        enum_names = {ed.name for ed in
+                      (getattr(self.program, "enums", None) or [])}
+        generic_names = {}
+        for sd in (getattr(self.program, "structs", None) or []):
+            if getattr(sd, "type_params", None):
+                generic_names[sd.name] = "struct"
+        for ed in (getattr(self.program, "enums", None) or []):
+            if getattr(ed, "type_params", None):
+                generic_names[ed.name] = "enum"
+        for name, ad in raw.items():
+            if name in SCALARS:
+                raise ForgeError(f"type alias '{name}' collides with the "
+                                 f"built-in type '{name}'", ad.line, ad.col)
+            if name in struct_names or name in enum_names:
+                raise ForgeError(f"type alias '{name}' collides with an "
+                                 f"existing type of the same name",
+                                 ad.line, ad.col)
+            if ad.target in generic_names:
+                kind = generic_names[ad.target]
+                raise ForgeError(f"type alias '{name}' cannot target "
+                                 f"generic {kind} '{ad.target}' without "
+                                 f"type arguments; write {ad.target}<...>",
+                                 ad.line, ad.col)
+        self.aliases = {}
+        self.alias_lines = {}
+        for name, ad in raw.items():
+            self.aliases[name] = self._resolve_alias(ad.target, raw, {name}, ad)
+            self.alias_lines[name] = (ad.line, ad.col)
+
+    def _resolve_alias(self, target, raw, seen, ad):
+        if target in raw:
+            if target in seen:
+                raise ForgeError(f"cyclic type alias involving '{target}'",
+                                 ad.line, ad.col)
+            return self._resolve_alias(raw[target].target, raw,
+                                       seen | {target}, ad)
+        if target.startswith("[") and target.endswith("]"):
+            return "[" + self._resolve_alias(target[1:-1], raw, seen, ad) + "]"
+        g = parse_generic(target)
+        if g is not None:
+            base, args = g
+            if base in raw:
+                raise ForgeError(f"type alias '{base}' takes no type "
+                                 f"arguments", ad.line, ad.col)
+            return base + "<" + ", ".join(
+                self._resolve_alias(a, raw, seen, ad) for a in args) + ">"
+        return target
+
+    def validate_alias_targets(self):
+        # After struct/enum tables exist: every resolved target must
+        # name a real type, even if no code ever uses the alias.
+        for name, target in (getattr(self, "aliases", None) or {}).items():
+            if not self.valid_type(target):
+                line, col = self.alias_lines[name]
+                raise ForgeError(f"type alias '{name}' targets unknown "
+                                 f"type '{target}'", line, col)
+
+    def expand_aliases(self):
+        """Rewrite every type spelling in the program through aliases.
+
+        Runs before any other checking, so every later pass sees
+        only concrete types. Type spellings live in a small set of
+        positions (function signatures, struct fields, enum
+        payloads, trait signatures, let annotations, cast targets,
+        struct literal names); everything else is reached by
+        generic recursion into blocks and expressions.
+        """
+        aliases = getattr(self, "aliases", None) or {}
+        if not aliases:
+            return
+
+        def expand(t):
+            if t in aliases:
+                return aliases[t]
+            from .tuples import is_tuple_type, tuple_elems
+            if is_tuple_type(t):
+                return "(" + ", ".join(expand(e) for e in tuple_elems(t)) + ")"
+            if t.startswith("[") and t.endswith("]"):
+                return "[" + expand(t[1:-1]) + "]"
+            g = parse_generic(t)
+            if g is not None:
+                base, args = g
+                if base in aliases:
+                    raise ForgeError(f"type alias '{base}' takes no type "
+                                     f"arguments")
+                return base + "<" + ", ".join(expand(a) for a in args) + ">"
+            return t
+
+        def walk(node):
+            if node is None or isinstance(node, (str, int, float, bool)):
+                return
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if isinstance(node, A.FuncDef):
+                node.params = [(n, expand(t)) for n, t in node.params]
+                node.ret = expand(node.ret)
+            elif isinstance(node, A.StructDef):
+                node.fields = [(n, expand(t)) for n, t in node.fields]
+            elif isinstance(node, A.EnumDef):
+                payloads = getattr(node, "variant_payloads", None) or {}
+                for v, pt in list(payloads.items()):
+                    if pt is not None:
+                        payloads[v] = expand(pt)
+            elif isinstance(node, A.TraitDef):
+                node.methods = [(mn, [(pn, expand(pt)) for pn, pt in ps],
+                                 expand(rt), ml, mc)
+                                for (mn, ps, rt, ml, mc) in node.methods]
+            elif isinstance(node, A.Let):
+                if node.ann is not None:
+                    node.ann = expand(node.ann)
+            elif isinstance(node, A.Cast):
+                node.target = expand(node.target)
+            elif isinstance(node, A.NewtypeDef):
+                node.target = expand(node.target)
+            elif isinstance(node, A.StructLit):
+                target = aliases.get(node.name)
+                if (target is not None and "<" not in target
+                        and "[" not in target):
+                    node.name = target
+            if hasattr(node, "__dict__"):
+                for v in vars(node).values():
+                    walk(v)
+
+        for decls in (self.program.funcs,
+                      getattr(self.program, "structs", None) or [],
+                      getattr(self.program, "enums", None) or [],
+                      getattr(self.program, "traits", None) or [],
+                      getattr(self.program, "impls", None) or [],
+                      getattr(self.program, "newtypes", None) or []):
+            for d in decls:
+                walk(d)
+        # The walk rewrote newtype targets in place; refresh the
+        # map so it never holds a pre-expansion (alias) spelling.
+        if hasattr(self, "newtype_targets"):
+            for nd in (getattr(self.program, "newtypes", None) or []):
+                self.newtype_targets[nd.name] = nd.target
+
+    def check_traits(self):
+        """Validate trait declarations and impl blocks (v1).
+
+        A trait is a contract: method signatures with no bodies. An
+        impl block supplies the methods for one struct, each with
+        the receiver as its first parameter; a trait impl must
+        implement every trait method with matching parameter types
+        (after the receiver) and return type. Extra methods are
+        allowed. Impl methods are then appended to program.funcs
+        under mangled names (Struct__method) so their bodies get
+        checked and infer/codegen see them as ordinary functions,
+        exactly like generic instantiations.
+        """
+        from .traits import mangle
+        traits = {}
+        for td in (getattr(self.program, "traits", None) or []):
+            if td.name in traits:
+                raise ForgeError(f"duplicate trait '{td.name}'", td.line, td.col)
+            sigs = {}
+            for (mname, params, ret, ml, mc) in td.methods:
+                if mname in sigs:
+                    raise ForgeError(f"duplicate method '{mname}' in trait "
+                                     f"'{td.name}'", ml, mc)
+                for (_pn, pt) in params:
+                    if not self.valid_type(pt):
+                        raise ForgeError(f"unknown type '{pt}' in trait "
+                                         f"'{td.name}' method '{mname}'",
+                                         ml, mc)
+                if ret != "void" and not self.valid_type(ret):
+                    raise ForgeError(f"unknown return type '{ret}' in trait "
+                                     f"'{td.name}' method '{mname}'", ml, mc)
+                sigs[mname] = (params, ret)
+            traits[td.name] = sigs
+        # Trait signatures, for method calls on opaque receivers
+        # (which resolve against the trait, not a concrete struct).
+        self.trait_sigs = traits
+        struct_params = {}
+        for sd in (getattr(self.program, "structs", None) or []):
+            struct_params[sd.name] = getattr(sd, "type_params", None) or []
+        free_names = {fn.name for fn in self.program.funcs}
+        # struct -> {method: (params after receiver, ret)} for calls.
+        self.method_types = {}
+        seen_trait_impls = set()
+        impls = getattr(self.program, "impls", None) or []
+        for idf in impls:
+            if idf.struct not in struct_params:
+                raise ForgeError(f"impl targets unknown struct '{idf.struct}'",
+                                 idf.line, idf.col)
+            if struct_params[idf.struct]:
+                raise ForgeError("generic structs cannot have impl blocks "
+                                 "in traits v1", idf.line, idf.col)
+            if idf.trait is not None:
+                if idf.trait not in traits:
+                    raise ForgeError(f"impl names unknown trait '{idf.trait}'",
+                                     idf.line, idf.col)
+                if (idf.trait, idf.struct) in seen_trait_impls:
+                    raise ForgeError(f"duplicate impl of trait '{idf.trait}' "
+                                     f"for '{idf.struct}'", idf.line, idf.col)
+                seen_trait_impls.add((idf.trait, idf.struct))
+            methods = self.method_types.setdefault(idf.struct, {})
+            for m in idf.methods:
+                if m.name in methods:
+                    raise ForgeError(f"duplicate method '{m.name}' for "
+                                     f"struct '{idf.struct}'", m.line, m.col)
+                if not m.params or m.params[0][1] != idf.struct:
+                    raise ForgeError(f"first parameter of method '{m.name}' "
+                                     f"must be the struct '{idf.struct}'",
+                                     m.line, m.col)
+                if mangle(idf.struct, m.name) in free_names:
+                    raise ForgeError(f"method '{m.name}' on '{idf.struct}' "
+                                     f"collides with an existing function "
+                                     f"'{mangle(idf.struct, m.name)}'",
+                                     m.line, m.col)
+                methods[m.name] = (m.params[1:], m.ret)
+            if idf.trait is not None:
+                for tname, (tparams, tret) in traits[idf.trait].items():
+                    if tname not in methods:
+                        raise ForgeError(f"impl of trait '{idf.trait}' for "
+                                         f"'{idf.struct}' is missing method "
+                                         f"'{tname}'", idf.line, idf.col)
+                    iparams, iret = methods[tname]
+                    if ([t for (_n, t) in iparams] !=
+                            [t for (_n, t) in tparams] or iret != tret):
+                        raise ForgeError(
+                            f"method '{tname}' in impl of trait "
+                            f"'{idf.trait}' for '{idf.struct}' does not "
+                            f"match the trait signature", idf.line, idf.col)
+        for idf in impls:
+            for m in idf.methods:
+                spec = copy.deepcopy(m)
+                spec.name = mangle(idf.struct, m.name)
+                self.program.funcs.append(spec)
+
+    def check_method_call(self, call):
+        rt = self.check_expr(call.base)
+        if rt == "range":
+            # Built-in range methods: len, contains, start, end, sum.
+            # A range is lazy (start/end only, no array), so these
+            # are all O(1); sum uses the arithmetic-series formula.
+            methods = {"len": ([], "int"), "contains": (["int"], "bool"),
+                       "start": ([], "int"), "end": ([], "int"),
+                       "sum": ([], "int")}
+            if call.method not in methods:
+                raise ForgeError(f"range has no method '{call.method}'",
+                                 call.line, call.col)
+            params, ret = methods[call.method]
+            if len(call.args) != len(params):
+                raise ForgeError(f"method '{call.method}' on 'range' takes "
+                                 f"{len(params)} arguments, got {len(call.args)}",
+                                 call.line, call.col)
+            for arg, pt in zip(call.args, params):
+                at = self.check_expr(arg)
+                if at != pt:
+                    raise ForgeError(f"method '{call.method}' on 'range' expects "
+                                     f"{pt}, got {at}", call.line, call.col)
+            return ret
+        if is_opaque_type(rt):
+            # An opaque receiver resolves against the trait, not a
+            # concrete struct: the implementation stays hidden.
+            trait = opaque_trait(rt)
+            sigs = getattr(self, "trait_sigs", {}).get(trait)
+            if sigs is None:
+                raise ForgeError(f"no methods on type '{rt}' (unknown trait "
+                                 f"'{trait}')", call.line, call.col)
+            if call.method not in sigs:
+                raise ForgeError(f"trait '{trait}' has no method '{call.method}'",
+                                 call.line, call.col)
+            params, ret = sigs[call.method]
+            if len(call.args) != len(params):
+                raise ForgeError(f"method '{call.method}' on '{rt}' takes "
+                                 f"{len(params)} arguments, got {len(call.args)}",
+                                 call.line, call.col)
+            for arg, (_pn, pt) in zip(call.args, params):
+                at = self.check_expr(arg)
+                if not self.accepts(at, pt, arg):
+                    raise ForgeError(f"method '{call.method}' on '{rt}' expects "
+                                     f"{pt}, got {at}", call.line, call.col)
+            return ret
+        if "<" in rt or rt not in self.method_types:
+            raise ForgeError(f"no methods on type '{rt}' (trait methods "
+                             f"need a struct with an impl block)",
+                             call.line, call.col)
+        methods = self.method_types[rt]
+        if call.method not in methods:
+            raise ForgeError(f"struct '{rt}' has no method '{call.method}'",
+                             call.line, call.col)
+        params, ret = methods[call.method]
+        if len(call.args) != len(params):
+            raise ForgeError(f"method '{call.method}' on '{rt}' takes "
+                             f"{len(params)} arguments, got {len(call.args)}",
+                             call.line, call.col)
+        for arg, (_pn, pt) in zip(call.args, params):
+            at = self.check_expr(arg)
+            if not self.accepts(at, pt, arg):
+                raise ForgeError(f"method '{call.method}' on '{rt}' expects "
+                                 f"{pt}, got {at}", call.line, call.col)
+        return ret
+
+    def collect_impls(self):
+        """Trait names and impl-block order, before any validation.
+
+        valid_type needs them (an opaque type requires a trait with
+        at least one implementation), and it runs during
+        check_structs, which precedes check_traits.
+        """
+        self.trait_names = set()
+        for td in (getattr(self.program, "traits", None) or []):
+            self.trait_names.add(td.name)
+        self.trait_impls = {}
+        for idf in (getattr(self.program, "impls", None) or []):
+            if getattr(idf, "trait", None) is not None:
+                impls = self.trait_impls.setdefault(idf.trait, [])
+                if idf.struct not in impls:
+                    impls.append(idf.struct)
+
+    def accepts(self, value, expected, expr=None):
+        """Value type accepted where an expected type is declared.
+
+        Exact equality, a union member for its union, or a struct
+        implementing the trait of an opaque type. A union value is
+        never accepted for a single member, and an opaque value is
+        never accepted for a concrete struct (the concrete type
+        stays hidden). An integer literal adapts to an expected
+        fixed-width type when it fits; a general int expression
+        does not adapt.
+        """
+        if type_matches(value, expected):
+            return True
+        if value == "never":
+            # Bottom type: a diverging expression stands in for
+            # any expected type (the code after it never runs).
+            return True
+        if is_opaque_type(expected):
+            trait = opaque_trait(expected)
+            return value in getattr(self, "trait_impls", {}).get(trait, [])
+        if is_readonly(expected):
+            # A mutable array coerces to a readonly view of the
+            # same array kind (dynamic to dynamic, sized to the
+            # same sized type); a view never coerces back, and
+            # kinds never mix.
+            return value == expected or value == readonly_inner(expected)
+        if expr is not None and is_fixed_int(expected):
+            v = literal_value(expr)
+            if v is not None:
+                lo, hi = fixed_range(expected)
+                return lo <= v <= hi
+        return False
+
+    def _expr_diverges(self, e):
+        """True when evaluating e necessarily diverges: it
+        contains a fail call or a call to a never function.
+        Only the expression itself is walked, never nested
+        statement bodies (those are conditional)."""
+        if e is None:
+            return False
+        if isinstance(e, A.Call):
+            if e.name == "fail":
+                return True
+            fn = self.funcs.get(e.name)
+            if fn is not None and fn.ret == "never":
+                return True
+        for v in vars(e).values():
+            if isinstance(v, list):
+                for item in v:
+                    if hasattr(item, "__dict__") and self._expr_diverges(item):
+                        return True
+            elif hasattr(v, "__dict__") and self._expr_diverges(v):
+                return True
+        return False
+
+    def _stmt_diverges(self, stmt):
+        """True when a top-level statement necessarily diverges.
+
+        Blocks and scopes recurse (they run unconditionally);
+        if/while/for/match count only through their conditions
+        and scrutinees (evaluated unconditionally), never their
+        bodies (control can skip those). Returns are not
+        divergers here: they are exits, handled by the return
+        rule, and are rejected outright inside never functions.
+        """
+        if isinstance(stmt, A.Block):
+            return any(self._stmt_diverges(s) for s in stmt.stmts)
+        if isinstance(stmt, A.Scope):
+            return self._stmt_diverges(stmt.body)
+        if isinstance(stmt, A.If):
+            return self._expr_diverges(stmt.cond)
+        if isinstance(stmt, A.While):
+            return self._expr_diverges(stmt.cond)
+        if isinstance(stmt, A.For):
+            return self._expr_diverges(stmt.expr)
+        if isinstance(stmt, A.Match):
+            return self._expr_diverges(stmt.expr)
+        if isinstance(stmt, A.Return):
+            return False
+        for v in vars(stmt).values():
+            if isinstance(v, list):
+                for item in v:
+                    if hasattr(item, "__dict__") and self._expr_diverges(item):
+                        return True
+            elif hasattr(v, "__dict__") and self._expr_diverges(v):
+                return True
+        return False
+
+    def _body_diverges(self, body):
+        """True when a function body cannot fall off its end:
+        some top-level statement necessarily diverges."""
+        return any(self._stmt_diverges(s) for s in body.stmts)
+
+    def _has_return(self, node):
+        """True when a return statement appears anywhere under
+        node (including nested blocks and branches)."""
+        if isinstance(node, A.Return):
+            return True
+        for v in vars(node).values():
+            if isinstance(v, list):
+                for item in v:
+                    if hasattr(item, "__dict__") and self._has_return(item):
+                        return True
+            elif hasattr(v, "__dict__") and self._has_return(v):
+                return True
+        return False
+
+    def _literal_fit_msg(self, expr, expected):
+        """Specific error when a literal does not fit an expected
+        fixed type, or None (the caller falls back to its generic
+        mismatch message)."""
+        if is_fixed_int(expected):
+            v = literal_value(expr)
+            if v is not None:
+                lo, hi = fixed_range(expected)
+                if not (lo <= v <= hi):
+                    return f"integer literal {v} does not fit in {expected}"
+        return None
+
+    def _sized_literal_ok(self, expr, expected):
+        """True when expr is an array literal with exactly the
+        element count and element types a sized annotation needs.
+
+        A length mismatch raises its own precise error (the
+        generic mismatch message would hide the count); an
+        element-type mismatch returns False so the caller reports
+        its generic message. Non-literals and non-sized
+        expectations return False without raising.
+        """
+        from .sizedarrays import is_sized_array, sized_elem, sized_len
+        if not is_sized_array(expected) or not isinstance(expr, A.ArrayLit):
+            return False
+        elem, n = sized_elem(expected), sized_len(expected)
+        if len(expr.elems) != n:
+            raise ForgeError(f"sized array {expected} needs {n} elements, "
+                             f"got {len(expr.elems)}", expr.line, expr.col)
+        for e in expr.elems:
+            if not self.accepts(self.check_expr(e), elem, e):
+                return False
+        return True
+
     def check(self, require_main=True):
+        self.collect_aliases()
+        self.collect_newtypes()
+        self.collect_impls()
+        self.expand_aliases()
         self.check_structs()
         self.check_enums()
+        self.validate_alias_targets()
+        self.validate_newtype_targets()
+        self.check_traits()
         original_funcs = list(self.program.funcs)
         for fn in original_funcs:
             if fn.name in self.funcs:
@@ -307,7 +939,7 @@ class Checker:
         # in the middle of checking another function (a call site), and
         # must not wipe that function's scopes/return type.
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
-                 self.loop_depth)
+                 self.loop_depth, self.unresolved)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -320,7 +952,7 @@ class Checker:
                                      f"parameter name; rename it", fn.line, fn.col)
                 if not self.valid_type(pt) or pt == "void":
                     raise ForgeError(f"parameter type '{pt}' is not a value type", fn.line, fn.col)
-            if not self.valid_type(fn.ret):
+            if fn.ret != "void" and not self.valid_type(fn.ret):
                 raise ForgeError(f"unknown return type '{fn.ret}'"
                                  f"{suggest(fn.ret, list(SCALARS) + list(self.structs) + list(self.enums))}",
                                  fn.line, fn.col)
@@ -338,16 +970,36 @@ class Checker:
             self.current_ret = fn.ret
             self.current_fn = fn
             self.scopes = [{n: (t, False) for n, t in fn.params}]
+            self.unresolved = {}
             self.check_block(fn.body)
-            if fn.ret != "void":
-                if not fn.body.stmts or not isinstance(fn.body.stmts[-1], A.Return):
-                    raise ForgeError(f"function '{fn.name}' returns {fn.ret} but its body "
-                                     f"does not end with a return; add a return statement "
-                                     f"of type {fn.ret} at the end of the function",
+            if self.unresolved:
+                # An empty array literal no use in this function
+                # constrained: inference found no element type.
+                let = next(iter(self.unresolved.values()))
+                raise ForgeError("cannot infer the element type of an empty array "
+                                 "literal; add an annotation, e.g. "
+                                 "let x: [int] = []",
+                                 let.line, let.col)
+            if fn.ret == "never":
+                if self._has_return(fn.body):
+                    raise ForgeError(f"never function '{fn.name}' cannot return; "
+                                     f"its body must diverge instead",
                                      fn.line, fn.col)
+                if not self._body_diverges(fn.body):
+                    raise ForgeError(f"never function '{fn.name}' must end with a "
+                                     f"diverging statement (fail or a call to a never "
+                                     f"function); its body can fall off the end",
+                                     fn.line, fn.col)
+            elif fn.ret != "void":
+                if not fn.body.stmts or not isinstance(fn.body.stmts[-1], A.Return):
+                    if not self._body_diverges(fn.body):
+                        raise ForgeError(f"function '{fn.name}' returns {fn.ret} but its body "
+                                         f"does not end with a return; add a return statement "
+                                         f"of type {fn.ret} at the end of the function",
+                                         fn.line, fn.col)
         finally:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
-                self.loop_depth = saved
+                self.loop_depth, self.unresolved = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -378,7 +1030,31 @@ class Checker:
                 raise ForgeError(f"variable '{stmt.name}' is already defined in this scope",
                                  stmt.line, stmt.col)
             t = self.check_expr(stmt.expr)
+            if stmt.ann is None:
+                # void is no value: it is allowed only as a
+                # function or method return type. Binding it (or
+                # a composite containing it) would compile to
+                # invalid C downstream, so fail here instead.
+                if t == "void":
+                    if isinstance(stmt.expr, A.Call):
+                        raise ForgeError(f"function '{stmt.expr.name}' returns void and has "
+                                         f"no value to bind; call it as a statement instead",
+                                         stmt.line, stmt.col)
+                    if isinstance(stmt.expr, A.MethodCall):
+                        raise ForgeError(f"method '{stmt.expr.method}' returns void and has "
+                                         f"no value to bind; call it as a statement instead",
+                                         stmt.line, stmt.col)
+                    raise ForgeError("void has no value to bind",
+                                     stmt.line, stmt.col)
+                if "?" not in t and not self.valid_type(t):
+                    raise ForgeError(f"type '{t}' contains void, which has no value",
+                                     stmt.line, stmt.col)
             if stmt.ann is not None:
+                if (isinstance(stmt.expr, A.Var)
+                        and self._resolve_empty(stmt.expr.name, stmt.ann)):
+                    # An annotated let constrains an unresolved
+                    # array value to the annotation's type.
+                    t = stmt.ann
                 if not self.valid_type(stmt.ann) or stmt.ann == "void":
                     raise ForgeError(f"unknown type '{stmt.ann}'"
                                      f"{suggest(stmt.ann, list(SCALARS) + list(self.structs) + list(self.enums))}",
@@ -395,13 +1071,21 @@ class Checker:
                         t = stmt.ann
                 if t != stmt.ann:
                     # Empty array literal has no element type of its own.
-                    if not (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
-                            and stmt.ann.startswith("[")):
-                        raise ForgeError(f"variable '{stmt.name}' is declared {stmt.ann} "
+                    if (not (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
+                             and stmt.ann.startswith("[") and not (is_sized_array(stmt.ann) and sized_len(stmt.ann) > 0)) and not self.accepts(t, stmt.ann, stmt.expr)
+                            and not self._sized_literal_ok(stmt.expr, stmt.ann)):
+                        raise ForgeError(self._literal_fit_msg(stmt.expr, stmt.ann)
+                                         or f"variable '{stmt.name}' is declared {stmt.ann} "
                                          f"but initialised with {t}{cast_hint(t, stmt.ann)}",
                                          stmt.line, stmt.col)
                     t = stmt.ann
             self.scopes[-1][stmt.name] = (t, stmt.mutable)
+            if (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
+                    and stmt.ann is None):
+                # Empty literal, no annotation: its element type is
+                # unresolved until a constraining use resolves it
+                # (or check_func reports it at the end of the body).
+                self.unresolved[(id(self.scopes[-1]), stmt.name)] = stmt
             return
         if isinstance(stmt, A.Assign):
             vt, mutable = self.lookup(stmt.name, stmt.line, stmt.col)
@@ -409,10 +1093,13 @@ class Checker:
                 raise ForgeError(f"cannot assign to immutable variable '{stmt.name}' "
                                  f"(declare it with 'let mut')", stmt.line, stmt.col)
             et = self.check_expr(stmt.expr)
-            if et != vt:
+            if self._resolve_empty(stmt.name, et):
+                vt, _m = self.lookup(stmt.name, stmt.line, stmt.col)
+            if not self.accepts(et, vt, stmt.expr) and not self._sized_literal_ok(stmt.expr, vt):
                 if not (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
-                        and vt.startswith("[")):
-                    raise ForgeError(f"cannot assign {et} to {vt} variable '{stmt.name}'"
+                        and vt.startswith("[") and not (is_sized_array(vt) and sized_len(vt) > 0)):
+                    raise ForgeError(self._literal_fit_msg(stmt.expr, vt)
+                                     or f"cannot assign {et} to {vt} variable '{stmt.name}'"
                                      f"{cast_hint(et, vt)}",
                                      stmt.line, stmt.col)
             return
@@ -432,7 +1119,12 @@ class Checker:
                                  stmt.line, stmt.col)
             ft = self.check_expr(stmt.target)
             vt2 = self.check_expr(stmt.expr)
-            if vt2 != ft:
+            if (isinstance(stmt.expr, A.Var)
+                    and self._resolve_empty(stmt.expr.name, ft)):
+                # Storing an unresolved array into a concretely typed
+                # field resolves it to the field's type.
+                vt2 = ft
+            if vt2 != ft and not self._sized_literal_ok(stmt.expr, ft):
                 raise ForgeError(f"cannot assign {vt2} to field of type {ft}"
                                  f"{cast_hint(vt2, ft)}",
                                  stmt.line, stmt.col)
@@ -455,6 +1147,9 @@ class Checker:
             else:
                 raise ForgeError("index assignment target must be a variable or a field",
                                  stmt.line, stmt.col)
+            if is_readonly(vt):
+                raise ForgeError(f"cannot assign through a readonly view {vt}",
+                                 stmt.line, stmt.col)
             if vt == "str":
                 raise ForgeError("cannot assign to a string index; strings are immutable",
                                  stmt.line, stmt.col)
@@ -465,6 +1160,11 @@ class Checker:
             if it != "int":
                 raise ForgeError("array index must be int", stmt.line, stmt.col)
             vt2 = self.check_expr(stmt.expr)
+            if (isinstance(base, A.Var) and "?" not in vt2
+                    and self._resolve_empty(base.name, f"[{vt2}]")):
+                # Storing a concrete element through an unresolved
+                # array resolves it to an array of that element type.
+                et = vt2
             if vt2 != et:
                 raise ForgeError(f"cannot assign {vt2} to element of type {et}"
                                  f"{cast_hint(vt2, et)}",
@@ -472,6 +1172,46 @@ class Checker:
             return
         if isinstance(stmt, A.Match):
             et = self.check_expr(stmt.expr)
+            if is_union_type(et):
+                # Narrowing a union: arms are member types, each
+                # binding the narrowed value; exhaustiveness is over
+                # the members, or a trailing wildcard.
+                members = union_members(et)
+                member_set = set(members)
+                seen = set()
+                has_wildcard = False
+                for idx, (pat, binding, body) in enumerate(stmt.arms):
+                    if pat == "_":
+                        has_wildcard = True
+                        if idx != len(stmt.arms) - 1:
+                            raise ForgeError("match wildcard '_' must be the last arm",
+                                             stmt.line, stmt.col)
+                        if binding is not None:
+                            raise ForgeError("wildcard arm cannot bind a value",
+                                             stmt.line, stmt.col)
+                        self.check_block(body)
+                        continue
+                    if pat not in member_set:
+                        raise ForgeError(f"'{pat}' is not a member of union '{et}'",
+                                         stmt.line, stmt.col)
+                    if pat in seen:
+                        raise ForgeError(f"duplicate match arm '{pat}'",
+                                         stmt.line, stmt.col)
+                    seen.add(pat)
+                    if binding is None:
+                        raise ForgeError(f"member '{pat}' has a value; "
+                                         f"write {pat}(name) => ...",
+                                         stmt.line, stmt.col)
+                    self.scopes.append({binding: (pat, False)})
+                    try:
+                        self.check_block(body)
+                    finally:
+                        self.scopes.pop()
+                if not has_wildcard and seen != member_set:
+                    missing = sorted(member_set - seen)
+                    raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
+                                     stmt.line, stmt.col)
+                return
             info = self.enum_info_for(et)
             if info is None:
                 raise ForgeError(f"match needs an enum value, got {et}",
@@ -566,9 +1306,12 @@ class Checker:
             return
         if isinstance(stmt, A.For):
             at = self.check_expr(stmt.expr)
-            et = elem_type(at)
+            if at == "range":
+                et = "int"
+            else:
+                et = elem_type(at)
             if et is None:
-                raise ForgeError(f"for loop needs an array, got {at}", stmt.line, stmt.col)
+                raise ForgeError(f"for loop needs an array or range, got {at}", stmt.line, stmt.col)
             self.scopes.append({stmt.name: (et, False)})
             self.loop_depth += 1
             try:
@@ -583,6 +1326,18 @@ class Checker:
                 raise ForgeError("break outside a loop; move it inside a "
                                  "'while' or 'for' loop", stmt.line, stmt.col)
             return
+        if isinstance(stmt, A.Continue):
+            if self.loop_depth == 0:
+                raise ForgeError("continue outside a loop; move it inside "
+                                 "a 'while' or 'for' loop", stmt.line, stmt.col)
+            return
+        if isinstance(stmt, A.Defer):
+            # The deferred call is checked like an expression
+            # statement; its value (if any) is discarded at exit.
+            if not isinstance(stmt.call, (A.Call, A.MethodCall)):
+                raise ForgeError("defer needs a call", stmt.line, stmt.col)
+            self.check_expr(stmt.call)
+            return
         if isinstance(stmt, A.Return):
             if self.current_ret == "void":
                 if stmt.expr is not None:
@@ -596,6 +1351,11 @@ class Checker:
                                      f"{self.current_ret} at the end of the "
                                      f"function", stmt.line, stmt.col)
                 t = self.check_expr(stmt.expr)
+                if (isinstance(stmt.expr, A.Var)
+                        and self._resolve_empty(stmt.expr.name, self.current_ret)):
+                    # Returning an unresolved array from a concretely
+                    # typed function resolves it to the return type.
+                    t = self.current_ret
                 filled = self.fill_placeholder(t, self.current_ret)
                 if filled != t:
                     if isinstance(stmt.expr, A.Call):
@@ -607,8 +1367,11 @@ class Checker:
                         t = self.current_ret
                 if t != self.current_ret:
                     if not (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
-                            and self.current_ret.startswith("[")):
-                        raise ForgeError(f"return type is {t}, function returns "
+                            and self.current_ret.startswith("[") and not (is_sized_array(self.current_ret) and sized_len(self.current_ret) > 0)) \
+                            and not self.accepts(t, self.current_ret, stmt.expr) \
+                            and not self._sized_literal_ok(stmt.expr, self.current_ret):
+                        raise ForgeError(self._literal_fit_msg(stmt.expr, self.current_ret)
+                                         or f"return type is {t}, function returns "
                                          f"{self.current_ret}{cast_hint(t, self.current_ret)}",
                                          stmt.line, stmt.col)
             return
@@ -659,7 +1422,19 @@ class Checker:
             et = elem_type(vt)
             if et is None:
                 raise ForgeError(f"push() needs an array, got {vt}", call.line, call.col)
+            from .sizedarrays import is_sized_array
+            if is_sized_array(vt):
+                raise ForgeError(f"cannot push to a sized array {vt} "
+                                 f"(its length is fixed)", call.line, call.col)
+            if is_readonly(vt):
+                raise ForgeError(f"cannot push to a readonly view {vt}",
+                                 call.line, call.col)
             vt2 = self.check_expr(call.args[1])
+            if (isinstance(call.args[0], A.Var) and "?" not in vt2
+                    and self._resolve_empty(call.args[0].name, f"[{vt2}]")):
+                # Pushing a concrete value into an unresolved array
+                # resolves it to an array of the value's type.
+                et = vt2
             if vt2 != et:
                 raise ForgeError(f"push() value must be {et}, got {vt2}", call.line, call.col)
             return
@@ -706,6 +1481,29 @@ class Checker:
                     raise ForgeError("array literal elements must all have the same type",
                                      e.line, e.col)
             return f"[{t0}]"
+        if isinstance(expr, A.TupleLit):
+            # Heterogeneous by design: each element keeps its own
+            # type, and the literal's type joins them in order.
+            types = [self.check_expr(e) for e in expr.elems]
+            return f"({', '.join(types)})"
+        if isinstance(expr, A.TupleIndex):
+            bt = self.check_expr(expr.base)
+            if not is_tuple_type(bt):
+                raise ForgeError(f"tuple index .{expr.index} needs a tuple value, "
+                                 f"got {bt}", expr.line, expr.col)
+            elems = tuple_elems(bt)
+            if expr.index >= len(elems):
+                raise ForgeError(f"tuple index .{expr.index} out of range for "
+                                 f"{bt} ({len(elems)} elements)",
+                                 expr.line, expr.col)
+            return elems[expr.index]
+        if isinstance(expr, A.RangeLit):
+            st = self.check_expr(expr.start)
+            et = self.check_expr(expr.end)
+            if st != "int" or et != "int":
+                raise ForgeError(f"range endpoints must be int, got {st} and {et}",
+                                 expr.line, expr.col)
+            return "range"
         if isinstance(expr, A.StructLit):
             if expr.name not in self.structs:
                 raise ForgeError(f"undefined struct '{expr.name}'", expr.line, expr.col)
@@ -720,6 +1518,12 @@ class Checker:
                     raise ForgeError(f"duplicate field '{fname}' in struct literal",
                                      expr.line, expr.col)
                 provided[fname] = self.check_expr(fexpr)
+                if (not params and isinstance(fexpr, A.Var)
+                        and self._is_concrete_array(template_fields[fname])):
+                    # An unresolved array stored into a concretely
+                    # typed field resolves to the field's type.
+                    if self._resolve_empty(fexpr.name, template_fields[fname]):
+                        provided[fname] = template_fields[fname]
             missing = [f for f in template_fields if f not in provided]
             if missing:
                 raise ForgeError(f"struct literal '{expr.name}' is missing field(s): "
@@ -746,7 +1550,9 @@ class Checker:
                     if provided[fname] != ftype:
                         fexpr = dict(expr.fields)[fname]
                         if not (isinstance(fexpr, A.ArrayLit) and not fexpr.elems
-                                and ftype.startswith("[")):
+                                and ftype.startswith("[") and not (is_sized_array(ftype) and sized_len(ftype) > 0)) \
+                                and not self.accepts(provided[fname], ftype, fexpr) \
+                                and not self._sized_literal_ok(fexpr, ftype):
                             raise ForgeError(f"field '{fname}' of '{expr.name}' must be {ftype}, "
                                              f"got {provided[fname]}", expr.line, expr.col)
                 return concrete
@@ -756,7 +1562,9 @@ class Checker:
                     # Empty array literal, like in let, takes the field type.
                     fexpr = dict(expr.fields)[fname]
                     if not (isinstance(fexpr, A.ArrayLit) and not fexpr.elems
-                            and ftype.startswith("[")):
+                            and ftype.startswith("[") and not (is_sized_array(ftype) and sized_len(ftype) > 0)) \
+                            and not self.accepts(provided[fname], ftype, fexpr) \
+                            and not self._sized_literal_ok(fexpr, ftype):
                         raise ForgeError(f"field '{fname}' of '{expr.name}' must be {ftype}, "
                                          f"got {provided[fname]}", expr.line, expr.col)
             expr.concrete_type = expr.name
@@ -788,9 +1596,34 @@ class Checker:
             t = self.check_expr(expr.expr)
             if not self.valid_type(expr.target) or expr.target == "void":
                 raise ForgeError(f"unknown cast target '{expr.target}'", expr.line, expr.col)
-            if (t, expr.target) not in (("int", "float"), ("float", "int")):
-                raise ForgeError(f"cannot cast {t} to {expr.target}", expr.line, expr.col)
-            return expr.target
+            if (t, expr.target) in (("int", "float"), ("float", "int")):
+                return expr.target
+            # Casts between int types (int counts as i64): widening
+            # is free, narrowing is range-checked at runtime.
+            # Identity casts stay rejected (t != target).
+            if is_int_type(t) and is_int_type(expr.target) and t != expr.target:
+                return expr.target
+            # Fixed-width integers convert to and from float like
+            # int does (a truncating C cast from float).
+            if is_int_type(t) and expr.target == "float":
+                return expr.target
+            if t == "float" and is_int_type(expr.target):
+                return expr.target
+            # A member value casts into its union: `5 as int | str`.
+            # The reverse (union to member) is unsafe and rejected:
+            # narrow with match instead.
+            if is_union_type(expr.target) and t in union_members(expr.target):
+                return expr.target
+            # Newtype crossings, both directions, to the newtype's
+            # own underlying type only (chains resolve: B = A = int
+            # allows B <-> int and A <-> int; B <-> A needs two
+            # casts, via int).
+            targets = getattr(self, "newtype_targets", {})
+            if t in targets and self.underlying_newtype(t) == expr.target:
+                return expr.target
+            if expr.target in targets and self.underlying_newtype(expr.target) == t:
+                return expr.target
+            raise ForgeError(f"cannot cast {t} to {expr.target}", expr.line, expr.col)
         if isinstance(expr, A.Try):
             t = self.check_expr(expr.expr)
             ret = self.current_ret
@@ -824,15 +1657,17 @@ class Checker:
                              expr.line, expr.col)
         if isinstance(expr, A.UnaryOp):
             t = self.check_expr(expr.expr)
-            if expr.op == "-" and t in ("int", "float"):
+            if expr.op == "-" and (t in ("int", "float") or is_fixed_int(t)):
                 return t
             if expr.op == "!" and t == "bool":
                 return "bool"
-            if expr.op == "~" and t == "int":
-                return "int"
+            if expr.op == "~" and (t == "int" or is_fixed_int(t)):
+                return t
             raise ForgeError(f"operator '{expr.op}' does not apply to {t}", expr.line, expr.col)
         if isinstance(expr, A.BinOp):
             return self.check_binop(expr)
+        if isinstance(expr, A.MethodCall):
+            return self.check_method_call(expr)
         if isinstance(expr, A.Call):
             return self.check_call(expr)
         raise ForgeError(f"unsupported expression {type(expr).__name__}", expr.line, expr.col)
@@ -887,6 +1722,26 @@ class Checker:
             if t != "str" and elem_type(t) is None:
                 raise ForgeError(f"len() needs a str or array, got {t}", call.line, call.col)
             return "int"
+        if call.name == "refcount":
+            if len(call.args) != 1:
+                raise ForgeError("refcount() takes exactly one argument", call.line, call.col)
+            t = self.check_expr(call.args[0])
+            if elem_type(t) is None:
+                raise ForgeError(f"refcount() needs an array, got {t}", call.line, call.col)
+            return "int"
+        if call.name == "weak_new":
+            if len(call.args) != 1:
+                raise ForgeError("weak_new() takes exactly one argument", call.line, call.col)
+            t = self.check_expr(call.args[0])
+            if t != "[int]":
+                raise ForgeError(f"weak_new() needs an [int] array in v1, got {t}", call.line, call.col)
+            return "int"
+        if call.name == "weak_upgrade":
+            if len(call.args) != 1:
+                raise ForgeError("weak_upgrade() takes exactly one argument", call.line, call.col)
+            if self.check_expr(call.args[0]) != "int":
+                raise ForgeError("weak_upgrade() takes a weak id (int)", call.line, call.col)
+            return "(bool, [int])"
         if call.name == "range":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
                 raise ForgeError("range() takes exactly one int argument", call.line, call.col)
@@ -922,6 +1777,23 @@ class Checker:
         if call.name == "abs":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
                 raise ForgeError("abs() takes exactly one int argument", call.line, call.col)
+            return "int"
+        if call.name in ("wrapping_add", "wrapping_sub", "wrapping_mul"):
+            # Defined wraparound beside the checked default: these
+            # never fail, on any backend (native wraps via unsigned
+            # arithmetic, big32 and WASM wrap by nature).
+            if len(call.args) != 2:
+                raise ForgeError(f"{call.name}() takes exactly two arguments",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError(f"{call.name}() takes int arguments",
+                                     call.line, call.col)
+            return "int"
+        if call.name == "wrapping_neg":
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
+                raise ForgeError("wrapping_neg() takes exactly one int argument",
+                                 call.line, call.col)
             return "int"
         if call.name == "file_exists":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
@@ -1130,39 +2002,86 @@ class Checker:
             return substitute_type(fn.ret, bindings)
         for arg, (pn, pt) in zip(call.args, fn.params):
             t = self.check_expr(arg)
+            if (isinstance(arg, A.Var)
+                    and self._resolve_empty(arg.name, pt)):
+                # A concretely typed parameter constrains an
+                # unresolved array argument to the parameter type.
+                t = pt
             filled = self.fill_placeholder(t, pt)
             if filled != t:
                 if isinstance(arg, A.Call):
                     arg.concrete_type = filled
                 t = filled
             if t != pt:
-                if not (isinstance(arg, A.ArrayLit) and not arg.elems and pt.startswith("[")):
-                    raise ForgeError(f"argument '{pn}' of '{call.name}' must be {pt}, got {t}"
+                if not (isinstance(arg, A.ArrayLit) and not arg.elems and pt.startswith("[") and not (is_sized_array(pt) and sized_len(pt) > 0)) \
+                        and not self.accepts(t, pt, arg) \
+                        and not self._sized_literal_ok(arg, pt):
+                    raise ForgeError(self._literal_fit_msg(arg, pt)
+                                     or f"argument '{pn}' of '{call.name}' must be {pt}, got {t}"
                                      f"{cast_hint(t, pt)}",
                                      call.line, call.col)
         return fn.ret
+
+    def underlying_newtype(self, t):
+        """Resolve a newtype chain to its ultimate underlying type."""
+        targets = getattr(self, "newtype_targets", {})
+        seen = set()
+        while t in targets and t not in seen:
+            seen.add(t)
+            t = targets[t]
+        return t
 
     def check_binop(self, node):
         lt = self.check_expr(node.left)
         rt = self.check_expr(node.right)
         op = node.op
+        # An integer literal adapts to the other operand's fixed
+        # type when it fits (the same adaptation as let/argument
+        # sites). Shifts are excluded: a shift count is a plain
+        # int, so it never needs to fit the left type, and its
+        # range is checked at runtime instead.
+        if lt != rt and op not in ("<<", ">>"):
+            for fixed_t, lit_expr in ((lt, node.right), (rt, node.left)):
+                if is_fixed_int(fixed_t):
+                    v = literal_value(lit_expr)
+                    if v is not None:
+                        lo, hi = fixed_range(fixed_t)
+                        if lo <= v <= hi:
+                            if op in ("+", "-", "*", "/", "%", "&", "|", "^"):
+                                return fixed_t
+                            if op in ("<", "<=", ">", ">=", "==", "!="):
+                                return "bool"
+                        raise ForgeError(f"integer literal {v} does not fit in {fixed_t}",
+                                         node.line, node.col)
         if op in ("+", "-", "*", "/", "%"):
             if op == "+" and lt == "str" and rt == "str":
                 return "str"
             if op == "%" and lt == "int" and rt == "int":
                 return "int"
-            if op in ("+", "-", "*", "/") and lt == rt and lt in ("int", "float"):
+            if op == "%" and lt == rt and is_fixed_int(lt):
+                return lt
+            if op in ("+", "-", "*", "/") and lt == rt and (lt in ("int", "float")
+                                                             or is_fixed_int(lt)):
                 return lt
             raise ForgeError(f"operator '{op}' needs matching int or float operands "
                              f"(or str + str), got {lt} and {rt}", node.line, node.col)
         if op in ("<", "<=", ">", ">="):
-            if lt == rt and lt in ("int", "float"):
+            if lt == rt and (lt in ("int", "float") or is_fixed_int(lt)):
                 return "bool"
             raise ForgeError(f"operator '{op}' needs matching int or float operands, "
                              f"got {lt} and {rt}", node.line, node.col)
         if op in ("==", "!="):
-            if lt == rt and (lt in ("int", "float", "bool", "str") or lt in self.enums):
+            if lt == rt and (lt in ("int", "float", "bool", "str")
+                             or is_fixed_int(lt) or lt in self.enums):
                 return "bool"
+            # Same-newtype equality, when the underlying type is
+            # itself comparable. Ordering and arithmetic still need
+            # an explicit cast out: distinctness is about mixing
+            # types, not about comparing identical ones.
+            if lt == rt and lt in getattr(self, "newtypes", set()):
+                under = self.underlying_newtype(lt)
+                if under in ("int", "float", "bool", "str") or under in self.enums:
+                    return "bool"
             raise ForgeError(f"operator '{op}' needs matching int, float, bool, str or enum "
                              f"operands, got {lt} and {rt}", node.line, node.col)
         if op in ("&&", "||"):
@@ -1173,6 +2092,11 @@ class Checker:
         if op in ("&", "|", "^", "<<", ">>"):
             if lt == "int" and rt == "int":
                 return "int"
+            if op in ("&", "|", "^") and lt == rt and is_fixed_int(lt):
+                return lt
+            if op in ("<<", ">>") and is_fixed_int(lt) and (rt == "int" or rt == lt):
+                # Shifts take a plain int count or the same width.
+                return lt
             raise ForgeError(f"operator '{op}' needs int operands, got {lt} and {rt}",
                              node.line, node.col)
         raise ForgeError(f"unknown operator '{op}'", node.line, node.col)

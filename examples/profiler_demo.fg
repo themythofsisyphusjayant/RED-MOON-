@@ -1,0 +1,12 @@
+import "profiler.fg";
+
+fn main() {
+    let mut p = profiler_new();
+    p = profiler_add(p, "parse", 1000, 3000);
+    p = profiler_add(p, "parse", 5000, 6000);
+    p = profiler_add(p, "emit", 6000, 9000);
+    println(profiler_total(p, "parse"));
+    println(profiler_total(p, "emit"));
+    println(profiler_total(p, "missing"));
+    println(profiler_report(p));
+}

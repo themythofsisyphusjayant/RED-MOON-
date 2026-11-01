@@ -1,0 +1,9 @@
+import "svg.fg";
+
+fn main() {
+    let inner = svg_rect(10, 10, 50, 30, "red") + svg_circle(100, 40, 20, "blue") + svg_line(0, 0, 120, 60, "green") + svg_text(10, 90, "hi");
+    println(svg_wrap(140, 100, inner));
+    let xs = [0, 10, 20];
+    let ys = [0, 5, 0];
+    println(svg_polyline(xs, ys));
+}

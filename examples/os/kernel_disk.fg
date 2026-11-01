@@ -1,0 +1,51 @@
+// Block device driver kernel (Phase F, RAM-backed disk-lite).
+//
+// Four blocks of four words at 0xA000; block b word w lives at
+// 0xA000 + b*16 + w*4. The demo writes blocks 2 and 3, reads
+// them back, and prints the values.
+//
+// Expected model UART transcript:
+//   DISK\n1234\n5678\nDONE, halted.
+// Block 2 word 2 at 0xA028 is 3; block 3 word 0 at 0xA030 is 5.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn disk_write(b: int, w: int, v: int) {
+  poke32(40960 + b * 16 + w * 4, v);
+}
+
+fn disk_read(b: int, w: int) -> int {
+  return peek32(40960 + b * 16 + w * 4);
+}
+
+fn main() {
+  put(68);
+  put(73);
+  put(83);
+  put(75);
+  put(10);
+  disk_write(2, 0, 1);
+  disk_write(2, 1, 2);
+  disk_write(2, 2, 3);
+  disk_write(2, 3, 4);
+  disk_write(3, 0, 5);
+  disk_write(3, 1, 6);
+  disk_write(3, 2, 7);
+  disk_write(3, 3, 8);
+  put(48 + disk_read(2, 0));
+  put(48 + disk_read(2, 1));
+  put(48 + disk_read(2, 2));
+  put(48 + disk_read(2, 3));
+  put(10);
+  put(48 + disk_read(3, 0));
+  put(48 + disk_read(3, 1));
+  put(48 + disk_read(3, 2));
+  put(48 + disk_read(3, 3));
+  put(10);
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}

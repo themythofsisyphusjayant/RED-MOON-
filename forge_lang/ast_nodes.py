@@ -7,6 +7,10 @@ class Program:
     funcs: list
     structs: list = None  # [StructDef]; None for old call sites
     enums: list = None  # [EnumDef]
+    traits: list = None  # [TraitDef]
+    impls: list = None  # [ImplDef]
+    aliases: list = None  # [AliasDef]
+    newtypes: list = None  # [NewtypeDef]
 
 
 @dataclass
@@ -141,6 +145,45 @@ class Break:
 
 
 @dataclass
+class Continue:
+    line: int
+    col: int
+
+
+@dataclass
+class TraitDef:
+    name: str
+    methods: list  # [(name, params, ret, line, col)]; signatures only
+    line: int
+    col: int
+
+
+@dataclass
+class ImplDef:
+    trait: object  # trait name, or None for an inherent impl
+    struct: str
+    methods: list  # [FuncDef], each with the receiver as first param
+    line: int
+    col: int
+
+
+@dataclass
+class AliasDef:
+    name: str
+    target: str  # a type spelling, e.g. "int", "[int]", "Stack<int>"
+    line: int
+    col: int
+
+
+@dataclass
+class NewtypeDef:
+    name: str
+    target: str  # the underlying type; the newtype is DISTINCT from it
+    line: int
+    col: int
+
+
+@dataclass
 class Return:
     expr: object
     line: int
@@ -190,6 +233,13 @@ class ArrayLit:
 
 
 @dataclass
+class TupleLit:
+    elems: list
+    line: int
+    col: int
+
+
+@dataclass
 class StructLit:
     name: str
     fields: list  # [(field_name, expr)]
@@ -202,6 +252,15 @@ class StructLit:
 class FieldAccess:
     base: object
     field: str
+    line: int
+    col: int
+
+
+@dataclass
+class MethodCall:
+    base: object
+    method: str
+    args: list
     line: int
     col: int
 
@@ -234,6 +293,29 @@ class Call:
 class Index:
     base: object
     index: object
+    line: int
+    col: int
+
+
+@dataclass
+class TupleIndex:
+    base: object
+    index: int
+    line: int
+    col: int
+
+
+@dataclass
+class RangeLit:
+    start: object
+    end: object
+    line: int
+    col: int
+
+
+@dataclass
+class Defer:
+    call: object
     line: int
     col: int
 

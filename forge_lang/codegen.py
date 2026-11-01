@@ -11,8 +11,17 @@ shared by reference on assignment, like Python lists.
 
 from .errors import ForgeError
 from . import ast_nodes as A
+from .unions import (is_union_type, union_members, union_c_name,
+                     union_str_index)
+from .opaques import (is_opaque_type, opaque_trait, opaque_c_name,
+                      impls_for_trait)
+from .fixedints import (is_fixed_int, is_int_type, fixed_range,
+                        FIXED_WIDTHS, FIXED_C_TYPES)
+from .tuples import is_tuple_type, tuple_elems, tuple_c_name
 
-C_SCALAR = {"int": "long long", "float": "double", "bool": "bool", "str": "char *", "void": "void"}
+C_SCALAR = {"int": "long long", "float": "double", "bool": "bool", "str": "char *", "void": "void",
+            "never": "char", "range": "ForgeRange"}
+C_SCALAR.update(FIXED_C_TYPES)
 ARRAY_STRUCT = {"int": "ForgeIntArray", "float": "ForgeFloatArray",
                 "bool": "ForgeBoolArray", "str": "ForgeStrArray"}
 ARRAY_ELEM_C = {"int": "long long", "float": "double", "bool": "bool", "str": "char *"}
@@ -85,8 +94,9 @@ static long long *forge_arr_ref_new(void) {
     return r;
 }
 static void forge_arr_inc(long long *ref) { if (ref) (*ref)++; }
+static void forge_weak_dead(long long *ref);
 static void forge_int_array_free(ForgeIntArray a) {
-    if (a.ref && --(*a.ref) == 0) { free(a.data); free(a.ref); forge_arr_frees++; }
+    if (a.ref && --(*a.ref) == 0) { forge_weak_dead(a.ref); free(a.data); free(a.ref); forge_arr_frees++; }
 }
 static void forge_float_array_free(ForgeFloatArray a) {
     if (a.ref && --(*a.ref) == 0) { free(a.data); free(a.ref); forge_arr_frees++; }
@@ -184,8 +194,75 @@ static long long forge_mod(long long a, long long b) {
     return a % b;
 }
 
-#define FORGE_ARRAY_HELPERS(CT, ST, FN) \
+/* Weak references over [int] (Top-500 #26): a runtime table
+   of non-owning handles. weak_new registers the array's
+   current buffer without gaining a holder; upgrade reads
+   it back while it is alive, or reports dead after the
+   last strong holder freed it. Push is the only operation
+   that moves the buffer or changes len/cap (index
+   assignment writes in place), so forge_int_push refreshes
+   live entries after every push; a copy-on-write push
+   gives the pusher a new ref, so the old entries (still
+   pointing at the original array) are correctly untouched.
+   Entries for dead arrays keep their ref pointer nulled
+   (never dereferenced again) and their data pointer
+   stale-but-unread: upgrade checks alive first. The table
+   itself is never freed (one entry per weak_new call, no
+   user data) — the documented v1 limit. */
+typedef struct { long long *ref; long long *data; long long len; long long cap; int alive; } ForgeWeakEntry;
+static ForgeWeakEntry *forge_weak_table = NULL;
+static long long forge_weak_len = 0;
+static long long forge_weak_cap = 0;
+static long long forge_weak_register(ForgeIntArray a) {
+    if (forge_weak_len >= forge_weak_cap) {
+        long long nc = forge_weak_cap ? forge_weak_cap * 2 : 8;
+        ForgeWeakEntry *nt = (ForgeWeakEntry *)realloc(forge_weak_table, sizeof(ForgeWeakEntry) * (size_t)nc);
+        if (!nt) forge_fail("out of memory");
+        forge_weak_table = nt; forge_weak_cap = nc;
+    }
+    ForgeWeakEntry *e = &forge_weak_table[forge_weak_len];
+    e->ref = a.ref; e->data = a.data; e->len = a.len; e->cap = a.cap; e->alive = 1;
+    return forge_weak_len++;
+}
+static void forge_weak_sync(ForgeIntArray *a) {
+    if (!a->ref) return;
+    for (long long i = 0; i < forge_weak_len; i++) {
+        ForgeWeakEntry *e = &forge_weak_table[i];
+        if (e->alive && e->ref == a->ref) { e->data = a->data; e->len = a->len; e->cap = a->cap; }
+    }
+}
+static void forge_weak_dead(long long *ref) {
+    if (!ref) return;
+    for (long long i = 0; i < forge_weak_len; i++) {
+        ForgeWeakEntry *e = &forge_weak_table[i];
+        if (e->alive && e->ref == ref) { e->alive = 0; e->ref = NULL; }
+    }
+}
+static int forge_weak_get(long long id, ForgeIntArray *out) {
+    if (id < 0 || id >= forge_weak_len) return 0;
+    ForgeWeakEntry *e = &forge_weak_table[id];
+    if (!e->alive) return 0;
+    out->data = e->data; out->len = e->len; out->cap = e->cap; out->ref = e->ref;
+    forge_arr_inc(out->ref);
+    return 1;
+}
+
+#define FORGE_ARRAY_HELPERS(CT, ST, FN, COPY, SYNC) \
 static void FN##_push(ST *a, CT v) { \
+    if (a->ref && *a->ref > 1) { \
+        /* Copy-on-write: this array is shared, so growing it
+           in place would realloc the shared buffer and leave
+           the other holders dangling on the freed pointer
+           (a real double-free, found by the arena module).
+           Duplicate the buffer under a fresh ref, then grow
+           the private copy below. */ \
+        long long oc = a->cap ? a->cap : 4; \
+        CT *nd = (CT *)malloc(sizeof(CT) * (size_t)oc); \
+        if (!nd) forge_fail("out of memory"); \
+        for (long long i = 0; i < a->len; i++) nd[i] = COPY; \
+        (*a->ref)--; \
+        a->data = nd; a->cap = oc; a->ref = forge_arr_ref_new(); \
+    } \
     if (a->len >= a->cap) { \
         long long nc = a->cap ? a->cap * 2 : 4; \
         CT *nd = (CT *)realloc(a->data, sizeof(CT) * (size_t)nc); \
@@ -193,6 +270,7 @@ static void FN##_push(ST *a, CT v) { \
         a->data = nd; a->cap = nc; \
     } \
     a->data[a->len++] = v; \
+    SYNC \
 } \
 static CT FN##_get(ST a, long long i) { \
     if (i < 0 || i >= a.len) forge_fail("array index out of bounds"); \
@@ -203,10 +281,10 @@ static void FN##_set(ST *a, long long i, CT v) { \
     a->data[i] = v; \
 }
 
-FORGE_ARRAY_HELPERS(long long, ForgeIntArray, forge_int)
-FORGE_ARRAY_HELPERS(double, ForgeFloatArray, forge_float)
-FORGE_ARRAY_HELPERS(bool, ForgeBoolArray, forge_bool)
-FORGE_ARRAY_HELPERS(char *, ForgeStrArray, forge_str)
+FORGE_ARRAY_HELPERS(long long, ForgeIntArray, forge_int, a->data[i], forge_weak_sync(a);)
+FORGE_ARRAY_HELPERS(double, ForgeFloatArray, forge_float, a->data[i], )
+FORGE_ARRAY_HELPERS(bool, ForgeBoolArray, forge_bool, a->data[i], )
+FORGE_ARRAY_HELPERS(char *, ForgeStrArray, forge_str, forge_copy_str(a->data[i]), )
 
 static ForgeIntArray forge_range(long long n) {
     ForgeIntArray a;
@@ -852,14 +930,40 @@ static int64_t forge_poke32(int64_t addr, int64_t val) {
 
 
 def c_type(t):
+    # Newtypes map to their underlying C type: a newtype value IS
+    # its underlying value at runtime; only the checker keeps them
+    # apart. The map is set by Codegen.__init__ (the compiler is
+    # single-threaded and every compilation builds a Codegen).
+    t = _resolve_newtype(t)
+    if is_union_type(t):
+        return union_c_name(t)
+    if is_opaque_type(t):
+        return opaque_c_name(t)
     if t in C_SCALAR:
         return C_SCALAR[t]
+    from .readonly import is_readonly, readonly_inner
+    if is_readonly(t):
+        # A view shares the underlying array's C layout.
+        return c_type(readonly_inner(t))
+    from .tuples import is_tuple_type, tuple_c_name
+    if is_tuple_type(t):
+        return tuple_c_name(t)
     if t.startswith("[") and t.endswith("]"):
+        from .sizedarrays import is_sized_array, sized_elem
+        if is_sized_array(t):
+            # v1 representation is the dynamic array of the same
+            # element type; the size lives in the type, not the C
+            # layout, so every downstream use sees the dynamic form.
+            return c_type(f"[{sized_elem(t)}]")
         inner = t[1:-1]
         if inner in ARRAY_STRUCT:
             return ARRAY_STRUCT[inner]
         if inner == "?":
             return t
+        if is_fixed_int(inner):
+            # Arrays of fixed-width integers are a later slice:
+            # their element helpers do not exist yet.
+            raise ForgeError(f"arrays of {inner} are not supported in v1")
         if inner.startswith("["):
             # Nested array: ForgeArray_<inner C array type>.
             return f"ForgeArray_{c_type(inner)}"
@@ -876,7 +980,31 @@ def c_type(t):
 
 
 def elem_of(arr_type):
-    return arr_type[1:-1] if arr_type.startswith("[") else "int"
+    from .sizedarrays import array_elem
+    return array_elem(arr_type) if arr_type.startswith("[") else "int"
+
+
+_NEWTYPE_MAP = {}
+
+
+def _resolve_newtype(t):
+    if t in _NEWTYPE_MAP:
+        return _resolve_newtype(_NEWTYPE_MAP[t])
+    from .readonly import is_readonly, readonly_inner
+    if is_readonly(t):
+        return f"readonly {_resolve_newtype(readonly_inner(t))}"
+    if t.startswith("[") and t.endswith("]"):
+        from .sizedarrays import is_sized_array, sized_elem, sized_len
+        if is_sized_array(t):
+            return f"[{_resolve_newtype(sized_elem(t))}; {sized_len(t)}]"
+        return "[" + _resolve_newtype(t[1:-1]) + "]"
+    if "<" in t:
+        from .generics import parse_generic
+        g = parse_generic(t)
+        if g is not None:
+            base, args = g
+            return base + "<" + ", ".join(_resolve_newtype(a) for a in args) + ">"
+    return t
 
 
 class Codegen:
@@ -899,6 +1027,10 @@ class Codegen:
         self.owned_stack = [{}]
         self.structs = {sd.name: dict(sd.fields)
                         for sd in (getattr(program, "structs", None) or [])}
+        self.newtype_targets = {nd.name: nd.target
+                                for nd in (getattr(program, "newtypes", None) or [])}
+        global _NEWTYPE_MAP
+        _NEWTYPE_MAP = dict(self.newtype_targets)
         self.enums = {ed.name: list(ed.variants)
                       for ed in (getattr(program, "enums", None) or [])}
         self.enum_templates = {}
@@ -943,6 +1075,226 @@ class Codegen:
     def owned_contains(self, name):
         return any(name in s for s in reversed(self.owned_stack))
 
+    def owned_type(self, name):
+        """Declared type of an owned variable, or None when untracked."""
+        for s in reversed(self.owned_stack):
+            if name in s:
+                return s[name]
+        return None
+
+    # ---- Union values (Top-500 #7, v1) ----
+    # A union value is a C struct { long long tag; union { ... } payload }.
+    # Construction wraps a member value into that struct; copying a
+    # union only deep-copies when the tag says str; freeing only
+    # frees when the tag says str. Non-str unions need no runtime
+    # calls at all, so they work in freestanding mode too.
+
+    def union_wrap(self, value_code, value_type, union_type, copy_str=False):
+        """Wrap a member value into its union struct (fresh value).
+
+        copy_str deep-copies a str payload first: without it the
+        union would share the string with its source and both
+        owners would free it.
+        """
+        idx = union_members(union_type).index(value_type)
+        cname = union_c_name(union_type)
+        if copy_str:
+            value_code = f"forge_copy_str({value_code})"
+        return (f"(({cname}){{.tag = {idx}, "
+                f".payload = {{._{idx} = ({value_code})}}}})")
+
+    def union_copy_stmt(self, temp_code, union_type):
+        """Statement deep-copying a union temp's str payload in place.
+
+        Empty when the union has no str member. The temp holds a
+        shallow copy already; only the str payload needs its own
+        copy, and only when the tag says the value is a str.
+        """
+        s = union_str_index(union_type)
+        if s is None:
+            return ""
+        return (f"if ({temp_code}.tag == {s}) "
+                f"{temp_code}.payload._{s} = forge_copy_str({temp_code}.payload._{s});")
+
+    def union_free_code(self, var_code, union_type):
+        """Statement freeing a union value's str payload, or ''."""
+        s = union_str_index(union_type)
+        if s is None:
+            return ""
+        return (f"if ({var_code}.tag == {s}) "
+                f"forge_free_str({var_code}.payload._{s});")
+
+    # ---- Fixed-width integers (Top-500 #9, v1) ----
+    # Checked arithmetic by widening: small widths compute in long
+    # long / unsigned long long (where they cannot overflow), then
+    # range-check and narrow; u64 uses the overflow builtins
+    # directly. Shifts check the count; division checks zero and
+    # signed-min / -1. Bitwise and comparison need nothing: C
+    # promotion plus narrowing at the use site is exact.
+
+    def _fx_temp(self):
+        self.assign_counter += 1
+        return f"__forge_fx{self.assign_counter}"
+
+    def fixed_checked_binop(self, op, left_code, right_code, t):
+        """Safe-mode checked BinOp on a fixed-width integer type."""
+        ct = FIXED_C_TYPES[t]
+        signed = t in ("i8", "i16", "i32")
+        if op in ("+", "-", "*"):
+            if t == "u64":
+                builtin = {"+": "__builtin_add_overflow",
+                           "-": "__builtin_sub_overflow",
+                           "*": "__builtin_mul_overflow"}[op]
+                tmp = self._fx_temp()
+                return (f"({{unsigned long long {tmp}; "
+                        f"if ({builtin}((unsigned long long)({left_code}), "
+                        f"(unsigned long long)({right_code}), &{tmp})) "
+                        f"forge_fail(\"integer overflow\"); {tmp};}})")
+            w = "long long" if signed else "unsigned long long"
+            tmp = self._fx_temp()
+            lo, hi = fixed_range(t)
+            return (f"({{{w} {tmp} = ({w})({left_code}) {op} ({w})({right_code}); "
+                    f"if ({tmp} < {lo} || {tmp} > {hi}) "
+                    f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+        if op == "/":
+            if signed:
+                dt = self._fx_temp()
+                nt = self._fx_temp()
+                lo, _hi = fixed_range(t)
+                return (f"({{long long {dt} = (long long)({right_code}); "
+                        f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                        f"long long {nt} = (long long)({left_code}); "
+                        f"if ({nt} == {lo} && {dt} == -1) "
+                        f"forge_fail(\"integer overflow\"); "
+                        f"({ct})({nt} / {dt});}})")
+            dt = self._fx_temp()
+            return (f"({{unsigned long long {dt} = "
+                    f"(unsigned long long)({right_code}); "
+                    f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                    f"({ct})((unsigned long long)({left_code}) / {dt});}})")
+        if op == "%":
+            w = "long long" if signed else "unsigned long long"
+            dt = self._fx_temp()
+            return (f"({{{w} {dt} = ({w})({right_code}); "
+                    f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                    f"({left_code} % {right_code});}})")
+        if op in ("<<", ">>"):
+            width = FIXED_WIDTHS[t]
+            at = self._fx_temp()
+            if op == "<<":
+                uct = {"i8": "uint8_t", "i16": "uint16_t", "i32": "uint32_t",
+                       "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t",
+                       "u64": "uint64_t"}[t]
+                return (f"({{long long {at} = (long long)({right_code}); "
+                        f"if ({at} < 0 || {at} >= {width}) "
+                        f"forge_fail(\"shift count out of range\"); "
+                        f"({ct})(({uct})({left_code}) << {at});}})")
+            return (f"({{long long {at} = (long long)({right_code}); "
+                    f"if ({at} < 0 || {at} >= {width}) "
+                    f"forge_fail(\"shift count out of range\"); "
+                    f"(({left_code}) >> {at});}})")
+        raise ForgeError(f"no checked form for '{op}' on {t}")
+
+    def int_cast_code(self, value_code, from_type, to_type):
+        """Cast between int types: free when widening, checked
+        when narrowing (a value outside the target range fails)."""
+        ct = c_type(to_type)
+        if to_type == "int":
+            tlo, thi = (-9223372036854775808, 9223372036854775807)
+        else:
+            tlo, thi = fixed_range(to_type)
+        if from_type == "int":
+            flo, fhi = (-9223372036854775808, 9223372036854775807)
+        else:
+            flo, fhi = fixed_range(from_type)
+        if flo >= tlo and fhi <= thi:
+            return f"({ct})({value_code})"
+        w = "unsigned long long" if from_type == "u64" else "long long"
+        tmp = self._fx_temp()
+        if w == "unsigned long long" and tlo <= 0:
+            # Unsigned values are never below a non-positive bound;
+            # comparing them against a negative bound in C would
+            # convert the bound to a huge unsigned value and fail
+            # every cast, so only the upper bound is checked.
+            cond = f"{tmp} > {thi}"
+        else:
+            cond = f"{tmp} < {tlo} || {tmp} > {thi}"
+        return (f"({{{w} {tmp} = ({w})({value_code}); "
+                f"if ({cond}) "
+                f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+
+    def float_to_int_cast(self, value_code, to_type):
+        """Cast from float to an int type: checked in safe mode,
+        plain truncating C cast in fast mode. Safe mode fails
+        when the float is outside the target range, or NaN or
+        infinite (NaN fails both comparisons, so it fails the
+        check too). The upper bound is exclusive: max+1 is a
+        power of two for every int width, so it is exactly
+        representable as a double."""
+        ct = c_type(to_type)
+        if self.mode != "safe":
+            return f"({ct})({value_code})"
+        if to_type == "int":
+            tlo, thi = (-9223372036854775808, 9223372036854775807)
+        else:
+            tlo, thi = fixed_range(to_type)
+        lo = float(tlo)
+        hi = float(thi + 1)
+        tmp = self._fx_temp()
+        return (f"({{ double {tmp} = ({value_code}); "
+                f"if (!({tmp} >= {lo!r} && {tmp} < {hi!r})) "
+                f"forge_fail(\"float to int cast out of range\"); "
+                f"({ct})({tmp});}})")
+
+    def never_wrap(self, code, expected):
+        """Wrap a never-typed value with a dummy of the expected
+        C type: the diverging call never returns, so the dummy
+        never runs, but C needs a value of the right type here."""
+        return f"({{ {code}; ({c_type(expected)})0; }})"
+
+    def is_fresh_union(self, expr):
+        """A union value fresh from its producer (no copy needed)."""
+        if isinstance(expr, (A.Call, A.MethodCall)):
+            return True
+        return False
+
+    # ---- Opaque values (Top-500 #8, v1) ----
+    # An opaque value is a C struct { long long tag; union { ... }
+    # payload }, the tag selecting the implementation in
+    # impl-block order for the trait, the payload a union over the
+    # implementing structs. Method calls, copies, and frees all
+    # dispatch on the tag.
+
+    def opaque_wrap(self, value_code, struct_type, opaque_type):
+        """Wrap a concrete struct value into its opaque struct."""
+        trait = opaque_trait(opaque_type)
+        impls = impls_for_trait(self.program, trait)
+        idx = impls.index(struct_type)
+        cname = opaque_c_name(opaque_type)
+        return (f"(({cname}){{.tag = {idx}, "
+                f".payload = {{._{idx} = ({value_code})}}}})")
+
+    def opaque_convert(self, code, value_type, opaque_type, expr):
+        """Convert a value to an opaque type at a site.
+
+        A concrete struct implementing the trait wraps into the
+        tagged struct (gaining independent fields when shared); a
+        shared value already of the opaque type gains an
+        independent copy through the generated helper.
+        """
+        if value_type in impls_for_trait(self.program,
+                                          opaque_trait(opaque_type)):
+            if not self.is_fresh_struct(expr):
+                self.assign_counter += 1
+                n = self.assign_counter
+                own = self.struct_own_code(f"__forge_op{n}", value_type)
+                return (f"({{{c_type(value_type)} __forge_op{n} = {code}; "
+                        f"{own} {self.opaque_wrap(f'__forge_op{n}', value_type, opaque_type)};}})")
+            return self.opaque_wrap(code, value_type, opaque_type)
+        if value_type == opaque_type and not self.is_fresh_union(expr):
+            return f"forge_copy_{opaque_c_name(opaque_type)}({code})"
+        return code
+
     def owned_all(self):
         """Owned variables currently in scope, innermost first, deduped: [(name, type)]."""
         seen = set()
@@ -957,9 +1309,16 @@ class Codegen:
     def _emit_free_one(self, name, typ):
         if typ == "str":
             self.emit(f"forge_free_str({name});")
-        elif typ.startswith("[") and typ.endswith("]"):
-            if self.is_array_type(typ):
-                self.emit(self.array_free_code(name, typ))
+        elif is_union_type(typ):
+            code = self.union_free_code(name, typ)
+            if code:
+                self.emit(code)
+        elif is_opaque_type(typ):
+            self.emit(f"forge_free_{opaque_c_name(typ)}({name});")
+        elif is_tuple_type(typ):
+            self.emit(self.tuple_free_code(name, typ))
+        elif self.is_array_type(typ):
+            self.emit(self.array_free_code(name, typ))
         elif self.is_struct_type(typ):
             self.emit_struct_free(name, typ)
 
@@ -1015,6 +1374,13 @@ class Codegen:
                     self._emit_free_one(name, typ)
 
     def is_array_type(self, t):
+        t = self.resolve_newtype(t)
+        from .sizedarrays import is_sized_array, sized_elem
+        from .readonly import is_readonly, readonly_inner
+        if is_readonly(t):
+            return self.is_array_type(readonly_inner(t))
+        if is_sized_array(t):
+            return self.is_array_type(f"[{sized_elem(t)}]")
         if not (t.startswith("[") and t.endswith("]")):
             return False
         inner = t[1:-1]
@@ -1024,6 +1390,12 @@ class Codegen:
     def array_free_code(self, var_code, typ):
         """C statements freeing the array value var_code of type typ
         (refcounted; nested arrays free element arrays first)."""
+        from .sizedarrays import is_sized_array, sized_elem
+        from .readonly import is_readonly, readonly_inner
+        if is_readonly(typ):
+            typ = readonly_inner(typ)
+        if is_sized_array(typ):
+            typ = f"[{sized_elem(typ)}]"
         inner = typ[1:-1]
         if inner in ("int", "float", "bool", "str"):
             fn = {"int": "forge_int_array_free", "float": "forge_float_array_free",
@@ -1046,7 +1418,29 @@ class Codegen:
             return mangle_type(t)
         return t
 
+    def resolve_newtype(self, t):
+        targets = self.newtype_targets
+        if t in targets:
+            return self.resolve_newtype(targets[t])
+        from .readonly import is_readonly, readonly_inner
+        if is_readonly(t):
+            return f"readonly {self.resolve_newtype(readonly_inner(t))}"
+        if t.startswith("[") and t.endswith("]"):
+            from .sizedarrays import is_sized_array, sized_elem, sized_len
+            if is_sized_array(t):
+                return f"[{self.resolve_newtype(sized_elem(t))}; {sized_len(t)}]"
+            return "[" + self.resolve_newtype(t[1:-1]) + "]"
+        if "<" in t:
+            from .generics import parse_generic
+            g = parse_generic(t)
+            if g is not None:
+                base, args = g
+                return base + "<" + ", ".join(self.resolve_newtype(a)
+                                              for a in args) + ">"
+        return t
+
     def is_struct_type(self, t):
+        t = self.resolve_newtype(t)
         if not t or t in ("int", "float", "bool", "str", "void"):
             return False
         if self.is_array_type(t):
@@ -1073,6 +1467,68 @@ class Codegen:
         if code:
             self.emit(code)
 
+    def tuple_own_code(self, var_code, t):
+        """C statements making a tuple value independently owned:
+        copy str elements, gain array references, recurse into
+        nested struct/tuple elements (mirrors struct_own_code)."""
+        from .tuples import tuple_elems, is_tuple_type
+        parts = []
+        for i, et in enumerate(tuple_elems(t)):
+            code = f"{var_code}._{i}"
+            if et == "str":
+                parts.append(f"{code} = forge_copy_str({code});")
+            elif is_union_type(et):
+                ucopy = self.union_copy_stmt(code, et)
+                if ucopy:
+                    parts.append(ucopy)
+            elif is_opaque_type(et):
+                parts.append(f"{code} = forge_copy_{opaque_c_name(et)}({code});")
+            elif self.is_array_type(et):
+                parts.append(f"forge_arr_inc({code}.ref);")
+            elif self.is_struct_type(et):
+                parts.append(self.struct_own_code(code, et))
+            elif is_tuple_type(et):
+                parts.append(self.tuple_own_code(code, et))
+        return " ".join(parts)
+
+    def emit_tuple_own(self, var_code, t):
+        code = self.tuple_own_code(var_code, t)
+        if code:
+            self.emit(code)
+
+    def tuple_free_code(self, var_code, t):
+        """C statements freeing a tuple value's owned elements
+        (mirrors struct_free_code)."""
+        from .tuples import tuple_elems, is_tuple_type
+        parts = []
+        for i, et in enumerate(tuple_elems(t)):
+            code = f"{var_code}._{i}"
+            if et == "str":
+                parts.append(f"forge_free_str({code});")
+            elif is_union_type(et):
+                ufree = self.union_free_code(code, et)
+                if ufree:
+                    parts.append(ufree)
+            elif is_opaque_type(et):
+                parts.append(f"forge_free_{opaque_c_name(et)}({code});")
+            elif self.is_array_type(et):
+                parts.append(self.array_free_code(code, et))
+            elif self.is_struct_type(et):
+                parts.append(self.struct_free_code(code, et))
+            elif is_tuple_type(et):
+                parts.append(self.tuple_free_code(code, et))
+        return " ".join(parts)
+
+    def emit_tuple_free(self, var_code, t):
+        code = self.tuple_free_code(var_code, t)
+        if code:
+            self.emit(code)
+
+    def is_fresh_tuple(self, expr):
+        if isinstance(expr, (A.TupleLit, A.Call, A.MethodCall)):
+            return True
+        return False
+
     def struct_free_code(self, var_code, t):
         fields = self.structs.get(self.struct_type_name(t), {})
         parts = []
@@ -1080,6 +1536,14 @@ class Codegen:
             code = f"{var_code}.{fname}"
             if ftype == "str":
                 parts.append(f"forge_free_str({code});")
+            elif is_union_type(ftype):
+                ufree = self.union_free_code(code, ftype)
+                if ufree:
+                    parts.append(ufree)
+            elif is_opaque_type(ftype):
+                # Unreachable in checked code (opaque struct fields
+                # are rejected), but free correctly if one appears.
+                parts.append(f"forge_free_{opaque_c_name(ftype)}({code});")
             elif self.is_array_type(ftype):
                 parts.append(self.array_free_code(code, ftype))
             elif self.is_struct_type(ftype):
@@ -1094,6 +1558,14 @@ class Codegen:
     def is_fresh_struct(self, expr):
         if isinstance(expr, A.StructLit):
             return True
+        if isinstance(expr, A.MethodCall):
+            # A method returning a struct is fresh, like a call
+            # returning a struct: the result is a new owned value.
+            from .traits import mangle
+            struct_t = self.expr_type(expr.base)
+            mangled = mangle(struct_t, expr.method)
+            rt = self.func_ret.get(mangled)
+            return bool(rt and self.is_struct_type(rt))
         if isinstance(expr, A.Call):
             rt = self.func_ret.get(expr.name)
             if rt and self.is_struct_type(rt):
@@ -1208,6 +1680,10 @@ class Codegen:
 
         def add(t):
             # Add t and every nested array prefix it contains.
+            # Sized sizes are stripped first: the C layout is the
+            # dynamic form, so only dynamic types get typedefs.
+            from .sizedarrays import normalize_sized
+            t = normalize_sized(t)
             while t.startswith("[") and t.endswith("]"):
                 inner = t[1:-1]
                 if inner.startswith("["):
@@ -1299,12 +1775,126 @@ class Codegen:
             self.lines.append("")
         for name in self.structs:
             self.emit(f"typedef struct {name} {name};")
-        for name, fields in self.structs.items():
-            self.emit(f"struct {name} {{")
-            for fname, ftype in fields.items():
-                self.emit(f"    {c_type(ftype)} {fname};")
+        # Union types: one tag+payload struct per distinct union
+        # spelling, payload fields by member index (_0, _1, ...).
+        from .unions import find_unions
+        union_types = find_unions(self.program)
+        if self.freestanding:
+            for ut in union_types:
+                if union_str_index(ut) is not None:
+                    raise ForgeError(
+                        f"unions with str members need the hosted runtime "
+                        f"(not in freestanding v1); union '{ut}' has one",
+                        0, 0)
+        for ut in union_types:
+            cname = union_c_name(ut)
+            self.emit(f"typedef struct {cname} {cname};")
+            self.emit(f"struct {cname} {{ long long tag;")
+            self.emit("    union {")
+            for i, m in enumerate(union_members(ut)):
+                self.emit(f"        {C_SCALAR[m]} _{i};")
+            self.emit("    } payload;")
             self.emit("};")
-        if self.structs:
+        if union_types:
+            self.lines.append("")
+        # Ranges: a lazy start/end pair, no array. The struct is
+        # emitted unconditionally (it is two longs, and range
+        # values may appear anywhere a scalar can).
+        self.emit("typedef struct { long long start; long long end; } ForgeRange;")
+        self.lines.append("")
+        # Composite bodies (structs, tuples, opaques) in
+        # dependency order: a value field needs its type
+        # complete, so a struct with a tuple field needs that
+        # tuple first, a tuple with a struct element needs
+        # that struct first, and so on. Forward references
+        # between structs (A has a B field, B defined later)
+        # work for the same reason. Arrays hold pointers, so
+        # they never force an order. A cycle (a struct
+        # containing itself through tuples) is infinitely
+        # sized and fails here with a clear error.
+        from .tuples import find_tuples, tuple_elems, tuple_c_name
+        tuple_types = find_tuples(self.program)
+        # weak_upgrade returns (bool, [int]); a builtin call's
+        # return type is spelled nowhere, so the tuple walk
+        # never sees it — union it in explicitly when any
+        # weak call exists.
+        from .weaks import uses_weak
+        if uses_weak(self.program) and "(bool, [int])" not in tuple_types:
+            tuple_types.append("(bool, [int])")
+        if self.freestanding:
+            for tt in tuple_types:
+                for e in tuple_elems(tt):
+                    # Nested tuples are separate entries in
+                    # tuple_types, so their elements are checked
+                    # at their own level.
+                    if e == "str" or self.is_array_type(e):
+                        raise ForgeError(
+                            f"tuples with str/array elements need the hosted runtime "
+                            f"(not in freestanding v1); tuple '{tt}' has one",
+                            0, 0)
+        opaque_traits = []
+        for idf in (getattr(self.program, "impls", None) or []):
+            if getattr(idf, "trait", None) is not None \
+                    and idf.trait not in opaque_traits:
+                opaque_traits.append(idf.trait)
+        for tt in tuple_types:
+            self.emit(f"typedef struct {tuple_c_name(tt)} {tuple_c_name(tt)};")
+        for trait in opaque_traits:
+            self.emit(f"typedef struct Opaque_{trait} Opaque_{trait};")
+        nodes = []
+        for name, fields in self.structs.items():
+            nodes.append(("struct", name, list(fields.values())))
+        for tt in tuple_types:
+            nodes.append(("tuple", tuple_c_name(tt), tuple_elems(tt)))
+        for trait in opaque_traits:
+            nodes.append(("opaque", f"Opaque_{trait}",
+                          impls_for_trait(self.program, trait)))
+        body_names = {cname for _kind, cname, _deps in nodes}
+        emitted = set()
+        order = []
+        remaining = list(nodes)
+        while remaining:
+            picked = None
+            for node in remaining:
+                _kind, cname, ftypes = node
+                deps = set()
+                for ft in ftypes:
+                    ct = c_type(ft)
+                    if ct in body_names:
+                        deps.add(ct)
+                if deps <= emitted:
+                    picked = node
+                    break
+            if picked is None:
+                cycle = ", ".join(c for _k, c, _d in remaining)
+                raise ForgeError(f"cyclic type definition involving {cycle}; "
+                                 f"a type cannot contain itself by value",
+                                 0, 0)
+            remaining.remove(picked)
+            emitted.add(picked[1])
+            order.append(picked)
+        struct_fields = {name: fields for name, fields in self.structs.items()}
+        for kind, cname, ftypes in order:
+            if kind == "struct":
+                self.emit(f"struct {cname} {{")
+                for fname, ftype in struct_fields[cname].items():
+                    self.emit(f"    {c_type(ftype)} {fname};")
+                self.emit("};")
+            elif kind == "tuple":
+                self.emit(f"struct {cname} {{")
+                for i, e in enumerate(ftypes):
+                    self.emit(f"    {c_type(e)} _{i};")
+                self.emit("};")
+            else:
+                trait = cname[len("Opaque_"):]
+                impls = impls_for_trait(self.program, trait)
+                self.emit(f"struct {cname} {{ long long tag;")
+                self.emit("    union {")
+                for i, st in enumerate(impls):
+                    self.emit(f"        {st} _{i};")
+                self.emit("    } payload;")
+                self.emit("};")
+        if order:
             self.lines.append("")
         # Per-struct array types and helpers: a [Point] value is a
         # ForgeArray_Point (same refcounted layout as scalar arrays).
@@ -1357,8 +1947,9 @@ class Codegen:
         # Nested array types: one typedef per nesting level used,
         # innermost first so each references only defined types.
         nested = self.collect_nested_array_types()
+        from .sizedarrays import array_elem
         for t in nested:
-            self.emit(f"typedef struct {{ {c_type(t[1:-1])} *data; long long len; "
+            self.emit(f"typedef struct {{ {c_type(array_elem(t))} *data; long long len; "
                       f"long long cap; long long *ref; }} {c_type(t)};")
         if nested:
             self.lines.append("")
@@ -1369,6 +1960,36 @@ class Codegen:
                 sig = self.c_sig_extern(fn) if getattr(fn, "is_extern", False) else self.c_sig(fn)
                 self.emit(f"{sig};")
         self.lines.append("")
+        # Opaque copy/free helpers, one per trait with
+        # implementations: both dispatch on the tag, reusing the
+        # struct own/free code for the active implementation.
+        for trait in opaque_traits:
+            impls = impls_for_trait(self.program, trait)
+            cname = f"Opaque_{trait}"
+            self.emit(f"static {cname} forge_copy_{cname}({cname} v) {{")
+            self.emit("    switch (v.tag) {")
+            for i, st in enumerate(impls):
+                own = self.struct_own_code(f"v.payload._{i}", st)
+                self.emit(f"    case {i}:")
+                if own:
+                    for line in own.strip().split("\n"):
+                        self.emit(f"        {line.strip()}")
+                self.emit("        break;")
+            self.emit("    }")
+            self.emit("    return v;")
+            self.emit("}")
+            self.emit(f"static void forge_free_{cname}({cname} v) {{")
+            self.emit("    switch (v.tag) {")
+            for i, st in enumerate(impls):
+                free = self.struct_free_code(f"v.payload._{i}", st)
+                self.emit(f"    case {i}:")
+                if free:
+                    self.emit(f"        {free}")
+                self.emit("        break;")
+            self.emit("    }")
+            self.emit("}")
+        if opaque_traits:
+            self.lines.append("")
         # Thread wrappers for every spawned function (collected once).
         spawns = []
         for fn in self.program.funcs:
@@ -1426,7 +2047,10 @@ class Codegen:
 
     def c_sig(self, fn):
         params = ", ".join(f"{c_type(pt)} {pn}" for pn, pt in fn.params)
-        return f"{c_type(fn.ret)} {fn.name}({params if params else 'void'})"
+        # A never function never returns, so its C signature is
+        # void: no value is ever produced to declare.
+        ret = "void" if fn.ret == "never" else c_type(fn.ret)
+        return f"{ret} {fn.name}({params if params else 'void'})"
 
     @staticmethod
     def c_str_literal(value):
@@ -1450,12 +2074,24 @@ class Codegen:
         self.scope_stack = []
         self.current_file = getattr(fn, "file", "") or ""
         self.owned_stack = [{}]
+        self.local_types = {}
         self.loop_frames = []
+        # Deferred calls, one list per enclosing block (innermost
+        # last). A block's defers run at its exit, innermost
+        # first within the block (LIFO); returns and loop exits
+        # run the frames they abandon. defer_loop_stack holds
+        # the defer_stack depth at each loop entry, so break and
+        # continue run exactly the frames entered inside the loop.
+        self.defer_stack = [[]]
+        self.defer_loop_stack = []
         # String parameters own their copy after copy-on-call (see gen_expr Call).
         # Array parameters own a reference after refcount-on-call (see gen_expr Call).
         # Struct parameters own their fields after own-on-call (see gen_expr Call).
+        # Union and opaque parameters own their value after copy-on-call (see gen_expr Call).
         for pn, pt in fn.params:
-            if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt):
+            self.local_types[pn] = pt
+            if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
+                    or is_union_type(pt) or is_opaque_type(pt):
                 self.owned_stack[0][pn] = pt
         sig = ("long long jalpari_main(void)"
                if fn.name == "main" and self.freestanding
@@ -1473,11 +2109,13 @@ class Codegen:
                       "forge_copy_str(__forge_argv[__forge_arg_i + 1]);")
         self.gen_block(fn.body, fn.ret)
         if fn.name == "main":
+            self._emit_defer_frame(self.defer_stack[0], fn.ret)
             if not self.freestanding:
                 self.emit("forge_join_threads();")
                 self.emit_free_owned()
             self.emit("return 0;")
         elif fn.ret == "void":
+            self._emit_defer_frame(self.defer_stack[0], fn.ret)
             self.emit_free_owned()
         self.indent -= 1
         self.emit("}")
@@ -1485,6 +2123,8 @@ class Codegen:
         self.current_fn = None
         self.owned_stack = [{}]
         self.loop_frames = []
+        self.defer_stack = [[]]
+        self.defer_loop_stack = []
 
     # ---- Check elimination: intervals, duplicate checks, comparisons ----
     INT_MIN = -(2 ** 63)
@@ -1492,7 +2132,7 @@ class Codegen:
 
     def _subtree_has_call(self, node):
         """True if the AST subtree contains a call (a possible mutation)."""
-        if isinstance(node, A.Call):
+        if isinstance(node, (A.Call, A.MethodCall)):
             return True
         if isinstance(node, (list, tuple)):
             return any(self._subtree_has_call(x) for x in node)
@@ -1622,7 +2262,7 @@ class Codegen:
         if not stmts:
             return False
         last = stmts[-1]
-        if isinstance(last, (A.Return, A.Break)):
+        if isinstance(last, (A.Return, A.Break, A.Continue)):
             return True
         if (isinstance(last, A.ExprStmt) and isinstance(last.expr, A.Call)
                 and last.expr.name == "fail"):
@@ -1713,6 +2353,30 @@ class Codegen:
                     self.lines.append(f'#line {line} "{esc}"')
             self.gen_stmt(stmt, ret_type)
 
+    def _emit_defer_frame(self, frame, ret_type):
+        """Emit one block's deferred calls, LIFO, as statements
+        at the exit point. Arguments evaluate here, at exit
+        time, in v1 (documented)."""
+        for call in reversed(frame):
+            self.gen_stmt(A.ExprStmt(call, call.line, call.col), ret_type)
+
+    def _emit_defers_downto(self, depth, ret_type):
+        """Emit the defers of every frame from `depth` upward,
+        innermost block first, each block LIFO."""
+        for frame in reversed(self.defer_stack[depth:]):
+            self._emit_defer_frame(frame, ret_type)
+
+    def _emit_all_defers(self, ret_type):
+        self._emit_defers_downto(0, ret_type)
+
+    def gen_arm_block(self, body, ret_type):
+        """A match arm's block: its own defer frame, run at arm
+        exit (arms have no owned frame of their own)."""
+        self.defer_stack.append([])
+        self.gen_block(body, ret_type)
+        self._emit_defer_frame(self.defer_stack[-1], ret_type)
+        self.defer_stack.pop()
+
     def gen_stmt(self, stmt, ret_type):
         # Duplicate checks live within one statement only: every
         # statement starts with an empty cache (a later statement may
@@ -1723,22 +2387,56 @@ class Codegen:
             self.emit("{")
             self.indent += 1
             self.owned_stack.append({})
+            self.defer_stack.append([])
             self.gen_block(stmt, ret_type)
             self._facts = saved_facts
+            self._emit_defer_frame(self.defer_stack[-1], ret_type)
+            self.defer_stack.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
             self.indent -= 1
             self.emit("}")
             return
         if isinstance(stmt, A.Let):
-            t = stmt.ann if (stmt.ann and isinstance(stmt.expr, A.ArrayLit)
-                             and not stmt.expr.elems) else self.expr_type(stmt.expr)
+            t = stmt.ann if (stmt.ann and (is_opaque_type(stmt.ann)
+                             or is_union_type(stmt.ann)
+                             or self.expr_type(stmt.expr) == "never"
+                             or (isinstance(stmt.expr, A.ArrayLit)
+                                 and not stmt.expr.elems))) else self.expr_type(stmt.expr)
             expr = self.gen_expr(stmt.expr)
+            if self.expr_type(stmt.expr) == "never":
+                expr = self.never_wrap(expr, t)
+            self.local_types[stmt.name] = t
             self._facts_update_from_rhs(stmt.name, stmt.expr, True)
             if t == "str":
                 if not self.is_fresh_str(stmt.expr):
                     expr = f"forge_copy_str({expr})"
                 self.owned_add(stmt.name, "str")
+            elif is_opaque_type(t):
+                # A concrete implementation wraps into the opaque
+                # value; a shared opaque value gains a copy.
+                expr = self.opaque_convert(expr, self.expr_type(stmt.expr),
+                                           t, stmt.expr)
+                self.owned_add(stmt.name, t)
+                self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                return
+            elif is_union_type(t):
+                # A member value wraps into the union (fresh); a
+                # shared union value gains an independent str
+                # payload, if any, before this owner takes it.
+                et = self.expr_type(stmt.expr)
+                if et in union_members(t):
+                    copy_str = et == "str" and not self.is_fresh_str(stmt.expr)
+                    expr = self.union_wrap(expr, et, t, copy_str=copy_str)
+                elif et == t and not self.is_fresh_union(stmt.expr):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    copy = self.union_copy_stmt(f"__forge_let{n}", t)
+                    expr = (f"({{{c_type(t)} __forge_let{n} = {expr}; "
+                            f"{copy} __forge_let{n};}})")
+                self.owned_add(stmt.name, t)
+                self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                return
             elif self.is_array_type(t):
                 # Fresh arrays are taken as-is (ref=1); shared arrays
                 # gain a reference for this new owner.
@@ -1755,13 +2453,62 @@ class Codegen:
                 if not self.is_fresh_struct(stmt.expr):
                     self.emit_struct_own(stmt.name, t)
                 return
+            elif is_tuple_type(t):
+                # Fresh tuples (literal/call) are already owned;
+                # shared tuples gain independent elements for this owner.
+                self.owned_add(stmt.name, t)
+                self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                if not self.is_fresh_tuple(stmt.expr):
+                    self.emit_tuple_own(stmt.name, t)
+                return
             self.emit(f"{c_type(t)} {stmt.name} = {expr};")
             return
         if isinstance(stmt, A.Assign):
             expr = self.gen_expr(stmt.expr)
             self._facts_update_from_rhs(stmt.name, stmt.expr, False)
             et = self.expr_type(stmt.expr)
-            if et == "str":
+            vt = self.owned_type(stmt.name)
+            if et == "never":
+                expected = self.local_types.get(stmt.name) or vt
+                if expected:
+                    expr = self.never_wrap(expr, expected)
+            if vt is not None and is_opaque_type(vt):
+                # Evaluate into a temp first (the new value may
+                # reference the old one), then free the old value
+                # and take the converted temp.
+                self.assign_counter += 1
+                n = self.assign_counter
+                temp = f"__forge_assign{n}"
+                converted = self.opaque_convert(expr, et, vt, stmt.expr)
+                self.emit(f"{c_type(vt)} {temp} = {converted};")
+                if self.owned_contains(stmt.name):
+                    self.emit(f"forge_free_{opaque_c_name(vt)}({stmt.name});")
+                self.emit(f"{stmt.name} = {temp};")
+                self.owned_add(stmt.name, vt)
+            elif vt is not None and is_union_type(vt):
+                # Evaluate into a temp first (the new value may
+                # reference the old one), copy the temp's str
+                # payload before freeing the old value, then take
+                # the temp. A member value wraps into the union,
+                # copying a shared str payload on the way in.
+                self.assign_counter += 1
+                n = self.assign_counter
+                temp = f"__forge_assign{n}"
+                if et in union_members(vt):
+                    copy_str = et == "str" and not self.is_fresh_str(stmt.expr)
+                    expr = self.union_wrap(expr, et, vt, copy_str=copy_str)
+                self.emit(f"{c_type(vt)} {temp} = {expr};")
+                if et == vt and not self.is_fresh_union(stmt.expr):
+                    copy = self.union_copy_stmt(temp, vt)
+                    if copy:
+                        self.emit(copy)
+                if self.owned_contains(stmt.name):
+                    ufree = self.union_free_code(stmt.name, vt)
+                    if ufree:
+                        self.emit(ufree)
+                self.emit(f"{stmt.name} = {temp};")
+                self.owned_add(stmt.name, vt)
+            elif et == "str":
                 if not self.is_fresh_str(stmt.expr):
                     expr = f"forge_copy_str({expr})"
                 # Evaluate first, then free the old value: the new
@@ -1798,6 +2545,18 @@ class Codegen:
                     self.emit_struct_free(stmt.name, et)
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 self.owned_add(stmt.name, et)
+            elif is_tuple_type(et):
+                # Same temp-first shape as structs, with tuple
+                # ownership on the temp and tuple frees on the old.
+                n = self.assign_counter
+                self.assign_counter += 1
+                self.emit(f"{c_type(et)} __forge_assign{n} = {expr};")
+                if not self.is_fresh_tuple(stmt.expr):
+                    self.emit_tuple_own(f"__forge_assign{n}", et)
+                if self.owned_contains(stmt.name):
+                    self.emit_tuple_free(stmt.name, et)
+                self.emit(f"{stmt.name} = __forge_assign{n};")
+                self.owned_add(stmt.name, et)
             else:
                 self.emit(f"{stmt.name} = {expr};")
             return
@@ -1805,9 +2564,67 @@ class Codegen:
             target_code = self.gen_expr(stmt.target)
             ft = self.expr_type(stmt.target)
             val = self.gen_expr(stmt.expr)
+            if self.expr_type(stmt.expr) == "never":
+                val = self.never_wrap(val, ft)
+            # Mirror Assign's temp-first ownership: evaluate the
+            # new value, make it independently owned, free the
+            # old field value, then take the new one. Field
+            # assignment previously skipped the own and free
+            # steps for arrays and structs entirely, so a field
+            # written from a shared value undercounted its
+            # reference and freed it while still in use (found
+            # by the arena module: push to a shared array, then
+            # write it back into its struct field).
             if ft == "str":
-                val = f"forge_copy_str({val})"
-            self.emit(f"{target_code} = {val};")
+                if not self.is_fresh_str(stmt.expr):
+                    val = f"forge_copy_str({val})"
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"char * __forge_fa{n} = {val};")
+                self.emit(f"forge_free_str({target_code});")
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif is_union_type(ft):
+                vt = self.expr_type(stmt.expr)
+                if vt in union_members(ft):
+                    copy_str = vt == "str" and not self.is_fresh_str(stmt.expr)
+                    val = self.union_wrap(val, vt, ft, copy_str=copy_str)
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if vt == ft and not self.is_fresh_union(stmt.expr):
+                    copy = self.union_copy_stmt(f"__forge_fa{n}", ft)
+                    if copy:
+                        self.emit(copy)
+                ufree = self.union_free_code(target_code, ft)
+                if ufree:
+                    self.emit(ufree)
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif self.is_array_type(ft):
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if not self.is_fresh_array(stmt.expr):
+                    self.emit(f"forge_arr_inc(__forge_fa{n}.ref);")
+                self.emit(self.array_free_code(target_code, ft))
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif self.is_struct_type(ft):
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if not self.is_fresh_struct(stmt.expr):
+                    self.emit_struct_own(f"__forge_fa{n}", ft)
+                self.emit_struct_free(target_code, ft)
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif is_tuple_type(ft):
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if not self.is_fresh_tuple(stmt.expr):
+                    self.emit_tuple_own(f"__forge_fa{n}", ft)
+                self.emit_tuple_free(target_code, ft)
+                self.emit(f"{target_code} = __forge_fa{n};")
+            else:
+                self.emit(f"{target_code} = {val};")
             return
         if isinstance(stmt, A.IndexAssign):
             base = stmt.base.base
@@ -1872,6 +2689,48 @@ class Codegen:
             return
         if isinstance(stmt, A.Match):
             et = self.expr_type(stmt.expr)
+            if is_union_type(et):
+                # Union match: evaluate once into a temp, match on
+                # .tag, bind the member value into a local (str
+                # payloads copied, as for payload enums).
+                members = union_members(et)
+                n = self.loop_counter
+                self.loop_counter += 1
+                temp = f"__forge_match{n}"
+                self.emit("{")
+                self.indent += 1
+                self.emit(f"{c_type(et)} {temp} = {self.gen_expr(stmt.expr)};")
+                match_pre = dict(self._facts)
+                for idx, (pat, binding, body) in enumerate(stmt.arms):
+                    if pat == "_":
+                        if idx == 0:
+                            self.emit("{")
+                        else:
+                            self.emit("} else {")
+                        self.indent += 1
+                        self._facts = dict(match_pre)
+                        self.gen_arm_block(body, ret_type)
+                        self.indent -= 1
+                        self.emit("}")
+                    else:
+                        midx = members.index(pat)
+                        kw = "if" if idx == 0 else "} else if"
+                        self.emit(f"{kw} ({temp}.tag == {midx}) {{")
+                        self.indent += 1
+                        self._facts = dict(match_pre)
+                        payload_code = f"{temp}.payload._{midx}"
+                        if pat == "str":
+                            payload_code = f"forge_copy_str({payload_code})"
+                        self.emit(f"{c_type(pat)} {binding} = {payload_code};")
+                        self._facts.pop(binding, None)
+                        self.gen_arm_block(body, ret_type)
+                        self.indent -= 1
+                        if idx == len(stmt.arms) - 1:
+                            self.emit("}")
+                self.indent -= 1
+                self.emit("}")
+                self._facts = {}
+                return
             info = self.enum_concrete_info(et)
             is_payload = False
             if info is not None:
@@ -1891,7 +2750,7 @@ class Codegen:
                             self.emit("} else {")
                         self.indent += 1
                         self._facts = dict(match_pre)
-                        self.gen_block(body, ret_type)
+                        self.gen_arm_block(body, ret_type)
                         self.indent -= 1
                         self.emit("}")
                     else:
@@ -1899,7 +2758,7 @@ class Codegen:
                         self.emit(f"{kw} ({target} == {pat}) {{")
                         self.indent += 1
                         self._facts = dict(match_pre)
-                        self.gen_block(body, ret_type)
+                        self.gen_arm_block(body, ret_type)
                         self.indent -= 1
                         if idx == len(stmt.arms) - 1:
                             self.emit("}")
@@ -1922,7 +2781,7 @@ class Codegen:
                         self.emit("} else {")
                     self.indent += 1
                     self._facts = dict(match_pre)
-                    self.gen_block(body, ret_type)
+                    self.gen_arm_block(body, ret_type)
                     self.indent -= 1
                     self.emit("}")
                 else:
@@ -1940,7 +2799,7 @@ class Codegen:
                         # of the same name for this arm: its value is
                         # unknown, so drop the outer variable's facts.
                         self._facts.pop(binding, None)
-                    self.gen_block(body, ret_type)
+                    self.gen_arm_block(body, ret_type)
                     self.indent -= 1
                     if idx == len(stmt.arms) - 1:
                         self.emit("}")
@@ -1981,11 +2840,14 @@ class Codegen:
             self._apply_cond_facts(stmt.cond, True)
             then_lets = set()
             self._let_stack.append(then_lets)
+            self.defer_stack.append([])
             self.gen_block(stmt.then, ret_type)
             self._let_stack.pop()
             then_facts = {k: v for k, v in self._facts.items()
                           if k not in then_lets}
             then_exits = self._branch_exits(stmt.then)
+            self._emit_defer_frame(self.defer_stack[-1], ret_type)
+            self.defer_stack.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
             self.indent -= 1
@@ -1997,11 +2859,14 @@ class Codegen:
                 self.owned_stack.append({})
                 else_lets = set()
                 self._let_stack.append(else_lets)
+                self.defer_stack.append([])
                 self.gen_block(stmt.els, ret_type)
                 self._let_stack.pop()
                 else_facts = {k: v for k, v in self._facts.items()
                               if k not in else_lets}
                 else_exits = self._branch_exits(stmt.els)
+                self._emit_defer_frame(self.defer_stack[-1], ret_type)
+                self.defer_stack.pop()
                 self.emit_free_frame()
                 self.owned_stack.pop()
                 self.indent -= 1
@@ -2021,6 +2886,9 @@ class Codegen:
         if isinstance(stmt, A.Break):
             if not self.loop_frames:
                 raise ForgeError("break outside a loop", stmt.line, stmt.col)
+            # Defers first: a deferred call runs while its block's
+            # locals are still alive, before joins and frees.
+            self._emit_defers_downto(self.defer_loop_stack[-1], ret_type)
             # A break leaves every scope entered inside the innermost
             # loop's body (those scopes' blocks are abandoned, so
             # their normal-end join never runs). Scopes entered
@@ -2031,6 +2899,20 @@ class Codegen:
             self.emit_free_frames_downto(self.loop_frames[-1])
             self.emit("break;")
             return
+        if isinstance(stmt, A.Continue):
+            if not self.loop_frames:
+                raise ForgeError("continue outside a loop", stmt.line, stmt.col)
+            self._emit_defers_downto(self.defer_loop_stack[-1], ret_type)
+            # A continue ends the current iteration exactly like a
+            # break ends the loop: body scopes are abandoned, so the
+            # same joins and frame frees apply, then C's continue
+            # runs the loop's own increment/condition step.
+            for start_var, depth in reversed(self.scope_stack):
+                if depth == len(self.loop_frames):
+                    self.emit(f"forge_join_scope({start_var});")
+            self.emit_free_frames_downto(self.loop_frames[-1])
+            self.emit("continue;")
+            return
         if isinstance(stmt, A.While):
             # A loop body runs many times: facts proven before the
             # loop may be stale by the second iteration, so no facts
@@ -2040,7 +2922,12 @@ class Codegen:
             self.indent += 1
             self.owned_stack.append({})
             self.loop_frames.append(len(self.owned_stack) - 1)
+            self.defer_loop_stack.append(len(self.defer_stack))
+            self.defer_stack.append([])
             self.gen_block(stmt.body, ret_type)
+            self.defer_loop_stack.pop()
+            self._emit_defer_frame(self.defer_stack[-1], ret_type)
+            self.defer_stack.pop()
             self.loop_frames.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
@@ -2051,7 +2938,39 @@ class Codegen:
         if isinstance(stmt, A.For):
             self._facts = {}
             arr_type = self.expr_type(stmt.expr)
+            if arr_type == "range":
+                # Lazy iteration: no array is built; the loop runs
+                # directly over the endpoints. The increment can
+                # never overflow: it fires only while x < end, so
+                # x + 1 <= end <= INT64_MAX.
+                self.local_types[stmt.name] = "int"
+                rng_tmp = f"__forge_rng{self.arr_counter}"
+                self.arr_counter += 1
+                self.emit("{")
+                self.indent += 1
+                self.emit(f"ForgeRange {rng_tmp} = {self.gen_expr(stmt.expr)};")
+                self.emit(f"for (long long {stmt.name} = {rng_tmp}.start; "
+                          f"{stmt.name} < {rng_tmp}.end; {stmt.name}++) {{")
+                self.indent += 1
+                self.owned_stack.append({})
+                self.loop_frames.append(len(self.owned_stack) - 1)
+                self.defer_loop_stack.append(len(self.defer_stack))
+                self.defer_stack.append([])
+                self.gen_block(stmt.body, ret_type)
+                self.defer_loop_stack.pop()
+                self._emit_defer_frame(self.defer_stack[-1], ret_type)
+                self.defer_stack.pop()
+                self.loop_frames.pop()
+                self.emit_free_frame()
+                self.owned_stack.pop()
+                self.indent -= 1
+                self.emit("}")
+                self.indent -= 1
+                self.emit("}")
+                self._facts = {}
+                return
             et = elem_of(arr_type)
+            self.local_types[stmt.name] = et
             arr_tmp = f"__forge_arr{self.arr_counter}"
             self.arr_counter += 1
             idx = f"__forge_i{self.loop_counter}"
@@ -2066,7 +2985,12 @@ class Codegen:
             self.emit(f"{c_type(et)} {stmt.name} = {arr_tmp}.data[{idx}];")
             self.owned_stack.append({})
             self.loop_frames.append(len(self.owned_stack) - 1)
+            self.defer_loop_stack.append(len(self.defer_stack))
+            self.defer_stack.append([])
             self.gen_block(stmt.body, ret_type)
+            self.defer_loop_stack.pop()
+            self._emit_defer_frame(self.defer_stack[-1], ret_type)
+            self.defer_stack.pop()
             self.loop_frames.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
@@ -2088,6 +3012,7 @@ class Codegen:
             self.emit("{")
             self.indent += 1
             self.owned_stack.append({})
+            self.defer_stack.append([])
             self.gen_block(stmt.body, ret_type)
             self._let_stack.pop()
             # Join before freeing the frame: tasks finish before
@@ -2100,6 +3025,8 @@ class Codegen:
                     self._facts[name] = scope_pre[name]
                 else:
                     self._facts.pop(name, None)
+            self._emit_defer_frame(self.defer_stack[-1], ret_type)
+            self.defer_stack.pop()
             self.emit(f"forge_join_scope({start_var});")
             self.emit_free_frame()
             self.owned_stack.pop()
@@ -2108,6 +3035,10 @@ class Codegen:
             self.scope_stack.pop()
             return
         if isinstance(stmt, A.Return):
+            # Defers run before joins and frees: a deferred call
+            # runs while its block's locals are still alive, and
+            # any task it spawns is still joined below.
+            self._emit_all_defers(ret_type)
             # A return leaves every enclosing scope: join innermost
             # first (an outer join would skip the already-joined
             # threads via the flags, but the order documents intent).
@@ -2120,8 +3051,20 @@ class Codegen:
                 self.emit("return 0;" if self.current_fn == "main" else "return;")
             else:
                 ret_code = self.gen_expr(stmt.expr)
+                if self.expr_type(stmt.expr) == "never":
+                    ret_code = self.never_wrap(ret_code, ret_type)
                 if ret_type == "str" and not self.is_fresh_str(stmt.expr):
                     ret_code = f"forge_copy_str({ret_code})"
+                if is_opaque_type(ret_type):
+                    ret_code = self.opaque_convert(ret_code,
+                                                   self.expr_type(stmt.expr),
+                                                   ret_type, stmt.expr)
+                if is_union_type(ret_type):
+                    rt = self.expr_type(stmt.expr)
+                    if rt in union_members(ret_type):
+                        copy_str = rt == "str" and not self.is_fresh_str(stmt.expr)
+                        ret_code = self.union_wrap(ret_code, rt, ret_type,
+                                                   copy_str=copy_str)
                 self.emit(f"{c_type(ret_type)} __forge_ret = {ret_code};")
                 if self.is_array_type(ret_type) and not self.is_fresh_array(stmt.expr):
                     # Shared array return: gain a reference before
@@ -2131,8 +3074,25 @@ class Codegen:
                     # Shared struct return: gain independent fields before
                     # freeing owned locals, so the returned struct survives.
                     self.emit_struct_own("__forge_ret", ret_type)
+                if is_tuple_type(ret_type) and not self.is_fresh_tuple(stmt.expr):
+                    # Shared tuple return: gain independent elements before
+                    # freeing owned locals, so the returned tuple survives.
+                    self.emit_tuple_own("__forge_ret", ret_type)
+                if is_union_type(ret_type) and self.expr_type(stmt.expr) == ret_type \
+                        and not self.is_fresh_union(stmt.expr):
+                    # Shared union return: gain an independent str
+                    # payload before freeing owned locals.
+                    copy = self.union_copy_stmt("__forge_ret", ret_type)
+                    if copy:
+                        self.emit(copy)
                 self.emit_free_owned()
                 self.emit("return __forge_ret;")
+            return
+        if isinstance(stmt, A.Defer):
+            # Record only: the call is emitted at the enclosing
+            # block's exit (or at any earlier return, break, or
+            # continue that abandons the block), LIFO.
+            self.defer_stack[-1].append(stmt.call)
             return
         if isinstance(stmt, A.ExprStmt):
             call = stmt.expr
@@ -2200,6 +3160,11 @@ class Codegen:
             code = self.gen_expr(arg)
             if t == "int":
                 self.emit(f'printf("%lld", {code});')
+            elif is_fixed_int(t):
+                if t in ("i8", "i16", "i32"):
+                    self.emit(f'printf("%lld", (long long)({code}));')
+                else:
+                    self.emit(f'printf("%llu", (unsigned long long)({code}));')
             elif t == "float":
                 self.emit(f'printf("%.6g", {code});')
             elif t == "bool":
@@ -2251,6 +3216,56 @@ class Codegen:
                     et = self.expr_type(expr)
                     return f"({c_type(et)}){{ .tag = {tag} }}"
             return expr.name
+        if isinstance(expr, A.RangeLit):
+            # A range is just its two endpoints; nothing is
+            # materialized, so iteration and methods stay O(1).
+            return (f"(ForgeRange){{ .start = {self.gen_expr(expr.start)}, "
+                    f".end = {self.gen_expr(expr.end)} }}")
+        if isinstance(expr, A.TupleLit):
+            t = self.expr_type(expr)
+            cname = c_type(t)
+            elems = tuple_elems(t)
+            parts = []
+            for i, eexpr in enumerate(expr.elems):
+                code = self.gen_expr(eexpr)
+                et = elems[i]
+                if self.expr_type(eexpr) == "never":
+                    code = self.never_wrap(code, et)
+                if et == "str":
+                    code = f"forge_copy_str({code})"
+                elif is_union_type(et):
+                    evt = self.expr_type(eexpr)
+                    if evt in union_members(et):
+                        copy_str = evt == "str" and not self.is_fresh_str(eexpr)
+                        code = self.union_wrap(code, evt, et, copy_str=copy_str)
+                    elif evt == et and not self.is_fresh_union(eexpr):
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        copy = self.union_copy_stmt(f"__forge_arg{n}", et)
+                        code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                                f"{copy} __forge_arg{n};}})")
+                elif is_opaque_type(et):
+                    code = self.opaque_convert(code, self.expr_type(eexpr),
+                                               et, eexpr)
+                elif self.is_array_type(et) and not self.is_fresh_array(eexpr):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                            f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
+                elif self.is_struct_type(et) and not self.is_fresh_struct(eexpr):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    own = self.struct_own_code(f"__forge_arg{n}", et)
+                    code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                            f"{own} __forge_arg{n};}})")
+                elif is_tuple_type(et) and not self.is_fresh_tuple(eexpr):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    own = self.tuple_own_code(f"__forge_arg{n}", et)
+                    code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                            f"{own} __forge_arg{n};}})")
+                parts.append(code)
+            return f"({cname}){{ {', '.join(parts)} }}"
         if isinstance(expr, A.StructLit):
             concrete = getattr(expr, "concrete_type", None) or expr.name
             cname = c_type(concrete)
@@ -2259,8 +3274,23 @@ class Codegen:
             for fname, fexpr in expr.fields:
                 code = self.gen_expr(fexpr)
                 ft = fields.get(fname)
+                if self.expr_type(fexpr) == "never" and ft:
+                    code = self.never_wrap(code, ft)
                 if ft == "str":
                     code = f"forge_copy_str({code})"
+                elif ft and is_union_type(ft):
+                    fvt = self.expr_type(fexpr)
+                    if fvt in union_members(ft):
+                        copy_str = fvt == "str" and not self.is_fresh_str(fexpr)
+                        code = self.union_wrap(code, fvt, ft, copy_str=copy_str)
+                    elif fvt == ft and not self.is_fresh_union(fexpr):
+                        # Shared union stored in a struct: struct
+                        # gains an independent str payload, if any.
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        copy = self.union_copy_stmt(f"__forge_arg{n}", ft)
+                        code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
+                                f"{copy} __forge_arg{n};}})")
                 elif ft and self.is_array_type(ft) and not self.is_fresh_array(fexpr):
                     # Shared array stored in a struct: struct gains a reference.
                     self.assign_counter += 1
@@ -2274,8 +3304,18 @@ class Codegen:
                     own = self.struct_own_code(f"__forge_arg{n}", ft)
                     code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
                             f"{own} __forge_arg{n};}})")
+                elif ft and is_tuple_type(ft) and not self.is_fresh_tuple(fexpr):
+                    # Shared tuple stored in a struct: gain independent elements.
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    own = self.tuple_own_code(f"__forge_arg{n}", ft)
+                    code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
+                            f"{own} __forge_arg{n};}})")
                 parts.append(f".{fname} = {code}")
             return f"({cname}){{ {', '.join(parts)} }}"
+        if isinstance(expr, A.TupleIndex):
+            base = self.gen_expr(expr.base)
+            return f"({base})._{expr.index}"
         if isinstance(expr, A.FieldAccess):
             if (isinstance(expr.base, A.Index)
                     and self.is_array_type(self.expr_type(expr.base.base))
@@ -2390,7 +3430,20 @@ class Codegen:
             return f"({base}).data[{idx}]"
         if isinstance(expr, A.Cast):
             code = self.gen_expr(expr.expr)
-            return f"(double)({code})" if expr.target == "float" else f"(long long)({code})"
+            if is_union_type(expr.target):
+                inner_type = self.expr_type(expr.expr)
+                copy_str = inner_type == "str" and not self.is_fresh_str(expr.expr)
+                return self.union_wrap(code, inner_type, expr.target,
+                                       copy_str=copy_str)
+            inner_type = self.expr_type(expr.expr)
+            if expr.target == "float":
+                return f"(double)({code})"
+            if is_int_type(inner_type) and is_int_type(expr.target) \
+                    and inner_type != expr.target:
+                return self.int_cast_code(code, inner_type, expr.target)
+            if inner_type == "float" and is_int_type(expr.target):
+                return self.float_to_int_cast(code, expr.target)
+            return f"(long long)({code})"
         if isinstance(expr, A.Try):
             n = self.try_counter
             self.try_counter += 1
@@ -2433,6 +3486,21 @@ class Codegen:
                 if iv is not None and iv[0] > self.INT_MIN:
                     return f"(-{code})"
                 return f"forge_neg({code})"
+            if expr.op == "-" and is_fixed_int(self.expr_type(expr.expr)) and self.mode == "safe":
+                t = self.expr_type(expr.expr)
+                code = self.gen_expr(expr.expr)
+                ct = FIXED_C_TYPES[t]
+                if t in ("i8", "i16", "i32"):
+                    tmp = self._fx_temp()
+                    lo, hi = fixed_range(t)
+                    return (f"({{long long {tmp} = -(long long)({code}); "
+                            f"if ({tmp} < {lo} || {tmp} > {hi}) "
+                            f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+                tmp = self._fx_temp()
+                return (f"({{unsigned long long {tmp} = "
+                        f"(unsigned long long)({code}); "
+                        f"if ({tmp} != 0) forge_fail(\"integer overflow\"); "
+                        f"({ct})(0);}})")
             return f"({expr.op}{self.gen_expr(expr.expr)})"
         if isinstance(expr, A.BinOp):
             if expr.op in ("==", "!=") and self.expr_type(expr.left) == "str":
@@ -2471,7 +3539,153 @@ class Codegen:
                     return f"((int64_t)((uint64_t)({left}) << ((uint64_t)({right}) & 63)))"
                 if expr.op == ">>":
                     return f"(({left}) >> (({right}) & 63))"
+            lt_t = self.expr_type(expr.left)
+            rt_t = self.expr_type(expr.right)
+            ft = lt_t if is_fixed_int(lt_t) else (rt_t if is_fixed_int(rt_t) else None)
+            if ft is not None:
+                if self.mode == "safe" and expr.op in ("+", "-", "*", "/", "%", "<<", ">>"):
+                    return self.fixed_checked_binop(expr.op, left, right, ft)
+                if expr.op in ("<<", ">>"):
+                    # Fast mode: shifts mask the count to the width,
+                    # like int shifts mask to 0..63.
+                    width = FIXED_WIDTHS[ft]
+                    mask = width - 1
+                    if expr.op == "<<":
+                        uct = {"i8": "uint8_t", "i16": "uint16_t", "i32": "uint32_t",
+                               "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t",
+                               "u64": "uint64_t"}[ft]
+                        return f"(({FIXED_C_TYPES[ft]})(({uct})({left}) << (({right}) & {mask})))"
+                    return f"(({left}) >> (({right}) & {mask}))"
             return f"({left} {expr.op} {right})"
+        if isinstance(expr, A.MethodCall):
+            # Opaque receiver: dispatch on the tag. The receiver is
+            # evaluated once into a temp; each case calls the
+            # implementing struct's mangled method with the payload.
+            # Arguments are converted once, as for ordinary calls
+            # (string arguments copied, shared arrays referenced,
+            # shared structs owned), and used by every case.
+            from .traits import mangle
+            struct_t = self.expr_type(expr.base)
+            if struct_t == "range":
+                # Built-in range methods. The receiver is evaluated
+                # once into a temp; len and sum use unsigned
+                # arithmetic so the full int64 span cannot overflow
+                # the difference, and fail in safe mode when the
+                # result itself does not fit in int.
+                self.loop_counter += 1
+                n = self.loop_counter
+                recv = f"__forge_rng{n}"
+                recv_code = self.gen_expr(expr.base)
+                if expr.method == "start":
+                    return f"({{ ForgeRange {recv} = {recv_code}; {recv}.start; }})"
+                if expr.method == "end":
+                    return f"({{ ForgeRange {recv} = {recv_code}; {recv}.end; }})"
+                if expr.method == "contains":
+                    arg = self.gen_expr(expr.args[0])
+                    return (f"({{ ForgeRange {recv} = {recv_code}; "
+                            f"long long __forge_x{n} = {arg}; "
+                            f"({recv}.start <= __forge_x{n} && __forge_x{n} < {recv}.end); }})")
+                if expr.method == "len":
+                    if self.mode == "safe":
+                        return (f"({{ ForgeRange {recv} = {recv_code}; long long __forge_l{n} = 0; "
+                                f"if ({recv}.end > {recv}.start) {{ "
+                                f"unsigned long long __forge_d{n} = (unsigned long long){recv}.end - (unsigned long long){recv}.start; "
+                                f"if (__forge_d{n} > 9223372036854775807ULL) forge_fail(\"integer overflow\"); "
+                                f"__forge_l{n} = (long long)__forge_d{n}; }} __forge_l{n}; }})")
+                    return (f"({{ ForgeRange {recv} = {recv_code}; "
+                            f"({recv}.end > {recv}.start ? (long long)((unsigned long long){recv}.end - (unsigned long long){recv}.start) : 0); }})")
+                if expr.method == "sum":
+                    # Arithmetic series: n * (first + last) / 2, in
+                    # __int128 so the intermediate is exact for
+                    # every int64 span; the result is checked
+                    # against int64 in safe mode.
+                    if self.mode == "safe":
+                        return (f"({{ ForgeRange {recv} = {recv_code}; __int128 __forge_s{n} = 0; "
+                                f"if ({recv}.end > {recv}.start) {{ "
+                                f"__int128 __forge_n{n} = (__int128)((unsigned long long){recv}.end - (unsigned long long){recv}.start); "
+                                f"__forge_s{n} = __forge_n{n} * ((__int128){recv}.start + (__int128){recv}.end - 1) / 2; "
+                                f"if (__forge_s{n} > 9223372036854775807 || __forge_s{n} < (-9223372036854775807 - 1)) forge_fail(\"integer overflow\"); }} "
+                                f"(long long)__forge_s{n}; }})")
+                    return (f"({{ ForgeRange {recv} = {recv_code}; "
+                            f"({recv}.end > {recv}.start ? (long long)(((__int128)((unsigned long long){recv}.end - (unsigned long long){recv}.start)) * ((__int128){recv}.start + (__int128){recv}.end - 1) / 2) : 0); }})")
+                raise ForgeError(f"range has no method '{expr.method}'",
+                                 expr.line, expr.col)
+            if is_opaque_type(struct_t):
+                trait = opaque_trait(struct_t)
+                impls = impls_for_trait(self.program, trait)
+                sigs = {}
+                for td in (getattr(self.program, "traits", None) or []):
+                    if td.name == trait:
+                        sigs = {m: (params, ret)
+                                for (m, params, ret, _l, _c) in td.methods}
+                params, ret = sigs[expr.method]
+                arg_codes = []
+                for a, (_pn, pt) in zip(expr.args, params):
+                    code = self.gen_expr(a)
+                    if pt == "str" and not self.is_fresh_str(a):
+                        code = f"forge_copy_str({code})"
+                    elif self.is_array_type(pt) and not self.is_fresh_array(a):
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                                f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
+                    elif self.is_struct_type(pt) and not self.is_fresh_struct(a):
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        own = self.struct_own_code(f"__forge_arg{n}", pt)
+                        code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                                f"{own} __forge_arg{n};}})")
+                    arg_codes.append(code)
+                self.loop_counter += 1
+                n = self.loop_counter
+                recv = f"__forge_recv{n}"
+                cname = opaque_c_name(struct_t)
+                parts = [f"({{{cname} {recv} = {self.gen_expr(expr.base)};"]
+                if ret != "void":
+                    parts.append(f"{c_type(ret)} __forge_mret{n};")
+                parts.append(f"switch ({recv}.tag) {{")
+                for i, st in enumerate(impls):
+                    mangled = mangle(st, expr.method)
+                    # The callee frees its receiver parameter on
+                    # return, so it must get an independently owned
+                    # copy of the payload, never the caller's own.
+                    own = self.struct_own_code(f"__forge_mrecv{n}_{i}", st)
+                    if own:
+                        recv_code = (f"({{{c_type(st)} __forge_mrecv{n}_{i} = "
+                                     f"{recv}.payload._{i}; {own} "
+                                     f"__forge_mrecv{n}_{i};}})")
+                    else:
+                        recv_code = f"{recv}.payload._{i}"
+                    call = f"{mangled}({recv_code}"
+                    if arg_codes:
+                        call += ", " + ", ".join(arg_codes)
+                    call += ")"
+                    parts.append(f"case {i}: {{")
+                    if ret != "void":
+                        parts.append(f"__forge_mret{n} = {call};")
+                    else:
+                        parts.append(f"{call};")
+                    parts.append("break; }")
+                parts.append("}")
+                if ret != "void":
+                    parts.append(f"__forge_mret{n};")
+                parts.append("})")
+                return " ".join(parts)
+            # Static dispatch: receiver type -> mangled function,
+            # receiver passed as the first argument. Delegating to
+            # the ordinary Call path keeps struct ownership handling.
+            from .traits import mangle
+            if struct_t not in self.structs:
+                raise ForgeError("trait method call needs a struct "
+                                 f"receiver, got {struct_t}",
+                                 expr.line, expr.col)
+            mangled = mangle(struct_t, expr.method)
+            if mangled not in self.func_params:
+                raise ForgeError(f"struct '{struct_t}' has no method "
+                                 f"'{expr.method}'", expr.line, expr.col)
+            return self.gen_expr(A.Call(mangled, [expr.base] +
+                                        list(expr.args),
+                                        expr.line, expr.col))
         if isinstance(expr, A.Call):
             # A call may mutate shared state (an array passed to it
             # can be written through its parameter), so it ends any
@@ -2493,6 +3707,20 @@ class Codegen:
                 return f"pow({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
             if expr.name == "abs":
                 return f"llabs({self.gen_expr(expr.args[0])})"
+            if expr.name in ("wrapping_add", "wrapping_sub", "wrapping_mul"):
+                # Unsigned arithmetic wraps by definition; the cast
+                # back reinterprets the bits as signed. This bypasses
+                # the checked forge_add/sub/mul helpers on purpose:
+                # wrapping is defined behaviour in both modes.
+                op = {"wrapping_add": "+", "wrapping_sub": "-",
+                      "wrapping_mul": "*"}[expr.name]
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return (f"((long long)((unsigned long long)({a}) {op} "
+                        f"(unsigned long long)({b})))")
+            if expr.name == "wrapping_neg":
+                a = self.gen_expr(expr.args[0])
+                return f"((long long)(0ULL - (unsigned long long)({a})))"
             if expr.name == "file_exists":
                 return f"forge_file_exists({self.gen_expr(expr.args[0])})"
             if expr.name == "read_file":
@@ -2557,6 +3785,39 @@ class Codegen:
                 return "forge_str_allocs" if expr.name == "alloc_count" else "forge_str_frees"
             if expr.name in ("arr_alloc_count", "arr_free_count"):
                 return "forge_arr_allocs" if expr.name == "arr_alloc_count" else "forge_arr_frees"
+            if expr.name == "refcount":
+                # Read the array's holder count WITHOUT gaining a
+                # holder: the temp is a plain copy of the array
+                # struct, never inc'd and never freed, so the
+                # observed count is exactly the program's own.
+                self.assign_counter += 1
+                n = self.assign_counter
+                at = self.expr_type(expr.args[0])
+                code = self.gen_expr(expr.args[0])
+                return (f"({{{c_type(at)} __forge_arg{n} = {code}; "
+                        f"__forge_arg{n}.ref ? *__forge_arg{n}.ref : 0;}})")
+            if expr.name == "weak_new":
+                # Register without gaining a holder: the weak
+                # must not keep the array alive.
+                self.assign_counter += 1
+                n = self.assign_counter
+                code = self.gen_expr(expr.args[0])
+                return (f"({{ForgeIntArray __forge_arg{n} = {code}; "
+                        f"forge_weak_register(__forge_arg{n});}})")
+            if expr.name == "weak_upgrade":
+                # (alive, array): alive fills the array with an
+                # inc (a genuine strong hold for the caller);
+                # dead fills an empty array the caller ignores.
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.assign_counter += 1
+                m = self.assign_counter
+                id_code = self.gen_expr(expr.args[0])
+                return (f"({{long long __forge_arg{n} = {id_code}; "
+                        f"ForgeTuple_bool_Arr_int __forge_arg{m}; "
+                        f"__forge_arg{m}._0 = forge_weak_get(__forge_arg{n}, &__forge_arg{m}._1); "
+                        f"if (!__forge_arg{m}._0) {{ __forge_arg{m}._1 = (ForgeIntArray){{NULL, 0, 0, forge_arr_ref_new()}}; }} "
+                        f"__forge_arg{m};}})")
             if expr.name == "parallel_dot":
                 return f"forge_parallel_dot({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
             if expr.name == "parallel_matmul":
@@ -2587,7 +3848,25 @@ class Codegen:
             arg_codes = []
             for a, (_pn, pt) in zip(expr.args, params):
                 code = self.gen_expr(a)
-                if pt == "str" and not self.is_fresh_str(a):
+                if self.expr_type(a) == "never":
+                    code = self.never_wrap(code, pt)
+                if is_opaque_type(pt):
+                    code = self.opaque_convert(code, self.expr_type(a),
+                                               pt, a)
+                elif is_union_type(pt):
+                    at = self.expr_type(a)
+                    if at in union_members(pt):
+                        copy_str = at == "str" and not self.is_fresh_str(a)
+                        code = self.union_wrap(code, at, pt, copy_str=copy_str)
+                    elif at == pt and not self.is_fresh_union(a):
+                        # Shared union argument: callee gains an
+                        # independent str payload, if any.
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        copy = self.union_copy_stmt(f"__forge_arg{n}", pt)
+                        code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                                f"{copy} __forge_arg{n};}})")
+                elif pt == "str" and not self.is_fresh_str(a):
                     code = f"forge_copy_str({code})"
                 elif self.is_array_type(pt) and not self.is_fresh_array(a):
                     # Shared array argument: callee gains a reference.
@@ -2600,6 +3879,13 @@ class Codegen:
                     self.assign_counter += 1
                     n = self.assign_counter
                     own = self.struct_own_code(f"__forge_arg{n}", pt)
+                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                            f"{own} __forge_arg{n};}})")
+                elif is_tuple_type(pt) and not self.is_fresh_tuple(a):
+                    # Shared tuple argument: callee gains independent elements.
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    own = self.tuple_own_code(f"__forge_arg{n}", pt)
                     code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
                             f"{own} __forge_arg{n};}})")
                 arg_codes.append(code)

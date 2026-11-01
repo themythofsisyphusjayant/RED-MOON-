@@ -1,0 +1,12 @@
+import "evalharness.fg";
+
+fn main() {
+    // 3 of 4 correct -> 0.75.
+    println(eval_accuracy([1, 2, 3, 4], [1, 2, 0, 4]));
+    // Errors 1, -1 -> MSE 1.0.
+    println(eval_mse([2.0, 2.0], [1.0, 3.0]));
+    // exp(0) = 1; exp(ln 2) = 2 (log builtin, e base).
+    println(eval_perplexity(0.0));
+    println(eval_perplexity(log(2.0)));
+    println(eval_report([1, 2, 3, 4], [1, 2, 0, 4]));
+}

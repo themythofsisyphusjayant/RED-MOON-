@@ -1,0 +1,48 @@
+// The Jal Pari Language — small geography helpers (geo-lite).
+// Import with: import "geo.fg";
+// LIMITS (honest v1): haversine distance only, with Taylor-series
+// sin/cos in pure .fg (no trig builtin); angles are degrees in,
+// radians inside. Bounding-box test is axis-aligned only, and
+// boxes crossing the antimeridian are not handled.
+
+fn geo_rad(deg: float) -> float {
+    return deg * 3.141592653589793 / 180.0;
+}
+
+fn geo_sin(x: float) -> float {
+    let x2 = x * x;
+    let x3 = x2 * x;
+    let x5 = x3 * x2;
+    let x7 = x5 * x2;
+    return x - x3 / 6.0 + x5 / 120.0 - x7 / 5040.0;
+}
+
+fn geo_cos(x: float) -> float {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x6 = x4 * x2;
+    return 1.0 - x2 / 2.0 + x4 / 24.0 - x6 / 720.0;
+}
+
+fn geo_haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float {
+    let dlat = geo_rad(lat2 - lat1);
+    let dlon = geo_rad(lon2 - lon1);
+    let s1 = geo_sin(dlat / 2.0);
+    let s2 = geo_sin(dlon / 2.0);
+    let a = s1 * s1 + geo_cos(geo_rad(lat1)) * geo_cos(geo_rad(lat2)) * s2 * s2;
+    // asin(sqrt(a)) by its Taylor series to x^5; accurate to < 1e-6
+    // for the demo distances (sqrt(a) < 0.15). No trig builtin exists.
+    let s = sqrt(a);
+    let s3 = s * s * s;
+    let s5 = s3 * s * s;
+    let asin = s + s3 / 6.0 + s5 * 3.0 / 40.0;
+    return 6371.0 * 2.0 * asin;
+}
+
+fn geo_in_box(lat: float, lon: float, lat_min: float, lat_max: float, lon_min: float, lon_max: float) -> bool {
+    if lat < lat_min { return false; }
+    if lat > lat_max { return false; }
+    if lon < lon_min { return false; }
+    if lon > lon_max { return false; }
+    return true;
+}

@@ -1,0 +1,44 @@
+// Keyboard driver kernel (Phase F, PS/2 scancode decode-lite).
+//
+// A tiny scancode table: 0x1E -> 'a', 0x30 -> 'b', 0x2E -> 'c',
+// 0x39 -> space; anything else -> '?'. The demo feeds five
+// scancodes and prints the decoded text.
+//
+// Expected model UART transcript:
+//   KBD\nabc a\nDONE, halted.
+// Decoded count word at 0x8008 is 5.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn kbd_decode(sc: int) -> int {
+  if sc == 30 { return 97; }
+  if sc == 48 { return 98; }
+  if sc == 46 { return 99; }
+  if sc == 57 { return 32; }
+  return 63;
+}
+
+fn main() {
+  poke32(32776, 0);
+  put(75);
+  put(66);
+  put(68);
+  put(10);
+  put(kbd_decode(30));
+  poke32(32776, peek32(32776) + 1);
+  put(kbd_decode(48));
+  poke32(32776, peek32(32776) + 1);
+  put(kbd_decode(46));
+  poke32(32776, peek32(32776) + 1);
+  put(kbd_decode(57));
+  poke32(32776, peek32(32776) + 1);
+  put(kbd_decode(30));
+  poke32(32776, peek32(32776) + 1);
+  put(10);
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}

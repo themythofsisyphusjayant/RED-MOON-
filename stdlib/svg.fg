@@ -1,0 +1,70 @@
+// The Jal Pari Language — SVG document generation (svg-gen).
+// Import with: import "svg.fg";
+// LIMITS (honest v1): integer coordinates only (Jal Pari has no
+// int-to-string builtin, so numbers come from a digit table);
+// shapes are rect/circle/line/text/polyline; no groups, transforms,
+// or CSS. Output is a plain SVG text document.
+
+fn svg_digit(d: int) -> str {
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    return "9";
+}
+
+fn svg_int_str(n: int) -> str {
+    if n == 0 { return "0"; }
+    let mut v: int = n;
+    let mut neg: bool = false;
+    if n < 0 { neg = true; v = 0 - n; }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + svg_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    if neg { out = "-"; }
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + rev[i];
+        i = i - 1;
+    }
+    return out;
+}
+
+fn svg_wrap(w: int, h: int, inner: str) -> str {
+    return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + svg_int_str(w) + "\" height=\"" + svg_int_str(h) + "\">" + inner + "</svg>";
+}
+
+fn svg_rect(x: int, y: int, w: int, h: int, fill: str) -> str {
+    return "<rect x=\"" + svg_int_str(x) + "\" y=\"" + svg_int_str(y) + "\" width=\"" + svg_int_str(w) + "\" height=\"" + svg_int_str(h) + "\" fill=\"" + fill + "\"/>";
+}
+
+fn svg_circle(cx: int, cy: int, r: int, fill: str) -> str {
+    return "<circle cx=\"" + svg_int_str(cx) + "\" cy=\"" + svg_int_str(cy) + "\" r=\"" + svg_int_str(r) + "\" fill=\"" + fill + "\"/>";
+}
+
+fn svg_line(x1: int, y1: int, x2: int, y2: int, stroke: str) -> str {
+    return "<line x1=\"" + svg_int_str(x1) + "\" y1=\"" + svg_int_str(y1) + "\" x2=\"" + svg_int_str(x2) + "\" y2=\"" + svg_int_str(y2) + "\" stroke=\"" + stroke + "\"/>";
+}
+
+fn svg_text(x: int, y: int, s: str) -> str {
+    return "<text x=\"" + svg_int_str(x) + "\" y=\"" + svg_int_str(y) + "\">" + s + "</text>";
+}
+
+fn svg_polyline(xs: [int], ys: [int]) -> str {
+    let mut pts: str = "";
+    let mut i: int = 0;
+    while i < len(xs) {
+        if i > 0 { pts = pts + " "; }
+        pts = pts + svg_int_str(xs[i]) + "," + svg_int_str(ys[i]);
+        i = i + 1;
+    }
+    return "<polyline points=\"" + pts + "\" fill=\"none\" stroke=\"black\"/>";
+}

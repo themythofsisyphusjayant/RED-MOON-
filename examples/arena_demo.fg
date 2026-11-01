@@ -1,0 +1,45 @@
+// Top-500 #24: arena allocation v1 demo.
+
+import "arena.fg";
+
+fn grab(a: Arena) -> (int, Arena) {
+  return arena_alloc(a);
+}
+
+fn main() {
+  let mut ar: Arena = arena_new();
+  let mut r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  let mk = arena_mark(ar);
+  println(mk.0);
+  ar = mk.1;
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  ar = arena_restore(ar, 3);
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  ar = arena_reset(ar);
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  ar = arena_free(ar, 0);
+  r = arena_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  println(arena_len(ar));
+  let mut gb: Arena = arena_new();
+  let g = grab(gb);
+  println(g.0);
+}

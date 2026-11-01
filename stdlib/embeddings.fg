@@ -1,0 +1,85 @@
+// The Jal Pari Language — tiny vector store (embeddings).
+// Import with: import "embeddings.fg";
+// LIMITS (honest v1): in-memory only, one fixed dimension per
+// store; vectors live in ONE flat [float] (row i starts at
+// i*dim) because nested arrays as struct fields break native
+// codegen (unknown ForgeArray_ForgeFloatArray type). Linear
+// scan, no index; nearest neighbour is argmax cosine similarity;
+// mismatched query dimensions score -2.0.
+
+struct EmbStore {
+    labels: [str];
+    data: [float];
+    dim: int;
+}
+
+fn emb_new(dim: int) -> EmbStore {
+    return EmbStore { labels: [], data: [], dim: dim };
+}
+
+fn emb_cosine(a: [float], b: [float]) -> float {
+    if len(a) != len(b) { return -2.0; }
+    let mut dot: float = 0.0;
+    let mut na: float = 0.0;
+    let mut nb: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        dot = dot + a[i] * b[i];
+        na = na + a[i] * a[i];
+        nb = nb + b[i] * b[i];
+        i = i + 1;
+    }
+    if na == 0.0 { return -2.0; }
+    if nb == 0.0 { return -2.0; }
+    return dot / (sqrt(na) * sqrt(nb));
+}
+
+fn emb_add(s: EmbStore, label: str, v: [float]) -> EmbStore {
+    let mut q = s;
+    if len(v) != q.dim { return q; }
+    push(q.labels, label);
+    let mut i: int = 0;
+    while i < len(v) {
+        push(q.data, v[i]);
+        i = i + 1;
+    }
+    return q;
+}
+
+fn emb_nearest(s: EmbStore, query: [float]) -> (str, float) {
+    if len(query) != s.dim { return ("", -2.0); }
+    // Query row is appended conceptually at the end of data.
+    let mut best: str = "";
+    let mut best_score: float = -2.0;
+    let mut i: int = 0;
+    while i < len(s.labels) {
+        // Cosine between stored row i and the query, computed
+        // directly from the flat arrays without a temp row.
+        let mut dot: float = 0.0;
+        let mut na: float = 0.0;
+        let mut nb: float = 0.0;
+        let mut j: int = 0;
+        while j < s.dim {
+            let a = s.data[i * s.dim + j];
+            let b = query[j];
+            dot = dot + a * b;
+            na = na + a * a;
+            nb = nb + b * b;
+            j = j + 1;
+        }
+        let mut sc: float = -2.0;
+        if na != 0.0 {
+            if nb != 0.0 { sc = dot / (sqrt(na) * sqrt(nb)); }
+        }
+        if sc > best_score {
+            best_score = sc;
+            best = s.labels[i];
+        }
+        i = i + 1;
+    }
+    return (best, best_score);
+}
+
+fn emb_count(s: EmbStore) -> int {
+    return len(s.labels);
+}

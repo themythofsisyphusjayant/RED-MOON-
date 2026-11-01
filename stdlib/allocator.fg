@@ -1,0 +1,45 @@
+struct Allocator {
+    kind: int;
+    mem: [int];
+    next: int;
+    free_head: int;
+    cap: int;
+}
+
+fn allocator_new(kind: int, cap: int) -> Allocator {
+    let a: Allocator = Allocator { kind: kind, mem: range(cap), next: 0, free_head: -1, cap: cap };
+    return a;
+}
+
+fn allocator_alloc(a: Allocator) -> (int, Allocator) {
+    let mut m = a;
+    if m.kind == 1 {
+        if m.free_head != -1 {
+            let addr: int = m.free_head;
+            m.free_head = m.mem[addr];
+            return (addr, m);
+        }
+    }
+    if m.next < m.cap {
+        let addr: int = m.next;
+        m.next = m.next + 1;
+        return (addr, m);
+    }
+    return (-1, m);
+}
+
+fn allocator_free(a: Allocator, addr: int) -> Allocator {
+    let mut m = a;
+    if m.kind == 1 {
+        m.mem[addr] = m.free_head;
+        m.free_head = addr;
+    }
+    return m;
+}
+
+fn allocator_reset(a: Allocator) -> Allocator {
+    let mut m = a;
+    m.next = 0;
+    m.free_head = -1;
+    return m;
+}

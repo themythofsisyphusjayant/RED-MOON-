@@ -1,0 +1,70 @@
+// Calendar app kernel (Phase F, weekday from days-since-epoch).
+//
+// 1970-01-01 was a Thursday (weekday 4 with 0 = Sunday), so
+// weekday = (4 + days) % 7. 2026-11-01 is 20758 days after the
+// epoch (Sunday); 2026-11-02 is 20759 (Monday). The kernel does
+// the modular arithmetic and maps the result to a day name.
+//
+// Expected model UART transcript:
+//   CAL\nSUN\nMON\nDONE, halted.
+// Weekday words at 0x8008/0x800C are 0 and 1.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn cal_name(w: int) {
+  if w == 0 {
+    put(83);
+    put(85);
+    put(78);
+  }
+  if w == 1 {
+    put(77);
+    put(79);
+    put(78);
+  }
+  if w == 2 {
+    put(84);
+    put(85);
+    put(69);
+  }
+  if w == 3 {
+    put(87);
+    put(69);
+    put(68);
+  }
+  if w == 4 {
+    put(84);
+    put(72);
+    put(85);
+  }
+  if w == 5 {
+    put(70);
+    put(82);
+    put(73);
+  }
+  if w == 6 {
+    put(83);
+    put(65);
+    put(84);
+  }
+  put(10);
+}
+
+fn main() {
+  put(67);
+  put(65);
+  put(76);
+  put(10);
+  let w1 = (4 + 20758) % 7;
+  poke32(32776, w1);
+  cal_name(w1);
+  let w2 = (4 + 20759) % 7;
+  poke32(32780, w2);
+  cal_name(w2);
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}

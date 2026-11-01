@@ -1,0 +1,56 @@
+// Top-500 #22: allocator-as-value v1 demo.
+// through grab(), as a value — never a global.
+
+import "allocator.fg";
+
+fn grab(a: Allocator) -> (int, Allocator) {
+  return allocator_alloc(a);
+}
+
+fn main() {
+  let mut b: Allocator = allocator_new(0, 4);
+  let mut r = allocator_alloc(b);
+  println(r.0);
+  b = r.1;
+  r = allocator_alloc(b);
+  println(r.0);
+  b = r.1;
+  r = allocator_alloc(b);
+  println(r.0);
+  b = r.1;
+  r = allocator_alloc(b);
+  println(r.0);
+  b = r.1;
+  r = allocator_alloc(b);
+  println(r.0);
+  b = r.1;
+  let mut f: Allocator = allocator_new(1, 4);
+  r = allocator_alloc(f);
+  println(r.0);
+  f = r.1;
+  r = allocator_alloc(f);
+  println(r.0);
+  f = r.1;
+  f = allocator_free(f, 0);
+  r = allocator_alloc(f);
+  println(r.0);
+  f = r.1;
+  f = allocator_free(f, 1);
+  r = allocator_alloc(f);
+  println(r.0);
+  f = r.1;
+  let mut ar: Allocator = allocator_new(2, 4);
+  r = allocator_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  r = allocator_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  ar = allocator_reset(ar);
+  r = allocator_alloc(ar);
+  println(r.0);
+  ar = r.1;
+  let mut gb: Allocator = allocator_new(0, 2);
+  let g = grab(gb);
+  println(g.0);
+}

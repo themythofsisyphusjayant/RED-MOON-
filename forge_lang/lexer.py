@@ -5,8 +5,10 @@ from .errors import ForgeError
 
 KEYWORDS = {"fn", "let", "mut", "if", "else", "while", "for", "in",
             "return", "true", "false", "import", "as", "struct",
-            "enum", "match", "spawn", "extern", "break"}
-TWO_CHAR = {"==", "!=", "<=", ">=", "&&", "||", "->", "=>", "<<", ">>"}
+            "enum", "match", "spawn", "extern", "break", "continue",
+            "trait", "impl", "type", "newtype", "opaque", "readonly",
+            "defer"}
+TWO_CHAR = {"==", "!=", "<=", ">=", "&&", "||", "->", "=>", "<<", ">>", ".."}
 ONE_CHAR = set("+-*/%<>=!;,:(){}[].?&|^~")
 
 
@@ -60,25 +62,48 @@ def tokenize(source):
 
         sl, sc = line, col
         if ch.isdigit():
-            if source[i:i + 2] in ("0x", "0X"):
-                # Hex integer literal: 0xFF, 0x10000000. Integers only
-                # (no hex floats); the value feeds the normal INT token,
-                # so every backend and the checker see a plain int.
+            prefix = source[i:i + 2]
+            if prefix in ("0x", "0X", "0b", "0B", "0o", "0O"):
+                # Prefixed integer literals: 0xFF hex, 0b1010 binary,
+                # 0o777 octal. Integers only (no prefixed floats).
+                # Underscores may separate digits (0xFF_FF, 1_000
+                # below) but never lead, trail, or double up.
+                kind = {"0x": "hex", "0X": "hex", "0b": "binary",
+                        "0B": "binary", "0o": "octal",
+                        "0O": "octal"}[prefix]
+                digits = {"hex": "0123456789abcdefABCDEF",
+                          "binary": "01", "octal": "01234567"}[kind]
+                base = {"hex": 16, "binary": 2, "octal": 8}[kind]
                 j = i + 2
-                while j < n and source[j] in "0123456789abcdefABCDEF":
+                while j < n and (source[j] in digits or source[j] == "_"):
                     j += 1
-                if j == i + 2:
-                    raise ForgeError("hex literal needs at least one "
-                                     "hex digit after 0x", sl, sc)
                 text = source[i:j]
+                parts = text[2:].split("_")
+                if not parts or any(p == "" for p in parts):
+                    raise ForgeError(
+                        f"{kind} literal needs at least one {kind} digit "
+                        f"and no leading, trailing, or doubled underscore",
+                        sl, sc)
                 advance(j - i)
-                tokens.append(Token("INT", int(text[2:], 16), sl, sc))
+                tokens.append(Token("INT", int(text[2:].replace("_", ""),
+                                               base), sl, sc))
                 continue
             j = i
-            while j < n and source[j].isdigit():
+            while j < n and (source[j].isdigit() or source[j] == "_"):
                 j += 1
+            if any(p == "" for p in source[i:j].split("_")):
+                raise ForgeError("integer literal has a leading, trailing, "
+                                 "or doubled underscore", sl, sc)
             is_float = False
-            if j < n and source[j] == "." and j + 1 < n and source[j + 1].isdigit():
+            # A number right after a dot is a tuple index, not the
+            # fraction of a float: `t.0.0` must lex as t . 0 . 0,
+            # not t . 0.0. (A float literal's own dot is scanned
+            # with its integer part, where the previous token is
+            # never a dot.)
+            after_dot = (tokens and tokens[-1].kind == "OP"
+                         and tokens[-1].value == ".")
+            if (not after_dot and j < n and source[j] == "."
+                    and j + 1 < n and source[j + 1].isdigit()):
                 is_float = True
                 j += 1
                 while j < n and source[j].isdigit():
@@ -95,7 +120,8 @@ def tokenize(source):
             text = source[i:j]
             advance(j - i)
             tokens.append(Token("FLOAT" if is_float else "INT",
-                                float(text) if is_float else int(text), sl, sc))
+                                float(text) if is_float else
+                                int(text.replace("_", "")), sl, sc))
             continue
         if ch.isalpha() or ch == "_":
             j = i

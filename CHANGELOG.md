@@ -8,6 +8,113 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Top-500 batch 1: binary/octal literals and digit separators
+  (0b1010, 0o777, 1_000; malformed literals are compile errors)
+  and the `continue` statement (native, big32, WASM, formatter;
+  a for-loop continue still runs the increment).
+- Top-500 batch 2: traits v1 — trait declarations, impl blocks
+  (with or without a trait), method-call syntax with static
+  dispatch, and checker-enforced trait conformance. big32 and
+  WASM reject trait programs in v1 (no struct parameters /
+  structs there yet); generic traits, trait objects, and
+  generic bounds are later slices.
+- Top-500 batch 3: type aliases v1 — transparent `type` 
+  shorthands expanded in the checker before other checking,
+  so they work on every backend for already-supported types.
+  Chains, arrays, concrete generic instantiations, struct and
+  enum aliases, and struct literals via bare-struct aliases
+  are in; aliases take no type arguments.
+- Top-500 batch 4: wrapping arithmetic (wrapping_add/sub/mul/
+  neg, never failing, on native + big32 + WASM) and distinct
+  newtypes v1 (`newtype UserId = int;`, cast-only crossings,
+  same-newtype equality, native + big32 verified, WASM a
+  later slice).
+- Top-500 batch 5: union types v1 — `int | str` as a tagged
+  value, wrapping at assignment/argument/return/struct-field/
+  cast sites, narrowing through match arms named by member
+  type, str-payload copy/free discipline; native verified,
+  big32/WASM reject union programs in v1. Members are the
+  four scalars in v1.
+- Top-500 batch 6: opaque types v1 — `opaque Trait` as an
+  existential over its implementations, tag-dispatched
+  method calls/copies/frees; native verified, big32/WASM
+  reject opaque programs in v1.
+- Top-500 batch 7: fixed-width integers v1 — i8/i16/i32/
+  u8/u16/u32/u64 as distinct scalars (i64 is int), fitting
+  literals adapt, checked arithmetic and narrowing casts,
+  struct fields; native verified, big32/WASM reject
+  fixed-width programs in v1.
+- Top-500 batch 8: sized arrays v1 — `[T; N]` as a distinct
+  type from `[T]`, exact-count literals, push rejected,
+  index/len/iteration like dynamic arrays; native verified,
+  big32/WASM reject sized programs in v1.
+- Top-500 batch 9: readonly views v1 — `readonly [T]` as a
+  read-only handle (index/len/iteration work, push and
+  index assignment rejected), mutable-to-view coercion
+  within the same array kind; native verified, big32/WASM
+  reject readonly programs in v1.
+- Top-500 batch 10: never type v1 — `never` as the bottom
+  type (never functions must diverge and cannot return,
+  never values coerce to any expected type at value
+  sites, diverging bodies satisfy the return rule);
+  native verified, big32/WASM reject never programs
+  in v1.
+- Top-500 batch 11: checked float-to-int casts v1 —
+  safe mode fails on out-of-range, NaN, or infinite
+  floats; fast mode keeps the truncating cast; WASM
+  already traps, big32 already rejects.
+- Top-500 batch 12: tuple types v1 — `(T1, T2, ...)`
+  with owned elements, flowing through let,
+  assignment, arguments, returns, and struct fields;
+  native verified, big32/WASM reject tuple programs
+  in v1. Also: composite structs now emit in
+  dependency order (forward struct references work)
+  and the lexer treats numbers after a dot as tuple
+  indices.
+- Top-500 batch 13: local type inference v1 — an
+  empty array literal infers its element type from
+  a later constraining use (push, assignment,
+  annotated let, call argument, return, struct
+  field, field assignment); unconstrained literals
+  fail with a clear message.
+- Top-500 batch 14: first-class ranges v1 — lazy
+  half-open `a..b` values of type `range`, with
+  len / contains / start / end / sum methods and
+  for-loop iteration; big32/WASM reject ranges
+  in v1.
+- Top-500 batch 15: void/unit consistency v1 —
+  void is allowed only as a function or method
+  return type; every other use fails in the
+  checker with a clear message instead of
+  invalid C. §1 Types/safety is now complete.
+- Top-500 batch 16: defer v1 — `defer call();`
+  runs at the enclosing block's exit, LIFO,
+  including early returns, breaks, and
+  continues; loop-body defers run each
+  iteration. big32/WASM reject defer in v1.
+- Top-500 batch 17: allocator-as-value v1 —
+  stdlib/allocator.fg, pure Jal Pari: one
+  Allocator struct passed explicitly to
+  functions, in bump, freelist, and arena
+  kinds; out-of-memory returns -1 as a value.
+- Top-500 batch 18: arena allocation v1 —
+  stdlib/arena.fg, pure Jal Pari: a growing
+  region with mark/restore for temporary
+  allocations. Also fixed two real ownership
+  bugs: copy-on-write push on shared arrays,
+  and field-assignment ownership for array and
+  struct fields.
+- Top-500 batch 19: reference counting v1 —
+  a `refcount` builtin plus stdlib/rc.fg:
+  shared ownership made observable, clone
+  gains a holder, last drop frees.
+- Top-500 batch 20: weak references v1 —
+  a runtime weak table: weak_new registers
+  without gaining a holder, weak_upgrade
+  reports the current array while alive and
+  (false, []) after the last strong holder
+  drops.
+
 ## 1.3.0 — 31 Oct 2026
 
 - Daily batch 31 Oct 2026 (10 OS kernels + 10 libraries, all

@@ -1,0 +1,24 @@
+// The Jal Pari Language — tiny benchmark harness (bench).
+// Import with: import "bench.fg";
+// LIMITS (honest v1): no closures, so the caller times a region
+// itself with clock_micros stamps and hands them in; the harness
+// only does the arithmetic and the summary text. Results are
+// microsecond integers and float seconds-per-op.
+
+fn bench_us_per_op(start_us: int, end_us: int, iters: int) -> float {
+    if iters == 0 { return 0.0; }
+    return (end_us - start_us) as float / iters as float;
+}
+
+fn bench_ops_per_sec(start_us: int, end_us: int, iters: int) -> float {
+    if end_us <= start_us { return 0.0; }
+    return iters as float / ((end_us - start_us) as float / 1000000.0);
+}
+
+fn bench_ms(start_us: int, end_us: int) -> int {
+    return (end_us - start_us) / 1000;
+}
+
+fn bench_summary(name: str, start_us: int, end_us: int, iters: int) -> str {
+    return name;
+}

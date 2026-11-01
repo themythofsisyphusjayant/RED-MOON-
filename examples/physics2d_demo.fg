@@ -1,0 +1,17 @@
+import "physics2d.fg";
+
+fn main() {
+    // Drop from y=5, no initial velocity, g=10, dt=1: after one
+    // step vy=-10, y=-5 (below the floor); bounce with 0.5
+    // clamps y to 0 and flips vy to 5.
+    let mut b = phys_new(0.0, 5.0, 2.0, 0.0);
+    b = phys_step(b, 1.0, 10.0);
+    println(b.x);
+    println(b.y);
+    println(b.vy);
+    b = phys_floor_bounce(b, 0.5);
+    println(b.y);
+    println(b.vy);
+    println(phys_aabb_hit(0.0, 0.0, 10.0, 10.0, 5.0, 5.0, 10.0, 10.0));
+    println(phys_aabb_hit(0.0, 0.0, 10.0, 10.0, 20.0, 20.0, 5.0, 5.0));
+}

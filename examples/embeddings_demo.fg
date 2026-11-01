@@ -1,0 +1,17 @@
+import "embeddings.fg";
+
+fn main() {
+    let mut s = emb_new(3);
+    s = emb_add(s, "cat", [1.0, 0.0, 0.0]);
+    s = emb_add(s, "dog", [0.9, 0.1, 0.0]);
+    s = emb_add(s, "fish", [0.0, 0.0, 1.0]);
+    s = emb_add(s, "bad", [1.0, 2.0]);
+    println(emb_count(s));
+    let r = emb_nearest(s, [1.0, 0.0, 0.0]);
+    println(r.0);
+    println(r.1);
+    let r2 = emb_nearest(s, [0.0, 0.0, 1.0]);
+    println(r2.0);
+    println(emb_cosine([1.0, 0.0], [0.0, 1.0]));
+    println(emb_cosine([1.0, 0.0], [1.0, 0.0]));
+}

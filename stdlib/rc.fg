@@ -1,0 +1,26 @@
+struct Rc {
+    data: [int];
+}
+
+fn rc_new(data: [int]) -> Rc {
+    let r: Rc = Rc { data: data };
+    return r;
+}
+
+fn rc_clone(rc: Rc) -> Rc {
+    return rc;
+}
+
+fn rc_get(rc: Rc) -> [int] {
+    return rc.data;
+}
+
+fn rc_set(rc: Rc, i: int, v: int) -> Rc {
+    let mut m = rc;
+    m.data[i] = v;
+    return m;
+}
+
+fn rc_len(rc: Rc) -> int {
+    return len(rc.data);
+}

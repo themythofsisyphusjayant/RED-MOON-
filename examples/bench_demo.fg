@@ -1,0 +1,19 @@
+import "bench.fg";
+
+fn main() {
+    // Fixed stamps: 1000 iters in 250000 us -> 250 us/op, 4000 ops/s.
+    println(bench_us_per_op(1000, 251000, 1000));
+    println(bench_ops_per_sec(1000, 251000, 1000));
+    println(bench_ms(1000, 251000));
+    let t0 = clock_micros();
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < 100000 {
+        s = s + i;
+        i = i + 1;
+    }
+    let t1 = clock_micros();
+    println(s);
+    println(t1 > t0);
+    println(bench_us_per_op(t0, t1, 100000) > 0.0);
+}

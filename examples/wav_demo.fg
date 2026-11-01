@@ -1,0 +1,20 @@
+import "wav.fg";
+
+fn main() {
+    // 8000 Hz, 8 samples -> 16 data bytes, chunk size 52.
+    let h = wav_header(8000, 8);
+    println(len(h));
+    println(h[0]);
+    println(h[1]);
+    println(h[2]);
+    println(h[3]);
+    println(h[4]);
+    println(h[24]);
+    println(h[25]);
+    println(h[40]);
+    // Square wave, 1000 Hz at 8000 Hz: ++++----.
+    println(wav_square_sample(0, 1000, 8000, 9000));
+    println(wav_square_sample(3, 1000, 8000, 9000));
+    println(wav_square_sample(4, 1000, 8000, 9000));
+    println(wav_square_sample(7, 1000, 8000, 9000));
+}

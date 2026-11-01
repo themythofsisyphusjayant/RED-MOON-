@@ -503,6 +503,51 @@ class WasmGen:
         return idx
 
     def gen(self):
+        # Unions need the tagged tag+payload representation, which
+        # the WASM backend does not have in v1.
+        from .unions import find_unions
+        unions = find_unions(self.program)
+        if unions:
+            raise ForgeError(f"wasm: union types are not supported in v1 "
+                             f"(found {unions[0]})")
+        from .opaques import find_opaques
+        opaques = find_opaques(self.program)
+        if opaques:
+            raise ForgeError(f"wasm: opaque types are not supported in v1 "
+                             f"(found {opaques[0]})")
+        from .fixedints import find_fixed
+        fixed = find_fixed(self.program)
+        if fixed:
+            raise ForgeError(f"wasm: fixed-width integer types are "
+                             f"not supported in v1 (found {fixed[0]})")
+        from .sizedarrays import find_sized
+        sized = find_sized(self.program)
+        if sized:
+            raise ForgeError(f"wasm: sized arrays are not supported in v1 "
+                             f"(found {sized[0]})")
+        from .readonly import find_readonly
+        readonly = find_readonly(self.program)
+        if readonly:
+            raise ForgeError(f"wasm: readonly views are not supported in v1 "
+                             f"(found {readonly[0]})")
+        from .never import find_never
+        never = find_never(self.program)
+        if never:
+            raise ForgeError(f"wasm: never types are not supported in v1 "
+                             f"(found {never[0]})")
+        from .tuples import find_tuples
+        tuples = find_tuples(self.program)
+        if tuples:
+            raise ForgeError(f"wasm: tuples are not supported in v1 "
+                             f"(found {tuples[0]})")
+        from .ranges import find_ranges
+        ranges = find_ranges(self.program)
+        if ranges:
+            raise ForgeError("wasm: ranges are not supported in v1 "
+                             "(found range)")
+        from .defers import find_defers
+        if find_defers(self.program):
+            raise ForgeError("wasm: defer is not supported in v1")
         # Validate signatures first, so errors are Forge errors, not bad binaries.
         for fn in self.funcs:
             if not is_wasm_type(fn.ret) and fn.ret != "void":
@@ -687,6 +732,14 @@ class WasmGen:
                 raise ForgeError("wasm: break outside a loop", stmt.line, stmt.col)
             rel = self.wasm_label_depth - self.wasm_loop_exits[-1]
             return b"\x0c" + uleb(rel)  # br to the loop's enclosing block
+        if isinstance(stmt, A.Continue):
+            if not self.wasm_loop_exits:
+                raise ForgeError("wasm: continue outside a loop", stmt.line, stmt.col)
+            # The loop itself sits one label inside its enclosing
+            # block, so branching to it re-runs the condition check
+            # at the loop head (the check lives inside the loop).
+            rel = self.wasm_label_depth - (self.wasm_loop_exits[-1] + 1)
+            return b"\x0c" + uleb(rel)  # br to the loop head
         if isinstance(stmt, A.While):
             # block { loop { if !cond br 1; body; br 0 } }
             out = b"\x02\x40\x03\x40"
@@ -744,6 +797,9 @@ class WasmGen:
         raise ForgeError(f"wasm: statement {type(stmt).__name__} is not supported in v1")
 
     def gen_expr(self, expr):
+        if isinstance(expr, A.MethodCall):
+            raise ForgeError("wasm: trait method calls are not supported "
+                             "in v1", expr.line, expr.col)
         if isinstance(expr, A.IntLit):
             return b"\x42" + sleb(int(expr.value))
         if isinstance(expr, A.FloatLit):
@@ -897,6 +953,15 @@ class WasmGen:
             if expr.name in ("csr_read", "csr_write", "csr_set", "csr_clear", "ecall", "ecall3"):
                 raise ForgeError(f"wasm: {expr.name}() needs RISC-V CSRs/ecall "
                                  f"(big32 target only)")
+            if expr.name in ("wrapping_add", "wrapping_sub", "wrapping_mul"):
+                # i64 arithmetic wraps by spec in WASM.
+                op = {"wrapping_add": b"\x7c", "wrapping_sub": b"\x7d",
+                      "wrapping_mul": b"\x7e"}[expr.name]
+                return (self.gen_expr(expr.args[0]) +
+                        self.gen_expr(expr.args[1]) + op)
+            if expr.name == "wrapping_neg":
+                # No i64.neg opcode: 0 - x.
+                return (b"\x42\x00" + self.gen_expr(expr.args[0]) + b"\x7d")
             if expr.name not in self.func_index:
                 raise ForgeError(f"wasm: call to '{expr.name}' is not supported in v1 "
                                  f"(builtins, structs, and enums are out)")

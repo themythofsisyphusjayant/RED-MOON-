@@ -1,0 +1,12 @@
+import "plot.fg";
+
+fn main() {
+    let vals = [3, 7, 2, 9];
+    println(plot_max(vals));
+    println(plot_scale(7, 9, 90));
+    println(plot_bar_svg(vals, 100, 90));
+    let xs = [0, 10, 20, 30];
+    let ys = [80, 40, 60, 10];
+    println(plot_line_svg(xs, ys, 40, 90));
+    println(plot_scatter_svg(xs, ys, 40, 90));
+}

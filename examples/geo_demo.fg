@@ -1,0 +1,12 @@
+import "geo.fg";
+
+fn main() {
+    // Delhi (28.6139, 77.2090) to Mumbai (19.0760, 72.8777): ~1148 km.
+    let d = geo_haversine_km(28.6139, 77.2090, 19.0760, 72.8777);
+    println(d);
+    println(d > 1140.0);
+    println(d < 1160.0);
+    println(geo_haversine_km(28.6139, 77.2090, 28.6139, 77.2090));
+    println(geo_in_box(28.6, 77.2, 28.0, 29.0, 77.0, 78.0));
+    println(geo_in_box(19.0, 72.8, 28.0, 29.0, 77.0, 78.0));
+}

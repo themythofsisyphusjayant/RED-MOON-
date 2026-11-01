@@ -53,10 +53,17 @@ def load_program(path, seen=None):
     # code to the main file.
     for fn in prog.funcs:
         fn.file = real
+    for idf in (prog.impls or []):
+        for m in idf.methods:
+            m.file = real
     base = os.path.dirname(real)
     all_funcs = list(prog.funcs)
     all_structs = list(prog.structs or [])
     all_enums = list(prog.enums or [])
+    all_traits = list(prog.traits or [])
+    all_impls = list(prog.impls or [])
+    all_aliases = list(prog.aliases or [])
+    all_newtypes = list(prog.newtypes or [])
     for imp in prog.imports:
         candidates = [
             os.path.join(base, imp),
@@ -71,7 +78,12 @@ def load_program(path, seen=None):
         all_funcs.extend(sub.funcs)
         all_structs.extend(sub.structs or [])
         all_enums.extend(sub.enums or [])
-    return A.Program([], all_funcs, all_structs, all_enums)
+        all_traits.extend(sub.traits or [])
+        all_impls.extend(sub.impls or [])
+        all_aliases.extend(sub.aliases or [])
+        all_newtypes.extend(sub.newtypes or [])
+    return A.Program([], all_funcs, all_structs, all_enums,
+                     all_traits, all_impls, all_aliases, all_newtypes)
 
 
 def compile_source(source, mode="safe", freestanding=False):

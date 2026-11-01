@@ -50,11 +50,20 @@ def fmt_expr(expr, parent_prec=0):
         return expr.name
     if isinstance(expr, A.ArrayLit):
         return "[" + ", ".join(fmt_expr(e) for e in expr.elems) + "]"
+    if isinstance(expr, A.TupleLit):
+        return "(" + ", ".join(fmt_expr(e) for e in expr.elems) + ")"
     if isinstance(expr, A.StructLit):
         inner = ", ".join(f"{f}: {fmt_expr(e)}" for f, e in expr.fields)
         return f"{expr.name} {{ {inner} }}" if inner else f"{expr.name} {{}}"
     if isinstance(expr, A.FieldAccess):
         return f"{fmt_expr(expr.base, 99)}.{expr.field}"
+    if isinstance(expr, A.TupleIndex):
+        return f"{fmt_expr(expr.base, 99)}.{expr.index}"
+    if isinstance(expr, A.RangeLit):
+        return f"{fmt_expr(expr.start, 99)}..{fmt_expr(expr.end, 99)}"
+    if isinstance(expr, A.MethodCall):
+        return (f"{fmt_expr(expr.base, 99)}.{expr.method}"
+                f"({', '.join(fmt_expr(a) for a in expr.args)})")
     if isinstance(expr, A.Index):
         return f"{fmt_expr(expr.base, 99)}[{fmt_expr(expr.index)}]"
     if isinstance(expr, A.Cast):
@@ -104,6 +113,34 @@ class Formatter:
                 pt = payloads.get(v)
                 parts.append(f"{v}({pt})" if pt is not None else v)
             self.emit(0, f"enum {ed.name}{tp} {{ {', '.join(parts)} }}")
+            self.emit(0)
+        for td in (getattr(prog, "traits", None) or []):
+            self.emit(0, f"trait {td.name} {{")
+            for (mname, params, ret, _ml, _mc) in td.methods:
+                ps = ", ".join(f"{n}: {t}" for n, t in params)
+                rs = f" -> {ret}" if ret != "void" else ""
+                self.emit(1, f"fn {mname}({ps}){rs};")
+            self.emit(0, "}")
+            self.emit(0)
+        for idf in (getattr(prog, "impls", None) or []):
+            head = (f"impl {idf.trait} for {idf.struct} {{"
+                    if idf.trait is not None else f"impl {idf.struct} {{")
+            self.emit(0, head)
+            for i, fn in enumerate(idf.methods):
+                params = ", ".join(f"{n}: {t}" for n, t in fn.params)
+                ret = f" -> {fn.ret}" if fn.ret != "void" else ""
+                self.emit(1, f"fn {fn.name}({params}){ret} {{")
+                self.fmt_block(fn.body, 2)
+                self.emit(1, "}")
+                if i < len(idf.methods) - 1:
+                    self.emit(1)
+            self.emit(0, "}")
+            self.emit(0)
+        for ad in (getattr(prog, "aliases", None) or []):
+            self.emit(0, f"type {ad.name} = {ad.target};")
+            self.emit(0)
+        for nd in (getattr(prog, "newtypes", None) or []):
+            self.emit(0, f"newtype {nd.name} = {nd.target};")
             self.emit(0)
         for i, fn in enumerate(prog.funcs):
             params = ", ".join(f"{n}: {t}" for n, t in fn.params)
@@ -158,6 +195,9 @@ class Formatter:
         if isinstance(stmt, A.Spawn):
             self.emit(indent, f"spawn {fmt_expr(stmt.call)};")
             return
+        if isinstance(stmt, A.Defer):
+            self.emit(indent, f"defer {fmt_expr(stmt.call)};")
+            return
         if isinstance(stmt, A.Scope):
             self.emit(indent, "scope {")
             self.fmt_block(stmt.body, indent + 1)
@@ -195,6 +235,9 @@ class Formatter:
             return
         if isinstance(stmt, A.Break):
             self.emit(indent, "break;")
+            return
+        if isinstance(stmt, A.Continue):
+            self.emit(indent, "continue;")
             return
         if isinstance(stmt, A.Return):
             if stmt.expr is None:
