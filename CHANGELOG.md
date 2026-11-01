@@ -8,6 +8,37 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Fix: type aliases inside sized-array spellings
+  now expand (the batch-12 gap: "[N; 3]" reached
+  later passes unexpanded and failed as an unknown
+  field type; expand_aliases now expands the
+  element part and keeps the literal length).
+- Fix: nested empty array literals now work
+  (`let x: [[int]] = [[]];`, mixed `[[], [1]]`,
+  call args, assignment, tuples): the checker
+  accepts types up to `[?]` holes in
+  dynamic-array/tuple positions (never sized),
+  and infer fills literal types from context so
+  codegen never sees a hole. Bare holes and
+  genuine mismatches still error.
+- Fix: nested arrays as struct fields now work
+  (`[[int]]` and `[Point]` fields): the typedefs
+  were collected but emitted after the struct
+  bodies, which hold array fields by value — the
+  typedef lines now precede composite bodies
+  (helpers still follow the bodies). Enum payload
+  structs with nested-array payloads remain a
+  documented residual.
+- Fix: push to a shared nested array now
+  copies-on-write (the batch-18 gap: the inline
+  nested-array push path realloced the shared
+  buffer in place, dangling the other holders and
+  double-freeing at scope exit — reproduced as a
+  tcache double free; the path now detaches first
+  like the scalar push helpers, copying slots and
+  gaining an inner reference each, so the free
+  counts stay exact. Inner arrays stay shared by
+  reference, as elsewhere).
 - Top-500 batch 1: binary/octal literals and digit separators
   (0b1010, 0o777, 1_000; malformed literals are compile errors)
   and the `continue` statement (native, big32, WASM, formatter;
@@ -114,6 +145,42 @@ without a major version bump (see docs/STABILITY.md).
   reports the current array while alive and
   (false, []) after the last strong holder
   drops.
+- Top-500 batch 21: move semantics v1 —
+  move(a) transfers the one hold instead of
+  copying; the source is dead afterwards and
+  any later use is a checker error.
+- Top-500 batch 22: copy-on-write arrays v1,
+  opt-in — stdlib/cow.fg: a Cow shares its
+  buffer until a write (shared writer gets a
+  private copy, sole holder writes in place).
+  Marked partial: language-default CoW needs
+  an explicit decision (it would break Rc's
+  shared mutation).
+- Top-500 batch 23: stack-allocated slices v1
+  — stdlib/slice.fg: a stack header over an
+  existing array's buffer, no copy, writes
+  through, slicing composes.
+- Top-500 batch 24: lifetime-ordered placement
+  v1 — stdlib/lifetime.fg: shorts from the
+  front, longs from the back, one reset frees
+  all shorts while longs survive.
+- Top-500 batch 25: memory-mapped files v1 —
+  a runtime mmap table: open/get/set/close,
+  writes land in the file itself. Also fixed
+  two real leaks the demo exposed (read_bytes
+  freshness, write_bytes param consumption).
+- Top-500 batch 26: allocator-aware collections
+  v1 — AVec over the #22 Allocator (one element
+  per slot; bump stays exhausted after a pop,
+  freelist reuses the freed slot; OOM is a
+  value). Pure Jal Pari. Maps are the next
+  slice, so #32 lands PARTIAL.
+- Top-500 batch 27: destructor hooks v1 — a
+  `drop` method runs when an owned binding dies
+  (block/function end, return, break), before
+  the free, via an owned copy; the receiver
+  parameter itself never hooks (else infinite
+  recursion). Native only.
 
 ## 1.3.0 — 31 Oct 2026
 

@@ -1,0 +1,18 @@
+// Top-500 #28: copy-on-write arrays v1 demo.
+// A shared Cow's writer gets a private copy (the
+// original is unchanged); plain arrays still share.
+
+import "cow.fg";
+
+fn main() {
+  let c = cow_new([1, 2]);
+  let d = c;
+  let e = cow_set(d, 0, 99);
+  println(cow_get(c, 0));
+  println(cow_get(e, 0));
+  println(cow_len(e));
+  let a = [1, 2];
+  let mut b = a;
+  b[0] = 77;
+  println(a[0]);
+}

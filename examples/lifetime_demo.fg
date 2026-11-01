@@ -1,0 +1,27 @@
+// Top-500 #30: lifetime-ordered placement v1 demo.
+// Short allocations bump from the front, long ones
+// from the back; one reset frees all shorts, and the
+// long values survive untouched.
+
+import "lifetime.fg";
+
+fn main() {
+  let a0 = life_new(8);
+  let r1 = life_alloc_short(a0, 10);
+  let s0 = r1.0;
+  let a1 = r1.1;
+  let r2 = life_alloc_long(a1, 20);
+  let l0 = r2.0;
+  let a2 = r2.1;
+  let r3 = life_alloc_short(a2, 11);
+  let a3 = r3.1;
+  println(life_get(a3, s0));
+  println(life_get(a3, l0));
+  let a4 = life_reset_short(a3);
+  println(life_get(a4, l0));
+  let r4 = life_alloc_short(a4, 30);
+  let s2 = r4.0;
+  let a5 = r4.1;
+  println(life_get(a5, s2));
+  println(life_get(a5, l0));
+}

@@ -1,0 +1,34 @@
+struct Cow {
+    data: [int];
+}
+
+fn cow_new(data: [int]) -> Cow {
+    let c: Cow = Cow { data: data };
+    return c;
+}
+
+fn cow_get(c: Cow, i: int) -> int {
+    return c.data[i];
+}
+
+fn cow_set(c: Cow, i: int, v: int) -> Cow {
+    let shared = refcount(c.data) > 2;
+    let mut m = c;
+    let mut d = m.data;
+    if shared {
+        let mut nd: [int] = [];
+        let mut j = 0;
+        while j < len(d) {
+            push(nd, d[j]);
+            j = j + 1;
+        }
+        d = nd;
+    }
+    d[i] = v;
+    m.data = d;
+    return m;
+}
+
+fn cow_len(c: Cow) -> int {
+    return len(c.data);
+}

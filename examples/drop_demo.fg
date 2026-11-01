@@ -1,0 +1,34 @@
+struct Guard {
+    id: int;
+}
+
+struct Bag {
+    items: [int];
+}
+
+impl Guard {
+    fn drop(g: Guard) {
+        println("dropped");
+        println(g.id);
+    }
+}
+
+impl Bag {
+    fn drop(b: Bag) {
+        println(len(b.items));
+    }
+}
+
+fn main() {
+    println("before");
+    {
+        let g = Guard { id: 7 };
+        println("inside");
+    }
+    println("after");
+    {
+        let b = Bag { items: [10, 20, 30] };
+        println("bag inside");
+    }
+    println("done");
+}

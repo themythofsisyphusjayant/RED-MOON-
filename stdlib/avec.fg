@@ -1,0 +1,69 @@
+import "allocator.fg";
+
+struct AVec {
+    alloc: Allocator;
+    slots: [int];
+}
+
+fn avec_new(alloc: Allocator) -> AVec {
+    let v: AVec = AVec { alloc: alloc, slots: [] };
+    return v;
+}
+
+fn avec_len(v: AVec) -> int {
+    return len(v.slots);
+}
+
+fn avec_push(v: AVec, x: int) -> (bool, AVec) {
+    let mut m = v;
+    let r = allocator_alloc(m.alloc);
+    let addr: int = r.0;
+    if addr == -1 {
+        return (false, m);
+    }
+    let mut al = r.1;
+    al.mem[addr] = x;
+    m.alloc = al;
+    let mut slots = m.slots;
+    push(slots, addr);
+    m.slots = slots;
+    return (true, m);
+}
+
+fn avec_get(v: AVec, i: int) -> int {
+    if i < 0 || i >= len(v.slots) {
+        fail("avec index out of bounds");
+    }
+    return v.alloc.mem[v.slots[i]];
+}
+
+fn avec_set(v: AVec, i: int, x: int) -> AVec {
+    if i < 0 || i >= len(v.slots) {
+        fail("avec index out of bounds");
+    }
+    let mut m = v;
+    let mut al = m.alloc;
+    let addr: int = m.slots[i];
+    al.mem[addr] = x;
+    m.alloc = al;
+    return m;
+}
+
+fn avec_pop(v: AVec) -> (int, bool, AVec) {
+    if len(v.slots) == 0 {
+        return (0, false, v);
+    }
+    let mut m = v;
+    let last: int = len(m.slots) - 1;
+    let addr: int = m.slots[last];
+    let val: int = m.alloc.mem[addr];
+    m.alloc = allocator_free(m.alloc, addr);
+    let mut slots: [int] = [];
+    let mut i: int = 0;
+    while i < last {
+        push(slots, m.slots[i]);
+        i = i + 1;
+    }
+    m.slots = slots;
+    return (val, true, m);
+}

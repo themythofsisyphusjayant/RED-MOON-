@@ -38,6 +38,35 @@ def type_matches(value, expected):
         return True
     return is_union_type(expected) and value in union_members(expected)
 
+
+def matches_up_to_unknown(value, expected):
+    """Value type matches expected where empty literals leave holes.
+
+    An empty array literal has no element type of its own, so
+    checking it yields `[?]`; nested, that becomes `[[?]]` and so
+    on. A hole matches any expected type in the same position,
+    except a sized array (an empty literal has 0 elements, never
+    the sized length) — so `[[?]]` is a valid `[[int]]` but not a
+    valid `[[int; 2]]`. Holes only count inside array/tuple
+    positions: a bare `?` never matches, so generic `?`
+    placeholders are untouched.
+    """
+    if value == expected:
+        return True
+    if (value.startswith("[") and value.endswith("]")
+            and expected.startswith("[") and expected.endswith("]")):
+        if is_sized_array(value) or is_sized_array(expected):
+            return False
+        return matches_up_to_unknown(value[1:-1], expected[1:-1])
+    if is_tuple_type(value) and is_tuple_type(expected):
+        ve, ee = tuple_elems(value), tuple_elems(expected)
+        return (len(ve) == len(ee)
+                and all(matches_up_to_unknown(v, e)
+                        for v, e in zip(ve, ee)))
+    if value == "?":
+        return True
+    return False
+
 SCALARS = {"int", "float", "bool", "str", "range",
            "i8", "i16", "i32", "u8", "u16", "u32", "u64", "never"}
 # C keywords that are not Jal Pari keywords: user names colliding
@@ -51,6 +80,7 @@ C_KEYWORDS = {"auto", "case", "char", "const", "continue", "default",
               "static", "switch", "typedef", "union", "unsigned",
               "void", "volatile", "_Bool", "_Complex", "_Imaginary"}
 STMT_BUILTINS = {"print", "println", "push", "fail", "assert", "poke32",
+                 "mmap_set", "mmap_close",
                  "csr_write", "csr_set", "csr_clear"}
 EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
@@ -62,7 +92,8 @@ EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "a
                  "alloc_count", "free_count",
                  "parallel_dot", "parallel_matmul",
                  "arr_alloc_count", "arr_free_count", "refcount",
-                 "weak_new", "weak_upgrade",
+                 "weak_new", "weak_upgrade", "move",
+                 "mmap_open", "mmap_get",
                  "peek32", "csr_read", "ecall", "ecall3"}
 BUILTINS = STMT_BUILTINS | EXPR_BUILTINS
 
@@ -108,6 +139,8 @@ class Checker:
         self.current_fn = None
         self.current_type_params = []
         self.loop_depth = 0
+        self.branch_depth = 0
+        self.moved = set()
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
         self.struct_instantiations = {}  # concrete type -> {field: type}
         self._instantiating = set()
@@ -474,6 +507,16 @@ class Checker:
             from .tuples import is_tuple_type, tuple_elems
             if is_tuple_type(t):
                 return "(" + ", ".join(expand(e) for e in tuple_elems(t)) + ")"
+            from .sizedarrays import is_sized_array, sized_elem, sized_len
+            if is_sized_array(t):
+                # Sized arrays need their own branch: the plain
+                # "[...]" branch below would try to expand "N; 3"
+                # as one name, so an alias element survived
+                # unexpanded (the batch-12 gap: "[N; 3]" reached
+                # struct checking as an unknown field type). The
+                # length is a literal int in v1, kept as-is.
+                return (f"[{expand(sized_elem(t).strip())}; "
+                        f"{sized_len(t)}]")
             if t.startswith("[") and t.endswith("]"):
                 return "[" + expand(t[1:-1]) + "]"
             g = parse_generic(t)
@@ -604,6 +647,24 @@ class Checker:
                     raise ForgeError(f"first parameter of method '{m.name}' "
                                      f"must be the struct '{idf.struct}'",
                                      m.line, m.col)
+                if m.name == "drop":
+                    # Destructor hook (Top-500 #33): the hook is a
+                    # plain method the native backend calls when an
+                    # owned binding dies, so it must take only its
+                    # struct as receiver and return nothing. In
+                    # freestanding mode scope-end frees do not run,
+                    # so a hook would silently never fire — reject.
+                    if len(m.params) != 1:
+                        raise ForgeError("drop must take only its struct "
+                                         "as receiver", m.line, m.col)
+                    if m.ret != "void":
+                        raise ForgeError("drop must return void",
+                                         m.line, m.col)
+                    if self.freestanding:
+                        raise ForgeError("drop is not supported in "
+                                         "freestanding v1 (scope-end frees "
+                                         "do not run there)",
+                                         m.line, m.col)
                 if mangle(idf.struct, m.name) in free_names:
                     raise ForgeError(f"method '{m.name}' on '{idf.struct}' "
                                      f"collides with an existing function "
@@ -742,6 +803,11 @@ class Checker:
             if v is not None:
                 lo, hi = fixed_range(expected)
                 return lo <= v <= hi
+        # Empty-literal holes (Top-500 fix track): a value type
+        # carrying `[?]` holes matches the expected type where
+        # every hole sits in a dynamic-array/tuple position.
+        if value != "?" and matches_up_to_unknown(value, expected):
+            return True
         return False
 
     def _expr_diverges(self, e):
@@ -939,13 +1005,15 @@ class Checker:
         # in the middle of checking another function (a call site), and
         # must not wipe that function's scopes/return type.
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
-                 self.loop_depth, self.unresolved)
+                 self.loop_depth, self.branch_depth, self.moved, self.unresolved)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
                                  f"function name; rename it", fn.line, fn.col)
             self.current_type_params = list(getattr(fn, "type_params", None) or [])
             self.loop_depth = 0
+            self.branch_depth = 0
+            self.moved = set()
             for pn, pt in fn.params:
                 if pn in C_KEYWORDS:
                     raise ForgeError(f"'{pn}' is a C keyword and cannot be used as a "
@@ -999,7 +1067,7 @@ class Checker:
                                          fn.line, fn.col)
         finally:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
-                self.loop_depth, self.unresolved = saved
+                self.loop_depth, self.branch_depth, self.moved, self.unresolved = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -1189,7 +1257,11 @@ class Checker:
                         if binding is not None:
                             raise ForgeError("wildcard arm cannot bind a value",
                                              stmt.line, stmt.col)
-                        self.check_block(body)
+                        self.branch_depth += 1
+                        try:
+                            self.check_block(body)
+                        finally:
+                            self.branch_depth -= 1
                         continue
                     if pat not in member_set:
                         raise ForgeError(f"'{pat}' is not a member of union '{et}'",
@@ -1204,7 +1276,11 @@ class Checker:
                                          stmt.line, stmt.col)
                     self.scopes.append({binding: (pat, False)})
                     try:
-                        self.check_block(body)
+                        self.branch_depth += 1
+                        try:
+                            self.check_block(body)
+                        finally:
+                            self.branch_depth -= 1
                     finally:
                         self.scopes.pop()
                 if not has_wildcard and seen != member_set:
@@ -1228,7 +1304,11 @@ class Checker:
                                          stmt.line, stmt.col)
                     if binding is not None:
                         raise ForgeError("wildcard arm cannot bind a value", stmt.line, stmt.col)
-                    self.check_block(body)
+                    self.branch_depth += 1
+                    try:
+                        self.check_block(body)
+                    finally:
+                        self.branch_depth -= 1
                     continue
                 if pat not in variants:
                     raise ForgeError(f"'{pat}' is not a variant of enum '{et}'"
@@ -1248,11 +1328,19 @@ class Checker:
                     # Check the arm body with the binding in scope.
                     self.scopes.append({binding: (payload_type, False)})
                     try:
-                        self.check_block(body)
+                        self.branch_depth += 1
+                        try:
+                            self.check_block(body)
+                        finally:
+                            self.branch_depth -= 1
                     finally:
                         self.scopes.pop()
                 else:
-                    self.check_block(body)
+                    self.branch_depth += 1
+                    try:
+                        self.check_block(body)
+                    finally:
+                        self.branch_depth -= 1
             if not has_wildcard and seen != variants:
                 missing = sorted(variants - seen)
                 raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
@@ -1291,9 +1379,13 @@ class Checker:
         if isinstance(stmt, A.If):
             if self.check_expr(stmt.cond) != "bool":
                 raise ForgeError("if condition must be bool", stmt.line, stmt.col)
-            self.check_block(stmt.then)
-            if stmt.els is not None:
-                self.check_block(stmt.els)
+            self.branch_depth += 1
+            try:
+                self.check_block(stmt.then)
+                if stmt.els is not None:
+                    self.check_block(stmt.els)
+            finally:
+                self.branch_depth -= 1
             return
         if isinstance(stmt, A.While):
             if self.check_expr(stmt.cond) != "bool":
@@ -1412,6 +1504,24 @@ class Checker:
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
                 raise ForgeError("fail() takes exactly one str argument", call.line, call.col)
             return
+        if call.name == "mmap_set":
+            if self.freestanding:
+                raise ForgeError("mmap needs the hosted runtime (not in freestanding v1)",
+                                 call.line, call.col)
+            if len(call.args) != 3:
+                raise ForgeError("mmap_set() takes a mapping id, an index, and a byte value",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("mmap_set() arguments must be int", call.line, call.col)
+            return
+        if call.name == "mmap_close":
+            if self.freestanding:
+                raise ForgeError("mmap needs the hosted runtime (not in freestanding v1)",
+                                 call.line, call.col)
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
+                raise ForgeError("mmap_close() takes a mapping id (int)", call.line, call.col)
+            return
         if call.name == "push":
             if len(call.args) != 2 or not isinstance(call.args[0], (A.Var, A.FieldAccess)):
                 raise ForgeError("push() takes a variable or field and a value", call.line, call.col)
@@ -1471,15 +1581,27 @@ class Checker:
         if isinstance(expr, A.BoolLit):
             return "bool"
         if isinstance(expr, A.Var):
+            if expr.name in self.moved:
+                raise ForgeError(f"use of moved value '{expr.name}'", expr.line, expr.col)
             return self.lookup(expr.name, expr.line, expr.col)[0]
         if isinstance(expr, A.ArrayLit):
             if not expr.elems:
                 return "[?]"
             t0 = self.check_expr(expr.elems[0])
             for e in expr.elems[1:]:
-                if self.check_expr(e) != t0:
-                    raise ForgeError("array literal elements must all have the same type",
-                                     e.line, e.col)
+                te = self.check_expr(e)
+                if te == t0:
+                    continue
+                # Empty-literal holes unify with a concrete
+                # sibling type (either direction); anything else
+                # is still a genuine element-type mismatch.
+                if matches_up_to_unknown(te, t0):
+                    continue
+                if matches_up_to_unknown(t0, te):
+                    t0 = te
+                    continue
+                raise ForgeError("array literal elements must all have the same type",
+                                 e.line, e.col)
             return f"[{t0}]"
         if isinstance(expr, A.TupleLit):
             # Heterogeneous by design: each element keeps its own
@@ -1679,6 +1801,7 @@ class Checker:
         if self.freestanding and call.name in (
                 "read_file", "write_file", "read_bytes", "write_bytes",
                 "file_exists", "read_line",
+                "mmap_open", "mmap_get",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
                 "clock_micros", "args", "parallel_dot", "parallel_matmul",
@@ -1742,6 +1865,33 @@ class Checker:
             if self.check_expr(call.args[0]) != "int":
                 raise ForgeError("weak_upgrade() takes a weak id (int)", call.line, call.col)
             return "(bool, [int])"
+        if call.name == "move":
+            if len(call.args) != 1:
+                raise ForgeError("move() takes exactly one argument", call.line, call.col)
+            arg = call.args[0]
+            if not isinstance(arg, A.Var):
+                raise ForgeError("move needs a variable", call.line, call.col)
+            if self.loop_depth > 0 or self.branch_depth > 0:
+                raise ForgeError("move inside a branch or loop is not supported in v1; "
+                                 "move in straight-line code", call.line, call.col)
+            t = self.check_expr(arg)
+            if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
+                    or t in self.structs or t in self.struct_instantiations):
+                raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
+                                 f"got {t}", call.line, call.col)
+            self.moved.add(arg.name)
+            return t
+        if call.name == "mmap_open":
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("mmap_open() takes a file path (str)", call.line, call.col)
+            return "int"
+        if call.name == "mmap_get":
+            if len(call.args) != 2:
+                raise ForgeError("mmap_get() takes a mapping id and an index", call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("mmap_get() arguments must be int", call.line, call.col)
+            return "int"
         if call.name == "range":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
                 raise ForgeError("range() takes exactly one int argument", call.line, call.col)

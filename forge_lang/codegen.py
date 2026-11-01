@@ -386,14 +386,82 @@ static ForgeIntArray forge_read_bytes(const char *path) {
 
 static bool forge_write_bytes(const char *path, ForgeIntArray data) {
     FILE *f = fopen(path, "wb");
-    if (!f) return false;
+    if (!f) { forge_int_array_free(data); return false; }
+    bool ok = true;
     for (long long i = 0; i < data.len; i++) {
         unsigned char byte = (unsigned char)(data.data[i] & 0xFF);
-        if (fwrite(&byte, 1, 1, f) != 1) { fclose(f); return false; }
+        if (fwrite(&byte, 1, 1, f) != 1) { ok = false; break; }
     }
     fclose(f);
-    return true;
+    /* Consume the param hold (mirrors Jal Pari fn params,
+       which are freed at fn end): a fresh literal's hold
+       is freed here, a shared array's param hold is just
+       dec'd and the caller's hold survives. Without this,
+       every write_bytes call leaked its input array. */
+    forge_int_array_free(data);
+    return ok;
 }
+
+/* Memory-mapped files (Top-500 #31): a runtime table
+   of mappings, keyed by an int id (Jal Pari has no
+   pointer type, so the mapping cannot be an array
+   value — array frees call free(), which would
+   corrupt mmap'd memory). Writes go through
+   MAP_SHARED into the file; close munmaps (which
+   flushes). The table itself is never freed (one
+   entry per mmap_open, no user data) — the same
+   documented limit as the weak table. */
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+typedef struct { void *ptr; long long len; int fd; int alive; } ForgeMmapEntry;
+static ForgeMmapEntry *forge_mmap_table = NULL;
+static long long forge_mmap_len = 0;
+static long long forge_mmap_cap = 0;
+static long long forge_mmap_open(const char *path) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) forge_fail("mmap: cannot open file");
+    struct stat st;
+    if (fstat(fd, &st) != 0) { close(fd); forge_fail("mmap: cannot stat file"); }
+    if (st.st_size == 0) { close(fd); forge_fail("mmap: cannot map an empty file"); }
+    void *ptr = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) { close(fd); forge_fail("mmap: mapping failed"); }
+    if (forge_mmap_len >= forge_mmap_cap) {
+        long long nc = forge_mmap_cap ? forge_mmap_cap * 2 : 8;
+        ForgeMmapEntry *nt = (ForgeMmapEntry *)realloc(forge_mmap_table, sizeof(ForgeMmapEntry) * (size_t)nc);
+        if (!nt) { munmap(ptr, (size_t)st.st_size); close(fd); forge_fail("out of memory"); }
+        forge_mmap_table = nt; forge_mmap_cap = nc;
+    }
+    ForgeMmapEntry *e = &forge_mmap_table[forge_mmap_len];
+    e->ptr = ptr; e->len = (long long)st.st_size; e->fd = fd; e->alive = 1;
+    return forge_mmap_len++;
+}
+static long long forge_mmap_get(long long id, long long i) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds");
+    return (long long)((unsigned char *)e->ptr)[i];
+}
+static void forge_mmap_set(long long id, long long i, long long v) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds");
+    ((unsigned char *)e->ptr)[i] = (unsigned char)(v & 0xFF);
+}
+static void forge_mmap_close(long long id) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: already closed");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    munmap(e->ptr, (size_t)e->len);
+    close(e->fd);
+    e->alive = 0;
+}
+#else
+static long long forge_mmap_open(const char *path) { (void)path; forge_fail("mmap is not supported on Windows in v1"); return -1; }
+static long long forge_mmap_get(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1"); return 0; }
+static void forge_mmap_set(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1"); }
+static void forge_mmap_close(long long id) { (void)id; forge_fail("mmap is not supported on Windows in v1"); }
+#endif
 
 static double forge_parse_float(const char *s) {
     char *end = NULL;
@@ -1072,6 +1140,18 @@ class Codegen:
     def owned_add(self, name, typ="str"):
         self.owned_stack[-1][name] = typ
 
+    def owned_forget(self, name):
+        """Drop a variable from ownership tracking: its hold moved
+        elsewhere, so scope-end frees must skip it. v1 only allows
+        moves in straight-line code (the checker rejects moves in
+        branches and loops), so the forget always executes before
+        any later free of that frame — no path can free a hold
+        that already moved, or leak one that never did."""
+        for s in reversed(self.owned_stack):
+            if name in s:
+                del s[name]
+                return
+
     def owned_contains(self, name):
         return any(name in s for s in reversed(self.owned_stack))
 
@@ -1306,6 +1386,73 @@ class Codegen:
                     out.append((name, typ))
         return out
 
+    def drop_hook_name(self, typ):
+        """Mangled drop-hook name for a struct type, or None.
+
+        The hook fires only when the struct's whole field tree
+        is ownable by struct_own_code (scalars, str, arrays,
+        structs, tuples — no union/opaque field anywhere):
+        struct_own_code does not own union/opaque payloads
+        while struct_free_code DOES free them, so hooking
+        such a struct could double-free the caller's payload.
+        Generics are skipped in v1. The checker already
+        enforces the drop signature (one receiver param,
+        void return); codegen re-checks it defensively.
+        """
+        resolved = self.resolve_newtype(typ)
+        if "<" in resolved:
+            return None
+        fname = f"{resolved}__drop"
+        params = self.func_params.get(fname)
+        if params is None or len(params) != 1 or params[0][1] != resolved:
+            return None
+        if self.func_ret.get(fname) != "void":
+            return None
+        from .tuples import tuple_elems, is_tuple_type
+        seen = set()
+
+        def ownable(t):
+            if t in ("int", "float", "bool", "str"):
+                return True
+            if is_union_type(t) or is_opaque_type(t):
+                return False
+            if is_tuple_type(t):
+                return all(ownable(e) for e in tuple_elems(t))
+            if self.is_array_type(t):
+                inner = t[1:-1]
+                return ownable(inner)
+            if self.is_struct_type(t):
+                name = self.struct_type_name(t)
+                if name in seen:
+                    return True
+                seen.add(name)
+                return all(ownable(ft)
+                           for ft in self.structs.get(name, {}).values())
+            return False
+
+        if not ownable(resolved):
+            return None
+        return fname
+
+    def emit_drop_hook(self, name, typ):
+        """Call Struct__drop on an independently owned copy of
+        `name` before it is freed (Top-500 #33). The copy
+        pattern is the proven call-arg one: str fields are
+        deep-copied, array refs inc'd, so the callee's
+        param free on return balances the incs here, and
+        the original's free afterwards is untouched.
+        """
+        fname = self.drop_hook_name(typ)
+        if fname is None:
+            return
+        resolved = self.resolve_newtype(typ)
+        self.assign_counter += 1
+        n = self.assign_counter
+        tmp = f"__forge_drop{n}"
+        own = self.struct_own_code(tmp, resolved)
+        self.emit(f"{{ {c_type(resolved)} {tmp} = {name}; {own} "
+                  f"{fname}({tmp}); }}")
+
     def _emit_free_one(self, name, typ):
         if typ == "str":
             self.emit(f"forge_free_str({name});")
@@ -1320,6 +1467,12 @@ class Codegen:
         elif self.is_array_type(typ):
             self.emit(self.array_free_code(name, typ))
         elif self.is_struct_type(typ):
+            # Destructor hook first: fields must still be alive
+            # when drop reads them (Top-500 #33). Never for the
+            # drop method's own receiver parameter — that would
+            # recurse forever (see gen_func's drop_receiver).
+            if getattr(self, "drop_receiver", None) != name:
+                self.emit_drop_hook(name, typ)
             self.emit_struct_free(name, typ)
 
     def emit_free_owned(self):
@@ -1567,6 +1720,11 @@ class Codegen:
             rt = self.func_ret.get(mangled)
             return bool(rt and self.is_struct_type(rt))
         if isinstance(expr, A.Call):
+            if expr.name == "move":
+                # A moved value transfers its hold: the receiving
+                # site must not inc it (see the move branch in
+                # gen_expr, which also forgets the source).
+                return True
             rt = self.func_ret.get(expr.name)
             if rt and self.is_struct_type(rt):
                 return True
@@ -1581,7 +1739,7 @@ class Codegen:
         if isinstance(expr, A.ArrayLit):
             return True
         if isinstance(expr, A.Call):
-            if expr.name in ("range", "split", "parallel_matmul", "args"):
+            if expr.name in ("range", "split", "parallel_matmul", "args", "move", "read_bytes"):
                 return True
             if self.func_ret.get(expr.name) and self.is_array_type(self.func_ret[expr.name]):
                 return True
@@ -1593,7 +1751,7 @@ class Codegen:
         (a user-function return, a str helper, or string concat),
         so taking it as-is does not leak or double-own."""
         if isinstance(expr, A.Call):
-            if expr.name in ("read_file", "read_line", "join", "substr", "trim", "http_get", "http_read_request"):
+            if expr.name in ("read_file", "read_line", "join", "substr", "trim", "http_get", "http_read_request", "move"):
                 return True
             if self.func_ret.get(expr.name) == "str" and not self.func_is_extern.get(expr.name):
                 return True
@@ -1841,6 +1999,32 @@ class Codegen:
             self.emit(f"typedef struct {tuple_c_name(tt)} {tuple_c_name(tt)};")
         for trait in opaque_traits:
             self.emit(f"typedef struct Opaque_{trait} Opaque_{trait};")
+        # Array typedefs before composite bodies (fix track:
+        # nested arrays as struct fields). A struct body holds
+        # array fields BY VALUE (ForgeArray_...), so their
+        # typedefs must precede the body — the old order emitted
+        # them after the bodies, and `[[int]]` (or `[Point]`)
+        # fields failed with "unknown type name". Per-struct
+        # array typedefs first (nested typedefs reference them),
+        # then nested array typedefs innermost-first. The
+        # per-struct helpers stay after the bodies (they access
+        # fields, so they need complete struct types); only the
+        # typedef lines move. All forward declarations above
+        # precede this block, so tuple/opaque element pointers
+        # are declared. Residual, documented: enum payload
+        # structs with nested-array payloads still need their
+        # typedef before the enum section, which precedes this
+        # block — that corner is not covered here.
+        for name in self.structs:
+            self.emit(f"typedef struct {{ {name} *data; long long len; long long cap; "
+                      f"long long *ref; }} ForgeArray_{name};")
+        nested_early = self.collect_nested_array_types()
+        from .sizedarrays import array_elem as _array_elem
+        for t in nested_early:
+            self.emit(f"typedef struct {{ {c_type(_array_elem(t))} *data; long long len; "
+                      f"long long cap; long long *ref; }} {c_type(t)};")
+        if self.structs or nested_early:
+            self.lines.append("")
         nodes = []
         for name, fields in self.structs.items():
             nodes.append(("struct", name, list(fields.values())))
@@ -1903,8 +2087,6 @@ class Codegen:
         # caller owns the value first, mirroring str push).
         for name in self.structs:
             arr_t = f"ForgeArray_{name}"
-            self.emit(f"typedef struct {{ {name} *data; long long len; long long cap; "
-                      f"long long *ref; }} {arr_t};")
             self.emit(f"static void forge_{name}_array_free({arr_t} a) {{")
             self.emit("    if (a.ref && --(*a.ref) == 0) {")
             self.emit("        for (long long i = 0; i < a.len; i++) {")
@@ -1943,15 +2125,6 @@ class Codegen:
             self.emit("    a->data[a->len++] = v;")
             self.emit("}")
         if self.structs:
-            self.lines.append("")
-        # Nested array types: one typedef per nesting level used,
-        # innermost first so each references only defined types.
-        nested = self.collect_nested_array_types()
-        from .sizedarrays import array_elem
-        for t in nested:
-            self.emit(f"typedef struct {{ {c_type(array_elem(t))} *data; long long len; "
-                      f"long long cap; long long *ref; }} {c_type(t)};")
-        if nested:
             self.lines.append("")
         for fn in self.program.funcs:
             if getattr(fn, "type_params", None):
@@ -2068,6 +2241,17 @@ class Codegen:
 
     def gen_func(self, fn):
         self.current_fn = fn.name
+        # Destructor hooks (Top-500 #33): a drop method's own
+        # receiver parameter must not hook on its return free,
+        # or the hook would call itself forever (the receiver
+        # is an owned param, so its death would re-enter drop).
+        # The free itself still runs; only the hook is skipped
+        # for this one name. Corner, documented: a local inside
+        # drop that shadows the receiver name also skips its
+        # hook — do not shadow the receiver name inside drop.
+        self.drop_receiver = (fn.params[0][0]
+                              if fn.name.endswith("__drop") and fn.params
+                              else None)
         self._check_cache = {}
         self._facts = {}
         self._let_stack = []
@@ -2121,6 +2305,7 @@ class Codegen:
         self.emit("}")
         self.lines.append("")
         self.current_fn = None
+        self.drop_receiver = None
         self.owned_stack = [{}]
         self.loop_frames = []
         self.defer_stack = [[]]
@@ -3133,6 +3318,32 @@ class Codegen:
                     self.assign_counter += 1
                     self.emit(f"{c_type(self.expr_type(call.args[0]))} *{ptr} = &{var_code};")
                     elem_c = c_type(et)
+                    # Copy-on-write (batch-18 gap): the scalar push
+                    # helpers detach a shared array before growing
+                    # it, but this inline path used to realloc the
+                    # shared buffer in place — dangling the other
+                    # holders and double-freeing at scope exit.
+                    # Detach first, mirroring FORGE_ARRAY_HELPERS:
+                    # fresh buffer, copy slots gaining an inner
+                    # reference each (the free path decrements one
+                    # per slot, so the inc keeps the counts exact),
+                    # drop this holder's count on the old buffer
+                    # without freeing it — the other holders still
+                    # own it.
+                    ocap = f"__forge_ocap{self.assign_counter}"
+                    self.assign_counter += 1
+                    nbuf = f"__forge_nbuf{self.assign_counter}"
+                    self.assign_counter += 1
+                    li = f"__forge_li{self.assign_counter}"
+                    self.assign_counter += 1
+                    self.emit(f"if ({ptr}->ref && *{ptr}->ref > 1) {{")
+                    self.emit(f"    long long {ocap} = {ptr}->cap ? {ptr}->cap : 4;")
+                    self.emit(f"    {elem_c} *{nbuf} = ({elem_c} *)malloc(sizeof({elem_c}) * (size_t){ocap});")
+                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\");")
+                    self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; forge_arr_inc({nbuf}[{li}].ref); }}")
+                    self.emit(f"    (*{ptr}->ref)--;")
+                    self.emit(f"    {ptr}->data = {nbuf}; {ptr}->cap = {ocap}; {ptr}->ref = forge_arr_ref_new();")
+                    self.emit("}")
                     ncap = f"__forge_ncap{self.assign_counter}"
                     self.assign_counter += 1
                     self.emit(f"if ({ptr}->len >= {ptr}->cap) {{")
@@ -3796,6 +4007,23 @@ class Codegen:
                 code = self.gen_expr(expr.args[0])
                 return (f"({{{c_type(at)} __forge_arg{n} = {code}; "
                         f"__forge_arg{n}.ref ? *__forge_arg{n}.ref : 0;}})")
+            if expr.name == "move":
+                # Transfer, not copy: forget the source's owned
+                # entry (scope-end frees skip it from here on)
+                # and emit the variable's value with no inc.
+                # The freshness helpers make the receiving
+                # Let/Assign/Call-arg/Return sites skip their
+                # inc too, so the hold arrives exactly once.
+                self.owned_forget(expr.args[0].name)
+                return self.gen_expr(expr.args[0])
+            if expr.name == "mmap_open":
+                return f"forge_mmap_open({self.gen_expr(expr.args[0])})"
+            if expr.name == "mmap_get":
+                return f"forge_mmap_get({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
+            if expr.name == "mmap_set":
+                return f"forge_mmap_set({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})"
+            if expr.name == "mmap_close":
+                return f"forge_mmap_close({self.gen_expr(expr.args[0])})"
             if expr.name == "weak_new":
                 # Register without gaining a holder: the weak
                 # must not keep the array alive.

@@ -1,0 +1,18 @@
+// Top-500 #29: stack-allocated slices v1 demo.
+// A slice is a view: no copy, writes through to the
+// original, and slicing a slice composes.
+
+import "slice.fg";
+
+fn main() {
+  let a = [10, 20, 30, 40];
+  let s = slice_of(a, 1, 2);
+  println(slice_get(s, 0));
+  println(slice_get(s, 1));
+  println(slice_len(s));
+  let s2 = slice_set(s, 0, 99);
+  println(a[1]);
+  println(slice_get(s2, 0));
+  let t = slice_sub(s, 1, 1);
+  println(slice_get(t, 0));
+}

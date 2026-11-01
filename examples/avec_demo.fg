@@ -1,0 +1,17 @@
+import "avec.fg";
+
+fn main() {
+    let b = avec_new(allocator_new(0, 2));
+    let p1 = avec_push(b, 10);
+    let p2 = avec_push(p1.1, 20);
+    let popped = avec_pop(p2.1);
+    let p3 = avec_push(popped.2, 30);
+    println(p3.0);
+    let f = avec_new(allocator_new(1, 2));
+    let q1 = avec_push(f, 10);
+    let q2 = avec_push(q1.1, 20);
+    let qpopped = avec_pop(q2.1);
+    let q3 = avec_push(qpopped.2, 30);
+    println(q3.0);
+    println(avec_get(q3.1, 1));
+}

@@ -62,24 +62,68 @@ class Infer:
             self.walk_stmt(stmt)
         self.scopes.pop()
 
+    def fill_lit(self, expr, expected):
+        """Set a literal's type from context, filling holes in
+        nested empty literals (fix track: nested empty array
+        literals). A nested `[]` under expected `[[int]]` gets
+        `[int]`, not `[?]`, so codegen never sees a hole type.
+        Only ArrayLit / TupleLit nodes recurse (only they can
+        carry `[?]` holes); every other element walks normally.
+        Sized expected types do not recurse: a sized literal's
+        elements are real values (empty-vs-sized is rejected
+        in the checker), so there is no hole to fill there."""
+        self.set(expr, expected)
+        if isinstance(expr, A.ArrayLit) and expr.elems:
+            if expected.startswith("[") and expected.endswith("]"):
+                from .sizedarrays import is_sized_array
+                if not is_sized_array(expected):
+                    elem = expected[1:-1]
+                    for e in expr.elems:
+                        if isinstance(e, (A.ArrayLit, A.TupleLit)):
+                            self.fill_lit(e, elem)
+                        else:
+                            self.walk_expr(e)
+                    return
+            for e in expr.elems:
+                self.walk_expr(e)
+        elif isinstance(expr, A.TupleLit) and expr.elems:
+            from .tuples import is_tuple_type, tuple_elems
+            if is_tuple_type(expected):
+                elems = tuple_elems(expected)
+                if len(elems) == len(expr.elems):
+                    for e, et in zip(expr.elems, elems):
+                        if isinstance(e, (A.ArrayLit, A.TupleLit)):
+                            self.fill_lit(e, et)
+                        else:
+                            self.walk_expr(e)
+                    return
+            for e in expr.elems:
+                self.walk_expr(e)
+
     def walk_stmt(self, stmt):
         if isinstance(stmt, A.Block):
             self.walk_block(stmt)
         elif isinstance(stmt, A.Scope):
             self.walk_block(stmt.body)
         elif isinstance(stmt, A.Let):
-            if isinstance(stmt.expr, A.ArrayLit) and stmt.ann:
+            if isinstance(stmt.expr, (A.ArrayLit, A.TupleLit)) and stmt.ann:
+                self.fill_lit(stmt.expr, stmt.ann)
                 t = stmt.ann
-                self.set(stmt.expr, t)
-                for e in stmt.expr.elems:
-                    self.walk_expr(e)
             else:
                 t = self.walk_expr(stmt.expr)
                 if stmt.ann:
                     t = stmt.ann
             self.scopes[-1][stmt.name] = t
         elif isinstance(stmt, A.Assign):
-            self.walk_expr(stmt.expr)
+            if isinstance(stmt.expr, (A.ArrayLit, A.TupleLit)):
+                vt = self.lookup(stmt.name)
+                from .tuples import is_tuple_type
+                if vt.startswith("[") or is_tuple_type(vt):
+                    self.fill_lit(stmt.expr, vt)
+                else:
+                    self.walk_expr(stmt.expr)
+            else:
+                self.walk_expr(stmt.expr)
         elif isinstance(stmt, A.Match):
             et = self.walk_expr(stmt.expr)
             from .generics import parse_generic, substitute_type
@@ -144,9 +188,13 @@ class Infer:
         elif isinstance(stmt, A.Return):
             if stmt.expr is not None:
                 if isinstance(stmt.expr, A.ArrayLit) and self.current_ret.startswith("["):
-                    self.set(stmt.expr, self.current_ret)
-                    for e in stmt.expr.elems:
-                        self.walk_expr(e)
+                    self.fill_lit(stmt.expr, self.current_ret)
+                elif isinstance(stmt.expr, A.TupleLit):
+                    from .tuples import is_tuple_type
+                    if is_tuple_type(self.current_ret):
+                        self.fill_lit(stmt.expr, self.current_ret)
+                    else:
+                        self.walk_expr(stmt.expr)
                 else:
                     self.walk_expr(stmt.expr)
         elif isinstance(stmt, A.ExprStmt):
@@ -190,8 +238,8 @@ class Infer:
             mangled = self._mangle(concrete) if self._parse_generic(concrete) else concrete
             fields = self.structs.get(mangled, self.structs.get(expr.name, {}))
             for fname, fexpr in expr.fields:
-                if isinstance(fexpr, A.ArrayLit) and not fexpr.elems and fields.get(fname):
-                    self.set(fexpr, fields[fname])
+                if isinstance(fexpr, (A.ArrayLit, A.TupleLit)) and fields.get(fname):
+                    self.fill_lit(fexpr, fields[fname])
                 else:
                     self.walk_expr(fexpr)
             return self.set(expr, concrete)
@@ -250,10 +298,9 @@ class Infer:
                 if expr.method in sigs:
                     params, ret = sigs[expr.method]
                     for arg, (_pn, pt) in zip(expr.args, params):
-                        if isinstance(arg, A.ArrayLit) and pt.startswith("["):
-                            self.set(arg, pt)
-                            for e in arg.elems:
-                                self.walk_expr(e)
+                        from .tuples import is_tuple_type as _is_tup
+                        if isinstance(arg, (A.ArrayLit, A.TupleLit)) and (pt.startswith("[") or _is_tup(pt)):
+                            self.fill_lit(arg, pt)
                         else:
                             self.walk_expr(arg)
                     return self.set(expr, ret)
@@ -263,10 +310,9 @@ class Infer:
             fn = self.funcs.get(mangle(rt, expr.method)) if rt in self.structs else None
             if fn:
                 for arg, (_pn, pt) in zip(expr.args, fn.params[1:]):
-                    if isinstance(arg, A.ArrayLit) and pt.startswith("["):
-                        self.set(arg, pt)
-                        for e in arg.elems:
-                            self.walk_expr(e)
+                    from .tuples import is_tuple_type as _is_tup
+                    if isinstance(arg, (A.ArrayLit, A.TupleLit)) and (pt.startswith("[") or _is_tup(pt)):
+                        self.fill_lit(arg, pt)
                     else:
                         self.walk_expr(arg)
                 return self.set(expr, fn.ret)
@@ -287,21 +333,25 @@ class Infer:
                 fn = self.funcs.get(expr.name)
                 if fn:
                     for arg, (_pn, pt) in zip(expr.args, fn.params):
-                        if isinstance(arg, A.ArrayLit) and pt.startswith("["):
-                            self.set(arg, pt)
-                            for e in arg.elems:
-                                self.walk_expr(e)
+                        from .tuples import is_tuple_type as _is_tup
+                        if isinstance(arg, (A.ArrayLit, A.TupleLit)) and (pt.startswith("[") or _is_tup(pt)):
+                            self.fill_lit(arg, pt)
                         else:
                             self.walk_expr(arg)
                     return self.set(expr, fn.ret)
             for a in expr.args:
                 self.walk_expr(a)
-            if expr.name in ("len", "clock_micros", "abs", "parse_int", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
+            if expr.name in ("len", "clock_micros", "abs", "parse_int", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
                 return self.set(expr, "int")
             if expr.name == "weak_upgrade":
                 for a in expr.args:
                     self.walk_expr(a)
                 return self.set(expr, "(bool, [int])")
+            if expr.name == "move":
+                for a in expr.args:
+                    self.walk_expr(a)
+                return self.set(expr, self.lookup(expr.args[0].name)
+                                if isinstance(expr.args[0], A.Var) else "int")
             if expr.name == "parallel_dot":
                 for a in expr.args:
                     self.walk_expr(a)

@@ -1,0 +1,11 @@
+fn main() {
+    let path = "/tmp/jalpari_mmap_demo.bin";
+    let ok = write_bytes(path, [72, 101, 108, 108, 111]);
+    let m = mmap_open(path);
+    println(mmap_get(m, 0));
+    println(mmap_get(m, 4));
+    mmap_set(m, 0, 74);
+    mmap_close(m);
+    let back = read_bytes(path);
+    println(back[0]);
+}

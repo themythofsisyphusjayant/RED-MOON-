@@ -208,6 +208,15 @@ class RVGen:
         from .defers import find_defers
         if find_defers(self.program):
             raise ForgeError("big32: defer is not supported in v1")
+        from .moves import uses_move
+        if uses_move(self.program):
+            raise ForgeError("big32: move is not supported in v1")
+        from .mmaps import uses_mmap
+        if uses_mmap(self.program):
+            raise ForgeError("big32: mmap is not supported in v1")
+        from .drops import uses_drop
+        if uses_drop(self.program):
+            raise ForgeError("big32: drop is not supported in v1")
         # Structs (0.7.0): a struct variable is consecutive
         # frame slots, one per field, in declaration
         # order. Fields must be scalar (int/bool/str);

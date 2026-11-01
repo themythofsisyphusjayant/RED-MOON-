@@ -1,0 +1,37 @@
+struct Slice {
+    arr: [int];
+    off: int;
+    len: int;
+}
+
+fn slice_of(arr: [int], off: int, len: int) -> Slice {
+    if off < 0 || off + len > len(arr) {
+        fail("slice out of bounds");
+    }
+    let s: Slice = Slice { arr: arr, off: off, len: len };
+    return s;
+}
+
+fn slice_get(s: Slice, i: int) -> int {
+    if i < 0 || i >= s.len {
+        fail("slice index out of bounds");
+    }
+    return s.arr[s.off + i];
+}
+
+fn slice_set(s: Slice, i: int, v: int) -> Slice {
+    if i < 0 || i >= s.len {
+        fail("slice index out of bounds");
+    }
+    let mut a = s.arr;
+    a[s.off + i] = v;
+    return s;
+}
+
+fn slice_len(s: Slice) -> int {
+    return s.len;
+}
+
+fn slice_sub(s: Slice, off: int, len: int) -> Slice {
+    return slice_of(s.arr, s.off + off, len);
+}

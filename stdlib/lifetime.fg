@@ -1,0 +1,60 @@
+struct LifeAlloc {
+    mem: [int];
+    short_next: int;
+    long_next: int;
+}
+
+fn life_new(size: int) -> LifeAlloc {
+    let mut mem: [int] = [];
+    let mut i = 0;
+    while i < size {
+        push(mem, 0);
+        i = i + 1;
+    }
+    let a: LifeAlloc = LifeAlloc { mem: mem, short_next: 0, long_next: size - 1 };
+    return a;
+}
+
+fn life_alloc_short(a: LifeAlloc, v: int) -> (int, LifeAlloc) {
+    if a.short_next > a.long_next {
+        return (-1, a);
+    }
+    let mut m = a;
+    let mut mem = m.mem;
+    let idx = m.short_next;
+    mem[idx] = v;
+    m.mem = mem;
+    m.short_next = idx + 1;
+    return (idx, m);
+}
+
+fn life_alloc_long(a: LifeAlloc, v: int) -> (int, LifeAlloc) {
+    if a.short_next > a.long_next {
+        return (-1, a);
+    }
+    let mut m = a;
+    let mut mem = m.mem;
+    let idx = m.long_next;
+    mem[idx] = v;
+    m.mem = mem;
+    m.long_next = idx - 1;
+    return (idx, m);
+}
+
+fn life_get(a: LifeAlloc, i: int) -> int {
+    return a.mem[i];
+}
+
+fn life_set(a: LifeAlloc, i: int, v: int) -> LifeAlloc {
+    let mut m = a;
+    let mut mem = m.mem;
+    mem[i] = v;
+    m.mem = mem;
+    return m;
+}
+
+fn life_reset_short(a: LifeAlloc) -> LifeAlloc {
+    let mut m = a;
+    m.short_next = 0;
+    return m;
+}

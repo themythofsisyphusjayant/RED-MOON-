@@ -1,0 +1,28 @@
+"""Move semantics (Top-500 #27) in a program, for backend
+gates. A program uses move when any call is to move.
+The native backend lowers it to a transfer (fresh +
+forget); big32 and WASM reject move programs in v1
+with a named error.
+"""
+
+import forge_lang.ast_nodes as A
+
+
+def _walk(node):
+    if isinstance(node, A.Call) and node.name == "move":
+        return True
+    if isinstance(node, (list, tuple)):
+        return any(_walk(x) for x in node)
+    if hasattr(node, "__dict__"):
+        return any(_walk(v) for v in vars(node).values())
+    return False
+
+
+def uses_move(program):
+    """True when any function body calls move."""
+    for fn in getattr(program, "funcs", []) or []:
+        if getattr(fn, "type_params", None):
+            continue
+        if getattr(fn, "body", None) is not None and _walk(fn.body):
+            return True
+    return False

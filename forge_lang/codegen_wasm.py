@@ -548,6 +548,15 @@ class WasmGen:
         from .defers import find_defers
         if find_defers(self.program):
             raise ForgeError("wasm: defer is not supported in v1")
+        from .moves import uses_move
+        if uses_move(self.program):
+            raise ForgeError("wasm: move is not supported in v1")
+        from .mmaps import uses_mmap
+        if uses_mmap(self.program):
+            raise ForgeError("wasm: mmap is not supported in v1")
+        from .drops import uses_drop
+        if uses_drop(self.program):
+            raise ForgeError("wasm: drop is not supported in v1")
         # Validate signatures first, so errors are Forge errors, not bad binaries.
         for fn in self.funcs:
             if not is_wasm_type(fn.ret) and fn.ret != "void":

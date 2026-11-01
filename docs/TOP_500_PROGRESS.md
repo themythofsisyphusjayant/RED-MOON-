@@ -282,10 +282,14 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   after the last strong holder's scope ends.
   Native-only in v1; big32 and WASM reject
   weak programs. Full-suite regression check
-  pending at that time (log
-  forge_suite_weak.log). Counts after batch
-  20: HAVE 60, PARTIAL 58, GAP 382, to build
-  440. Next in priority: #27 move semantics.
+  confirmed clean 1 Nov 2026 (log
+  forge_suite_weak.log: PASS). Batches 1–20
+  pushed 1 Nov 2026 via the daily batch push
+  (commit 7707d172); batch 21 was still in
+  flight then and rides the next push. Counts
+  after batch 20: HAVE 60, PARTIAL 58, GAP
+  382, to build 440. Next in priority: #27
+  move semantics.
 - Batch 21 (1 Nov 2026): #27 move semantics
   v1 (a move builtin + forge_lang/moves.py +
   examples/move_demo.fg + tests/
@@ -297,11 +301,119 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   or loops are rejected in v1 (the free
   tracking is compile-time). Native-only in
   v1; big32 and WASM reject move programs.
-  Full-suite regression check pending at that
-  time (log forge_suite_move.log). Counts
-  after batch 21: HAVE 61, PARTIAL 58, GAP
-  381, to build 439. Next in priority: #28
-  copy-on-write arrays (batch 18's push CoW
-  is a first piece — the batch must decide
-  index-assignment CoW, currently specified
-  as shared mutation).
+  Full-suite regression check confirmed clean
+  1 Nov 2026 (log forge_suite_move.log:
+  PASS). Counts after batch 21: HAVE 61,
+  PARTIAL 58, GAP 381, to build 439. Batch
+  21 itself is unpushed (it landed after the
+  1 Nov daily push) and rides the next push.
+  Next in priority: #28 copy-on-write arrays.
+- Batch 22 (1 Nov 2026): #28 copy-on-write
+  arrays v1, opt-in (stdlib/cow.fg + examples/
+  cow_demo.fg + tests/test_cow_v1.py, ALL
+  PASS, plus a clean AddressSanitizer run).
+  Pure Jal Pari, no compiler change: a Cow
+  shares its buffer until a write (shared
+  writer gets a private copy, sole holder
+  writes in place). Marked [PARTIAL], not
+  [HAVE]: language-default CoW (every index
+  assignment CoWs) is NOT taken — it would
+  break Rc's shared-mutation promise and
+  existing programs, so it needs Jayant's
+  explicit word. Full-suite regression check
+  confirmed clean 1 Nov 2026 (log
+  forge_suite_cow.log: PASS). Counts after batch
+  22: HAVE 61, PARTIAL 59, GAP 380, to build
+  439 (a PARTIAL does not drop the to-build
+  total). Next in priority: #29 stack-
+  allocated slices.
+- Batch 23 (1 Nov 2026): #29 stack-allocated
+  slices v1 (stdlib/slice.fg + examples/
+  slice_demo.fg + tests/test_slice_v1.py, ALL
+  PASS, plus a clean AddressSanitizer run).
+  Pure Jal Pari, no compiler change: a Slice
+  is a stack-allocated header over an
+  existing array's buffer — no copy, writes
+  through to the original, bounds are the
+  slice's own, slicing a slice composes.
+  Full-suite regression check confirmed clean
+  1 Nov 2026 (log forge_suite_slice.log:
+  PASS except the known flaky spawn_demo
+  println-interleaving failure, re-verified
+  4/4 clean). Counts after batch 23: HAVE 62, PARTIAL 59, GAP
+  379, to build 438. Next in priority: #30
+  lifetime-ordered placement (already HAVE
+  as the kernel allocator — promote it to an
+  allocator API, or confirm and move on).
+- Batch 24 (1 Nov 2026): #30 lifetime-ordered
+  placement v1 (stdlib/lifetime.fg + examples/
+  lifetime_demo.fg + tests/test_lifetime_v1.py,
+  ALL PASS, plus a clean AddressSanitizer
+  run). Pure Jal Pari, no compiler change:
+  the kernel allocator's idea promoted to a
+  stdlib API — shorts from the front, longs
+  from the back, one reset frees all shorts
+  while longs survive, OOM is a value (-1).
+  Full-suite regression check confirmed clean
+  1 Nov 2026 (log forge_suite_lifetime.log:
+  PASS). Counts after batch 24: HAVE 63, PARTIAL 59, GAP
+  378, to build 437. Next in priority: #31
+  memory-mapped files.
+- Batch 25 (1 Nov 2026): #31 memory-mapped
+  files v1 (runtime mmap table in
+  forge_lang/codegen.py + forge_lang/mmaps.py
+  + examples/mmap_demo.fg + tests/
+  test_mmap_v1.py, ALL PASS, plus a clean
+  AddressSanitizer run). mmap_open/get/set/
+  close over bytes, native only; writes go
+  through MAP_SHARED into the file itself.
+  Also fixed two real pre-existing leaks the
+  demo exposed: read_bytes freshness and
+  write_bytes param consumption. Full-suite
+  regression check confirmed 1 Nov 2026 (log
+  forge_suite_mmap2.log: sole failure scope_demo
+  fast, the known println-interleaving flake,
+  re-verified 4/4 clean by direct runs). Counts after batch 25:
+  HAVE 64, PARTIAL 59, GAP 377, to build
+  436. Next in priority: #32 allocator-aware
+  collections.
+- Batch 26 (1 Nov 2026): #32 allocator-aware
+  collections v1 (stdlib/avec.fg +
+  examples/avec_demo.fg + tests/
+  test_avec_v1.py, ALL PASS, plus a clean
+  AddressSanitizer run). AVec holds one element
+  per Allocator slot; the demo proves the
+  allocator drives growth: bump size-2 push/
+  push/pop/push ends in OOM-as-value (false),
+  freelist size-2 reuses the freed slot (true)
+  and reads the new value back (30). Pure Jal
+  Pari, no compiler change. Marked PARTIAL:
+  maps are the named next slice, not faked —
+  their string keys cannot live in the
+  allocator's [int]-backed slots. Full-suite
+  regression check confirmed clean 1 Nov 2026
+  (log forge_suite_avec.log: PASS). Counts after
+  batch 26: HAVE 64, PARTIAL 60, GAP 376, to
+  build 436. Next in priority: #33 destructor
+  hooks.
+- Batch 27 (1 Nov 2026): #33 destructor hooks
+  v1 (forge_lang/drops.py + checker + native
+  codegen + examples/drop_demo.fg + tests/
+  test_drop_v1.py, ALL PASS, plus a clean
+  AddressSanitizer run). A `drop` method on a
+  struct runs when an owned binding dies
+  (block/function end, return, break), before
+  the free, via an owned copy; the receiver
+  parameter itself never hooks (else infinite
+  recursion — caught live by the first demo
+  run, which printed forever until killed).
+  Native only; big32/WASM/freestanding reject.
+  V1 limits: per-binding drops, no nested
+  drops, no union/opaque-field hooks, no
+  generics. Full-suite regression check
+  confirmed 1 Nov 2026 (log
+  forge_suite_drop.log: sole failure scope_demo
+  fast, the known println-interleaving flake,
+  re-verified 4/4 clean by direct runs). Counts after batch 27: HAVE 65,
+  PARTIAL 60, GAP 375, to build 435. Next in
+  priority: #34 pinning.
