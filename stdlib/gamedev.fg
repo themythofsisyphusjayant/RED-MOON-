@@ -1,0 +1,26 @@
+struct Sprite {
+    x: int;
+    y: int;
+    w: int;
+    h: int;
+}
+
+fn sprite_move(s: Sprite, dx: int, dy: int) -> Sprite {
+    return Sprite { x: s.x + dx, y: s.y + dy, w: s.w, h: s.h };
+}
+
+fn sprite_overlaps(a: Sprite, b: Sprite) -> bool {
+    if a.x + a.w <= b.x {
+        return false;
+    }
+    if b.x + b.w <= a.x {
+        return false;
+    }
+    if a.y + a.h <= b.y {
+        return false;
+    }
+    if b.y + b.h <= a.y {
+        return false;
+    }
+    return true;
+}

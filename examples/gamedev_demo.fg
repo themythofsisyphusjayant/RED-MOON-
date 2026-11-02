@@ -1,0 +1,11 @@
+import "gamedev.fg";
+
+fn main() {
+    let a = Sprite { x: 0, y: 0, w: 10, h: 10 };
+    let b = Sprite { x: 5, y: 5, w: 10, h: 10 };
+    println(sprite_overlaps(a, b));
+    let c = sprite_move(b, 10, 0);
+    println(sprite_overlaps(a, c));
+    println(c.x);
+    println(sprite_overlaps(a, sprite_move(a, 0, 0)));
+}

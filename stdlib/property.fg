@@ -1,0 +1,29 @@
+fn prop_add_comm_range(lo: int, hi: int) -> bool {
+    let mut a: int = lo;
+    while a <= hi {
+        let mut b: int = lo;
+        while b <= hi {
+            if a + b != b + a {
+                return false;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return true;
+}
+
+fn prop_square_nonneg_range(lo: int, hi: int) -> bool {
+    let mut a: int = lo;
+    while a <= hi {
+        if a * a < 0 {
+            return false;
+        }
+        a = a + 1;
+    }
+    return true;
+}
+
+fn prop_concat_len(a: str, b: str) -> bool {
+    return len(a + b) == len(a) + len(b);
+}

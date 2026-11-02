@@ -1,0 +1,11 @@
+import "bloom.fg";
+
+fn main() {
+    let mut b = bloom_new();
+    b = bloom_add(b, 5);
+    b = bloom_add(b, 9);
+    println(bloom_maybe(b, 5));
+    println(bloom_maybe(b, 9));
+    println(bloom_maybe(b, 6));
+    println(bloom_maybe(b, 1));
+}

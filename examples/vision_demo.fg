@@ -1,0 +1,13 @@
+import "vision.fg";
+
+fn main() {
+    let img: [float] = [10.0, 20.0, 30.0, 40.0];
+    println(vision_mean(img));
+    let n = vision_normalize(img);
+    println(n[0]);
+    println(n[3]);
+    let small = vision_resize_nearest(img, 2, 2, 1, 1);
+    println(small[0]);
+    let big = vision_resize_nearest(img, 2, 2, 2, 1);
+    println(big[1]);
+}

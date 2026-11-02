@@ -1,0 +1,14 @@
+import "lru.fg";
+
+fn main() {
+    let mut c = lru_new(2);
+    c = lru_put(c, 1, 10);
+    c = lru_put(c, 2, 20);
+    println(lru_get(c, 1));
+    c = lru_put(c, 3, 30);
+    println(lru_get(c, 1));
+    println(lru_get(c, 2));
+    println(lru_get(c, 3));
+    c = lru_put(c, 2, 99);
+    println(lru_get(c, 2));
+}

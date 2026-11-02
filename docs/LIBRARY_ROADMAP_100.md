@@ -113,7 +113,7 @@ things is how the language gets updated. This replaces the earlier
     first; compression is item 58).
 57. checksum (py/go) — BUILD: crc32, adler32, fnv.
 58. compress (go/rs) — RLE DONE 30 Oct 2026: stdlib/compress.fg (count+char pairs, runs split at 9, round-trip verified); Huffman-lite + gzip still BUILD.
-59. tempfiles (py) — BUILD: temp names + cleanup discipline.
+59. tempfiles (py) — DONE 2 Nov 2026: stdlib/tempfile.fg (deterministic names/paths from a caller counter; names only, no creation/cleanup in v1).
 60. dotenv (rs) — DONE 30 Oct 2026: stdlib/dotenv.fg (KEY=VALUE, comments, quotes, '=' kept in values; no $ expansion in v1).
 
 ## 6. Crypto & security (8)
@@ -121,7 +121,7 @@ things is how the language gets updated. This replaces the earlier
 62. hmac (py) — BUILD: keyed hashing over hashlib.
 63. base64-hex (py/rs) — BUILD: encode/decode (extend split/join).
 64. uuid (rs) — BUILD: v4-style ids from seeded random.
-65. passwords (py) — BUILD: salted sha + verify (NOT bcrypt;
+65. passwords (py) — DONE 2 Nov 2026 (lite): stdlib/password.fg (salted FNV-1a verify; NOT bcrypt, NOT SHA, demo discipline only — must not protect real passwords).
     bcrypt NEEDS blowfish + cost work — later).
 66. jwt-lite (py) — BUILD: header/payload/signature (HMAC).
 67. aes-lite (py) — BUILD: AES-128 on word arrays (pure .fg).
@@ -143,8 +143,8 @@ things is how the language gets updated. This replaces the earlier
 77. unittest (py/go) — BUILD: asserts + reporters over forge test.
 78. bench (mo) — BUILD: timing harness over clock_micros
     (BENCHMARKS.md becomes a library, not just a doc).
-79. property-test (rs) — BUILD: quickcheck-lite generators.
-80. mock-lite (py) — BUILD: stub functions/values for tests.
+79. property-test (rs) — DONE 2 Nov 2026 (lite): stdlib/property.fg (hard-coded range checkers: add-commutes, square-nonneg, concat-len; no function values passed in).
+80. mock-lite (py) — DONE 2 Nov 2026: stdlib/mock.fg (one canned int return, call counting; no argument matching).
 81. docgen (mo) — DONE (partial): extend doc output formats.
 82. fmt (go/rs) — DONE (partial): forge fmt + style checks.
 83. lint (rs) — BUILD: checker-diagnostic rules as a library.
@@ -160,14 +160,14 @@ things is how the language gets updated. This replaces the earlier
 91. inference (mo) — DONE: KV-cache + quant steps.
 92. sklearn-lite (py) — BUILD: linear regression, kNN, k-means,
     decision-tree-lite, naive-bayes.
-93. vision-lite (py) — BUILD: image tensors (resize/crop/
+93. vision-lite (py) — DONE 2 Nov 2026: stdlib/vision.fg (flat [float] mean/max/normalize/nearest-resize; no PNG decode).
     normalize) + png-lite encode; png DECODE is item 106.
 94. tfidf (py) — BUILD: term vectors + cosine search.
-95. rl-lite (py) — BUILD: bandits + Q-table agents.
+95. rl-lite (py) — DONE 2 Nov 2026: stdlib/rl.fg (Q update, greedy argmax, least-tried explore; deterministic, no randomness).
 96. model-export (mo) — BUILD: extend text checkpoints (save/
     load, versioned).
 97. embeddings (py) — BUILD: vector store + nearest neighbour.
-98. rag-lite (py) — BUILD: chunk files + retrieve + prompt pack.
+98. rag-lite (py) — DONE 2 Nov 2026 (retrieve only): stdlib/rag.fg (word-overlap score + best-doc; case-sensitive, no stemming, no chunking/prompt pack yet).
 99. eval-harness (py) — BUILD: held-out loss/perplexity reports
     (standardize what gpt_tinystories already does by hand).
 100. data-augment (py) — BUILD: text/image augmentation-lite.
@@ -187,12 +187,12 @@ things is how the language gets updated. This replaces the earlier
     (text UI, no GUI toolkit pretence).
 
 ## 11. Games, geo & misc (12)
-109. gamedev-lite (go) — BUILD: sprites + collision on VRAM.
+109. gamedev-lite (go) — DONE 2 Nov 2026: stdlib/gamedev.fg (Sprite struct, move, AABB overlap; no rendering).
 110. physics2d (py) — BUILD: gravity/collision-lite.
 111. ecs-lite (rs) — BUILD: entity/component/store-lite.
 112. money (py) — BUILD: fixed-point currency arithmetic.
 113. geo-lite (py) — BUILD: haversine, bounding boxes.
-114. timezones-lite (py) — BUILD: offset tables (subset).
+114. timezones-lite (py) — DONE 2 Nov 2026: stdlib/timezone.fg (fixed standard offsets in minutes for Delhi/London/New York/Tokyo/Sydney/Dubai; no DST, unknown cities -> UTC).
 115. ical-lite (py) — BUILD: calendar event text format.
 116. cli-table (go) — BUILD: aligned tables for terminals.
 117. progress (py) — BUILD: bars + spinners (with tui-lite).
@@ -233,3 +233,12 @@ structs, because Jal Pari has no ord() or int-to-string builtin
 yet. Trig-needing items (9 fft, 113 geo) are NOT faked: they
 wait for a sin/cos/acos builtin slice, which is the next
 language-evolution item when their turn comes.
+
+## Daily batch — 2 Nov 2026 (verified by forge run demos + big32 model kernels)
+DONE now (new): bitset-lite, bloom-lite, lru-lite (stdlib + examples
+demos, all forge run verified), timezones-lite, gamedev-lite,
+vision-lite, rl-lite, rag-lite (retrieve only), property-test lite,
+mock-lite, tempfiles lite, passwords lite (salted FNV, NOT bcrypt/SHA).
+OS kernels (examples/os + tests/test_kernel_*.py, big32 model exact
+transcript + halt + final word): pwm, adc, spi, i2c, ringbuf, sem,
+mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.

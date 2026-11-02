@@ -1,0 +1,6 @@
+import "tempfile.fg";
+
+fn main() {
+    println(tempfile_name("build", 7));
+    println(tempfile_path("/tmp", "job", 3));
+}

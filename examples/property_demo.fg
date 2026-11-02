@@ -1,0 +1,8 @@
+import "property.fg";
+
+fn main() {
+    println(prop_add_comm_range(0, 20));
+    println(prop_square_nonneg_range(-10, 10));
+    println(prop_concat_len("jal", "pari"));
+    println(prop_concat_len("", "x"));
+}

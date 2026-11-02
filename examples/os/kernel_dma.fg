@@ -1,0 +1,53 @@
+// DMA copy driver kernel (Phase F).
+//
+// Copy 10, 20, 30, 40 from 0x8040 to 0x8080 word by word;
+// destination sum is 100, last word is 40.
+// Expected UART: DMA\n100\n40\nDONE, halted.
+// Final destination-sum word at 0x8000 is 100.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn put_num(v: int) {
+  let mut w = v;
+  if w < 0 {
+    put(45);
+    w = 0 - w;
+  }
+  if w >= 100 {
+    put(48 + w / 100);
+  }
+  if w >= 10 {
+    put(48 + (w / 10) % 10);
+  }
+  put(48 + w % 10);
+}
+
+fn put_str_done() {
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}
+
+fn main() {
+  put(68);
+  put(77);
+  put(65);
+  put(10);
+  poke32(32832, 10);
+  poke32(32836, 20);
+  poke32(32840, 30);
+  poke32(32844, 40);
+  poke32(32896, peek32(32832));
+  poke32(32900, peek32(32836));
+  poke32(32904, peek32(32840));
+  poke32(32908, peek32(32844));
+  poke32(32768, peek32(32896) + peek32(32900) + peek32(32904) + peek32(32908));
+  put_num(peek32(32768));
+  put(10);
+  put_num(peek32(32908));
+  put(10);
+  put_str_done();
+}

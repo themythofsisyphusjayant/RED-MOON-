@@ -1,0 +1,48 @@
+// Ring-buffer IPC driver kernel (Phase F).
+//
+// Push 10, 20, 30 into a 4-slot ring, pop one: 2 remain,
+// head value 20. Counts are kept in words, not a real queue.
+// Expected UART: RING\n2\n20\nDONE, halted.
+// Final count word at 0x8000 is 2, head word at 0x8004 is 20.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn put_num(v: int) {
+  let mut w = v;
+  if w < 0 {
+    put(45);
+    w = 0 - w;
+  }
+  if w >= 100 {
+    put(48 + w / 100);
+  }
+  if w >= 10 {
+    put(48 + (w / 10) % 10);
+  }
+  put(48 + w % 10);
+}
+
+fn put_str_done() {
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}
+
+fn main() {
+  put(82);
+  put(73);
+  put(78);
+  put(71);
+  put(10);
+  poke32(32768, 3);
+  poke32(32768, peek32(32768) - 1);
+  poke32(32772, 20);
+  put_num(peek32(32768));
+  put(10);
+  put_num(peek32(32772));
+  put(10);
+  put_str_done();
+}

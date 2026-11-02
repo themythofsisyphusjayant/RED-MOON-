@@ -1,0 +1,48 @@
+// Mailbox IPC driver kernel (Phase F).
+//
+// Send 42 into the mailbox (flag 1), receive reads 42 and
+// clears the flag to 0.
+// Expected UART: MBOX\n42\n0\nDONE, halted.
+// Final flag word at 0x8004 is 0, value word at 0x8000 is 42.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn put_num(v: int) {
+  let mut w = v;
+  if w < 0 {
+    put(45);
+    w = 0 - w;
+  }
+  if w >= 100 {
+    put(48 + w / 100);
+  }
+  if w >= 10 {
+    put(48 + (w / 10) % 10);
+  }
+  put(48 + w % 10);
+}
+
+fn put_str_done() {
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}
+
+fn main() {
+  put(77);
+  put(66);
+  put(79);
+  put(88);
+  put(10);
+  poke32(32768, 42);
+  poke32(32772, 1);
+  put_num(peek32(32768));
+  put(10);
+  poke32(32772, 0);
+  put_num(peek32(32772));
+  put(10);
+  put_str_done();
+}

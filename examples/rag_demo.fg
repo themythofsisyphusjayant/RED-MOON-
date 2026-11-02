@@ -1,0 +1,9 @@
+import "rag.fg";
+
+fn main() {
+    let docs: [str] = ["cats like fish", "dogs like walks", "cats and dogs play"];
+    println(rag_score("cats fish", docs[0]));
+    println(rag_score("cats fish", docs[1]));
+    println(rag_best(docs, "cats fish"));
+    println(rag_best(docs, "dogs walks"));
+}

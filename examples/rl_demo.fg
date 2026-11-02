@@ -1,0 +1,9 @@
+import "rl.fg";
+
+fn main() {
+    println(rl_q_update(0.0, 0.5, 10.0));
+    println(rl_q_update(5.0, 0.5, 10.0));
+    println(rl_greedy([1.0, 5.0, 3.0]));
+    println(rl_least_tried([5, 1, 0]));
+    println(rl_greedy([2.0, 2.0, 1.0]));
+}

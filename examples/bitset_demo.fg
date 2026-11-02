@@ -1,0 +1,15 @@
+import "bitset.fg";
+
+fn main() {
+    let mut m: int = 0;
+    m = bitset_set(m, 0);
+    m = bitset_set(m, 2);
+    m = bitset_set(m, 5);
+    println(m);
+    println(bitset_test(m, 2));
+    println(bitset_test(m, 3));
+    println(bitset_count(m));
+    m = bitset_clear(m, 2);
+    println(m);
+    println(bitset_count(m));
+}

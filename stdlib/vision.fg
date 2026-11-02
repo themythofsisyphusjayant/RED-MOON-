@@ -1,0 +1,55 @@
+fn vision_max(img: [float]) -> float {
+    let mut m: float = 0.0;
+    let mut i: int = 0;
+    while i < len(img) {
+        if img[i] > m {
+            m = img[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn vision_mean(img: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(img) {
+        s = s + img[i];
+        i = i + 1;
+    }
+    if len(img) == 0 {
+        return 0.0;
+    }
+    return s / len(img) as float;
+}
+
+fn vision_normalize(img: [float]) -> [float] {
+    let m = vision_max(img);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        if m == 0.0 {
+            push(out, 0.0);
+        } else {
+            push(out, img[i] / m);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vision_resize_nearest(src: [float], sw: int, sh: int, dw: int, dh: int) -> [float] {
+    let mut out: [float] = [];
+    let mut y: int = 0;
+    while y < dh {
+        let mut x: int = 0;
+        while x < dw {
+            let sx = x * sw / dw;
+            let sy = y * sh / dh;
+            push(out, src[sy * sw + sx]);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return out;
+}

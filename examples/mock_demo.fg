@@ -1,0 +1,10 @@
+import "mock.fg";
+
+fn main() {
+    let mut m = mock_new(42);
+    println(mock_calls(m));
+    m = mock_call(m);
+    m = mock_call(m);
+    println(mock_calls(m));
+    println(mock_value(m));
+}

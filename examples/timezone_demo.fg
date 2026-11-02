@@ -1,0 +1,10 @@
+import "timezone.fg";
+
+fn main() {
+    println(tz_offset_min("Delhi"));
+    println(tz_offset_min("New York"));
+    println(tz_convert_hour(12, "Delhi"));
+    println(tz_convert_hour(12, "New York"));
+    println(tz_convert_hour(12, "Tokyo"));
+    println(tz_convert_hour(12, "Nowhere"));
+}

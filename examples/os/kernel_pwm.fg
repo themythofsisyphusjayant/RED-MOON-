@@ -1,0 +1,54 @@
+// PWM duty-cycle driver kernel (Phase F).
+//
+// Duty steps 0, 25, 50, 75, 100 percent, printed in order.
+// Expected UART: PWM\n0\n25\n50\n75\n100\nDONE, halted.
+// Final duty word at 0x8000 is 100.
+
+fn put(c: int) {
+  poke32(268435456, c);
+}
+
+fn put_num(v: int) {
+  let mut w = v;
+  if w < 0 {
+    put(45);
+    w = 0 - w;
+  }
+  if w >= 100 {
+    put(48 + w / 100);
+  }
+  if w >= 10 {
+    put(48 + (w / 10) % 10);
+  }
+  put(48 + w % 10);
+}
+
+fn put_str_done() {
+  put(68);
+  put(79);
+  put(78);
+  put(69);
+}
+
+fn main() {
+  put(80);
+  put(87);
+  put(77);
+  put(10);
+  poke32(32768, 0);
+  put_num(peek32(32768));
+  put(10);
+  poke32(32768, 25);
+  put_num(peek32(32768));
+  put(10);
+  poke32(32768, 50);
+  put_num(peek32(32768));
+  put(10);
+  poke32(32768, 75);
+  put_num(peek32(32768));
+  put(10);
+  poke32(32768, 100);
+  put_num(peek32(32768));
+  put(10);
+  put_str_done();
+}

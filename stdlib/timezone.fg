@@ -1,0 +1,32 @@
+fn tz_offset_min(city: str) -> int {
+    if city == "Delhi" {
+        return 330;
+    }
+    if city == "London" {
+        return 0;
+    }
+    if city == "New York" {
+        return -300;
+    }
+    if city == "Tokyo" {
+        return 540;
+    }
+    if city == "Sydney" {
+        return 600;
+    }
+    if city == "Dubai" {
+        return 240;
+    }
+    return 0;
+}
+
+fn tz_convert_hour(utc_hour: int, city: str) -> int {
+    let mut total: int = utc_hour * 60 + tz_offset_min(city);
+    while total < 0 {
+        total = total + 1440;
+    }
+    while total >= 1440 {
+        total = total - 1440;
+    }
+    return total / 60;
+}
