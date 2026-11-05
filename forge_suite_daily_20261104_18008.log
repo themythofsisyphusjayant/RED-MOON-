@@ -1,0 +1,2 @@
+FAIL: 1 failure(s)
+ - spawn_demo: missing 'worker done 1' in 'main done, waiting for workers\nworker doneworker done 2\n 1\n' err=''

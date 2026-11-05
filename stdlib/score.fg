@@ -1,0 +1,33 @@
+fn score_avg(xs: [int]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        n = n + xs[i];
+        i = i + 1;
+    }
+    return n / len(xs);
+}
+
+fn score_min(xs: [int]) -> int {
+    let mut m: int = xs[0];
+    let mut i: int = 1;
+    while i < len(xs) {
+        if xs[i] < m {
+            m = xs[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn score_max(xs: [int]) -> int {
+    let mut m: int = xs[0];
+    let mut i: int = 1;
+    while i < len(xs) {
+        if xs[i] > m {
+            m = xs[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}

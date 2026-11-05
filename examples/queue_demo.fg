@@ -1,0 +1,12 @@
+import "queue.fg";
+
+fn main() {
+    let mut q: Queue = queue_new();
+    q = queue_enqueue(q, 10);
+    q = queue_enqueue(q, 20);
+    q = queue_enqueue(q, 30);
+    println(queue_front(q));
+    q = queue_dequeue(q);
+    println(queue_front(q));
+    println(queue_len(q));
+}

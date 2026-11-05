@@ -1,0 +1,15 @@
+fn fib(n: int) -> int {
+    if n < 2 {
+        return n;
+    }
+    let mut a: int = 0;
+    let mut b: int = 1;
+    let mut i: int = 2;
+    while i <= n {
+        let mut t: int = a + b;
+        a = b;
+        b = t;
+        i = i + 1;
+    }
+    return b;
+}

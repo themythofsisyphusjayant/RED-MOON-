@@ -1,0 +1,26 @@
+struct Bag {
+    vals: [int];
+    tag: str;
+}
+
+fn main() {
+    let mut a = [1, 2, 3];
+    if true {
+        let b = move(a);
+        println(b[0]);
+        println(len(b));
+    }
+    a = [9];
+    println(a[0]);
+    let c = [7, 8];
+    let mut i = 0;
+    while i < 1 {
+        let d = move(c);
+        println(d[1]);
+        i = i + 1;
+    }
+    let mut bag: Bag = Bag { vals: [4, 5], tag: "hi" };
+    let v = move(bag.vals);
+    println(v[1]);
+    println(bag.tag);
+}

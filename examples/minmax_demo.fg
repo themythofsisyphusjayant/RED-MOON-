@@ -1,0 +1,9 @@
+import "minmax.fg";
+
+fn main() {
+    let mut xs: [int] = [3, 1, 4];
+    println(array_min(xs));
+    println(array_max(xs));
+    println(array_sum(xs));
+    println(array_avg(xs));
+}

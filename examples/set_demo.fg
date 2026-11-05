@@ -1,0 +1,14 @@
+import "set.fg";
+
+fn main() {
+    let mut s: IntSet = set_new();
+    s = set_add(s, 5);
+    s = set_add(s, 7);
+    s = set_add(s, 5);
+    println(set_has(s, 5));
+    println(set_has(s, 9));
+    println(set_len(s));
+    s = set_remove(s, 5);
+    println(set_has(s, 5));
+    println(set_len(s));
+}

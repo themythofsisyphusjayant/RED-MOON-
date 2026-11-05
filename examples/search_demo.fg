@@ -1,0 +1,9 @@
+import "search.fg";
+
+fn main() {
+    let mut xs: [int] = [10, 20, 30];
+    println(search_linear(xs, 20));
+    println(search_linear(xs, 99));
+    println(search_binary(xs, 30));
+    println(search_binary(xs, 15));
+}

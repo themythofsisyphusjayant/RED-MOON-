@@ -1,0 +1,8 @@
+import "score.fg";
+
+fn main() {
+    let mut xs: [int] = [80, 90, 70];
+    println(score_avg(xs));
+    println(score_min(xs));
+    println(score_max(xs));
+}

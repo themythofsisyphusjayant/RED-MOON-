@@ -1,0 +1,55 @@
+struct Counter {
+    keys: [int];
+    vals: [int];
+}
+
+fn counter_new() -> Counter {
+    return Counter { keys: [], vals: [] };
+}
+
+fn counter_inc(c: Counter, k: int) -> Counter {
+    let mut keys: [int] = [];
+    let mut vals: [int] = [];
+    let mut found: bool = false;
+    let mut i: int = 0;
+    while i < len(c.keys) {
+        push(keys, c.keys[i]);
+        if c.keys[i] == k {
+            push(vals, c.vals[i] + 1);
+            found = true;
+        } else {
+            push(vals, c.vals[i]);
+        }
+        i = i + 1;
+    }
+    if found == false {
+        push(keys, k);
+        push(vals, 1);
+    }
+    return Counter { keys: keys, vals: vals };
+}
+
+fn counter_get(c: Counter, k: int) -> int {
+    let mut i: int = 0;
+    while i < len(c.keys) {
+        if c.keys[i] == k {
+            return c.vals[i];
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn counter_distinct(c: Counter) -> int {
+    return len(c.keys);
+}
+
+fn counter_total(c: Counter) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(c.vals) {
+        n = n + c.vals[i];
+        i = i + 1;
+    }
+    return n;
+}

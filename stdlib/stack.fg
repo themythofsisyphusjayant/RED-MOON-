@@ -1,0 +1,31 @@
+struct Stack {
+    items: [int];
+}
+
+fn stack_new() -> Stack {
+    return Stack { items: [] };
+}
+
+fn stack_push(s: Stack, v: int) -> Stack {
+    let mut items: [int] = s.items;
+    push(items, v);
+    return Stack { items: items };
+}
+
+fn stack_pop(s: Stack) -> Stack {
+    let mut items: [int] = [];
+    let mut i: int = 0;
+    while i < len(s.items) - 1 {
+        push(items, s.items[i]);
+        i = i + 1;
+    }
+    return Stack { items: items };
+}
+
+fn stack_peek(s: Stack) -> int {
+    return s.items[len(s.items) - 1];
+}
+
+fn stack_len(s: Stack) -> int {
+    return len(s.items);
+}

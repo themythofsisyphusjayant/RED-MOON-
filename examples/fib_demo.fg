@@ -1,0 +1,7 @@
+import "fib.fg";
+
+fn main() {
+    println(fib(0));
+    println(fib(1));
+    println(fib(10));
+}

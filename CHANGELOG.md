@@ -8,6 +8,42 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Move semantics v2 (fix track, #27 extension):
+  moves in branches and loops now work via a
+  runtime moved flag per owned variable, with
+  path-sensitive checker joins (a use after a
+  conditional move is a checker error until
+  reassignment revives the variable; a second
+  loop move fails at runtime instead of
+  transferring a freed buffer), and field moves
+  now work in straight-line code (move(s.field)
+  transfers that field; sibling fields stay
+  usable, the whole struct and the moved field
+  do not, assigning the field revives it).
+  Limits, rejected with named errors: field
+  moves in branches/loops (need per-field
+  runtime flags) and moves of for-loop
+  variables (borrowed views). Native-only;
+  big32/WASM still reject move programs.
+
+## 1.4.0 — 3 Nov 2026
+
+- Fix: C-helper param-consumption audit (batch-25 follow-up):
+  write_bytes freed its array parameter while builtin callers
+  transfer no hold — a sole-holder variable died with
+  heap-use-after-free on later use, and a shared variable
+  drove its refcount below the true holder count (both
+  reproduced under ASan; batch 25 had only tested a fresh
+  literal). Native gen_expr now wraps a non-fresh array
+  argument in a temp with forge_arr_inc, exactly the
+  user-function call pattern; fresh arguments pass as-is
+  and are freed. All other str/array helpers audited clean
+  by code reading + probes (file, read/write, mmap, split,
+  join, substr, trim, parallel dot/matmul, http, refcount,
+  weak_register). Documented, not fixed here: fresh heap
+  string temps passed to a builtin and discarded leak, and
+  weak_new on a fresh temp registers an entry that never
+  dies — both need semantic follow-ups, not helper edits.
 - Fix: type aliases inside sized-array spellings
   now expand (the batch-12 gap: "[N; 3]" reached
   later passes unexpanded and failed as an unknown
@@ -39,6 +75,19 @@ without a major version bump (see docs/STABILITY.md).
   gaining an inner reference each, so the free
   counts stay exact. Inner arrays stay shared by
   reference, as elsewhere).
+- Fix: nested sized-array literals now unify
+  (`[[1, 2], [3, 4]]` against `[[int; 2]; 2]` was
+  rejected as `[[int]]`: the sized-literal check
+  compared each element's inferred dynamic type
+  against the sized element type instead of
+  recursing; it now recurses into nested literals
+  at any depth, and under a dynamic outer array
+  with sized inner arrays, and infer assigns the
+  sized type to inner literals. Precise count
+  errors now fire at the offending level, and
+  wrong inner sizes / element types are still
+  rejected. Native only; big32/WASM keep their
+  named sized rejections).
 - Top-500 batch 1: binary/octal literals and digit separators
   (0b1010, 0o777, 1_000; malformed literals are compile errors)
   and the `continue` statement (native, big32, WASM, formatter;

@@ -1,0 +1,12 @@
+import "histogram.fg";
+
+fn main() {
+    let mut h: Histogram = histogram_new();
+    h = histogram_add(h, 5);
+    h = histogram_add(h, 15);
+    h = histogram_add(h, 25);
+    h = histogram_add(h, 15);
+    println(histogram_bucket(h, 0));
+    println(histogram_bucket(h, 1));
+    println(histogram_bucket(h, 2));
+}

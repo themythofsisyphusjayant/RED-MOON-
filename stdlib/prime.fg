@@ -1,0 +1,21 @@
+fn prime_is(v: int) -> int {
+    if v < 2 {
+        return 0;
+    }
+    let mut d: int = 2;
+    while d * d <= v {
+        if v % d == 0 {
+            return 0;
+        }
+        d = d + 1;
+    }
+    return 1;
+}
+
+fn prime_next(v: int) -> int {
+    let mut n: int = v + 1;
+    while prime_is(n) == 0 {
+        n = n + 1;
+    }
+    return n;
+}

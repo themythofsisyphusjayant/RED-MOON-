@@ -1,0 +1,12 @@
+import "interval.fg";
+
+fn main() {
+    let mut a: Interval = interval_new(10, 20);
+    let mut b: Interval = interval_new(15, 25);
+    let mut c: Interval = interval_new(30, 40);
+    println(interval_contains(a, 15));
+    println(interval_contains(a, 25));
+    println(interval_overlaps(a, b));
+    println(interval_overlaps(a, c));
+    println(interval_len(a));
+}

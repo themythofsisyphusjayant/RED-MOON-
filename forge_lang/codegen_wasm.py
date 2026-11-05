@@ -550,7 +550,7 @@ class WasmGen:
             raise ForgeError("wasm: defer is not supported in v1")
         from .moves import uses_move
         if uses_move(self.program):
-            raise ForgeError("wasm: move is not supported in v1")
+            raise ForgeError("wasm: move is not supported")
         from .mmaps import uses_mmap
         if uses_mmap(self.program):
             raise ForgeError("wasm: mmap is not supported in v1")

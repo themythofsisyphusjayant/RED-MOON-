@@ -1,0 +1,12 @@
+import "events.fg";
+
+fn main() {
+    let mut e: EventLog = events_new();
+    e = events_emit(e, 1);
+    e = events_emit(e, 2);
+    e = events_emit(e, 1);
+    println(events_count(e, 1));
+    println(events_count(e, 2));
+    println(events_count(e, 9));
+    println(events_total(e));
+}

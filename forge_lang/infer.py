@@ -68,22 +68,23 @@ class Infer:
         literals). A nested `[]` under expected `[[int]]` gets
         `[int]`, not `[?]`, so codegen never sees a hole type.
         Only ArrayLit / TupleLit nodes recurse (only they can
-        carry `[?]` holes); every other element walks normally.
-        Sized expected types do not recurse: a sized literal's
-        elements are real values (empty-vs-sized is rejected
-        in the checker), so there is no hole to fill there."""
+        carry `[?]` holes). Sized expected types recurse too
+        (fix track: nested sized-literal unification): an inner
+        literal under `[[int; 2]; 2]` gets `[int; 2]`, not the
+        dynamic `[int]` a plain walk would assign, and codegen
+        normalizes sized types to the shared heap layout."""
         self.set(expr, expected)
         if isinstance(expr, A.ArrayLit) and expr.elems:
             if expected.startswith("[") and expected.endswith("]"):
-                from .sizedarrays import is_sized_array
-                if not is_sized_array(expected):
-                    elem = expected[1:-1]
-                    for e in expr.elems:
-                        if isinstance(e, (A.ArrayLit, A.TupleLit)):
-                            self.fill_lit(e, elem)
-                        else:
-                            self.walk_expr(e)
-                    return
+                from .sizedarrays import is_sized_array, sized_elem
+                elem = (sized_elem(expected) if is_sized_array(expected)
+                        else expected[1:-1])
+                for e in expr.elems:
+                    if isinstance(e, (A.ArrayLit, A.TupleLit)):
+                        self.fill_lit(e, elem)
+                    else:
+                        self.walk_expr(e)
+                return
             for e in expr.elems:
                 self.walk_expr(e)
         elif isinstance(expr, A.TupleLit) and expr.elems:
@@ -348,10 +349,10 @@ class Infer:
                     self.walk_expr(a)
                 return self.set(expr, "(bool, [int])")
             if expr.name == "move":
-                for a in expr.args:
-                    self.walk_expr(a)
-                return self.set(expr, self.lookup(expr.args[0].name)
-                                if isinstance(expr.args[0], A.Var) else "int")
+                # A move returns its source's type, whether the
+                # source is a variable or a struct field (move v2).
+                t = self.walk_expr(expr.args[0])
+                return self.set(expr, t)
             if expr.name == "parallel_dot":
                 for a in expr.args:
                     self.walk_expr(a)

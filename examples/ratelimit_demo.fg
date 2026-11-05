@@ -1,0 +1,17 @@
+import "ratelimit.fg";
+
+fn main() {
+    let mut b: Bucket = bucket_new(3);
+    b = bucket_try(b);
+    println(b.allowed);
+    b = bucket_try(b);
+    println(b.allowed);
+    b = bucket_try(b);
+    println(b.allowed);
+    b = bucket_try(b);
+    println(b.allowed);
+    b = bucket_refill(b, 2);
+    b = bucket_try(b);
+    println(b.allowed);
+    println(b.tokens);
+}

@@ -1,0 +1,7 @@
+import "cuboid.fg";
+
+fn main() {
+    let mut c: Cuboid = cuboid_new(2, 3, 4);
+    println(cuboid_volume(c));
+    println(cuboid_surface(c));
+}

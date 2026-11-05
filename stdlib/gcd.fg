@@ -1,0 +1,14 @@
+fn gcd(a: int, b: int) -> int {
+    let mut x: int = a;
+    let mut y: int = b;
+    while y != 0 {
+        let mut t: int = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn lcm(a: int, b: int) -> int {
+    return a / gcd(a, b) * b;
+}

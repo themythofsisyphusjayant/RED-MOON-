@@ -1,0 +1,13 @@
+import "vec2.fg";
+
+fn main() {
+    let mut a: Vec2 = vec2_new(1, 2);
+    let mut b: Vec2 = vec2_new(3, 4);
+    let mut c: Vec2 = vec2_add(a, b);
+    println(c.x);
+    println(c.y);
+    println(vec2_dot(a, b));
+    let mut d: Vec2 = vec2_scale(a, 2);
+    println(d.x);
+    println(d.y);
+}

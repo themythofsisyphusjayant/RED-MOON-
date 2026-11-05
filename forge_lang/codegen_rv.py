@@ -210,7 +210,7 @@ class RVGen:
             raise ForgeError("big32: defer is not supported in v1")
         from .moves import uses_move
         if uses_move(self.program):
-            raise ForgeError("big32: move is not supported in v1")
+            raise ForgeError("big32: move is not supported")
         from .mmaps import uses_mmap
         if uses_mmap(self.program):
             raise ForgeError("big32: mmap is not supported in v1")

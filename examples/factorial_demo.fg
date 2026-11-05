@@ -1,0 +1,6 @@
+import "factorial.fg";
+
+fn main() {
+    println(fact(0));
+    println(fact(5));
+}

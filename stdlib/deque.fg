@@ -1,0 +1,56 @@
+struct Deque {
+    items: [int];
+}
+
+fn deque_new() -> Deque {
+    return Deque { items: [] };
+}
+
+fn deque_len(d: Deque) -> int {
+    return len(d.items);
+}
+
+fn deque_front(d: Deque) -> int {
+    return d.items[0];
+}
+
+fn deque_back(d: Deque) -> int {
+    return d.items[len(d.items) - 1];
+}
+
+fn deque_push_back(d: Deque, v: int) -> Deque {
+    let mut items: [int] = d.items;
+    push(items, v);
+    return Deque { items: items };
+}
+
+fn deque_push_front(d: Deque, v: int) -> Deque {
+    let mut items: [int] = [];
+    push(items, v);
+    let mut i: int = 0;
+    while i < len(d.items) {
+        push(items, d.items[i]);
+        i = i + 1;
+    }
+    return Deque { items: items };
+}
+
+fn deque_pop_front(d: Deque) -> Deque {
+    let mut items: [int] = [];
+    let mut i: int = 1;
+    while i < len(d.items) {
+        push(items, d.items[i]);
+        i = i + 1;
+    }
+    return Deque { items: items };
+}
+
+fn deque_pop_back(d: Deque) -> Deque {
+    let mut items: [int] = [];
+    let mut i: int = 0;
+    while i < len(d.items) - 1 {
+        push(items, d.items[i]);
+        i = i + 1;
+    }
+    return Deque { items: items };
+}

@@ -1,0 +1,21 @@
+struct Vec3 {
+    x: int;
+    y: int;
+    z: int;
+}
+
+fn vec3_new(x: int, y: int, z: int) -> Vec3 {
+    return Vec3 { x: x, y: y, z: z };
+}
+
+fn vec3_add(a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+
+fn vec3_dot(a: Vec3, b: Vec3) -> int {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+fn vec3_scale(a: Vec3, k: int) -> Vec3 {
+    return Vec3 { x: a.x * k, y: a.y * k, z: a.z * k };
+}

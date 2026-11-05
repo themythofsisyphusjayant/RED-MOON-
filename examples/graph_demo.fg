@@ -1,0 +1,13 @@
+import "graph.fg";
+
+fn main() {
+    let mut g: Graph = graph_new();
+    g = graph_add_edge(g, 0, 1);
+    g = graph_add_edge(g, 1, 2);
+    g = graph_add_edge(g, 0, 2);
+    println(graph_edge_count(g));
+    println(graph_degree(g, 0));
+    println(graph_degree(g, 1));
+    println(graph_has_edge(g, 0, 2));
+    println(graph_has_edge(g, 2, 0));
+}

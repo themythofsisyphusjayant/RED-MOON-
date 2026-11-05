@@ -2,9 +2,11 @@
 (tests/test_move_v1.py). move(a) transfers the one
 hold instead of copying: the destination's refcount
 stays 1, and the source is dead afterwards — any
-later use, second move, or move inside a branch or
-loop is a checker error. Native-only in v1; big32
-and WASM reject move programs.
+later use or second move is a checker error.
+Native-only; big32 and WASM reject move programs.
+Branch/loop moves and field moves arrived in v2
+(tests/test_move_branch_field.py); the v1 branch and
+loop rejection cases moved there as success cases.
 """
 
 import os
@@ -25,12 +27,6 @@ CASES = [
     ("double move",
      "fn main() {\n  let a = [1];\n  let b = move(a);\n  let c = move(a);\n}\n",
      "use of moved value 'a'"),
-    ("move in loop",
-     "fn main() {\n  let a = [1];\n  let i = 0;\n  while i < 1 {\n    let b = move(a);\n    i = i + 1;\n  }\n}\n",
-     "move inside a branch or loop is not supported in v1"),
-    ("move in branch",
-     "fn main() {\n  let a = [1];\n  if true {\n    let b = move(a);\n  }\n}\n",
-     "move inside a branch or loop is not supported in v1"),
     ("move of int",
      "fn main() {\n  let a = 5;\n  let b = move(a);\n}\n",
      "move needs an owned value"),

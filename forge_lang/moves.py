@@ -1,8 +1,9 @@
 """Move semantics (Top-500 #27) in a program, for backend
 gates. A program uses move when any call is to move.
 The native backend lowers it to a transfer (fresh +
-forget); big32 and WASM reject move programs in v1
-with a named error.
+forget for straight-line moves, a runtime moved flag
+for branch/loop moves); big32 and WASM reject move
+programs with a named error.
 """
 
 import forge_lang.ast_nodes as A

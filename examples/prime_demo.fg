@@ -1,0 +1,9 @@
+import "prime.fg";
+
+fn main() {
+    println(prime_is(17));
+    println(prime_is(18));
+    println(prime_is(1));
+    println(prime_next(14));
+    println(prime_next(17));
+}

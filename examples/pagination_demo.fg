@@ -1,0 +1,9 @@
+import "pagination.fg";
+
+fn main() {
+    println(page_total_pages(25, 10));
+    println(page_start(3, 10));
+    println(page_count(25, 3, 10));
+    println(page_count(25, 4, 10));
+    println(page_count(25, 1, 10));
+}

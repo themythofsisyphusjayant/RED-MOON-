@@ -1,0 +1,20 @@
+struct Rect {
+    w: int;
+    h: int;
+}
+
+fn rect_new(w: int, h: int) -> Rect {
+    return Rect { w: w, h: h };
+}
+
+fn rect_area(r: Rect) -> int {
+    return r.w * r.h;
+}
+
+fn rect_perimeter(r: Rect) -> int {
+    return 2 * r.w + 2 * r.h;
+}
+
+fn triangle_area(b: int, h: int) -> int {
+    return b * h / 2;
+}

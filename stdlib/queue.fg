@@ -1,0 +1,31 @@
+struct Queue {
+    items: [int];
+}
+
+fn queue_new() -> Queue {
+    return Queue { items: [] };
+}
+
+fn queue_enqueue(q: Queue, v: int) -> Queue {
+    let mut items: [int] = q.items;
+    push(items, v);
+    return Queue { items: items };
+}
+
+fn queue_dequeue(q: Queue) -> Queue {
+    let mut items: [int] = [];
+    let mut i: int = 1;
+    while i < len(q.items) {
+        push(items, q.items[i]);
+        i = i + 1;
+    }
+    return Queue { items: items };
+}
+
+fn queue_front(q: Queue) -> int {
+    return q.items[0];
+}
+
+fn queue_len(q: Queue) -> int {
+    return len(q.items);
+}

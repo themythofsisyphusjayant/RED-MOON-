@@ -1,0 +1,9 @@
+fn fact(n: int) -> int {
+    let mut r: int = 1;
+    let mut i: int = 2;
+    while i <= n {
+        r = r * i;
+        i = i + 1;
+    }
+    return r;
+}

@@ -1,0 +1,22 @@
+fn digit_sum(n: int) -> int {
+    let mut s: int = 0;
+    let mut x: int = n;
+    while x > 0 {
+        s = s + x % 10;
+        x = x / 10;
+    }
+    return s;
+}
+
+fn digit_count(n: int) -> int {
+    if n == 0 {
+        return 1;
+    }
+    let mut c: int = 0;
+    let mut x: int = n;
+    while x > 0 {
+        c = c + 1;
+        x = x / 10;
+    }
+    return c;
+}

@@ -1,0 +1,12 @@
+import "movingavg.fg";
+
+fn main() {
+    let mut m: MovingAvg = movingavg_new();
+    m = movingavg_push(m, 10);
+    m = movingavg_push(m, 20);
+    m = movingavg_push(m, 30);
+    println(movingavg_avg(m));
+    m = movingavg_push(m, 40);
+    println(movingavg_avg(m));
+    println(movingavg_len(m));
+}

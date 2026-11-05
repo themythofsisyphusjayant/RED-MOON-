@@ -1,0 +1,24 @@
+struct Bucket {
+    tokens: int;
+    cap: int;
+    allowed: int;
+}
+
+fn bucket_new(cap: int) -> Bucket {
+    return Bucket { tokens: cap, cap: cap, allowed: 0 };
+}
+
+fn bucket_try(b: Bucket) -> Bucket {
+    if b.tokens > 0 {
+        return Bucket { tokens: b.tokens - 1, cap: b.cap, allowed: 1 };
+    }
+    return Bucket { tokens: b.tokens, cap: b.cap, allowed: 0 };
+}
+
+fn bucket_refill(b: Bucket, n: int) -> Bucket {
+    let mut t: int = b.tokens + n;
+    if t > b.cap {
+        t = b.cap;
+    }
+    return Bucket { tokens: t, cap: b.cap, allowed: b.allowed };
+}

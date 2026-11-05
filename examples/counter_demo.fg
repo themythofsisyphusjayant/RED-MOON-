@@ -1,0 +1,12 @@
+import "counter.fg";
+
+fn main() {
+    let mut c: Counter = counter_new();
+    c = counter_inc(c, 7);
+    c = counter_inc(c, 7);
+    c = counter_inc(c, 3);
+    println(counter_get(c, 7));
+    println(counter_get(c, 3));
+    println(counter_distinct(c));
+    println(counter_total(c));
+}

@@ -1093,6 +1093,7 @@ class Codegen:
         self.try_counter = 0
         self.assign_counter = 0
         self.owned_stack = [{}]
+        self.moved_fields = set()
         self.structs = {sd.name: dict(sd.fields)
                         for sd in (getattr(program, "structs", None) or [])}
         self.newtype_targets = {nd.name: nd.target
@@ -1140,13 +1141,40 @@ class Codegen:
     def owned_add(self, name, typ="str"):
         self.owned_stack[-1][name] = typ
 
+    def moved_flag(self, name):
+        """C variable holding a variable's runtime moved flag
+        (move v2): 1 once a conditional move of it has run."""
+        return f"__forge_moved_{name}"
+
+    def _field_path(self, expr):
+        """Dotted path for a field access rooted at a variable,
+        or None for any other base (mirrors checker)."""
+        parts = []
+        node = expr
+        while isinstance(node, A.FieldAccess):
+            parts.append(node.field)
+            node = node.base
+        if not isinstance(node, A.Var):
+            return None
+        parts.append(node.name)
+        return ".".join(reversed(parts))
+
+    def emit_guarded(self, name, code):
+        """Emit a free statement string only when `name`'s moved
+        flag is clear (move v2): a variable moved in a branch or
+        loop has no value left to free on the path that moved it,
+        but still does on the path that did not."""
+        if code:
+            self.emit(f"if (!{self.moved_flag(name)}) {{ {code} }}")
+
     def owned_forget(self, name):
         """Drop a variable from ownership tracking: its hold moved
-        elsewhere, so scope-end frees must skip it. v1 only allows
-        moves in straight-line code (the checker rejects moves in
-        branches and loops), so the forget always executes before
-        any later free of that frame — no path can free a hold
-        that already moved, or leak one that never did."""
+        elsewhere, so scope-end frees must skip it. Only for
+        straight-line moves (the checker annotates conditional
+        moves, which use the runtime moved flag instead): a
+        straight-line forget always executes before any later
+        free of that frame — no path can free a hold that
+        already moved, or leak one that never did."""
         for s in reversed(self.owned_stack):
             if name in s:
                 del s[name]
@@ -1454,6 +1482,14 @@ class Codegen:
                   f"{fname}({tmp}); }}")
 
     def _emit_free_one(self, name, typ):
+        # A conditional move leaves the flag as the only record
+        # of whether this variable still owns its value: skip
+        # the whole free when the flag says it moved (move v2).
+        # Every owned variable gets a flag at its declaration
+        # (Let, parameter, match binding), so this is always
+        # in scope wherever the variable can be freed.
+        self.emit(f"if (!{self.moved_flag(name)}) {{")
+        self.indent += 1
         if typ == "str":
             self.emit(f"forge_free_str({name});")
         elif is_union_type(typ):
@@ -1467,13 +1503,21 @@ class Codegen:
         elif self.is_array_type(typ):
             self.emit(self.array_free_code(name, typ))
         elif self.is_struct_type(typ):
-            # Destructor hook first: fields must still be alive
-            # when drop reads them (Top-500 #33). Never for the
-            # drop method's own receiver parameter — that would
-            # recurse forever (see gen_func's drop_receiver).
-            if getattr(self, "drop_receiver", None) != name:
-                self.emit_drop_hook(name, typ)
-            self.emit_struct_free(name, typ)
+            if any(p.startswith(name + ".") for p in self.moved_fields):
+                # A field of this struct moved away: the drop
+                # hook must not read it, and the free must skip
+                # it (the new owner frees it) — move v2.
+                self.emit_struct_free(name, typ, path=name)
+            else:
+                # Destructor hook first: fields must still be alive
+                # when drop reads them (Top-500 #33). Never for the
+                # drop method's own receiver parameter — that would
+                # recurse forever (see gen_func's drop_receiver).
+                if getattr(self, "drop_receiver", None) != name:
+                    self.emit_drop_hook(name, typ)
+                self.emit_struct_free(name, typ)
+        self.indent -= 1
+        self.emit("}")
 
     def emit_free_owned(self):
         if self.freestanding:
@@ -1682,10 +1726,17 @@ class Codegen:
             return True
         return False
 
-    def struct_free_code(self, var_code, t):
+    def struct_free_code(self, var_code, t, path=None):
+        """Free code for a struct value's owned fields. When
+        `path` is the variable's dotted path, fields recorded
+        in moved_fields (move v2: straight-line field moves)
+        are skipped — their new owner frees them."""
         fields = self.structs.get(self.struct_type_name(t), {})
         parts = []
         for fname, ftype in fields.items():
+            full = f"{path}.{fname}" if path is not None else None
+            if full is not None and full in self.moved_fields:
+                continue
             code = f"{var_code}.{fname}"
             if ftype == "str":
                 parts.append(f"forge_free_str({code});")
@@ -1700,11 +1751,11 @@ class Codegen:
             elif self.is_array_type(ftype):
                 parts.append(self.array_free_code(code, ftype))
             elif self.is_struct_type(ftype):
-                parts.append(self.struct_free_code(code, ftype))
+                parts.append(self.struct_free_code(code, ftype, path=full))
         return " ".join(parts)
 
-    def emit_struct_free(self, var_code, t):
-        code = self.struct_free_code(var_code, t)
+    def emit_struct_free(self, var_code, t, path=None):
+        code = self.struct_free_code(var_code, t, path=path)
         if code:
             self.emit(code)
 
@@ -2241,6 +2292,7 @@ class Codegen:
 
     def gen_func(self, fn):
         self.current_fn = fn.name
+        self.moved_fields = set()
         # Destructor hooks (Top-500 #33): a drop method's own
         # receiver parameter must not hook on its return free,
         # or the hook would call itself forever (the receiver
@@ -2283,6 +2335,13 @@ class Codegen:
                if fn.name == "main" else self.c_sig(fn))
         self.emit(sig + " {")
         self.indent += 1
+        # Runtime moved flags for owned parameters (move v2):
+        # a conditional move of a parameter must be visible
+        # to the function-end free, which checks this flag.
+        for pn, pt in fn.params:
+            if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
+                    or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt):
+                self.emit(f"int {self.moved_flag(pn)} = 0;")
         if fn.name == "main" and not self.freestanding:
             self.emit("forge_args_global.len = __forge_argc > 0 ? __forge_argc - 1 : 0;")
             self.emit("forge_args_global.cap = forge_args_global.len;")
@@ -2597,6 +2656,9 @@ class Codegen:
                 if not self.is_fresh_str(stmt.expr):
                     expr = f"forge_copy_str({expr})"
                 self.owned_add(stmt.name, "str")
+                # Runtime moved flag (move v2), declared with
+                # the variable so it shares its block scope.
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
             elif is_opaque_type(t):
                 # A concrete implementation wraps into the opaque
                 # value; a shared opaque value gains a copy.
@@ -2604,6 +2666,7 @@ class Codegen:
                                            t, stmt.expr)
                 self.owned_add(stmt.name, t)
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 return
             elif is_union_type(t):
                 # A member value wraps into the union (fresh); a
@@ -2621,12 +2684,14 @@ class Codegen:
                             f"{copy} __forge_let{n};}})")
                 self.owned_add(stmt.name, t)
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 return
             elif self.is_array_type(t):
                 # Fresh arrays are taken as-is (ref=1); shared arrays
                 # gain a reference for this new owner.
                 self.owned_add(stmt.name, t)
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 if not self.is_fresh_array(stmt.expr):
                     self.emit(f"forge_arr_inc({stmt.name}.ref);")
                 return
@@ -2635,6 +2700,7 @@ class Codegen:
                 # shared structs gain independent fields for this owner.
                 self.owned_add(stmt.name, t)
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 if not self.is_fresh_struct(stmt.expr):
                     self.emit_struct_own(stmt.name, t)
                 return
@@ -2643,6 +2709,7 @@ class Codegen:
                 # shared tuples gain independent elements for this owner.
                 self.owned_add(stmt.name, t)
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 if not self.is_fresh_tuple(stmt.expr):
                     self.emit_tuple_own(stmt.name, t)
                 return
@@ -2667,9 +2734,10 @@ class Codegen:
                 converted = self.opaque_convert(expr, et, vt, stmt.expr)
                 self.emit(f"{c_type(vt)} {temp} = {converted};")
                 if self.owned_contains(stmt.name):
-                    self.emit(f"forge_free_{opaque_c_name(vt)}({stmt.name});")
+                    self.emit_guarded(stmt.name, f"forge_free_{opaque_c_name(vt)}({stmt.name});")
                 self.emit(f"{stmt.name} = {temp};")
                 self.owned_add(stmt.name, vt)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             elif vt is not None and is_union_type(vt):
                 # Evaluate into a temp first (the new value may
                 # reference the old one), copy the temp's str
@@ -2688,11 +2756,10 @@ class Codegen:
                     if copy:
                         self.emit(copy)
                 if self.owned_contains(stmt.name):
-                    ufree = self.union_free_code(stmt.name, vt)
-                    if ufree:
-                        self.emit(ufree)
+                    self.emit_guarded(stmt.name, self.union_free_code(stmt.name, vt))
                 self.emit(f"{stmt.name} = {temp};")
                 self.owned_add(stmt.name, vt)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             elif et == "str":
                 if not self.is_fresh_str(stmt.expr):
                     expr = f"forge_copy_str({expr})"
@@ -2702,9 +2769,10 @@ class Codegen:
                 self.assign_counter += 1
                 self.emit(f"char * __forge_assign{n} = {expr};")
                 if self.owned_contains(stmt.name):
-                    self.emit(f"forge_free_str({stmt.name});")
+                    self.emit_guarded(stmt.name, f"forge_free_str({stmt.name});")
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 self.owned_add(stmt.name, "str")
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             elif self.is_array_type(et):
                 # Evaluate into a temp, free the old array (refcounted),
                 # then take the new one, gaining a reference if shared.
@@ -2712,11 +2780,12 @@ class Codegen:
                 self.assign_counter += 1
                 self.emit(f"{c_type(et)} __forge_assign{n} = {expr};")
                 if self.owned_contains(stmt.name):
-                    self.emit(self.array_free_code(stmt.name, et))
+                    self.emit_guarded(stmt.name, self.array_free_code(stmt.name, et))
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 if not self.is_fresh_array(stmt.expr):
                     self.emit(f"forge_arr_inc({stmt.name}.ref);")
                 self.owned_add(stmt.name, et)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             elif self.is_struct_type(et):
                 # Evaluate into a temp, make it independently owned
                 # (so freeing the old value cannot free the new one),
@@ -2727,9 +2796,12 @@ class Codegen:
                 if not self.is_fresh_struct(stmt.expr):
                     self.emit_struct_own(f"__forge_assign{n}", et)
                 if self.owned_contains(stmt.name):
-                    self.emit_struct_free(stmt.name, et)
+                    self.emit_guarded(stmt.name, self.struct_free_code(stmt.name, et, path=stmt.name))
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 self.owned_add(stmt.name, et)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
+                self.moved_fields = {p for p in self.moved_fields
+                                     if not p.startswith(stmt.name + ".")}
             elif is_tuple_type(et):
                 # Same temp-first shape as structs, with tuple
                 # ownership on the temp and tuple frees on the old.
@@ -2739,13 +2811,19 @@ class Codegen:
                 if not self.is_fresh_tuple(stmt.expr):
                     self.emit_tuple_own(f"__forge_assign{n}", et)
                 if self.owned_contains(stmt.name):
-                    self.emit_tuple_free(stmt.name, et)
+                    self.emit_guarded(stmt.name, self.tuple_free_code(stmt.name, et))
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 self.owned_add(stmt.name, et)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             else:
                 self.emit(f"{stmt.name} = {expr};")
             return
         if isinstance(stmt, A.FieldAssign):
+            # A field that moved away (move v2) holds no value
+            # to free: assigning it revives it, so its old free
+            # is skipped and the path leaves moved_fields below.
+            field_path = self._field_path(stmt.target)
+            field_moved = field_path is not None and field_path in self.moved_fields
             target_code = self.gen_expr(stmt.target)
             ft = self.expr_type(stmt.target)
             val = self.gen_expr(stmt.expr)
@@ -2766,7 +2844,8 @@ class Codegen:
                 self.assign_counter += 1
                 n = self.assign_counter
                 self.emit(f"char * __forge_fa{n} = {val};")
-                self.emit(f"forge_free_str({target_code});")
+                if not field_moved:
+                    self.emit(f"forge_free_str({target_code});")
                 self.emit(f"{target_code} = __forge_fa{n};")
             elif is_union_type(ft):
                 vt = self.expr_type(stmt.expr)
@@ -2781,7 +2860,7 @@ class Codegen:
                     if copy:
                         self.emit(copy)
                 ufree = self.union_free_code(target_code, ft)
-                if ufree:
+                if ufree and not field_moved:
                     self.emit(ufree)
                 self.emit(f"{target_code} = __forge_fa{n};")
             elif self.is_array_type(ft):
@@ -2790,7 +2869,8 @@ class Codegen:
                 self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
                 if not self.is_fresh_array(stmt.expr):
                     self.emit(f"forge_arr_inc(__forge_fa{n}.ref);")
-                self.emit(self.array_free_code(target_code, ft))
+                if not field_moved:
+                    self.emit(self.array_free_code(target_code, ft))
                 self.emit(f"{target_code} = __forge_fa{n};")
             elif self.is_struct_type(ft):
                 self.assign_counter += 1
@@ -2798,7 +2878,8 @@ class Codegen:
                 self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
                 if not self.is_fresh_struct(stmt.expr):
                     self.emit_struct_own(f"__forge_fa{n}", ft)
-                self.emit_struct_free(target_code, ft)
+                if not field_moved:
+                    self.emit_struct_free(target_code, ft, path=field_path)
                 self.emit(f"{target_code} = __forge_fa{n};")
             elif is_tuple_type(ft):
                 self.assign_counter += 1
@@ -2806,10 +2887,13 @@ class Codegen:
                 self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
                 if not self.is_fresh_tuple(stmt.expr):
                     self.emit_tuple_own(f"__forge_fa{n}", ft)
-                self.emit_tuple_free(target_code, ft)
+                if not field_moved:
+                    self.emit_tuple_free(target_code, ft)
                 self.emit(f"{target_code} = __forge_fa{n};")
             else:
                 self.emit(f"{target_code} = {val};")
+            if field_path is not None:
+                self.moved_fields.discard(field_path)
             return
         if isinstance(stmt, A.IndexAssign):
             base = stmt.base.base
@@ -2907,6 +2991,9 @@ class Codegen:
                         if pat == "str":
                             payload_code = f"forge_copy_str({payload_code})"
                         self.emit(f"{c_type(pat)} {binding} = {payload_code};")
+                        if pat == "str" or self.is_array_type(pat) or self.is_struct_type(pat) \
+                                or is_tuple_type(pat) or is_union_type(pat) or is_opaque_type(pat):
+                            self.emit(f"int {self.moved_flag(binding)} = 0;")
                         self._facts.pop(binding, None)
                         self.gen_arm_block(body, ret_type)
                         self.indent -= 1
@@ -2980,6 +3067,9 @@ class Codegen:
                         if pt == "str":
                             payload_code = f"forge_copy_str({payload_code})"
                         self.emit(f"{c_type(pt)} {binding} = {payload_code};")
+                        if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
+                                or is_tuple_type(pt) or is_union_type(pt) or is_opaque_type(pt):
+                            self.emit(f"int {self.moved_flag(binding)} = 0;")
                         # The payload binding shadows any outer variable
                         # of the same name for this arm: its value is
                         # unknown, so drop the outer variable's facts.
@@ -3953,8 +4043,24 @@ class Codegen:
             if expr.name == "read_bytes":
                 return f"forge_read_bytes({self.gen_expr(expr.args[0])})"
             if expr.name == "write_bytes":
-                return (f"forge_write_bytes({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                # Ownership (audit fix): forge_write_bytes FREES
+                # its array parameter (batch 25), but builtin
+                # callers transfer nothing — so a variable
+                # argument lost its hold (UAF, audit probes P1/P2).
+                # Follow the ordinary function-parameter rule:
+                # non-fresh array arguments arrive with an extra
+                # hold the helper frees; fresh arguments arrive
+                # as-is and are freed. The path stays borrowed,
+                # like every other str parameter.
+                path_code = self.gen_expr(expr.args[0])
+                data = expr.args[1]
+                data_code = self.gen_expr(data)
+                if not self.is_fresh_array(data):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    data_code = (f"({{{c_type(self.expr_type(data))} __forge_arg{n} = {data_code}; "
+                                 f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
+                return f"forge_write_bytes({path_code}, {data_code})"
             if expr.name == "args":
                 return "forge_args_global"
             if expr.name == "parse_float":
@@ -4008,14 +4114,31 @@ class Codegen:
                 return (f"({{{c_type(at)} __forge_arg{n} = {code}; "
                         f"__forge_arg{n}.ref ? *__forge_arg{n}.ref : 0;}})")
             if expr.name == "move":
-                # Transfer, not copy: forget the source's owned
-                # entry (scope-end frees skip it from here on)
-                # and emit the variable's value with no inc.
-                # The freshness helpers make the receiving
-                # Let/Assign/Call-arg/Return sites skip their
-                # inc too, so the hold arrives exactly once.
-                self.owned_forget(expr.args[0].name)
-                return self.gen_expr(expr.args[0])
+                # Transfer, not copy: the freshness helpers make
+                # the receiving Let/Assign/Call-arg/Return sites
+                # skip their inc too, so the hold arrives exactly
+                # once. A straight-line move forgets the source
+                # at compile time; a conditional move (checker
+                # annotation) sets a runtime flag instead — the
+                # branch or loop may not run, so only the flag
+                # can tell scope-end frees whether the hold
+                # already left. A second conditional move fails
+                # at runtime instead of transferring a freed
+                # buffer a second time. A field move records
+                # its path so struct frees skip that field.
+                arg = expr.args[0]
+                if isinstance(arg, A.FieldAccess):
+                    path = self._field_path(arg)
+                    if path is not None:
+                        self.moved_fields.add(path)
+                    return self.gen_expr(arg)
+                if getattr(expr, "in_conditional", False):
+                    flag = self.moved_flag(arg.name)
+                    return (f"({{ if ({flag}) forge_fail(\"use of moved value "
+                            f"'{arg.name}'\"); {flag} = 1; "
+                            f"{self.gen_expr(arg)}; }})")
+                self.owned_forget(arg.name)
+                return self.gen_expr(arg)
             if expr.name == "mmap_open":
                 return f"forge_mmap_open({self.gen_expr(expr.args[0])})"
             if expr.name == "mmap_get":

@@ -1,0 +1,12 @@
+import "stack.fg";
+
+fn main() {
+    let mut s: Stack = stack_new();
+    s = stack_push(s, 1);
+    s = stack_push(s, 2);
+    s = stack_push(s, 3);
+    println(stack_peek(s));
+    s = stack_pop(s);
+    println(stack_peek(s));
+    println(stack_len(s));
+}

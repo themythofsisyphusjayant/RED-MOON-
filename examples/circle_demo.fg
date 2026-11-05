@@ -1,0 +1,8 @@
+import "circle.fg";
+
+fn main() {
+    let mut c: Circle = circle_new(5);
+    println(circle_diameter(c));
+    println(circle_area3(c));
+    println(circle_circum3(c));
+}

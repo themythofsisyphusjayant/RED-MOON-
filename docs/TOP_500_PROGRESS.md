@@ -417,3 +417,48 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   re-verified 4/4 clean by direct runs). Counts after batch 27: HAVE 65,
   PARTIAL 60, GAP 375, to build 435. Next in
   priority: #34 pinning.
+
+- Fix track (2 Nov 2026, pipeline run): nested sized-literal
+  unification (tests/test_sizedunif_fix.py, ALL PASS, plus a
+  clean AddressSanitizer run). `[[1, 2], [3, 4]]` against
+  `[[int; 2]; 2]` now checks: the checker recurses the
+  sized-literal check into nested literals at any depth
+  (and under a dynamic outer array with sized inner arrays),
+  and infer assigns sized types to inner literals. Verified
+  across let, function parameter, return, and struct-field
+  positions, plus triple nesting and `[[int; 0]; 2]`; inner
+  and outer count mismatches raise precise errors, and wrong
+  inner sizes / element types are still rejected. Full-suite
+  regression check confirmed clean 2 Nov 2026 (log
+  forge_suite_sizedunif_4602.log: PASS). Counts unchanged
+  (a fix, not a new feature): HAVE 65, PARTIAL 60, GAP 375,
+  to build 435. Next in priority: the C-helper
+  param-consumption audit.
+
+- Fix track (4 Nov 2026, pipeline run): branch/loop moves
+  + field moves, the #27 v2 slice
+  (tests/test_move_branch_field.py, ALL PASS, plus
+  AddressSanitizer-clean runs of the demo, field,
+  branch, loop, and parameter programs; the v1 test
+  was updated — its branch/loop rejection cases are
+  superseded and now live in the v2 test as success
+  cases). The checker now joins moved sets over
+  if/while/for/match paths, so a use after a
+  conditional move is a checker error until
+  reassignment (or a fresh shadowing let) revives
+  the variable; codegen gives every owned variable
+  a runtime moved flag, so a branch move frees
+  correctly on both paths and a second loop move
+  fails at runtime instead of transferring a freed
+  buffer. Field moves work in straight-line code
+  with scope-end frees skipping the moved field
+  (and its drop hook); field moves in branches or
+  loops and moves of for-loop variables are
+  rejected with named errors, not approximated.
+  Full-suite regression check confirmed clean
+  4 Nov 2026 (log forge_suite_movebranch_9356.log:
+  PASS). Counts unchanged (an extension of #27,
+  already HAVE): HAVE 65, PARTIAL 60, GAP 375,
+  to build 435. Next in priority: mmap grow +
+  word-width access (fix track), then the
+  struct-array push copy-on-write item.

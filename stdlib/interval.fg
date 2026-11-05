@@ -1,0 +1,26 @@
+struct Interval {
+    lo: int;
+    hi: int;
+}
+
+fn interval_new(lo: int, hi: int) -> Interval {
+    return Interval { lo: lo, hi: hi };
+}
+
+fn interval_contains(iv: Interval, v: int) -> int {
+    if v >= iv.lo && v <= iv.hi {
+        return 1;
+    }
+    return 0;
+}
+
+fn interval_overlaps(a: Interval, b: Interval) -> int {
+    if a.lo <= b.hi && b.lo <= a.hi {
+        return 1;
+    }
+    return 0;
+}
+
+fn interval_len(iv: Interval) -> int {
+    return iv.hi - iv.lo;
+}

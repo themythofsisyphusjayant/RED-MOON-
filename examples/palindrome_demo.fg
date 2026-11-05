@@ -1,0 +1,7 @@
+import "palindrome.fg";
+
+fn main() {
+    println(reverse_int(123));
+    println(is_palindrome(121));
+    println(is_palindrome(123));
+}

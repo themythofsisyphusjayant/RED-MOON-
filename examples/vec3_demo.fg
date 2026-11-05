@@ -1,0 +1,15 @@
+import "vec3.fg";
+
+fn main() {
+    let mut a: Vec3 = vec3_new(1, 2, 3);
+    let mut b: Vec3 = vec3_new(4, 5, 6);
+    let mut c: Vec3 = vec3_add(a, b);
+    println(c.x);
+    println(c.y);
+    println(c.z);
+    println(vec3_dot(a, b));
+    let mut d: Vec3 = vec3_scale(a, 2);
+    println(d.x);
+    println(d.y);
+    println(d.z);
+}

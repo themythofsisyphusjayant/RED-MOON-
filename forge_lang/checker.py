@@ -141,6 +141,10 @@ class Checker:
         self.loop_depth = 0
         self.branch_depth = 0
         self.moved = set()
+        self.moved_fields = set()
+        self._in_field_base = 0
+        self._moved_field_target = None
+        self.loop_vars = []
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
         self.struct_instantiations = {}  # concrete type -> {field: type}
         self._instantiating = set()
@@ -897,24 +901,42 @@ class Checker:
         return None
 
     def _sized_literal_ok(self, expr, expected):
-        """True when expr is an array literal with exactly the
-        element count and element types a sized annotation needs.
+        """True when expr is an array literal matching a sized
+        annotation at any depth.
 
-        A length mismatch raises its own precise error (the
-        generic mismatch message would hide the count); an
-        element-type mismatch returns False so the caller reports
-        its generic message. Non-literals and non-sized
-        expectations return False without raising.
+        A length mismatch at any sized level raises its own
+        precise error (the generic mismatch message would hide
+        the count); an element-type mismatch returns False so
+        the caller reports its generic message. Non-literals
+        and expectations with no sized array anywhere return
+        False without raising. Recursion handles nested sized
+        literals (`[[1, 2], [3, 4]]` against `[[int; 2]; 2]`)
+        and sized literals nested under a dynamic array
+        (`[[1, 2]]` against `[[int; 2]]`): without it the inner
+        literal checks as dynamic `[int]` and the whole literal
+        is rejected. Non-literal elements (variables of a sized
+        type) still go through `accepts`.
         """
-        from .sizedarrays import is_sized_array, sized_elem, sized_len
-        if not is_sized_array(expected) or not isinstance(expr, A.ArrayLit):
+        from .sizedarrays import (contains_sized, is_sized_array,
+                                  sized_elem, sized_len)
+        if not isinstance(expr, A.ArrayLit):
             return False
-        elem, n = sized_elem(expected), sized_len(expected)
-        if len(expr.elems) != n:
-            raise ForgeError(f"sized array {expected} needs {n} elements, "
-                             f"got {len(expr.elems)}", expr.line, expr.col)
+        if is_sized_array(expected):
+            elem, n = sized_elem(expected), sized_len(expected)
+            if len(expr.elems) != n:
+                raise ForgeError(f"sized array {expected} needs {n} elements, "
+                                 f"got {len(expr.elems)}", expr.line, expr.col)
+        elif (isinstance(expected, str) and expected.startswith("[")
+              and expected.endswith("]") and contains_sized(expected[1:-1])):
+            elem = expected[1:-1]
+        else:
+            return False
         for e in expr.elems:
-            if not self.accepts(self.check_expr(e), elem, e):
+            if (isinstance(e, A.ArrayLit) and isinstance(elem, str)
+                    and elem.startswith("[") and elem.endswith("]")):
+                if not self._sized_literal_ok(e, elem):
+                    return False
+            elif not self.accepts(self.check_expr(e), elem, e):
                 return False
         return True
 
@@ -1005,7 +1027,8 @@ class Checker:
         # in the middle of checking another function (a call site), and
         # must not wipe that function's scopes/return type.
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
-                 self.loop_depth, self.branch_depth, self.moved, self.unresolved)
+                 self.loop_depth, self.branch_depth, self.moved, self.unresolved,
+                 self.moved_fields, self.loop_vars)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1014,6 +1037,8 @@ class Checker:
             self.loop_depth = 0
             self.branch_depth = 0
             self.moved = set()
+            self.moved_fields = set()
+            self.loop_vars = []
             for pn, pt in fn.params:
                 if pn in C_KEYWORDS:
                     raise ForgeError(f"'{pn}' is a C keyword and cannot be used as a "
@@ -1067,7 +1092,8 @@ class Checker:
                                          fn.line, fn.col)
         finally:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
-                self.loop_depth, self.branch_depth, self.moved, self.unresolved = saved
+                self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
+                self.moved_fields, self.loop_vars = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -1085,6 +1111,41 @@ class Checker:
         for stmt in block.stmts:
             self.check_stmt(stmt)
         self.scopes.pop()
+
+    def _field_path(self, expr):
+        """Dotted path for a field access rooted at a variable
+        ('s.vals', 's.inner.arr'), or None for any other base."""
+        parts = []
+        node = expr
+        while isinstance(node, A.FieldAccess):
+            parts.append(node.field)
+            node = node.base
+        if not isinstance(node, A.Var):
+            return None
+        parts.append(node.name)
+        return ".".join(reversed(parts))
+
+    def _join_moved(self, before_moved, before_fields, results):
+        """Path-sensitive join for branches and loops (move v2):
+        a variable is moved after the join when it is moved on
+        ANY path (a use after a conditional move is unsafe on
+        the path that moved it, so the checker rejects it).
+        Names declared only inside a branch are filtered out:
+        they are out of scope after the join, and must not
+        poison a later redeclaration of the same name."""
+        visible = set()
+        for scope in self.scopes:
+            visible.update(scope.keys())
+        moved = set(before_moved)
+        fields = set(before_fields)
+        for mset, fset in results:
+            for name in mset:
+                if name in visible:
+                    moved.add(name)
+            for path in fset:
+                if path.split(".")[0] in visible:
+                    fields.add(path)
+        return moved, fields
 
     def check_stmt(self, stmt):
         if isinstance(stmt, A.Block):
@@ -1148,6 +1209,11 @@ class Checker:
                                          stmt.line, stmt.col)
                     t = stmt.ann
             self.scopes[-1][stmt.name] = (t, stmt.mutable)
+            # A fresh binding is never moved, even when it shadows
+            # an outer variable that was moved (move v2).
+            self.moved.discard(stmt.name)
+            self.moved_fields = {p for p in self.moved_fields
+                                 if not p.startswith(stmt.name + ".")}
             if (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
                     and stmt.ann is None):
                 # Empty literal, no annotation: its element type is
@@ -1170,6 +1236,12 @@ class Checker:
                                      or f"cannot assign {et} to {vt} variable '{stmt.name}'"
                                      f"{cast_hint(et, vt)}",
                                      stmt.line, stmt.col)
+            # Reassignment revives a moved variable: the new value
+            # is fresh, so later uses (and scope-end frees) see it
+            # as live again (move v2; codegen resets the flag too).
+            self.moved.discard(stmt.name)
+            self.moved_fields = {p for p in self.moved_fields
+                                 if not p.startswith(stmt.name + ".")}
             return
         if isinstance(stmt, A.FieldAssign):
             # Outermost variable must be mutable; field type comes from
@@ -1185,7 +1257,16 @@ class Checker:
                 raise ForgeError(f"cannot assign to a field of immutable variable "
                                  f"'{node.name}' (declare it with 'let mut')",
                                  stmt.line, stmt.col)
-            ft = self.check_expr(stmt.target)
+            # Assigning a field revives it after a field move, so
+            # the target check alone must not reject a moved field;
+            # the value check below still rejects a moved field
+            # used as the new value (move v2).
+            target_path = self._field_path(stmt.target)
+            self._moved_field_target = target_path
+            try:
+                ft = self.check_expr(stmt.target)
+            finally:
+                self._moved_field_target = None
             vt2 = self.check_expr(stmt.expr)
             if (isinstance(stmt.expr, A.Var)
                     and self._resolve_empty(stmt.expr.name, ft)):
@@ -1196,6 +1277,8 @@ class Checker:
                 raise ForgeError(f"cannot assign {vt2} to field of type {ft}"
                                  f"{cast_hint(vt2, ft)}",
                                  stmt.line, stmt.col)
+            if target_path is not None:
+                self.moved_fields.discard(target_path)
             return
         if isinstance(stmt, A.IndexAssign):
             base = stmt.base.base
@@ -1240,6 +1323,8 @@ class Checker:
             return
         if isinstance(stmt, A.Match):
             et = self.check_expr(stmt.expr)
+            match_before_moved, match_before_fields = set(self.moved), set(self.moved_fields)
+            match_results = []
             if is_union_type(et):
                 # Narrowing a union: arms are member types, each
                 # binding the narrowed value; exhaustiveness is over
@@ -1257,11 +1342,13 @@ class Checker:
                         if binding is not None:
                             raise ForgeError("wildcard arm cannot bind a value",
                                              stmt.line, stmt.col)
+                        self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
                         self.branch_depth += 1
                         try:
                             self.check_block(body)
                         finally:
                             self.branch_depth -= 1
+                        match_results.append((set(self.moved), set(self.moved_fields)))
                         continue
                     if pat not in member_set:
                         raise ForgeError(f"'{pat}' is not a member of union '{et}'",
@@ -1274,6 +1361,7 @@ class Checker:
                         raise ForgeError(f"member '{pat}' has a value; "
                                          f"write {pat}(name) => ...",
                                          stmt.line, stmt.col)
+                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
                     self.scopes.append({binding: (pat, False)})
                     try:
                         self.branch_depth += 1
@@ -1283,10 +1371,13 @@ class Checker:
                             self.branch_depth -= 1
                     finally:
                         self.scopes.pop()
+                    match_results.append((set(self.moved), set(self.moved_fields)))
                 if not has_wildcard and seen != member_set:
                     missing = sorted(member_set - seen)
                     raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
                                      stmt.line, stmt.col)
+                self.moved, self.moved_fields = self._join_moved(
+                    match_before_moved, match_before_fields, match_results)
                 return
             info = self.enum_info_for(et)
             if info is None:
@@ -1304,11 +1395,13 @@ class Checker:
                                          stmt.line, stmt.col)
                     if binding is not None:
                         raise ForgeError("wildcard arm cannot bind a value", stmt.line, stmt.col)
+                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
                     self.branch_depth += 1
                     try:
                         self.check_block(body)
                     finally:
                         self.branch_depth -= 1
+                    match_results.append((set(self.moved), set(self.moved_fields)))
                     continue
                 if pat not in variants:
                     raise ForgeError(f"'{pat}' is not a variant of enum '{et}'"
@@ -1326,6 +1419,7 @@ class Checker:
                                      stmt.line, stmt.col)
                 if binding is not None:
                     # Check the arm body with the binding in scope.
+                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
                     self.scopes.append({binding: (payload_type, False)})
                     try:
                         self.branch_depth += 1
@@ -1336,15 +1430,19 @@ class Checker:
                     finally:
                         self.scopes.pop()
                 else:
+                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
                     self.branch_depth += 1
                     try:
                         self.check_block(body)
                     finally:
                         self.branch_depth -= 1
+                match_results.append((set(self.moved), set(self.moved_fields)))
             if not has_wildcard and seen != variants:
                 missing = sorted(variants - seen)
                 raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
                                  stmt.line, stmt.col)
+            self.moved, self.moved_fields = self._join_moved(
+                match_before_moved, match_before_fields, match_results)
             return
         if isinstance(stmt, A.Spawn):
             if self.freestanding:
@@ -1379,22 +1477,41 @@ class Checker:
         if isinstance(stmt, A.If):
             if self.check_expr(stmt.cond) != "bool":
                 raise ForgeError("if condition must be bool", stmt.line, stmt.col)
+            before_moved, before_fields = set(self.moved), set(self.moved_fields)
             self.branch_depth += 1
             try:
                 self.check_block(stmt.then)
+                then_moved, then_fields = set(self.moved), set(self.moved_fields)
+                self.moved, self.moved_fields = before_moved, before_fields
                 if stmt.els is not None:
                     self.check_block(stmt.els)
+                    else_moved, else_fields = set(self.moved), set(self.moved_fields)
+                else:
+                    else_moved, else_fields = before_moved, before_fields
             finally:
                 self.branch_depth -= 1
+            self.moved, self.moved_fields = self._join_moved(
+                before_moved, before_fields,
+                [(then_moved, then_fields), (else_moved, else_fields)])
             return
         if isinstance(stmt, A.While):
             if self.check_expr(stmt.cond) != "bool":
                 raise ForgeError("while condition must be bool", stmt.line, stmt.col)
+            before_moved, before_fields = set(self.moved), set(self.moved_fields)
             self.loop_depth += 1
             try:
                 self.check_block(stmt.body)
+                body_moved, body_fields = set(self.moved), set(self.moved_fields)
             finally:
                 self.loop_depth -= 1
+            # The body may run zero times, so after the loop a
+            # variable is moved only if it was already moved
+            # before, or moved in the body (maybe-moved counts
+            # as moved: a later use is unsafe on the path that
+            # moved it). A second execution of a move in the
+            # body is caught at runtime by the moved flag.
+            self.moved, self.moved_fields = self._join_moved(
+                before_moved, before_fields, [(body_moved, body_fields)])
             return
         if isinstance(stmt, A.For):
             at = self.check_expr(stmt.expr)
@@ -1404,14 +1521,20 @@ class Checker:
                 et = elem_type(at)
             if et is None:
                 raise ForgeError(f"for loop needs an array or range, got {at}", stmt.line, stmt.col)
+            before_moved, before_fields = set(self.moved), set(self.moved_fields)
             self.scopes.append({stmt.name: (et, False)})
             self.loop_depth += 1
+            self.loop_vars.append(stmt.name)
             try:
                 for s in stmt.body.stmts:
                     self.check_stmt(s)
+                body_moved, body_fields = set(self.moved), set(self.moved_fields)
             finally:
                 self.loop_depth -= 1
+                self.loop_vars.pop()
             self.scopes.pop()
+            self.moved, self.moved_fields = self._join_moved(
+                before_moved, before_fields, [(body_moved, body_fields)])
             return
         if isinstance(stmt, A.Break):
             if self.loop_depth == 0:
@@ -1583,6 +1706,17 @@ class Checker:
         if isinstance(expr, A.Var):
             if expr.name in self.moved:
                 raise ForgeError(f"use of moved value '{expr.name}'", expr.line, expr.col)
+            if self._in_field_base == 0:
+                # A whole-value use after a field move is unsafe
+                # (a copy would re-own the moved field); field
+                # accesses themselves go through the FieldAccess
+                # branch, which skips this check while it walks
+                # the base (move v2).
+                moved_field = sorted(p for p in self.moved_fields
+                                     if p.startswith(expr.name + "."))
+                if moved_field:
+                    raise ForgeError(f"use of value '{expr.name}' with moved field "
+                                     f"'{moved_field[0]}'", expr.line, expr.col)
             return self.lookup(expr.name, expr.line, expr.col)[0]
         if isinstance(expr, A.ArrayLit):
             if not expr.elems:
@@ -1692,7 +1826,15 @@ class Checker:
             expr.concrete_type = expr.name
             return expr.name
         if isinstance(expr, A.FieldAccess):
-            bt = self.check_expr(expr.base)
+            path = self._field_path(expr)
+            if (path is not None and path in self.moved_fields
+                    and path != self._moved_field_target):
+                raise ForgeError(f"use of moved value '{path}'", expr.line, expr.col)
+            self._in_field_base += 1
+            try:
+                bt = self.check_expr(expr.base)
+            finally:
+                self._in_field_base -= 1
             fields = self.struct_fields_for(bt)
             if fields is None:
                 raise ForgeError(f"cannot access a field on a non-struct value of type {bt}",
@@ -1869,17 +2011,44 @@ class Checker:
             if len(call.args) != 1:
                 raise ForgeError("move() takes exactly one argument", call.line, call.col)
             arg = call.args[0]
-            if not isinstance(arg, A.Var):
-                raise ForgeError("move needs a variable", call.line, call.col)
-            if self.loop_depth > 0 or self.branch_depth > 0:
-                raise ForgeError("move inside a branch or loop is not supported in v1; "
-                                 "move in straight-line code", call.line, call.col)
+            if not isinstance(arg, (A.Var, A.FieldAccess)):
+                raise ForgeError("move needs a variable or field", call.line, call.col)
+            in_conditional = self.loop_depth > 0 or self.branch_depth > 0
+            if isinstance(arg, A.Var) and arg.name in self.loop_vars:
+                raise ForgeError("move of a for-loop variable is not supported in v2; "
+                                 "copy it into a let first, then move that",
+                                 call.line, call.col)
+            if isinstance(arg, A.FieldAccess):
+                # Field moves are straight-line only in v2: a field
+                # move in a branch or loop would need a per-field
+                # runtime flag, which is a named follow-up, not
+                # silently approximated (see TOP_500_PROGRESS).
+                if in_conditional:
+                    raise ForgeError("move of a field inside a branch or loop is not "
+                                     "supported in v2; move the field in straight-line "
+                                     "code", call.line, call.col)
+                path = self._field_path(arg)
+                if path is None:
+                    raise ForgeError("move needs a variable or field", call.line, call.col)
+                t = self.check_expr(arg)
+                if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
+                        or t in self.structs or t in self.struct_instantiations):
+                    raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
+                                     f"got {t}", call.line, call.col)
+                self.moved_fields.add(path)
+                call.in_conditional = False
+                return t
             t = self.check_expr(arg)
             if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
                     or t in self.structs or t in self.struct_instantiations):
                 raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
                                  f"got {t}", call.line, call.col)
             self.moved.add(arg.name)
+            # Codegen reads this: a conditional move must not
+            # forget the source at compile time (the branch or
+            # loop may not run); it sets a runtime moved flag
+            # instead, and scope-end frees check that flag.
+            call.in_conditional = in_conditional
             return t
         if call.name == "mmap_open":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":

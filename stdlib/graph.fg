@@ -1,0 +1,48 @@
+struct Graph {
+    froms: [int];
+    tos: [int];
+}
+
+fn graph_new() -> Graph {
+    return Graph { froms: [], tos: [] };
+}
+
+fn graph_add_edge(g: Graph, a: int, b: int) -> Graph {
+    let mut froms: [int] = g.froms;
+    let mut tos: [int] = g.tos;
+    push(froms, a);
+    push(tos, b);
+    return Graph { froms: froms, tos: tos };
+}
+
+fn graph_edge_count(g: Graph) -> int {
+    return len(g.froms);
+}
+
+fn graph_has_edge(g: Graph, a: int, b: int) -> bool {
+    let mut i: int = 0;
+    while i < len(g.froms) {
+        if g.froms[i] == a {
+            if g.tos[i] == b {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn graph_degree(g: Graph, v: int) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(g.froms) {
+        if g.froms[i] == v {
+            n = n + 1;
+        }
+        if g.tos[i] == v {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

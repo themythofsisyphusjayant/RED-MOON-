@@ -1,0 +1,7 @@
+import "digitsum.fg";
+
+fn main() {
+    println(digit_sum(1234));
+    println(digit_count(1234));
+    println(digit_sum(99));
+}

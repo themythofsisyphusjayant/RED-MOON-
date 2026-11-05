@@ -1,0 +1,20 @@
+struct Histogram {
+    counts: [int];
+}
+
+fn histogram_new() -> Histogram {
+    return Histogram { counts: [0, 0, 0] };
+}
+
+fn histogram_add(h: Histogram, v: int) -> Histogram {
+    let mut counts: [int] = h.counts;
+    let mut b: int = v / 10;
+    if b >= 0 && b < 3 {
+        counts[b] = counts[b] + 1;
+    }
+    return Histogram { counts: counts };
+}
+
+fn histogram_bucket(h: Histogram, b: int) -> int {
+    return h.counts[b];
+}

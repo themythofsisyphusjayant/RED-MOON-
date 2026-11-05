@@ -1,0 +1,8 @@
+import "rect.fg";
+
+fn main() {
+    let mut r: Rect = rect_new(2, 3);
+    println(rect_area(r));
+    println(rect_perimeter(r));
+    println(triangle_area(4, 5));
+}

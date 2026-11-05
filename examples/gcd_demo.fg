@@ -1,0 +1,7 @@
+import "gcd.fg";
+
+fn main() {
+    println(gcd(12, 18));
+    println(lcm(12, 18));
+    println(gcd(7, 5));
+}

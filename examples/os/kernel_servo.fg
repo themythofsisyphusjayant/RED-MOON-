@@ -1,0 +1,45 @@
+fn put(c: int) {
+    poke32(268435456, c);
+}
+
+fn put_num(v: int) {
+    let mut w = v;
+    if w < 0 {
+        put(45);
+        w = 0 - w;
+    }
+    if w >= 1000 {
+        put(48 + w / 1000);
+    }
+    if w >= 100 {
+        put(48 + w / 100 % 10);
+    }
+    if w >= 10 {
+        put(48 + w / 10 % 10);
+    }
+    put(48 + w % 10);
+}
+
+fn put_done() {
+    put(68);
+    put(79);
+    put(78);
+    put(69);
+}
+
+fn main() {
+    put(83);
+    put(69);
+    put(82);
+    put(86);
+    put(79);
+    put(10);
+    poke32(32768, 500 + 180 * 1000 / 180);
+    put_num(500);
+    put(10);
+    put_num(500 + 90 * 1000 / 180);
+    put(10);
+    put_num(peek32(32768));
+    put(10);
+    put_done();
+}

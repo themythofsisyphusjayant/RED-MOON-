@@ -1,0 +1,37 @@
+struct MovingAvg {
+    vals: [int];
+}
+
+fn movingavg_new() -> MovingAvg {
+    return MovingAvg { vals: [] };
+}
+
+fn movingavg_push(m: MovingAvg, v: int) -> MovingAvg {
+    let mut vals: [int] = [];
+    if len(m.vals) == 3 {
+        push(vals, m.vals[1]);
+        push(vals, m.vals[2]);
+    } else {
+        let mut i: int = 0;
+        while i < len(m.vals) {
+            push(vals, m.vals[i]);
+            i = i + 1;
+        }
+    }
+    push(vals, v);
+    return MovingAvg { vals: vals };
+}
+
+fn movingavg_avg(m: MovingAvg) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(m.vals) {
+        n = n + m.vals[i];
+        i = i + 1;
+    }
+    return n / len(m.vals);
+}
+
+fn movingavg_len(m: MovingAvg) -> int {
+    return len(m.vals);
+}

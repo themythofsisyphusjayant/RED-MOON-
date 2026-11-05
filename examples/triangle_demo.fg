@@ -1,0 +1,10 @@
+import "triangle.fg";
+
+fn main() {
+    let mut t: Triangle = triangle_new(3, 4, 5);
+    println(triangle_perimeter(t));
+    println(triangle_is_right(t));
+    let mut u: Triangle = triangle_new(2, 3, 4);
+    println(triangle_perimeter(u));
+    println(triangle_is_right(u));
+}

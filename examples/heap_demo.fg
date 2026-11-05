@@ -1,0 +1,15 @@
+import "heap.fg";
+
+fn main() {
+    let mut h: MinHeap = heap_new();
+    h = heap_push(h, 5);
+    h = heap_push(h, 3);
+    h = heap_push(h, 8);
+    h = heap_push(h, 1);
+    println(heap_peek(h));
+    h = heap_pop(h);
+    println(heap_peek(h));
+    h = heap_pop(h);
+    println(heap_peek(h));
+    println(heap_len(h));
+}
