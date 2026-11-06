@@ -1,0 +1,16 @@
+struct Ellipse {
+    a: int;
+    b: int;
+}
+
+fn ellipse_new(a: int, b: int) -> Ellipse {
+    return Ellipse { a: a, b: b };
+}
+
+fn ellipse_area3(e: Ellipse) -> int {
+    return 3 * e.a * e.b;
+}
+
+fn ellipse_perim3(e: Ellipse) -> int {
+    return 3 * (e.a + e.b);
+}

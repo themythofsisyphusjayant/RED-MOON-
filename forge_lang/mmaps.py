@@ -1,6 +1,7 @@
 """Memory-mapped files (Top-500 #31) in a program,
 for backend gates. A program uses mmap when any call
-is to mmap_open, mmap_get, mmap_set, or mmap_close.
+is to mmap_open, mmap_get, mmap_set, mmap_close,
+mmap_grow, mmap_get32, or mmap_set32.
 The native backend lowers them to the runtime mmap
 table; big32 and WASM reject mmap programs in v1
 with a named error.
@@ -8,7 +9,8 @@ with a named error.
 
 import forge_lang.ast_nodes as A
 
-_MMAP = ("mmap_open", "mmap_get", "mmap_set", "mmap_close")
+_MMAP = ("mmap_open", "mmap_get", "mmap_set", "mmap_close",
+         "mmap_grow", "mmap_get32", "mmap_set32")
 
 
 def _walk(node):

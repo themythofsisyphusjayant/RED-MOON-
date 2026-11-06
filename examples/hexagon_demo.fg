@@ -1,0 +1,7 @@
+import "hexagon.fg";
+
+fn main() {
+    let mut h: Hexagon = hexagon_new(4);
+    println(hexagon_area3(h));
+    println(hexagon_perim(h));
+}

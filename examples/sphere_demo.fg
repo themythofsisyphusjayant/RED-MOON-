@@ -1,0 +1,7 @@
+import "sphere.fg";
+
+fn main() {
+    let mut s: Sphere = sphere_new(2);
+    println(sphere_volume3(s));
+    println(sphere_surface3(s));
+}

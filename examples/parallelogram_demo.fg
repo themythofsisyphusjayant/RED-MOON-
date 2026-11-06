@@ -1,0 +1,7 @@
+import "parallelogram.fg";
+
+fn main() {
+    let mut p: Parallelogram = parallelogram_new(6, 4);
+    println(parallelogram_area(p));
+    println(parallelogram_perim(p));
+}

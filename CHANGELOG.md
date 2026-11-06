@@ -26,6 +26,41 @@ without a major version bump (see docs/STABILITY.md).
   variables (borrowed views). Native-only;
   big32/WASM still reject move programs.
 
+- mmap grow + word-width access (fix track, #31
+  extension): mmap_grow(m, new_len) extends the
+  mapped file with ftruncate and remaps it under
+  the same id, returning the new length (grow-only;
+  a smaller or equal size fails with a named
+  error), and mmap_get32/mmap_set32 read and write
+  a 32-bit little-endian word at a byte offset
+  (zero-extended, like peek32; a word crossing the
+  end fails with "mmap index out of bounds").
+  Native-only; big32/WASM still reject mmap
+  programs.
+
+- Fix: struct-array push copy-on-write (fix track):
+  the per-struct forge_<T>_push helper realloced a
+  shared buffer in place — a two-sided push read
+  a[2].x == 9 where 4 was expected and ASan reported
+  a double-free in realloc. It now detaches first,
+  mirroring the scalar helpers: fresh buffer, copy
+  slots gaining ownership of their fields each
+  (str fields deep-copied, array fields inc'd),
+  drop this holder's count on the old buffer. The
+  fix track is now complete (all 7 items).
+
+- Daily batch 6 Nov 2026 (unpushed — push
+  authorization spent): 10 OS sensor kernels
+  (hall 512, pir 1, ph 70, tds 320, flow 12,
+  level 80, current 15, voltage 330, power 99,
+  encoder 360; each freestanding big32, exact
+  UART transcript, halts, final memory word)
+  and 10 geometry libraries (sphere, cone,
+  cylinder, pyramid, ellipse, trapezoid,
+  parallelogram, rhombus, hexagon, pentagon;
+  pure Jal Pari, pi ≈ 3, demos exact). Full
+  suite PASS (log forge_suite_daily_20261106_16215.log).
+
 ## 1.4.0 — 3 Nov 2026
 
 - Fix: C-helper param-consumption audit (batch-25 follow-up):

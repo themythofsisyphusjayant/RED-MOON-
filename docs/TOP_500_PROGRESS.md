@@ -462,3 +462,51 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   to build 435. Next in priority: mmap grow +
   word-width access (fix track), then the
   struct-array push copy-on-write item.
+
+- Fix track (5 Nov 2026, pipeline run): mmap grow +
+  word-width access, the #31 extension
+  (tests/test_mmap_grow32_fix.py, ALL PASS, plus
+  an AddressSanitizer-clean run of the demo:
+  forge_mmap_grow ftruncates the file and remaps
+  it under the same id, returning the new length;
+  grow-only, a smaller or equal size fails with
+  "mmap: new size must be larger than current
+  size"; mmap_get32/mmap_set32 read and write a
+  32-bit little-endian word at a byte offset
+  (zero-extended, like peek32), assembled byte by
+  byte so no alignment is assumed; a word crossing
+  the end fails with "mmap index out of bounds".
+  big32 and WASM still reject mmap programs with
+  a named error. Full-suite regression check
+  confirmed clean 5 Nov 2026 (log
+  forge_suite_mmapgrow32_6775.log: PASS). Counts
+  unchanged (an extension of #31, already HAVE):
+  HAVE 65, PARTIAL 60, GAP 375, to build 435.
+  NOT pushed: push authorization for the 1.4.0
+  pile is SPENT — further pushes need Jayant's
+  fresh word. Next in priority: struct-array push
+  copy-on-write (fix track).
+
+- Fix track (5 Nov 2026, pipeline run): struct-array push
+  copy-on-write (tests/test_structpush_fix.py, ALL PASS,
+  plus AddressSanitizer-clean runs of the two-sided,
+  str-field, and array-field programs). The per-struct
+  forge_<T>_push helper realloced a shared buffer in
+  place — the two-sided probe read a[2].x == 9 where 4
+  was expected and ASan reported a double-free in
+  realloc. It now detaches first, mirroring the scalar
+  helpers and the inline nested-array path: fresh
+  buffer, copy slots gaining ownership of their fields
+  each (struct_own_code — str fields deep-copied,
+  array fields inc'd, nested structs recursed), drop
+  this holder's count on the old buffer without
+  freeing it. Full-suite regression check confirmed
+  clean 5 Nov 2026 (log forge_suite_structpush_8224.log:
+  PASS). Counts unchanged (a fix, not a feature):
+  HAVE 65, PARTIAL 60, GAP 375, to build 435.
+  NOT pushed: push authorization for the 1.4.0 pile
+  is SPENT — further pushes need Jayant's fresh word.
+  The fix track is now COMPLETE (all 7 items done).
+  Next: order of the two PhD research slices vs #34
+  pinning is Jayant's call (QUEUE.md), and any
+  release after 1.4.0 needs his fresh word.

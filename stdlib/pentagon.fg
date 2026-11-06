@@ -1,0 +1,15 @@
+struct Pentagon {
+    s: int;
+}
+
+fn pentagon_new(s: int) -> Pentagon {
+    return Pentagon { s: s };
+}
+
+fn pentagon_area2(p: Pentagon) -> int {
+    return 2 * p.s * p.s;
+}
+
+fn pentagon_perim(p: Pentagon) -> int {
+    return 5 * p.s;
+}

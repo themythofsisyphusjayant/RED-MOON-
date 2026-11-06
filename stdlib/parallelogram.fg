@@ -1,0 +1,16 @@
+struct Parallelogram {
+    b: int;
+    h: int;
+}
+
+fn parallelogram_new(b: int, h: int) -> Parallelogram {
+    return Parallelogram { b: b, h: h };
+}
+
+fn parallelogram_area(p: Parallelogram) -> int {
+    return p.b * p.h;
+}
+
+fn parallelogram_perim(p: Parallelogram) -> int {
+    return 2 * (p.b + p.h);
+}

@@ -1,0 +1,7 @@
+import "rhombus.fg";
+
+fn main() {
+    let mut r: Rhombus = rhombus_new(6, 8);
+    println(rhombus_area(r));
+    println(rhombus_perim2(r));
+}

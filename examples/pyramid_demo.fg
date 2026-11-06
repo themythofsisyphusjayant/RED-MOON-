@@ -1,0 +1,7 @@
+import "pyramid.fg";
+
+fn main() {
+    let mut p: Pyramid = pyramid_new(3, 4);
+    println(pyramid_volume(p));
+    println(pyramid_base_area(p));
+}

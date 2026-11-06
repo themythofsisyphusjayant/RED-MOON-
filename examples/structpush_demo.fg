@@ -1,0 +1,18 @@
+struct P {
+    x: int;
+}
+
+fn main() {
+    let mut a: [P] = [P { x: 1 }, P { x: 3 }];
+    let b = a;
+    push(a, P { x: 4 });
+    push(b, P { x: 9 });
+    println(len(a));
+    println(len(b));
+    println(a[2].x);
+    println(b[2].x);
+    println(b[0].x);
+    println(b[1].x);
+    println(a[0].x);
+    println(a[1].x);
+}

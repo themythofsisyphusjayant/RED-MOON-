@@ -1,0 +1,15 @@
+struct Hexagon {
+    s: int;
+}
+
+fn hexagon_new(s: int) -> Hexagon {
+    return Hexagon { s: s };
+}
+
+fn hexagon_area3(h: Hexagon) -> int {
+    return 3 * h.s * h.s;
+}
+
+fn hexagon_perim(h: Hexagon) -> int {
+    return 6 * h.s;
+}

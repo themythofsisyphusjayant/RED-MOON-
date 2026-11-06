@@ -1,0 +1,8 @@
+import "cone.fg";
+
+fn main() {
+    let mut c: Cone = cone_new(3, 4);
+    println(cone_volume(c));
+    println(cone_slant2(c));
+    println(cone_surface3(c));
+}

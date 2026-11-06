@@ -1,0 +1,7 @@
+import "pentagon.fg";
+
+fn main() {
+    let mut p: Pentagon = pentagon_new(5);
+    println(pentagon_area2(p));
+    println(pentagon_perim(p));
+}

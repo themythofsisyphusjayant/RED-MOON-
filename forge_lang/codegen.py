@@ -449,6 +449,41 @@ static void forge_mmap_set(long long id, long long i, long long v) {
     if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds");
     ((unsigned char *)e->ptr)[i] = (unsigned char)(v & 0xFF);
 }
+static long long forge_mmap_grow(long long id, long long new_len) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    if (new_len <= e->len) forge_fail("mmap: new size must be larger than current size");
+    if (ftruncate(e->fd, (off_t)new_len) != 0) forge_fail("mmap: cannot grow file");
+    /* Map the grown file first: if this fails the old mapping
+       is still valid (only the file grew). Then drop the old
+       mapping and point the entry at the new one — the id
+       stays the same, so holders keep working. */
+    void *ptr = mmap(NULL, (size_t)new_len, PROT_READ | PROT_WRITE, MAP_SHARED, e->fd, 0);
+    if (ptr == MAP_FAILED) forge_fail("mmap: remap failed");
+    munmap(e->ptr, (size_t)e->len);
+    e->ptr = ptr; e->len = new_len;
+    return new_len;
+}
+static long long forge_mmap_get32(long long id, long long i) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds");
+    /* Little-endian word, assembled byte by byte (no
+       alignment assumption, portable across hosts). The
+       value is zero-extended, matching forge_peek32. */
+    unsigned char *b = (unsigned char *)e->ptr + i;
+    return (long long)((uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                       ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24));
+}
+static void forge_mmap_set32(long long id, long long i, long long v) {
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    ForgeMmapEntry *e = &forge_mmap_table[id];
+    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds");
+    unsigned char *b = (unsigned char *)e->ptr + i;
+    uint32_t w = (uint32_t)(v & 0xFFFFFFFFLL);
+    b[0] = (unsigned char)(w & 0xFF); b[1] = (unsigned char)((w >> 8) & 0xFF);
+    b[2] = (unsigned char)((w >> 16) & 0xFF); b[3] = (unsigned char)((w >> 24) & 0xFF);
+}
 static void forge_mmap_close(long long id) {
     if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: already closed");
     ForgeMmapEntry *e = &forge_mmap_table[id];
@@ -461,6 +496,9 @@ static long long forge_mmap_open(const char *path) { (void)path; forge_fail("mma
 static long long forge_mmap_get(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1"); return 0; }
 static void forge_mmap_set(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1"); }
 static void forge_mmap_close(long long id) { (void)id; forge_fail("mmap is not supported on Windows in v1"); }
+static long long forge_mmap_grow(long long id, long long new_len) { (void)id; (void)new_len; forge_fail("mmap is not supported on Windows in v1"); return -1; }
+static long long forge_mmap_get32(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1"); return 0; }
+static void forge_mmap_set32(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1"); }
 #endif
 
 static double forge_parse_float(const char *s) {
@@ -2167,6 +2205,29 @@ class Codegen:
                 self.emit("    a->data[i] = v;")
                 self.emit("}")
             self.emit(f"static void forge_{name}_push({arr_t} *a, {name} v) {{")
+            own = self.struct_own_code("nd[i]", name)
+            self.emit("    if (a->ref && *a->ref > 1) {")
+            self.emit("        /* Copy-on-write (fix track): this array is")
+            self.emit("           shared, so growing it in place would")
+            self.emit("           realloc the shared buffer and leave the")
+            self.emit("           other holders dangling — the two-sided")
+            self.emit("           probe double-freed in realloc. Detach")
+            self.emit("           first, mirroring FORGE_ARRAY_HELPERS:")
+            self.emit("           fresh buffer, copy slots gaining")
+            self.emit("           ownership of their fields each (the")
+            self.emit("           struct free path frees one hold per")
+            self.emit("           slot, so the inc keeps the counts")
+            self.emit("           exact), drop this holder's count on")
+            self.emit("           the old buffer without freeing it. */")
+            self.emit("        long long oc = a->cap ? a->cap : 4;")
+            self.emit(f"        {name} *nd = ({name} *)malloc(sizeof({name}) * (size_t)oc);")
+            self.emit('        if (!nd) forge_fail("out of memory");')
+            self.emit("        for (long long i = 0; i < a->len; i++) {")
+            self.emit(f"            nd[i] = a->data[i];{(' ' + own) if own else ''}")
+            self.emit("        }")
+            self.emit("        (*a->ref)--;")
+            self.emit("        a->data = nd; a->cap = oc; a->ref = forge_arr_ref_new();")
+            self.emit("    }")
             self.emit("    if (a->len >= a->cap) {")
             self.emit("        long long nc = a->cap ? a->cap * 2 : 4;")
             self.emit(f"        {name} *nd = ({name} *)realloc(a->data, sizeof({name}) * (size_t)nc);")
@@ -4147,6 +4208,12 @@ class Codegen:
                 return f"forge_mmap_set({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})"
             if expr.name == "mmap_close":
                 return f"forge_mmap_close({self.gen_expr(expr.args[0])})"
+            if expr.name == "mmap_grow":
+                return f"forge_mmap_grow({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
+            if expr.name == "mmap_get32":
+                return f"forge_mmap_get32({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
+            if expr.name == "mmap_set32":
+                return f"forge_mmap_set32({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})"
             if expr.name == "weak_new":
                 # Register without gaining a holder: the weak
                 # must not keep the array alive.

@@ -1,0 +1,7 @@
+import "ellipse.fg";
+
+fn main() {
+    let mut e: Ellipse = ellipse_new(4, 3);
+    println(ellipse_area3(e));
+    println(ellipse_perim3(e));
+}

@@ -80,7 +80,7 @@ C_KEYWORDS = {"auto", "case", "char", "const", "continue", "default",
               "static", "switch", "typedef", "union", "unsigned",
               "void", "volatile", "_Bool", "_Complex", "_Imaginary"}
 STMT_BUILTINS = {"print", "println", "push", "fail", "assert", "poke32",
-                 "mmap_set", "mmap_close",
+                 "mmap_set", "mmap_close", "mmap_set32",
                  "csr_write", "csr_set", "csr_clear"}
 EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
@@ -93,7 +93,7 @@ EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "a
                  "parallel_dot", "parallel_matmul",
                  "arr_alloc_count", "arr_free_count", "refcount",
                  "weak_new", "weak_upgrade", "move",
-                 "mmap_open", "mmap_get",
+                 "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                  "peek32", "csr_read", "ecall", "ecall3"}
 BUILTINS = STMT_BUILTINS | EXPR_BUILTINS
 
@@ -1638,6 +1638,17 @@ class Checker:
                 if self.check_expr(a) != "int":
                     raise ForgeError("mmap_set() arguments must be int", call.line, call.col)
             return
+        if call.name == "mmap_set32":
+            if self.freestanding:
+                raise ForgeError("mmap needs the hosted runtime (not in freestanding v1)",
+                                 call.line, call.col)
+            if len(call.args) != 3:
+                raise ForgeError("mmap_set32() takes a mapping id, a byte offset, and a word value",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("mmap_set32() arguments must be int", call.line, call.col)
+            return
         if call.name == "mmap_close":
             if self.freestanding:
                 raise ForgeError("mmap needs the hosted runtime (not in freestanding v1)",
@@ -1943,7 +1954,7 @@ class Checker:
         if self.freestanding and call.name in (
                 "read_file", "write_file", "read_bytes", "write_bytes",
                 "file_exists", "read_line",
-                "mmap_open", "mmap_get",
+                "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
                 "clock_micros", "args", "parallel_dot", "parallel_matmul",
@@ -2060,6 +2071,20 @@ class Checker:
             for a in call.args:
                 if self.check_expr(a) != "int":
                     raise ForgeError("mmap_get() arguments must be int", call.line, call.col)
+            return "int"
+        if call.name == "mmap_grow":
+            if len(call.args) != 2:
+                raise ForgeError("mmap_grow() takes a mapping id and a new size", call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("mmap_grow() arguments must be int", call.line, call.col)
+            return "int"
+        if call.name == "mmap_get32":
+            if len(call.args) != 2:
+                raise ForgeError("mmap_get32() takes a mapping id and a byte offset", call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("mmap_get32() arguments must be int", call.line, call.col)
             return "int"
         if call.name == "range":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":

@@ -1,0 +1,18 @@
+fn main() {
+    let path = "/tmp/jalpari_mmap_grow32_demo.bin";
+    let ok = write_bytes(path, [120, 86, 52, 18, 1, 0, 0, 0]);
+    let m = mmap_open(path);
+    println(mmap_get32(m, 0));
+    mmap_set32(m, 4, 305419896);
+    println(mmap_get32(m, 4));
+    let n = mmap_grow(m, 16);
+    println(n);
+    println(mmap_get32(m, 12));
+    mmap_set32(m, 12, 42);
+    println(mmap_get32(m, 12));
+    mmap_close(m);
+    let back = read_bytes(path);
+    println(len(back));
+    println(back[0]);
+    println(back[12]);
+}

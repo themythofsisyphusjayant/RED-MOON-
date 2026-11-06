@@ -1,0 +1,7 @@
+import "trapezoid.fg";
+
+fn main() {
+    let mut t: Trapezoid = trapezoid_new(3, 5, 4);
+    println(trapezoid_area(t));
+    println(trapezoid_midline(t));
+}

@@ -1,0 +1,7 @@
+import "cylinder.fg";
+
+fn main() {
+    let mut c: Cylinder = cylinder_new(2, 5);
+    println(cylinder_volume3(c));
+    println(cylinder_surface3(c));
+}
