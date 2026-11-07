@@ -1,0 +1,17 @@
+struct Prism {
+    a: int;
+    b: int;
+    h: int;
+}
+
+fn prism_new(a: int, b: int, h: int) -> Prism {
+    return Prism { a: a, b: b, h: h };
+}
+
+fn prism_volume(p: Prism) -> int {
+    return p.a * p.b * p.h;
+}
+
+fn prism_surface(p: Prism) -> int {
+    return 2 * (p.a * p.b + p.a * p.h + p.b * p.h);
+}

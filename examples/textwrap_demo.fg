@@ -7,7 +7,7 @@ fn main() -> int {
         println(">", ln);
     }
     println("fill =");
-    println(tw_fill("hello world from jal pari", 10));
+    println(tw_fill("hello world from qasida", 10));
     println(tw_indent("a\nb", "  "));
     return 0;
 }

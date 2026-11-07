@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import weights into The Jal Pari Language (Mojo-level ML, step 6).
+"""Import weights into Qasida (Mojo-level ML, step 6).
 
 Two input modes, same output:
   1. Text format (works everywhere, no torch needed):
@@ -10,16 +10,16 @@ Two input modes, same output:
      A line starting with '#' names the next tensor; the following
      lines (until the next '#') are its floats, whitespace-separated.
   2. PyTorch .pt (needs torch on the machine running this script —
-     it is NOT installed in the Jal Pari VM, so this branch is
+     it is NOT installed in the Qasida VM, so this branch is
      provided for the user's own machine, not claimed as run here):
        python3 tools/import_torch_weights.py --input model.pt \\
            --output imported_weights.fg
      It loads torch.load(..., map_location="cpu", weights_only=True)
      and treats every tensor in the state dict as one named array.
 
-Output is a Jal Pari file with one function per tensor:
+Output is a Qasida file with one function per tensor:
     fn imported_tok_emb() -> [float] { return [0.12, -0.03, ...]; }
-Import it from a Jal Pari program and call the functions to get
+Import it from a Qasida program and call the functions to get
 the weights as ordinary [float] arrays (e.g. feed them into the
 GPT layout, or into Linear structs). Floats are written with
 repr(), so the round-trip is exact for float32 values that fit

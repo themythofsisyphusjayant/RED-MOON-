@@ -6,7 +6,7 @@ Linux underneath. Freestanding v1 is the integer/bool kernel
 subset, and its rules are:
 
   * No libc: the native build uses -nostdlib, the program's own
-    _start entry calls jalpari_main and exits via the raw Linux
+    _start entry calls qasida_main and exits via the raw Linux
     exit_group syscall with main's return value. ldd reports
     "statically linked" and nm shows no undefined symbols.
   * No OS at check time: files, sockets, threads (spawn/scope),
@@ -94,8 +94,8 @@ fn main() -> int {
         r4 = subprocess.run(["nm", out], capture_output=True, text=True, timeout=30)
         undef = [l for l in r4.stdout.splitlines() if " U " in l]
         check("nm no undefined symbols", not undef, f"undef={undef!r}")
-        check("nm _start + jalpari_main present",
-              " T _start" in r4.stdout and " T jalpari_main" in r4.stdout,
+        check("nm _start + qasida_main present",
+              " T _start" in r4.stdout and " T qasida_main" in r4.stdout,
               f"nm={r4.stdout!r}")
 
     print("native void main + fast mode")

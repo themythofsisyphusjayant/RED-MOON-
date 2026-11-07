@@ -1,0 +1,33 @@
+fn mathex_erf(x: float) -> float {
+    let mut sign: float = 1.0;
+    let mut ax: float = x;
+    if x < 0.0 {
+        sign = 0.0 - 1.0;
+        ax = 0.0 - x;
+    }
+    let t: float = 1.0 / (1.0 + 0.3275911 * ax);
+    let poly: float = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t;
+    return sign * (1.0 - poly * exp((0.0 - ax) * ax));
+}
+
+fn mathex_gamma(x: float) -> float {
+    if x < 0.5 {
+        fail("mathex_gamma: v1 supports x >= 0.5 only");
+    }
+    let z: float = x - 1.0;
+    let mut a: float = 0.9999999999998099;
+    a = a + 676.5203681218851 / (z + 1.0);
+    a = a + (0.0 - 1259.1392167224028) / (z + 2.0);
+    a = a + 771.3234287776531 / (z + 3.0);
+    a = a + (0.0 - 176.6150291621406) / (z + 4.0);
+    a = a + 12.507343278686905 / (z + 5.0);
+    a = a + (0.0 - 0.13857109526572012) / (z + 6.0);
+    a = a + 9.984369578019572e-06 / (z + 7.0);
+    a = a + 1.505632730666e-07 / (z + 8.0);
+    let t: float = z + 7.5;
+    return 2.5066282746310007 * pow(t, z + 0.5) * exp(0.0 - t) * a;
+}
+
+fn mathex_erfc(x: float) -> float {
+    return 1.0 - mathex_erf(x);
+}

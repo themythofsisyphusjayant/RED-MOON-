@@ -1,0 +1,51 @@
+// Qasida — leveled logging (0.6.0).
+// Import with: import "log.fg";
+// Two styles: plain functions that always print, and
+// a Logger struct carrying a level (0 debug, 1 info,
+// 2 warn, 3 error) for filtering. No timestamps:
+// the clock is available via clock_micros for callers
+// that want to add their own timing.
+
+fn log_debug(msg: str) -> int {
+    println("[DEBUG]", msg);
+    return 0;
+}
+
+fn log_info(msg: str) -> int {
+    println("[INFO]", msg);
+    return 0;
+}
+
+fn log_warn(msg: str) -> int {
+    println("[WARN]", msg);
+    return 0;
+}
+
+fn log_error(msg: str) -> int {
+    println("[ERROR]", msg);
+    return 0;
+}
+
+struct Logger {
+    level: int;
+}
+
+fn logger_new(level: int) -> Logger {
+    return Logger { level: level };
+}
+
+fn logger_log(lg: Logger, level: int, msg: str) -> int {
+    if level < lg.level {
+        return 0;
+    }
+    if level == 0 {
+        println("[DEBUG]", msg);
+    } else if level == 1 {
+        println("[INFO]", msg);
+    } else if level == 2 {
+        println("[WARN]", msg);
+    } else {
+        println("[ERROR]", msg);
+    }
+    return 0;
+}

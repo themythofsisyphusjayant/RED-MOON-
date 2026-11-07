@@ -1,0 +1,43 @@
+// Qasida — plain-text tables for CLIs.
+// Import with: import "cli-table.fg";
+// Cells are padded to the caller's widths; the caller owns the
+// widths (no auto-sizing in v1 — measure your longest cell).
+// Rows look like: | name | age |  Separators like: +------+-----+
+
+fn table_pad(s: str, w: int) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = out + " ";
+    }
+    return out;
+}
+
+fn table_dashes(n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + "-";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn table_row(cells: [str], widths: [int]) -> str {
+    let mut out: str = "|";
+    let mut i: int = 0;
+    while i < len(cells) {
+        out = out + " " + table_pad(cells[i], widths[i]) + " |";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn table_sep(widths: [int]) -> str {
+    let mut out: str = "+";
+    let mut i: int = 0;
+    while i < len(widths) {
+        out = out + table_dashes(widths[i] + 2) + "+";
+        i = i + 1;
+    }
+    return out;
+}

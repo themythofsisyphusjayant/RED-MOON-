@@ -1,4 +1,4 @@
-// REA bridge v0 — a Jal Pari tool that reads REA's own output.
+// REA bridge v0 — a Qasida tool that reads REA's own output.
 //
 // Reads a REA capabilities JSON file (default: the one saved at
 // ~/workspace/rx-proof/rea-capabilities.json, or a path passed as the last

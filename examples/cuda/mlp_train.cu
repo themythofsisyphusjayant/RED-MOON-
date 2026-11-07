@@ -1,4 +1,4 @@
-/* GPU training loop — The Jal Pari Language (0.5.0).
+/* GPU training loop — Qasida (0.5.0).
  *
  * A full-batch SGD trainer for a 2-layer sigmoid MLP on XOR,
  * with every matmul offloaded to the GPU through

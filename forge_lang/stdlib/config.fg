@@ -1,0 +1,56 @@
+// Qasida — flat key=value configuration.
+// Import with: import "config.fg";
+// Distinct from dotenv.fg (env files) and ini.fg (sections):
+// this is section-less KEY=VALUE text. '#' comments and blank
+// lines are skipped; a value containing '=' is kept whole.
+// No variable expansion in v1 ($FOO stays literal).
+
+struct Config {
+    keys: [str];
+    vals: [str];
+}
+
+fn config_join_rest(parts: [str], from: int) -> str {
+    let mut out: str = "";
+    let mut i: int = from;
+    while i < len(parts) {
+        if i > from { out = out + "="; }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn config_parse(text: str) -> Config {
+    let mut keys: [str] = [];
+    let mut vals: [str] = [];
+    let lines: [str] = split(text, "\n");
+    for line in lines {
+        let t: str = trim(line);
+        if len(t) > 0 && !starts_with(t, "#") {
+            let parts: [str] = split(t, "=");
+            if len(parts) >= 2 {
+                push(keys, trim(parts[0]));
+                push(vals, trim(config_join_rest(parts, 1)));
+            }
+        }
+    }
+    return Config { keys: keys, vals: vals };
+}
+
+fn config_get(c: Config, key: str, fallback: str) -> str {
+    let mut i: int = 0;
+    while i < len(c.keys) {
+        if c.keys[i] == key {
+            return c.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn config_get_int(c: Config, key: str, fallback: int) -> int {
+    let v: str = config_get(c, key, "");
+    if len(v) == 0 { return fallback; }
+    return parse_int(v);
+}

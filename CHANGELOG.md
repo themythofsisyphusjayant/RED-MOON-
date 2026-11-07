@@ -1,4 +1,4 @@
-# Changelog — The Jal Pari Language
+# Changelog — Qasida
 
 All notable changes are listed here. Version numbers follow
 semantic versioning: 1.0.0 (26 Oct 2026) is the first stable
@@ -6,17 +6,18 @@ release — the documented language surface will not break
 without a major version bump (see docs/STABILITY.md).
 0.x releases were pre-stable; breaking changes were possible then.
 
-## Unreleased
+## 2.0.0 — 7 Nov 2026
 
-- Daily batch 7 Nov 2026 (verified, NOT pushed — push
-  authorization SPENT, further pushes need Jayant's fresh
-  word): 10 OS kernels (relay 1/4, stepper 200/120, oled
+- Renamed to Qasida. The command is now `qasida`, the PyPI package is `qasida`, and the runtime error prefix is `qasida:`. The version is bumped to 2.0.0 because the command name and error prefix are breaking changes. Technical names (`forge.py`, `forge_lang`, `.fg` files, RED-MOON-) are unchanged, so existing programs keep working.
+
+- Daily batch 7 Nov 2026 (verified, pushed 7 Nov 2026
+  14:10 IST as 210ad252, tag v1.5.0 + GitHub Release): 10 OS kernels (relay 1/4, stepper 200/120, oled
   128/64, gps 2861/7, ble 72/2, sdcard 8192/2048, loadcell
   512/12, color 255/128, gesture 3/94, fingerprint 97/5 —
   each a freestanding big32 kernel with a model test:
   exact UART transcript, halted, final memory word) and
   10 stdlib geometry modules with demos verified by
-  `forge run` (heptagon 100/35, octagon 125/40, nonagon
+  `qasida run` (heptagon 100/35, octagon 125/40, nonagon
   150/45, decagon 200/50, torus 360/360, hemisphere
   250/225, prism 60/94, tetrahedron 64/32, octahedron
   27/27, sector 900/9000; integer-scaled formulas, same
@@ -42,6 +43,32 @@ without a major version bump (see docs/STABILITY.md).
   error. Limits (rejected with named errors): pin
   needs a variable, not a field; pinning a struct
   with a drop method; indexing a pinned string.
+
+## 1.5.1 — 7 Nov 2026
+
+- PyPI packaging rework (no language change): the
+  compiler is now a real installable package. The CLI
+  moved from forge.py into forge_lang/cli.py
+  (`qasida = "forge_lang.cli:main"`; forge.py is a
+  thin shim, `python3 forge.py ...` still works, and
+  VERSION stays importable from it). The standard
+  library moved from repo-root stdlib/ into
+  forge_lang/stdlib/ and ships as package data, so an
+  installed `qasida` finds its stdlib; the compiler
+  looks in-package first and keeps the old repo-root
+  stdlib/ as a legacy fallback. setup.py and
+  bin/qasida-pip are deleted (the old data_files
+  install under share/qasida is gone); packaging is
+  fully in pyproject.toml with the version read from
+  forge_lang/__init__.py:__version__ (single source
+  of truth). MANIFEST.in ships examples/ and docs/ in
+  the sdist. .github/workflows/release.yml builds the
+  wheel + sdist, publishes to PyPI, and creates the
+  GitHub Release on every v* tag (needs the
+  PYPI_API_TOKEN secret; the file itself cannot ride
+  the Contents-API push, it lands with a git push).
+  Docs, the CI formatter check, and the web playground
+  now point at forge_lang/stdlib/.
 
 ## 1.5.0 — 6 Nov 2026
 
@@ -109,7 +136,7 @@ without a major version bump (see docs/STABILITY.md).
   and 10 geometry libraries (sphere, cone,
   cylinder, pyramid, ellipse, trapezoid,
   parallelogram, rhombus, hexagon, pentagon;
-  pure Jal Pari, pi ≈ 3, demos exact). Full
+  pure Qasida, pi ≈ 3, demos exact). Full
   suite PASS (log forge_suite_daily_20261106_16215.log).
 
 ## 1.4.0 — 3 Nov 2026
@@ -259,12 +286,12 @@ without a major version bump (see docs/STABILITY.md).
   continues; loop-body defers run each
   iteration. big32/WASM reject defer in v1.
 - Top-500 batch 17: allocator-as-value v1 —
-  stdlib/allocator.fg, pure Jal Pari: one
+  stdlib/allocator.fg, pure Qasida: one
   Allocator struct passed explicitly to
   functions, in bump, freelist, and arena
   kinds; out-of-memory returns -1 as a value.
 - Top-500 batch 18: arena allocation v1 —
-  stdlib/arena.fg, pure Jal Pari: a growing
+  stdlib/arena.fg, pure Qasida: a growing
   region with mark/restore for temporary
   allocations. Also fixed two real ownership
   bugs: copy-on-write push on shared arrays,
@@ -308,7 +335,7 @@ without a major version bump (see docs/STABILITY.md).
   v1 — AVec over the #22 Allocator (one element
   per slot; bump stays exhausted after a pop,
   freelist reuses the freed slot; OOM is a
-  value). Pure Jal Pari. Maps are the next
+  value). Pure Qasida. Maps are the next
   slice, so #32 lands PARTIAL.
 - Top-500 batch 27: destructor hooks v1 — a
   `drop` method runs when an owned binding dies
@@ -326,8 +353,8 @@ without a major version bump (see docs/STABILITY.md).
   app), editor (type/backspace), fm (file manager), paint (8x8
   framebuffer), mon (system monitor), bootmenu (app launcher),
   notes (notes app), pipe (byte-stream ring IPC). Libraries,
-  each a new pure Jal Pari stdlib file with a demo verified by
-  `forge run` — uuid, retry-backoff, cli-table, progress,
+  each a new pure Qasida stdlib file with a demo verified by
+  `qasida run` — uuid, retry-backoff, cli-table, progress,
   email-parse, tfidf, ical-lite, config, timers, changelog.
   Regression suite `tests/run_tests.py` passed.
 - Language upgrade 30 Oct 2026: `ecall3(eid, arg0, arg1) -> int`
@@ -344,8 +371,8 @@ without a major version bump (see docs/STABILITY.md).
   no hex digit is a compile error. Proved by
   `tests/test_hex_literals.py` (native values + a big32 model
   kernel using `0x10000000` as the UART address).
-- Daily batch 30 Oct 2026 (15 libraries, all pure Jal Pari with a
-  demo each, verified by `forge run`): fft (radix-2 + inverse,
+- Daily batch 30 Oct 2026 (15 libraries, all pure Qasida with a
+  demo each, verified by `qasida run`): fft (radix-2 + inverse,
   Taylor-series twiddles), mathex (erf, gamma), textwrap,
   difflib (LCS ratio — documented as not Python's SequenceMatcher
   ratio), slugify, markdown-lite (to text; HTML pending),
@@ -358,8 +385,8 @@ without a major version bump (see docs/STABILITY.md).
   big32 diagnostic sim (privilege trace, then CSR-write trace)
   was running, so per the daily rules the OS track is reported
   short honestly instead of colliding with it.
-- Daily batch 29 Oct 2026 (16 libraries, all pure Jal Pari with a
-  demo each, verified by `forge run`): numpy (flat row-major
+- Daily batch 29 Oct 2026 (16 libraries, all pure Qasida with a
+  demo each, verified by `qasida run`): numpy (flat row-major
   arrays, matmul, reductions), pandas (flat DataFrame, filter,
   sort, means), complex, fractions, statistics (mode, quantiles,
   IQR), checksum (crc32/fnv1a/adler32 over byte arrays),
@@ -436,8 +463,8 @@ without a major version bump (see docs/STABILITY.md).
   OpenSSL here): `https_get` compiles to a stub that
   fails at runtime with a clear message; plain HTTP and
   non-network programs are unaffected. Opt back in with
-  `JALPARI_HAVE_OPENSSL=1` (MSYS2 OpenSSL, untested).
-  `JALPARI_NO_OPENSSL=1` builds any platform without
+  `QASIDA_HAVE_OPENSSL=1` (MSYS2 OpenSSL, untested).
+  `QASIDA_NO_OPENSSL=1` builds any platform without
   OpenSSL (same stub). Verified: hello, HTTP registry
   server, scope/threads, struct-array, nested-array,
   break, and https programs all cross-compile with
@@ -460,7 +487,7 @@ without a major version bump (see docs/STABILITY.md).
   The Docker image itself is not built here — the
   Dockerfile is a 10-line copy of the verified script.
 - JalOS (examples/os/jalos.fg, ~1300 lines): a complete
-  teaching OS in Jal Pari — boot, priority scheduler
+  teaching OS in Qasida — boot, priority scheduler
   (29-tick demo: printer, counter, fibber, sorter,
   idler), first-fit heap allocator with coalescing,
   hierarchical VFS with permissions, users, /proc,
@@ -573,12 +600,12 @@ without a major version bump (see docs/STABILITY.md).
   and the -posix MinGW variant. macOS was not buildable here
   (no SDK/clang/zig); its path is a native build with Xcode
   tools + Homebrew OpenSSL. No macOS or Windows binary is
-  claimed. Enabler shipped: `JALPARI_CC` selects the C compiler
+  claimed. Enabler shipped: `QASIDA_CC` selects the C compiler
   for `run`/`build`/shared-library builds (default `cc`,
   unchanged).
 
 - Killer app: examples/apps/registry_server.fg — a package
-  registry server written in Jal Pari itself, speaking the same
+  registry server written in Qasida itself, speaking the same
   HTTP API as the Python reference server, so the real `forge
   pkg publish-remote` / `add-remote` clients work against it.
   Verified live: publish (incl. 401 unauthorized, 409 version
@@ -631,7 +658,7 @@ without a major version bump (see docs/STABILITY.md).
 - Stability promise: docs/STABILITY.md — semver for real. 1.x adds,
   never breaks; breaking changes require a major version; deprecations
   get at least one minor release of warning. The promise covers the
-  documented language surface, stdlib APIs, the jalpari CLI, and the
+  documented language surface, stdlib APIs, the qasida CLI, and the
   package format. It does NOT cover missing features (gaps, not breaks),
   experimental backends (CUDA emit, big32 soft-float internals, the
   self-host prototype), performance characteristics, or error wording.
@@ -639,8 +666,8 @@ without a major version bump (see docs/STABILITY.md).
   preserved on GitHub's side before). Landing page updated to 1.0.0
   numbers. Repo rename + hosting + GitHub Pages enable remain the
   maintainer's own clicks.
-- Install: re-verified on a clean HOME (install.sh -> jalpari 1.0.0,
-  demo runs) and a clean pip venv (jalpari-pip 1.0.0). PyPI publish
+- Install: re-verified on a clean HOME (install.sh -> qasida 1.0.0,
+  demo runs) and a clean pip venv (qasida-pip 1.0.0). PyPI publish
   itself still needs the maintainer's account.
 - Live playground v2: web/playground.html is now a real editor. The
   actual compiler runs under Pyodide (fetched from the repo's main
@@ -667,7 +694,7 @@ without a major version bump (see docs/STABILITY.md).
   checker types, infer types, codegen call mapping, and (for str
   results) the fresh-string list — the first build failed on exactly
   this (emitted `void fd`) until infer was updated.
-- Regex: stdlib/regex.fg, a backtracking engine in pure Jal Pari —
+- Regex: stdlib/regex.fg, a backtracking engine in pure Qasida —
   literals, `.`, `*` `+` `?` with backtracking, classes with ranges
   (a-z/A-Z/0-9 via alphabet-position lookup, since the language has
   no char-to-int conversion), negation, \d \w \s, literal escapes,
@@ -688,22 +715,22 @@ without a major version bump (see docs/STABILITY.md).
   100 F = 37.7778 C). Public hosting still needs the maintainer's
   VPS/Render/Fly account + domain + HTTPS.
 - VS Code extension: packaged as editors/vscode/forge/forge-1.0.0.vsix
-  (verified contents: displayName "The Jal Pari Language", 1.0.0,
-  publisher jalpari, updated grammar). Grammar gained the missing
+  (verified contents: displayName "Qasida", 1.0.0,
+  publisher qasida, updated grammar). Grammar gained the missing
   keywords (enum, extern, spawn, match) and the new builtins. The
   extension is intentionally client-free (grammar + config); the LSP
   server (forge.py lsp) works with any LSP client. Marketplace publish
   needs the maintainer's publisher account.
 - Benchmarks: docs/BENCHMARKS_VS.md + tools/bench_vs/run_bench.py —
-  same algorithm in Jal Pari, Python, Go, Rust, C; medians of 3;
-  results verified equal across languages. Jal Pari is ~31x Python
+  same algorithm in Qasida, Python, Go, Rust, C; medians of 3;
+  results verified equal across languages. Qasida is ~31x Python
   on fib(35), ~49x on array_sum, ~259x on matmul 128; in the compiled
   cluster with Go/Rust/C (within ~2-4x of C, trading places with Go
   and Rust run to run on this noisy VM). Two findings kept: (1) the
   first loop task was deleted by Rust/C compilers (closed form),
-  which is why the task is now runtime-array data; Jal Pari safe
+  which is why the task is now runtime-array data; Qasida safe
   mode does NOT fold it (checks block it), fast mode DOES (0us) —
-  mechanism verified both ways. (2) Jal Pari prints floats at 6
+  mechanism verified both ways. (2) Qasida prints floats at 6
   significant digits, so its matmul checksum displays rounded.
 - CI: .github/workflows/ci.yml verified current (suite + formatter
   + ecosystem example; node is preinstalled on ubuntu-latest, big32
@@ -711,7 +738,7 @@ without a major version bump (see docs/STABILITY.md).
   workflow scope (403, as before) — needs a token fix or a web-UI
   upload.
 - Gotchas found by this batch (all fixed, all verified after fixing):
-  a Jal Pari fn named `close` collides with libc close() in the
+  a Qasida fn named `close` collides with libc close() in the
   generated C; the INT_MIN literal overflows (9223372036854775808 >
   i64 max — compute it as 0 - 9223372036854775807 - 1); args()
   excludes the program name; the WASM backend compiles every
@@ -722,7 +749,7 @@ without a major version bump (see docs/STABILITY.md).
 
 - Source-level debugger: `forge.py build --debug`
   adds `-g` and the code generator emits per-statement
-  `#line` directives naming the Jal Pari file (main
+  `#line` directives naming the Qasida file (main
   file AND imported helpers — verified with readelf's
   line table). Without `--debug` the C has no `#line`
   at all. Caveat: -O2 inlining merges addresses, and
@@ -928,15 +955,15 @@ Added (scaled training):
   plausible fragments than at the small size.
 
 Added (ecosystem, all verified by running):
-- `docs/BENCHMARKS.md` — dot(5000): Jal Pari 8 µs,
+- `docs/BENCHMARKS.md` — dot(5000): Qasida 8 µs,
   NumPy 29 µs, Python loops 788 µs; matmul 64x64:
-  Jal Pari 615 µs, NumPy 343 µs (BLAS wins, stated
+  Qasida 615 µs, NumPy 343 µs (BLAS wins, stated
   plainly), Python 476,501 µs.
 - `web/landing/index.html` — static landing page with
   the verified numbers and honest limits.
-- `setup.py` + `pyproject.toml` + `bin/jalpari-pip` —
+- `setup.py` + `pyproject.toml` + `bin/qasida-pip` —
   `pip install .` verified in a clean venv
-  (`jalpari-pip --version`, demo runs from another cwd).
+  (`qasida-pip --version`, demo runs from another cwd).
   PyPI publication still needs the maintainer's account.
 - `docs/DEBUGGING.md` — gdb-on-emitted-C recipe,
   allocation counters, and the missing piece (see below).
@@ -1007,7 +1034,7 @@ Found by running (the important limitation of this batch):
   1 of the original single-process run, and again during
   the eval phase of the 3-epoch run). Training is therefore
   split into one-epoch processes with checkpoint resume
-  (`forge run examples/gpt_tinystories.fg`,
+  (`qasida run examples/gpt_tinystories.fg`,
   `... resume`, `... resume final`), and eval runs as its
   own process. Tape-memory freeing is the open compiler
   fix for 0.5.0, alongside tensor-level autograd.
@@ -1076,7 +1103,7 @@ Added:
   train/test split, batching, shuffling
 - `stdlib/gpt.fg` + `examples/tiny_gpt.fg` — a 1-block, 1-head
   transformer (d=8, hidden=16, tied head, 776 params) trained by
-  autograd + Adam on "hello world hello jal pari": loss
+  autograd + Adam on "hello world hello qasida": loss
   2.274 -> 0.360 over 20 epochs (min 0.199 at epoch 16), in ~5 s.
   Generation is the honest weak point: greedy loops on spaces,
   temperature sampling gives varied gibberish — a 776-param model
@@ -1086,7 +1113,7 @@ Added:
   quantized step differs by at most 0.026 on the demo step
 - `tools/import_torch_weights.py` — imports weights from a text
   file or (with torch installed elsewhere) a .pt state dict into
-  Jal Pari functions; text path verified end to end
+  Qasida functions; text path verified end to end
 - CUDA: fused attention, LayerNorm, embedding and fp16 matmul
   kernels added to `examples/cuda/kernel.cu`, verified by
   `tools/simulate_cuda.py` (attention 1.0/0.0, 0.330/0.670, ...)
@@ -1099,15 +1126,15 @@ Not yet done, and not claimed:
 - No 1B model, no distributed training, no MLIR compiler — the
   beachhead is small models that train and run natively
 
-## 0.1.0 — 26 Oct 2026 — First Jal Pari market release
+## 0.1.0 — 26 Oct 2026 — First Qasida market release
 
 Formerly Forge v2. The language itself is unchanged in this
 release; this release is about making it installable and usable
 by a stranger.
 
 Added:
-- `jalpari` command (`bin/jalpari`) — `jalpari run`, `jalpari --version`
-- `jalpari --version` / `jalpari version` — prints "The Jal Pari Language 0.1.0"
+- `qasida` command (`bin/qasida`) — `qasida run`, `qasida --version`
+- `qasida --version` / `qasida version` — prints "Qasida 0.1.0"
 - `scripts/install.sh` — one-command user install, checks python3
   and cc, symlinks into `~/.local/bin`, verifies with the demo
 - This changelog
@@ -1120,10 +1147,10 @@ Included from Forge v2 (all verified by tests, see README.md):
   by backprop (loss 0.558973 -> 0.000267766)
 - Backends: native C, big32 RISC-V (simulation), WASM (int/float/bool),
   CUDA kernels (verified on Kaggle Tesla T4, dot 70, matmul 19 22 43 50)
-- Tooling: `forge pkg`, `forge fmt`, `forge lsp`, `forge repl`, `forge doc`
+- Tooling: `qasida pkg`, `qasida fmt`, `qasida lsp`, `qasida repl`, `qasida doc`
 - Examples: hello, matrix, todo CLI, Teju special, dates/rand,
   SQL/table/KV demos, high-school guide, web playground, book starter
-- Dedicated to Tejaswini — Jal Pari (see DEDICATION.md)
+- Dedicated to Tejaswini — Qasida (see DEDICATION.md)
 
 Known limits in 0.1.0 (honest, not hidden):
 - No public package registry host yet (server + Dockerfile exist)
@@ -1133,4 +1160,4 @@ Known limits in 0.1.0 (honest, not hidden):
   (token lacks workflow scope)
 - Repo is still called RED-MOON- on GitHub; renaming it is a
   web-UI step, and the tool file is still `forge.py` for
-  compatibility — `jalpari` is the new market name for it.
+  compatibility — `qasida` is the new market name for it.

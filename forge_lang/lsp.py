@@ -1,4 +1,4 @@
-"""Minimal Forge language server (forge lsp).
+"""Minimal Forge language server (qasida lsp).
 
 Speaks LSP over stdio with Content-Length framing. Supported:
   initialize -> capabilities (full sync, hover off, completion on)
@@ -10,7 +10,7 @@ Speaks LSP over stdio with Content-Length framing. Supported:
 
 This is intentionally small: it gives an editor real diagnostics
 and completion, not a full rename/refactor engine. A VS Code
-extension that launches `forge lsp` is in editors/vscode/forge/.
+extension that launches `qasida lsp` is in editors/vscode/forge/.
 """
 import json
 import sys
@@ -58,7 +58,7 @@ def diagnostics_for(text):
                       "end": {"line": 0, "character": 1}},
             "severity": 1,
             "source": "forge",
-            "message": f"jalpari: {e}",
+            "message": f"qasida: {e}",
         }]
 
 

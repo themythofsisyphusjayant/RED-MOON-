@@ -1,0 +1,19 @@
+struct Circle {
+    r: int;
+}
+
+fn circle_new(r: int) -> Circle {
+    return Circle { r: r };
+}
+
+fn circle_diameter(c: Circle) -> int {
+    return 2 * c.r;
+}
+
+fn circle_area3(c: Circle) -> int {
+    return 3 * c.r * c.r;
+}
+
+fn circle_circum3(c: Circle) -> int {
+    return 6 * c.r;
+}

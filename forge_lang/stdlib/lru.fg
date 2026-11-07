@@ -1,0 +1,47 @@
+struct Lru {
+    keys: [int];
+    vals: [int];
+    cap: int;
+}
+
+fn lru_new(cap: int) -> Lru {
+    return Lru { keys: [], vals: [], cap: cap };
+}
+
+fn lru_get(c: Lru, key: int) -> int {
+    let mut i: int = 0;
+    while i < len(c.keys) {
+        if c.keys[i] == key {
+            return c.vals[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn lru_put(c: Lru, key: int, val: int) -> Lru {
+    let mut keys: [int] = [];
+    let mut vals: [int] = [];
+    let mut i: int = 0;
+    while i < len(c.keys) {
+        if c.keys[i] != key {
+            push(keys, c.keys[i]);
+            push(vals, c.vals[i]);
+        }
+        i = i + 1;
+    }
+    push(keys, key);
+    push(vals, val);
+    if len(keys) > c.cap {
+        let mut k2: [int] = [];
+        let mut v2: [int] = [];
+        let mut j: int = 1;
+        while j < len(keys) {
+            push(k2, keys[j]);
+            push(v2, vals[j]);
+            j = j + 1;
+        }
+        return Lru { keys: k2, vals: v2, cap: c.cap };
+    }
+    return Lru { keys: keys, vals: vals, cap: c.cap };
+}

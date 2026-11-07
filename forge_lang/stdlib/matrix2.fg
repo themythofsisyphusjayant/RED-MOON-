@@ -1,0 +1,18 @@
+struct Mat2 {
+    a: int;
+    b: int;
+    c: int;
+    d: int;
+}
+
+fn mat2_add(m: Mat2, n: Mat2) -> Mat2 {
+    return Mat2 { a: m.a + n.a, b: m.b + n.b, c: m.c + n.c, d: m.d + n.d };
+}
+
+fn mat2_mul(m: Mat2, n: Mat2) -> Mat2 {
+    return Mat2 { a: m.a * n.a + m.b * n.c, b: m.a * n.b + m.b * n.d, c: m.c * n.a + m.d * n.c, d: m.c * n.b + m.d * n.d };
+}
+
+fn mat2_det(m: Mat2) -> int {
+    return m.a * m.d - m.b * m.c;
+}

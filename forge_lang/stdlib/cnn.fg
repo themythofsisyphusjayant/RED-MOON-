@@ -1,0 +1,98 @@
+// Qasida — convolutional layers on tensor autograd (0.6.0).
+// Import with: import "cnn.fg";
+// (It imports tensor_autograd.fg.)
+//
+// How conv works here: im2col rearranges the image
+// into a matrix whose rows are the flattened patches,
+// so convolution becomes one matmul. im2col runs on
+// plain data (not on the tape), so in v1 the conv input
+// must be a raw image — conv is the FIRST layer, and
+// its output feeds relu / maxpool / linear layers.
+// Stacking conv on conv needs a tape-native im2col.
+// That op landed in 0.7.0 (t_im2col, op 21): its
+// backward pass scatters patch gradients back to
+// input pixels, accumulating where patches overlap.
+// cnn_conv2d_tape below uses it, so conv layers now
+// stack. The plain-data cnn_conv2d stays for the
+// first-layer case (it is cheaper: no scatter).
+//
+// Layouts: image is row-major [h, w], single channel.
+// conv output is [oh*ow, F] (one row per patch, one
+// column per filter); per-filter maps come back out
+// with t_col_slice + t_reshape, then t_maxpool2d.
+
+import "tensor_autograd.fg";
+
+// Uniform [-0.1, 0.1] init from a small LCG (same
+// constants as tgt_lcg/rnn_lcg, so results reproduce).
+fn cnn_init(n: int, seed: int) -> [float] {
+    let mut out: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        s = (1103515245 * s + 12345) % 2147483647;
+        push(out, (s as float / 2147483647.0 - 0.5) * 0.2);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cnn_out_h(h: int, kh: int) -> int {
+    return h - kh + 1;
+}
+
+fn cnn_out_w(w: int, kw: int) -> int {
+    return w - kw + 1;
+}
+
+// Plain im2col: rows are patches in row-major order.
+fn cnn_im2col(img: [float], h: int, w: int, kh: int, kw: int) -> [float] {
+    let oh: int = h - kh + 1;
+    let ow: int = w - kw + 1;
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < oh {
+        let mut c: int = 0;
+        while c < ow {
+            let mut dr: int = 0;
+            while dr < kh {
+                let mut dc: int = 0;
+                while dc < kw {
+                    push(out, img[(r + dr) * w + c + dc]);
+                    dc = dc + 1;
+                }
+                dr = dr + 1;
+            }
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+// One conv layer on raw image data. w_id is a leaf
+// [kh*kw, F], b_id a leaf [F]. Returns the tape whose
+// last node is [oh*ow, F].
+fn cnn_conv2d(s: TAg, img: [float], h: int, w: int, kh: int, kw: int, w_id: int, b_id: int) -> TAg {
+    let oh: int = h - kh + 1;
+    let ow: int = w - kw + 1;
+    let patches: [float] = cnn_im2col(img, h, w, kh, kw);
+    let mut t: TAg = t_leaf(s.tape, [oh * ow, kh * kw], patches);
+    let p: int = t.last;
+    t = t_matmul(t, p, w_id);
+    let m: int = t.last;
+    t = t_add_bias(t, m, b_id);
+    return t;
+}
+
+// Tape-native conv (0.7.0): x_id is any earlier
+// tape node with shape [h, w]; kh/kw are the kernel
+// size. Output [oh*ow, F], same layout as above.
+fn cnn_conv2d_tape(s: TAg, x_id: int, kh: int, kw: int, w_id: int, b_id: int) -> TAg {
+    let mut t: TAg = t_im2col(s, x_id, kh, kw);
+    let im: int = t.last;
+    t = t_matmul(t, im, w_id);
+    let m: int = t.last;
+    t = t_add_bias(t, m, b_id);
+    return t;
+}

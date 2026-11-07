@@ -1,0 +1,182 @@
+// Qasida — reverse-mode autograd (Mojo-level ML, step 1).
+// Import with: import "autograd.fg";
+// This is a real scalar tape, the same idea as PyTorch's autograd
+// graph, cut down to what Qasida can express today:
+//   * a Tape holds flat arrays (Qasida has no arrays of structs,
+//     so nodes are parallel arrays, not objects);
+//   * every op appends one node and returns an Ag carrying the new
+//     tape plus the new node's id (the "last" field);
+//   * ag_backward walks the tape in reverse, accumulating gradients
+//     with the chain rule — no hand-written backward formulas.
+// Pattern (ids are just sequential integers):
+//   let mut s: Ag = ag_input(tape_new(), 3.0);
+//   let x: int = s.last;
+//   s = ag_input(s.tape, 4.0);
+//   let y: int = s.last;
+//   s = ag_mul(s, x, y);          // node id = s.last, value 12
+//   s = ag_backward(s, s.last);
+//   println("d/dx =", ag_grad(s, x));   // 4
+// Op codes: 0 input, 1 add, 2 mul, 3 sub, 4 sigmoid, 5 relu,
+// 6 div, 7 exp, 8 log, 9 neg, 10 sqrt.
+
+struct Tape {
+    vals: [float];
+    grads: [float];
+    left: [int];
+    right: [int];
+    op: [int];
+}
+
+struct Ag {
+    tape: Tape;
+    last: int;
+}
+
+// A vector of tape nodes, for layers that return many nodes at
+// once. Defined here (not in user code) because the C backend
+// must see Ag's full definition before a struct containing it.
+struct NodeVec {
+    ag: Ag;
+    ids: [int];
+}
+
+fn tape_new() -> Tape {
+    return Tape { vals: [], grads: [], left: [], right: [], op: [] };
+}
+
+fn ag_push(t: Tape, v: float, l: int, r: int, o: int) -> Ag {
+    let mut nt: Tape = t;
+    push(nt.vals, v);
+    push(nt.grads, 0.0);
+    push(nt.left, l);
+    push(nt.right, r);
+    push(nt.op, o);
+    return Ag { tape: nt, last: len(nt.vals) - 1 };
+}
+
+fn ag_input(t: Tape, v: float) -> Ag {
+    return ag_push(t, v, -1, -1, 0);
+}
+
+fn ag_add(s: Ag, a: int, b: int) -> Ag {
+    return ag_push(s.tape, s.tape.vals[a] + s.tape.vals[b], a, b, 1);
+}
+
+fn ag_sub(s: Ag, a: int, b: int) -> Ag {
+    return ag_push(s.tape, s.tape.vals[a] - s.tape.vals[b], a, b, 3);
+}
+
+fn ag_mul(s: Ag, a: int, b: int) -> Ag {
+    return ag_push(s.tape, s.tape.vals[a] * s.tape.vals[b], a, b, 2);
+}
+
+fn ag_div(s: Ag, a: int, b: int) -> Ag {
+    return ag_push(s.tape, s.tape.vals[a] / s.tape.vals[b], a, b, 6);
+}
+
+fn ag_neg(s: Ag, a: int) -> Ag {
+    return ag_push(s.tape, -s.tape.vals[a], a, -1, 9);
+}
+
+fn ag_sigmoid(s: Ag, a: int) -> Ag {
+    let v: float = 1.0 / (1.0 + exp(-s.tape.vals[a]));
+    return ag_push(s.tape, v, a, -1, 4);
+}
+
+fn ag_relu(s: Ag, a: int) -> Ag {
+    let v: float = s.tape.vals[a];
+    if v > 0.0 {
+        return ag_push(s.tape, v, a, -1, 5);
+    }
+    return ag_push(s.tape, 0.0, a, -1, 5);
+}
+
+fn ag_exp(s: Ag, a: int) -> Ag {
+    return ag_push(s.tape, exp(s.tape.vals[a]), a, -1, 7);
+}
+
+fn ag_sqrt(s: Ag, a: int) -> Ag {
+    return ag_push(s.tape, sqrt(s.tape.vals[a]), a, -1, 10);
+}
+
+fn ag_log(s: Ag, a: int) -> Ag {
+    return ag_push(s.tape, log(s.tape.vals[a]), a, -1, 8);
+}
+
+fn ag_value(s: Ag, id: int) -> float {
+    return s.tape.vals[id];
+}
+
+fn ag_grad(s: Ag, id: int) -> float {
+    return s.tape.grads[id];
+}
+
+fn ag_backward(s: Ag, out: int) -> Ag {
+    let mut nt: Tape = s.tape;
+    nt.grads[out] = 1.0;
+    let mut i: int = len(nt.vals) - 1;
+    while i >= 0 {
+        let g: float = nt.grads[i];
+        let o: int = nt.op[i];
+        let l: int = nt.left[i];
+        let r: int = nt.right[i];
+        if o == 1 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g;
+            }
+            if r >= 0 {
+                nt.grads[r] = nt.grads[r] + g;
+            }
+        } else if o == 2 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g * nt.vals[r];
+            }
+            if r >= 0 {
+                nt.grads[r] = nt.grads[r] + g * nt.vals[l];
+            }
+        } else if o == 3 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g;
+            }
+            if r >= 0 {
+                nt.grads[r] = nt.grads[r] - g;
+            }
+        } else if o == 4 {
+            if l >= 0 {
+                let v: float = nt.vals[i];
+                nt.grads[l] = nt.grads[l] + g * v * (1.0 - v);
+            }
+        } else if o == 5 {
+            if l >= 0 {
+                if nt.vals[l] > 0.0 {
+                    nt.grads[l] = nt.grads[l] + g;
+                }
+            }
+        } else if o == 6 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g / nt.vals[r];
+            }
+            if r >= 0 {
+                nt.grads[r] = nt.grads[r] + g * (-nt.vals[l] / (nt.vals[r] * nt.vals[r]));
+            }
+        } else if o == 7 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g * nt.vals[i];
+            }
+        } else if o == 8 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g / nt.vals[l];
+            }
+        } else if o == 10 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] + g * 0.5 / nt.vals[i];
+            }
+        } else if o == 9 {
+            if l >= 0 {
+                nt.grads[l] = nt.grads[l] - g;
+            }
+        }
+        i = i - 1;
+    }
+    return Ag { tape: nt, last: s.last };
+}

@@ -1,4 +1,4 @@
-// The Jal Pari Language — AI training, for real.
+// Qasida — AI training, for real.
 // A 2-2-1 sigmoid MLP that LEARNS XOR from scratch by backprop,
 // not by hand-set weights (contrast examples/ml_mlp_xor.fg, which
 // is inference only). No random numbers in the language yet, so

@@ -1,0 +1,97 @@
+// Qasida — color conversion (roadmap item 103).
+// Import with: import "color.fg";
+// Hex digits are found by alphabet search, so no ord() builtin
+// is needed. rgb_to_hex always emits lowercase hex.
+
+struct Rgb {
+    r: int;
+    g: int;
+    b: int;
+}
+
+struct Hsl {
+    h: float;
+    s: float;
+    l: float;
+}
+
+fn hex_digit_val(c: str) -> int {
+    let alpha: str = "0123456789abcdef";
+    let mut j: int = 0;
+    while j < 16 {
+        if alpha[j] == c {
+            return j;
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+fn hex_to_rgb(s: str) -> Rgb {
+    let mut t: str = s;
+    if starts_with(t, "#") {
+        t = substr(t, 1, len(t) - 1);
+    }
+    if len(t) != 6 {
+        fail("hex_to_rgb: expected 6 hex digits");
+    }
+    let r: int = hex_digit_val(substr(t, 0, 1)) * 16 + hex_digit_val(substr(t, 1, 1));
+    let g: int = hex_digit_val(substr(t, 2, 1)) * 16 + hex_digit_val(substr(t, 3, 1));
+    let b: int = hex_digit_val(substr(t, 4, 1)) * 16 + hex_digit_val(substr(t, 5, 1));
+    return Rgb { r: r, g: g, b: b };
+}
+
+fn rgb_to_hex(r: int, g: int, b: int) -> str {
+    let alpha: str = "0123456789abcdef";
+    let mut out: str = "#";
+    out = out + alpha[r >> 4];
+    out = out + alpha[r & 15];
+    out = out + alpha[g >> 4];
+    out = out + alpha[g & 15];
+    out = out + alpha[b >> 4];
+    out = out + alpha[b & 15];
+    return out;
+}
+
+fn rgb_to_hsl(r: int, g: int, b: int) -> Hsl {
+    let rf: float = r as float / 255.0;
+    let gf: float = g as float / 255.0;
+    let bf: float = b as float / 255.0;
+    let mut mx: float = rf;
+    if gf > mx {
+        mx = gf;
+    }
+    if bf > mx {
+        mx = bf;
+    }
+    let mut mn: float = rf;
+    if gf < mn {
+        mn = gf;
+    }
+    if bf < mn {
+        mn = bf;
+    }
+    let l: float = (mx + mn) / 2.0;
+    if mx == mn {
+        return Hsl { h: 0.0, s: 0.0, l: l };
+    }
+    let d: float = mx - mn;
+    let mut s: float = 0.0;
+    if l > 0.5 {
+        s = d / (2.0 - mx - mn);
+    } else {
+        s = d / (mx + mn);
+    }
+    let mut h: float = 0.0;
+    if mx == rf {
+        h = (gf - bf) / d;
+        if gf < bf {
+            h = h + 6.0;
+        }
+    } else if mx == gf {
+        h = (bf - rf) / d + 2.0;
+    } else {
+        h = (rf - gf) / d + 4.0;
+    }
+    return Hsl { h: h * 60.0, s: s, l: l };
+}

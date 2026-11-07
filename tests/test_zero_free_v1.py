@@ -7,7 +7,7 @@ big32/WASM free paths are untouched in v1 (no gate — programs
 there simply do not get zeroing yet); mmap is munmap, not
 free, and is out of scope.
 
-Freed memory is unobservable from Jal Pari by design, so the
+Freed memory is unobservable from Qasida by design, so the
 proof is at the C level: the emitted C must contain
 memset-before-free at every site, and a C probe (plain cc,
 -O0, NOT ASan — reading a just-freed buffer is the point)

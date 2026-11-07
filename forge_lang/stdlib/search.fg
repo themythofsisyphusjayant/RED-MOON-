@@ -1,0 +1,27 @@
+fn search_linear(xs: [int], v: int) -> int {
+    let mut i: int = 0;
+    while i < len(xs) {
+        if xs[i] == v {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn search_binary(xs: [int], v: int) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs) - 1;
+    while lo <= hi {
+        let mut mid: int = (lo + hi) / 2;
+        if xs[mid] == v {
+            return mid;
+        }
+        if xs[mid] < v {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return -1;
+}

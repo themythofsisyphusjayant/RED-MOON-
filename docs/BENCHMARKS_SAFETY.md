@@ -1,4 +1,4 @@
-# The cost of safety: Jal Pari safe mode vs fast mode
+# The cost of safety: Qasida safe mode vs fast mode
 
 How much do safe mode's runtime checks actually cost? Two comparisons,
 same programs, same inputs, self-timed with `clock_micros`, medians of 3

@@ -1,0 +1,26 @@
+# systemd unit for a VPS. Install:
+#   1. Clone the repo to /opt/qasida (or change WorkingDirectory).
+#   2. sudo mkdir -p /var/lib/qasida-registry && sudo chown nobody:nogroup /var/lib/qasida-registry
+#   3. Optional token: put FORGE_REGISTRY_TOKEN=<token> in
+#      /etc/qasida-registry.env (root-readable only) — without it
+#      the registry is open, anyone can publish.
+#   4. sudo cp registry/qasida-registry.service /etc/systemd/system/
+#      sudo systemctl daemon-reload && sudo systemctl enable --now qasida-registry
+# Put nginx/Caddy with HTTPS in front for public use: the server is
+# HTTP only, and the Bearer token must not travel over plain HTTP.
+[Unit]
+Description=Qasida package registry
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+WorkingDirectory=/opt/qasida
+Environment=PORT=8765
+EnvironmentFile=-/etc/qasida-registry.env
+ExecStart=/usr/bin/python3 forge_lang/registry_server.py --dir /var/lib/qasida-registry
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

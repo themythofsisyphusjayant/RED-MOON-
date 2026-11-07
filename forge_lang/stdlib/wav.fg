@@ -1,0 +1,54 @@
+// Qasida — tiny WAV writer (wav-lite).
+// Import with: import "wav.fg";
+// LIMITS (honest v1): 16-bit mono PCM only; the header is a
+// [int] byte array and samples are int16 values (not packed
+// bytes) — packing to a file is a later slice. The tone is a
+// square wave (no trig builtin), so harmonics are not sine.
+
+fn wav_u16le(v: int) -> [int] {
+    let lo = v % 256;
+    let hi = v / 256;
+    return [lo, hi];
+}
+
+fn wav_u32le(v: int) -> [int] {
+    let b0 = v % 256;
+    let b1 = (v / 256) % 256;
+    let b2 = (v / 65536) % 256;
+    let b3 = v / 16777216;
+    return [b0, b1, b2, b3];
+}
+
+fn wav_append(a: [int], b: [int]) -> [int] {
+    let mut out = a;
+    let mut i: int = 0;
+    while i < len(b) {
+        push(out, b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn wav_header(rate: int, n_samples: int) -> [int] {
+    let data_bytes = n_samples * 2;
+    let mut h: [int] = [82, 73, 70, 70];
+    h = wav_append(h, wav_u32le(36 + data_bytes));
+    h = wav_append(h, [87, 65, 86, 69]);
+    h = wav_append(h, [102, 109, 116, 32]);
+    h = wav_append(h, wav_u32le(16));
+    h = wav_append(h, wav_u16le(1));
+    h = wav_append(h, wav_u16le(1));
+    h = wav_append(h, wav_u32le(rate));
+    h = wav_append(h, wav_u32le(rate * 2));
+    h = wav_append(h, wav_u16le(2));
+    h = wav_append(h, wav_u16le(16));
+    h = wav_append(h, [100, 97, 116, 97]);
+    h = wav_append(h, wav_u32le(data_bytes));
+    return h;
+}
+
+fn wav_square_sample(i: int, freq: int, rate: int, amp: int) -> int {
+    let half = (i * freq * 2) / rate;
+    if half % 2 == 0 { return amp; }
+    return 0 - amp;
+}

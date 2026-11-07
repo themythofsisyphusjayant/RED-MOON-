@@ -1,13 +1,13 @@
-// SBI-style dispatch demo kernel — the agent+REA loop, implemented fresh in Jal Pari.
+// SBI-style dispatch demo kernel — the agent+REA loop, implemented fresh in Qasida.
 //
 // Investigation: Ghidra RISC-V analysis of the big32 SBI firmware (see
 // ~/workspace/rx-proof/sbi_fw-ghidra-findings.md) decoded its trap handler:
 // mscratch stack swap, mcause dispatch, and an EID compare-and-branch table
 // (Base + TIME + sPI + RFENCE + SRST). This kernel reimplements that DISPATCH
-// PATTERN fresh in Jal Pari — it is not a copy of the firmware, and it does
+// PATTERN fresh in Qasida — it is not a copy of the firmware, and it does
 // not claim the firmware's identity (impl id here is a demo value, 7).
 //
-// Demo convention (documented difference from SBI): Jal Pari's ecall builtin
+// Demo convention (documented difference from SBI): Qasida's ecall builtin
 // carries (EID in a7, one argument in a0) — see codegen_rv.py. Real SBI puts
 // the function id in a6, which needs a 3-argument ecall builtin: that is a
 // named future language slice, not done here. So this demo dispatches Base

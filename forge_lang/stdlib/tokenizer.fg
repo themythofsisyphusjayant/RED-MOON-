@@ -1,0 +1,206 @@
+// Qasida — tokenizers (Mojo-level ML, step 3).
+// Import with: import "tokenizer.fg";
+// Two levels, in the order real LLM work uses them:
+//   * character tokenizer: one id per character, vocab = the
+//     distinct characters of the corpus, in first-seen order.
+//   * BPE: start from characters, repeatedly merge the most
+//     frequent adjacent pair (count >= 2) into one token. Merges
+//     are stored as "left|right" strings; tokens containing "|"
+//     are not supported (documented limit, fine for plain text).
+// Both tokenizers round-trip: decode(encode(text)) == text.
+
+struct Bpe {
+    merges: [str];
+}
+
+fn vocab_index(vocab: str, ch: str) -> int {
+    let mut i: int = 0;
+    while i < len(vocab) {
+        if substr(vocab, i, 1) == ch {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn char_vocab_from_text(text: str) -> str {
+    let mut vocab: str = "";
+    let mut i: int = 0;
+    while i < len(text) {
+        let ch: str = substr(text, i, 1);
+        if vocab_index(vocab, ch) < 0 {
+            vocab = vocab + ch;
+        }
+        i = i + 1;
+    }
+    return vocab;
+}
+
+fn char_encode(text: str, vocab: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(text) {
+        let id: int = vocab_index(vocab, substr(text, i, 1));
+        if id < 0 {
+            fail("char_encode: character not in vocab");
+        }
+        push(out, id);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn char_decode(ids: [int], vocab: str) -> str {
+    let mut out: str = "";
+    for id in ids {
+        if id < 0 || id >= len(vocab) {
+            fail("char_decode: id out of vocab range");
+        }
+        out = out + substr(vocab, id, 1);
+    }
+    return out;
+}
+
+fn bpe_train(text: str, num_merges: int) -> Bpe {
+    let mut tokens: [str] = [];
+    let mut i: int = 0;
+    while i < len(text) {
+        push(tokens, substr(text, i, 1));
+        i = i + 1;
+    }
+    let mut merges: [str] = [];
+    let mut done: int = 0;
+    while done < num_merges {
+        let mut keys: [str] = [];
+        let mut counts: [int] = [];
+        let mut p: int = 0;
+        while p + 1 < len(tokens) {
+            let pair: str = tokens[p] + "|" + tokens[p + 1];
+            let mut found: int = -1;
+            let mut k: int = 0;
+            while k < len(keys) {
+                if keys[k] == pair {
+                    found = k;
+                }
+                k = k + 1;
+            }
+            if found < 0 {
+                push(keys, pair);
+                push(counts, 1);
+            } else {
+                counts[found] = counts[found] + 1;
+            }
+            p = p + 1;
+        }
+        let mut best: int = -1;
+        let mut best_count: int = 0;
+        let mut k2: int = 0;
+        while k2 < len(keys) {
+            if counts[k2] > best_count {
+                best_count = counts[k2];
+                best = k2;
+            }
+            k2 = k2 + 1;
+        }
+        if best < 0 || best_count < 2 {
+            done = num_merges;
+        } else {
+            let pair: str = keys[best];
+            push(merges, pair);
+            let parts: [str] = split(pair, "|");
+            let left: str = parts[0];
+            let right: str = parts[1];
+            let merged: str = left + right;
+            let mut next: [str] = [];
+            let mut q: int = 0;
+            while q < len(tokens) {
+                if q + 1 < len(tokens) && tokens[q] == left && tokens[q + 1] == right {
+                    push(next, merged);
+                    q = q + 2;
+                } else {
+                    push(next, tokens[q]);
+                    q = q + 1;
+                }
+            }
+            tokens = next;
+            done = done + 1;
+        }
+    }
+    return Bpe { merges: merges };
+}
+
+fn bpe_vocab(bpe: Bpe, initial: [str]) -> [str] {
+    let mut vocab: [str] = [];
+    for t in initial {
+        push(vocab, t);
+    }
+    for m in bpe.merges {
+        let parts: [str] = split(m, "|");
+        push(vocab, parts[0] + parts[1]);
+    }
+    return vocab;
+}
+
+fn bpe_token_index(vocab: [str], tok: str) -> int {
+    let mut i: int = 0;
+    while i < len(vocab) {
+        if vocab[i] == tok {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn bpe_encode_tokens(text: str, bpe: Bpe) -> [str] {
+    let mut tokens: [str] = [];
+    let mut i: int = 0;
+    while i < len(text) {
+        push(tokens, substr(text, i, 1));
+        i = i + 1;
+    }
+    for m in bpe.merges {
+        let parts: [str] = split(m, "|");
+        let left: str = parts[0];
+        let right: str = parts[1];
+        let merged: str = left + right;
+        let mut next: [str] = [];
+        let mut q: int = 0;
+        while q < len(tokens) {
+            if q + 1 < len(tokens) && tokens[q] == left && tokens[q + 1] == right {
+                push(next, merged);
+                q = q + 2;
+            } else {
+                push(next, tokens[q]);
+                q = q + 1;
+            }
+        }
+        tokens = next;
+    }
+    return tokens;
+}
+
+fn bpe_encode(text: str, bpe: Bpe, vocab: [str]) -> [int] {
+    let tokens: [str] = bpe_encode_tokens(text, bpe);
+    let mut out: [int] = [];
+    for t in tokens {
+        let id: int = bpe_token_index(vocab, t);
+        if id < 0 {
+            fail("bpe_encode: token not in vocab");
+        }
+        push(out, id);
+    }
+    return out;
+}
+
+fn bpe_decode(ids: [int], vocab: [str]) -> str {
+    let mut out: str = "";
+    for id in ids {
+        if id < 0 || id >= len(vocab) {
+            fail("bpe_decode: id out of vocab range");
+        }
+        out = out + vocab[id];
+    }
+    return out;
+}

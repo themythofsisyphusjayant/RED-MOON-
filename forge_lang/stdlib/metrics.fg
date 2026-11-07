@@ -1,0 +1,125 @@
+// Qasida — evaluation metrics (0.6.0).
+// Import with: import "metrics.fg";
+// Plain functions, no tape. Confusion matrices are
+// flat [classes, classes] rows (true) x cols (pred).
+
+// Fraction of predictions equal to the labels.
+fn accuracy(pred: [int], labels: [int]) -> float {
+    let mut correct: int = 0;
+    let mut i: int = 0;
+    while i < len(pred) {
+        if pred[i] == labels[i] { correct = correct + 1; }
+        i = i + 1;
+    }
+    if len(pred) == 0 { return 0.0; }
+    return correct as float / len(pred) as float;
+}
+
+fn confusion(pred: [int], labels: [int], classes: int) -> [int] {
+    let mut cm: [int] = [];
+    let mut i: int = 0;
+    while i < classes * classes { push(cm, 0); i = i + 1; }
+    i = 0;
+    while i < len(pred) {
+        cm[labels[i] * classes + pred[i]] = cm[labels[i] * classes + pred[i]] + 1;
+        i = i + 1;
+    }
+    return cm;
+}
+
+// Per-class precision/recall/F1 from a confusion
+// matrix. Returns [prec..., rec..., f1...].
+fn prf(cm: [int], classes: int) -> [float] {
+    let mut out: [float] = [];
+    let mut c: int = 0;
+    while c < classes {
+        let tp: int = cm[c * classes + c];
+        let mut fp: int = 0;
+        let mut fn_: int = 0;
+        let mut r: int = 0;
+        while r < classes {
+            if r != c {
+                fp = fp + cm[r * classes + c];
+                fn_ = fn_ + cm[c * classes + r];
+            }
+            r = r + 1;
+        }
+        let mut prec: float = 0.0;
+        if tp + fp > 0 { prec = tp as float / (tp + fp) as float; }
+        push(out, prec);
+        c = c + 1;
+    }
+    c = 0;
+    while c < classes {
+        let tp: int = cm[c * classes + c];
+        let mut fn_: int = 0;
+        let mut r: int = 0;
+        while r < classes {
+            if r != c { fn_ = fn_ + cm[c * classes + r]; }
+            r = r + 1;
+        }
+        let mut rec: float = 0.0;
+        if tp + fn_ > 0 { rec = tp as float / (tp + fn_) as float; }
+        push(out, rec);
+        c = c + 1;
+    }
+    c = 0;
+    while c < classes {
+        let p: float = out[c];
+        let r: float = out[classes + c];
+        if p + r == 0.0 { push(out, 0.0); } else { push(out, 2.0 * p * r / (p + r)); }
+        c = c + 1;
+    }
+    return out;
+}
+
+// Regression metrics.
+fn mse(pred: [float], actual: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(pred) {
+        let d: float = pred[i] - actual[i];
+        s = s + d * d;
+        i = i + 1;
+    }
+    if len(pred) == 0 { return 0.0; }
+    return s / len(pred) as float;
+}
+
+fn mae(pred: [float], actual: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(pred) {
+        let mut d: float = pred[i] - actual[i];
+        if d < 0.0 { d = -d; }
+        s = s + d;
+        i = i + 1;
+    }
+    if len(pred) == 0 { return 0.0; }
+    return s / len(pred) as float;
+}
+
+fn r2(pred: [float], actual: [float]) -> float {
+    let mut mean: float = 0.0;
+    let mut i: int = 0;
+    while i < len(actual) { mean = mean + actual[i]; i = i + 1; }
+    if len(actual) == 0 { return 0.0; }
+    mean = mean / len(actual) as float;
+    let mut ss_res: float = 0.0;
+    let mut ss_tot: float = 0.0;
+    i = 0;
+    while i < len(actual) {
+        let dr: float = actual[i] - pred[i];
+        ss_res = ss_res + dr * dr;
+        let dt: float = actual[i] - mean;
+        ss_tot = ss_tot + dt * dt;
+        i = i + 1;
+    }
+    if ss_tot == 0.0 { return 0.0; }
+    return 1.0 - ss_res / ss_tot;
+}
+
+// Perplexity from a mean negative-log-likelihood.
+fn perplexity(nll: float) -> float {
+    return exp(nll);
+}

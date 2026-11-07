@@ -1,0 +1,18 @@
+// Qasida — changelog entry formatting.
+// Import with: import "changelog.fg";
+// Builds one "## version (date)" markdown section from a list
+// of change lines. It formats text only — it does not read or
+// write any CHANGELOG file, and it does not parse versions
+// (see semver.fg for that).
+
+fn changelog_entry(version: str, date: str, changes: [str]) -> str {
+    let mut out: str = "## " + version + " (" + date + ")";
+    for c in changes {
+        out = out + "\n- " + c;
+    }
+    return out;
+}
+
+fn changelog_count(changes: [str]) -> int {
+    return len(changes);
+}

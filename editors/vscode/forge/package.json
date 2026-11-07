@@ -24,14 +24,14 @@
       }
     ]
   },
-  "description": "Syntax highlighting for Jal Pari (.fg) files. The language server (forge.py lsp) works with any LSP client.",
-  "displayName": "The Jal Pari Language",
+  "description": "Syntax highlighting for Qasida (.fg) files. The language server (forge.py lsp) works with any LSP client.",
+  "displayName": "Qasida",
   "engines": {
     "vscode": "^1.85.0"
   },
   "name": "forge",
   "version": "1.0.0",
-  "publisher": "jalpari",
+  "publisher": "qasida",
   "license": "MIT",
   "repository": {
     "type": "git",

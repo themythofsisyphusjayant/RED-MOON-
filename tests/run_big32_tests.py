@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Forge-on-big32 verification: build each examples/big32/*.fg with
-`forge build --target big32`, run it in the big32 Python model AND in
+`qasida build --target big32`, run it in the big32 Python model AND in
 Icarus Verilog simulation, and compare UART output with the x86 Forge
 run. Run from ~/workspace/forge-v2:
     python3 tests/run_big32_tests.py [--big32-dir ../big32]

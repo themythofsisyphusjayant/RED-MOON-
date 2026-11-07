@@ -1,6 +1,6 @@
-# The Jal Pari Language — Simple Guide for School Students
+# Qasida — Simple Guide for School Students
 
-Dedicated to Tejaswini — Jal Pari.
+Dedicated to Tejaswini — Qasida.
 No big words here. If you can use a computer and do class 10 maths,
 you can run this language.
 
@@ -13,7 +13,7 @@ does the work for you.
 Example: you tell the computer "add these numbers" or "print my
 name". It does exactly what you wrote. Nothing magic.
 
-The Jal Pari Language is one such language. It was made to be
+Qasida is one such language. It was made to be
 safe and simple. Safe means: if you make a mistake, it tells you
 clearly, instead of silently giving a wrong answer.
 
@@ -48,7 +48,7 @@ git clone https://github.com/jayantt1dubeyy/RED-MOON-
 This downloads a folder called `RED-MOON-`. That folder is the
 language. Its old name was Forge, so inside the folder you will
 still see files called `forge.py`. That is normal. The language
-name is Jal Pari, the tool file is still called `forge.py` so
+name is Qasida, the tool file is still called `forge.py` so
 old programs do not break.
 
 ### Step 2: Go inside the folder
@@ -78,18 +78,18 @@ then try again.
 Type this:
 
 ```sh
-python3 forge.py run examples/jal_pari_demo.fg
+python3 forge.py run examples/qasida_demo.fg
 ```
 
 You should see:
 
 ```
-The Jal Pari Language
-For Teju, my Jal Pari
+Qasida
+For Teju, my Qasida
 Safe. Simple. Natively fast.
 ```
 
-Well done. You just ran your first Jal Pari program.
+Well done. You just ran your first Qasida program.
 
 ### Step 5: Write your own program
 
@@ -99,7 +99,7 @@ this:
 
 ```forge
 fn main() -> int {
-    println("Hello, I am learning Jal Pari!");
+    println("Hello, I am learning Qasida!");
     let marks: int = 85;
     println("My marks =", marks);
     return 0;
@@ -115,7 +115,7 @@ python3 forge.py run myfirst.fg
 You should see:
 
 ```
-Hello, I am learning Jal Pari!
+Hello, I am learning Qasida!
 My marks = 85
 ```
 
@@ -217,7 +217,7 @@ do everything.
 | `python3: command not found` | Try `python` instead of `python3`. If that also fails, install Python 3 from python.org. |
 | `cc: command not found` | Install a C compiler. On Windows, install Build Tools for Visual Studio. On Mac, install Xcode Command Line Tools. On Linux, install `gcc`. |
 | `file not found` | Check you are inside the `RED-MOON-` folder (`cd RED-MOON-`) and the file name is spelled correctly, including `.fg`. |
-| `jalpari: error: ...` | Read the error line. It tells you the file, line number, and what is wrong — for example, a missing `;` or a wrong type. Fix that line and run again. |
+| `qasida: error: ...` | Read the error line. It tells you the file, line number, and what is wrong — for example, a missing `;` or a wrong type. Fix that line and run again. |
 
 ## 8. Your next 3 steps
 

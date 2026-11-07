@@ -1,0 +1,16 @@
+struct Pyramid {
+    b: int;
+    h: int;
+}
+
+fn pyramid_new(b: int, h: int) -> Pyramid {
+    return Pyramid { b: b, h: h };
+}
+
+fn pyramid_volume(p: Pyramid) -> int {
+    return p.b * p.b * p.h / 3;
+}
+
+fn pyramid_base_area(p: Pyramid) -> int {
+    return p.b * p.b;
+}

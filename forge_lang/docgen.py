@@ -1,4 +1,4 @@
-"""Forge doc generator (forge doc <file.fg>).
+"""Forge doc generator (qasida doc <file.fg>).
 
 Parses a file and emits Markdown: one section per struct, enum,
 and function, with the // comment lines immediately above each

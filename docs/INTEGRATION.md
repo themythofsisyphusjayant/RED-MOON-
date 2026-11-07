@@ -24,7 +24,7 @@ at its root) from the distro side.
 
 | Component | Owner | Notes |
 |---|---|---|
-| Jal Pari language, compiler, stdlib, registry, packages | RED-MOON- | Source of truth; versioned releases |
+| Qasida language, compiler, stdlib, registry, packages | RED-MOON- | Source of truth; versioned releases |
 | `examples/os/jalos.fg` (JalOS source) | RED-MOON- | Suite-guarded: `tests/run_tests.py` pins its exact 254-line demo output |
 | Distro profile, theme, AI/sec launchers, installer | BLACK-MOON-OS- | archiso profile under `distro/` |
 | `jalos.fg` copies in BLACK-MOON-OS- (root + `distro/.../blackmoon/`) | BLACK-MOON-OS- vendors | Byte-identical copies of RED-MOON-'s file; see Sync |
@@ -45,7 +45,7 @@ at its root) from the distro side.
    the demo output matches BLACK-MOON-OS-'s `tests/expected_output.txt`,
    and the `ai`/`audit` commands print their expected markers.
    Run it before any release that touches either side.
-4. **Distro install.** `blackmoon-install-jalpari` (BLACK-MOON-OS-)
+4. **Distro install.** `blackmoon-install-qasida` (BLACK-MOON-OS-)
    clones RED-MOON- into the installed system and runs its
    `scripts/install.sh`. The distro therefore depends on RED-MOON-'s
    install script staying runnable, not on any internal layout.

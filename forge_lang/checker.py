@@ -1,4 +1,4 @@
-"""Static checker for The Jal Pari Language.
+"""Static checker for Qasida.
 
 Types: int, float, bool, str, void, and [T] dynamic arrays.
 Builtins:
@@ -69,7 +69,7 @@ def matches_up_to_unknown(value, expected):
 
 SCALARS = {"int", "float", "bool", "str", "range",
            "i8", "i16", "i32", "u8", "u16", "u32", "u64", "never"}
-# C keywords that are not Jal Pari keywords: user names colliding
+# C keywords that are not Qasida keywords: user names colliding
 # with these compile to invalid C on the native backend (e.g. a
 # function named `double` becomes `long long double(...)`), so
 # the checker rejects them with a clear message instead of
@@ -2413,7 +2413,7 @@ class Checker:
             # Top-500 #36: fallible allocation. Returns Result<[int], str>:
             # Ok with a zero-initialised array, or Err("out of memory") /
             # Err("bad size") instead of the fatal forge_fail. The Result
-            # struct comes from stdlib/result.fg, so the program must
+            # struct comes from forge_lang/stdlib/result.fg, so the program must
             # import it; register the concrete instantiation here so
             # check()'s epilogue appends it to program.structs and
             # codegen emits the C struct body.

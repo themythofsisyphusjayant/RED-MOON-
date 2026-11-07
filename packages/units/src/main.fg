@@ -1,4 +1,4 @@
-// NOTE: helper is named approx, not close: a Jal Pari fn named close
+// NOTE: helper is named approx, not close: a Qasida fn named close
 // collides with libc close() (unistd.h) in the generated C build.
 import "units.fg";
 fn approx(a: float, b: float, tol: float) -> bool {

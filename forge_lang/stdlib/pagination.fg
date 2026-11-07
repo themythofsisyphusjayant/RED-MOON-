@@ -1,0 +1,18 @@
+fn page_start(page: int, size: int) -> int {
+    return (page - 1) * size;
+}
+
+fn page_total_pages(total: int, size: int) -> int {
+    return (total + size - 1) / size;
+}
+
+fn page_count(total: int, page: int, size: int) -> int {
+    let mut s: int = page_start(page, size);
+    if s >= total {
+        return 0;
+    }
+    if total - s < size {
+        return total - s;
+    }
+    return size;
+}

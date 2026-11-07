@@ -1,5 +1,5 @@
 fn main() {
-    let path = "/tmp/jalpari_mmap_grow32_demo.bin";
+    let path = "/tmp/qasida_mmap_grow32_demo.bin";
     let ok = write_bytes(path, [120, 86, 52, 18, 1, 0, 0, 0]);
     let m = mmap_open(path);
     println(mmap_get32(m, 0));

@@ -2,7 +2,7 @@
 //   forge.py build examples/dbg_demo.fg --debug --keep-c /tmp/dbg_demo.c -o /tmp/dbg_demo
 // and the generated C carries #line directives for
 // BOTH this file and dbg_helper.fg, so gdb steps
-// through Jal Pari source. Without --debug the C
+// through Qasida source. Without --debug the C
 // has no #line directives at all.
 import "dbg_helper.fg";
 fn main() -> int {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-language benchmarks: Jal Pari vs Python vs Go vs Rust vs C.
+"""Cross-language benchmarks: Qasida vs Python vs Go vs Rust vs C.
 
 Same algorithm in every language, same inputs, self-timed programs.
 Each program prints `us = <microseconds>` and a result; this runner
@@ -45,9 +45,9 @@ def find_tool(env_name, names, extra):
 
 
 def build(lang, task, workdir):
-    src = os.path.join(HERE, f"{task}.{lang if lang != 'jalpari' else 'fg'}")
+    src = os.path.join(HERE, f"{task}.{lang if lang != 'qasida' else 'fg'}")
     out = os.path.join(workdir, f"{task}_{lang}")
-    if lang == "jalpari":
+    if lang == "qasida":
         r = subprocess.run([sys.executable, os.path.join(ROOT, "forge.py"), "build",
                             src, "-o", out], capture_output=True, text=True, cwd=ROOT)
     elif lang == "py":
@@ -86,7 +86,7 @@ def run_once(cmd):
 def main():
     workdir = "/tmp/bench_vs_bin"
     os.makedirs(workdir, exist_ok=True)
-    langs = ["jalpari", "py", "go", "rs", "c"]
+    langs = ["qasida", "py", "go", "rs", "c"]
     print("task, language, median_us, result")
     for task in TASKS:
         for lang in langs:
@@ -110,7 +110,7 @@ def main():
                     want = EXPECTED[task]
                     # matmul checksum prints as float; compare numerically
                     try:
-                        # Relative tolerance: Jal Pari prints floats at 6
+                        # Relative tolerance: Qasida prints floats at 6
                         # significant digits (%g), so its displayed value is
                         # rounded (4.1943e+06 for 4194304). The check is that
                         # the computation agrees, not the display.

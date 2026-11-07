@@ -1,0 +1,32 @@
+struct Bloom {
+    bits: [int];
+}
+
+fn bloom_new() -> Bloom {
+    return Bloom { bits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+}
+
+fn bloom_h1(k: int) -> int {
+    return k % 16;
+}
+
+fn bloom_h2(k: int) -> int {
+    return (k * 7 + 3) % 16;
+}
+
+fn bloom_add(b: Bloom, k: int) -> Bloom {
+    let mut q = b;
+    q.bits[bloom_h1(k)] = 1;
+    q.bits[bloom_h2(k)] = 1;
+    return q;
+}
+
+fn bloom_maybe(b: Bloom, k: int) -> bool {
+    if b.bits[bloom_h1(k)] == 0 {
+        return false;
+    }
+    if b.bits[bloom_h2(k)] == 0 {
+        return false;
+    }
+    return true;
+}

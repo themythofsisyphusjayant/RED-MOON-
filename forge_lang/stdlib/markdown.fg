@@ -1,0 +1,100 @@
+// Qasida — markdown-lite (roadmap item 32).
+// Import with: import "markdown.fg";
+// md_to_text: headings lose their '#' markers, list markers
+// ('- ', '* ') are stripped, **bold** / *italic* / `code`
+// markers are removed, [text](url) links keep their text, and
+// fenced-code fences are dropped while code lines are kept.
+// No HTML output in v1; blockquotes and tables pass through
+// as plain text lines.
+
+fn md_strip_markers(s: str) -> str {
+    let mut out: str = s;
+    out = join(split(out, "**"), "");
+    out = join(split(out, "*"), "");
+    out = join(split(out, "`"), "");
+    return out;
+}
+
+fn md_links(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let mut handled: bool = false;
+        if s[i] == "[" {
+            let mut j: int = i + 1;
+            let mut text: str = "";
+            while j < len(s) {
+                if s[j] == "]" {
+                    break;
+                }
+                text = text + s[j];
+                j = j + 1;
+            }
+            if j < len(s) {
+                if j + 1 < len(s) {
+                    if s[j + 1] == "(" {
+                        let mut k: int = j + 2;
+                        while k < len(s) {
+                            if s[k] == ")" {
+                                break;
+                            }
+                            k = k + 1;
+                        }
+                        out = out + text;
+                        i = k + 1;
+                        handled = true;
+                    }
+                }
+            }
+        }
+        if !handled {
+            out = out + s[i];
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+fn md_clean_line(ln: str) -> str {
+    let mut s: str = trim(ln);
+    while starts_with(s, "#") {
+        s = trim(substr(s, 1, len(s) - 1));
+    }
+    if starts_with(s, "- ") {
+        s = substr(s, 2, len(s) - 2);
+    } else if starts_with(s, "* ") {
+        s = substr(s, 2, len(s) - 2);
+    }
+    s = md_links(s);
+    s = md_strip_markers(s);
+    return s;
+}
+
+fn md_to_text(doc: str) -> str {
+    let lines: [str] = split(doc, "\n");
+    let mut out: [str] = [];
+    let mut in_fence: bool = false;
+    for ln in lines {
+        let t: str = trim(ln);
+        if starts_with(t, "```") {
+            in_fence = !in_fence;
+        } else if in_fence {
+            push(out, ln);
+        } else {
+            push(out, md_clean_line(ln));
+        }
+    }
+    return join(out, "\n");
+}
+
+fn md_headings(doc: str) -> [str] {
+    let lines: [str] = split(doc, "\n");
+    let mut out: [str] = [];
+    for ln in lines {
+        let t: str = trim(ln);
+        if starts_with(t, "#") {
+            push(out, md_clean_line(ln));
+        }
+    }
+    return out;
+}

@@ -1,0 +1,22 @@
+// Qasida — timer arithmetic on microsecond stamps.
+// Import with: import "timers.fg";
+// Pure arithmetic over caller-supplied microsecond values, so
+// results are deterministic and testable. timer_now_us wraps
+// the clock_micros builtin for callers that want a live stamp;
+// the demo uses fixed values so its output is exact.
+
+fn timer_now_us() -> int {
+    return clock_micros();
+}
+
+fn timer_ms(start_us: int, end_us: int) -> int {
+    return (end_us - start_us) / 1000;
+}
+
+fn timer_secs(start_us: int, end_us: int) -> float {
+    return (end_us - start_us) as float / 1000000.0;
+}
+
+fn timer_is_slow(start_us: int, end_us: int, limit_ms: int) -> bool {
+    return timer_ms(start_us, end_us) > limit_ms;
+}

@@ -1,0 +1,63 @@
+// Qasida — exact rationals (roadmap item 7).
+// Import with: import "fractions.fg";
+// A fraction is always stored reduced with a positive denominator.
+
+struct Frac {
+    num: int;
+    den: int;
+}
+
+fn frac_gcd(a: int, b: int) -> int {
+    let mut x: int = a;
+    if x < 0 {
+        x = 0 - x;
+    }
+    let mut y: int = b;
+    if y < 0 {
+        y = 0 - y;
+    }
+    while y != 0 {
+        let t: int = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn frac_new(num: int, den: int) -> Frac {
+    if den == 0 {
+        fail("frac_new: zero denominator");
+    }
+    let mut n: int = num;
+    let mut d: int = den;
+    if d < 0 {
+        n = 0 - n;
+        d = 0 - d;
+    }
+    let g: int = frac_gcd(n, d);
+    if g > 1 {
+        n = n / g;
+        d = d / g;
+    }
+    if g == 0 {
+        n = 0;
+        d = 1;
+    }
+    return Frac { num: n, den: d };
+}
+
+fn frac_add(a: Frac, b: Frac) -> Frac {
+    return frac_new(a.num * b.den + b.num * a.den, a.den * b.den);
+}
+
+fn frac_sub(a: Frac, b: Frac) -> Frac {
+    return frac_new(a.num * b.den - b.num * a.den, a.den * b.den);
+}
+
+fn frac_mul(a: Frac, b: Frac) -> Frac {
+    return frac_new(a.num * b.num, a.den * b.den);
+}
+
+fn frac_to_float(a: Frac) -> float {
+    return a.num as float / a.den as float;
+}

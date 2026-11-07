@@ -1,7 +1,7 @@
 // Autograd demo + gradient check.
 // f(x, y) = (x + y) * x + sigmoid(x). At x=3, y=4:
 // f = 21 + 0.952574, df/dx = (x+y) + x + sig*(1-sig) = 7 + 3 + 0.045177
-// = 10.0452 (printed with Jal Pari's float formatting), df/dy = x = 3.
+// = 10.0452 (printed with Qasida's float formatting), df/dy = x = 3.
 // The numeric check perturbs x by 0.0001 in plain floats and must
 // agree with the tape gradient to ~0.001.
 import "autograd.fg";

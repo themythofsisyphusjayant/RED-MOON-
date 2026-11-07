@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the macOS-look font for the Jal Pari kernel.
+"""Generate the macOS-look font for the Qasida kernel.
 
 The language has no arrays in freestanding mode, so the
 font is emitted as one small function per glyph plus a

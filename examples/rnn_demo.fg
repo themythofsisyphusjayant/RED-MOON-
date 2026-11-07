@@ -46,7 +46,7 @@ fn slice_f(a: [float], off: int, n: int) -> [float] {
 
 // Forward one sequence. The logits node is always the
 // tape's last node, so callers use tt.last — no
-// out-parameter is needed (and Jal Pari has no arrays
+// out-parameter is needed (and Qasida has no arrays
 // of structs, so a tape can't be returned "through" an
 // array either).
 fn forward_seq(params: [float], bits: [int], off: int) -> TAg {

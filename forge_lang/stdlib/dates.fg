@@ -1,0 +1,59 @@
+// Dates, in pure Qasida — no date builtin, just arithmetic.
+// Proleptic Gregorian calendar. days_since_epoch counts days from
+// 1970-01-01 (day 0), using Howard Hinnant's civil-from-days math
+// in reverse: days_from_civil(y, m, d) with the era shift.
+
+fn is_leap(y: int) -> bool {
+    if y % 400 == 0 {
+        return true;
+    }
+    if y % 100 == 0 {
+        return false;
+    }
+    return y % 4 == 0;
+}
+
+fn days_in_month(y: int, m: int) -> int {
+    if m == 2 {
+        if is_leap(y) {
+            return 29;
+        }
+        return 28;
+    }
+    if m == 4 {
+        return 30;
+    }
+    if m == 6 {
+        return 30;
+    }
+    if m == 9 {
+        return 30;
+    }
+    if m == 11 {
+        return 30;
+    }
+    return 31;
+}
+
+fn days_from_civil(y: int, m: int, d: int) -> int {
+    let mut yy: int = y;
+    if m <= 2 {
+        yy = yy - 1;
+    }
+    let mut era: int = yy / 400;
+    if yy < 0 {
+        era = era - 1;
+    }
+    let yoe: int = yy - era * 400;
+    let mut mp: int = m - 3;
+    if m <= 2 {
+        mp = m + 9;
+    }
+    let doy: int = (153 * mp + 2) / 5 + d - 1;
+    let doe: int = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+fn days_between(y1: int, m1: int, d1: int, y2: int, m2: int, d2: int) -> int {
+    return days_from_civil(y2, m2, d2) - days_from_civil(y1, m1, d1);
+}

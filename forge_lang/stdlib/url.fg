@@ -1,0 +1,221 @@
+// Qasida — URL parse/build/encode (roadmap item 39).
+// Import with: import "url.fg";
+// url_encode covers the reserved set (space, %, &, =, ?, #, +,
+// /); other characters pass through in v1 because Qasida
+// has no ord() builtin to map arbitrary characters to hex.
+// url_decode reverses exactly the set url_encode produces.
+
+struct Url {
+    scheme: str;
+    host: str;
+    port: int;
+    path: str;
+    query: str;
+}
+
+fn url_find(s: str, pat: str, from: int) -> int {
+    let mut i: int = from;
+    while i + len(pat) <= len(s) {
+        if substr(s, i, len(pat)) == pat {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn url_parse(s: str) -> Url {
+    let scheme: str = "";
+    let mut rest: str = s;
+    let sep: int = url_find(s, "://", 0);
+    let mut sc: str = scheme;
+    if sep >= 0 {
+        sc = substr(s, 0, sep);
+        rest = substr(s, sep + 3, len(s) - (sep + 3));
+    }
+    let mut hostport: str = rest;
+    let mut path: str = "";
+    let mut query: str = "";
+    let slash: int = url_find(rest, "/", 0);
+    if slash >= 0 {
+        hostport = substr(rest, 0, slash);
+        path = substr(rest, slash, len(rest) - slash);
+    }
+    let q: int = url_find(path, "?", 0);
+    if q >= 0 {
+        query = substr(path, q + 1, len(path) - (q + 1));
+        path = substr(path, 0, q);
+    }
+    let mut host: str = hostport;
+    let mut port: int = 0;
+    let colon: int = url_find(hostport, ":", 0);
+    if colon >= 0 {
+        host = substr(hostport, 0, colon);
+        port = parse_int(substr(hostport, colon + 1, len(hostport) - (colon + 1)));
+    }
+    return Url { scheme: sc, host: host, port: port, path: path, query: query };
+}
+
+fn url_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    return "9";
+}
+
+fn url_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut v: int = n;
+    if n < 0 {
+        neg = true;
+        v = 0 - n;
+    }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + url_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + rev[i];
+        i = i - 1;
+    }
+    if neg {
+        out = "-" + out;
+    }
+    return out;
+}
+
+fn url_build(u: Url) -> str {
+    let mut out: str = "";
+    if len(u.scheme) > 0 {
+        out = u.scheme + "://";
+    }
+    out = out + u.host;
+    if u.port != 0 {
+        out = out + ":" + url_int_str(u.port);
+    }
+    out = out + u.path;
+    if len(u.query) > 0 {
+        out = out + "?" + u.query;
+    }
+    return out;
+}
+
+fn url_query_get(u: Url, key: str) -> str {
+    let pairs: [str] = split(u.query, "&");
+    for pair in pairs {
+        let kv: [str] = split(pair, "=");
+        if len(kv) >= 2 {
+            if kv[0] == key {
+                return kv[1];
+            }
+        }
+    }
+    return "";
+}
+
+fn url_encode(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        if c == " " {
+            out = out + "%20";
+        } else if c == "%" {
+            out = out + "%25";
+        } else if c == "&" {
+            out = out + "%26";
+        } else if c == "=" {
+            out = out + "%3D";
+        } else if c == "?" {
+            out = out + "%3F";
+        } else if c == "#" {
+            out = out + "%23";
+        } else if c == "+" {
+            out = out + "%2B";
+        } else if c == "/" {
+            out = out + "%2F";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn url_decode_pair(code: str) -> str {
+    if code == "20" {
+        return " ";
+    }
+    if code == "25" {
+        return "%";
+    }
+    if code == "26" {
+        return "&";
+    }
+    if code == "3D" {
+        return "=";
+    }
+    if code == "3F" {
+        return "?";
+    }
+    if code == "23" {
+        return "#";
+    }
+    if code == "2B" {
+        return "+";
+    }
+    if code == "2F" {
+        return "/";
+    }
+    return "%" + code;
+}
+
+fn url_decode(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        if s[i] == "%" {
+            if i + 2 < len(s) {
+                out = out + url_decode_pair(substr(s, i + 1, 2));
+                i = i + 3;
+            } else {
+                out = out + "%";
+                i = i + 1;
+            }
+        } else {
+            out = out + s[i];
+            i = i + 1;
+        }
+    }
+    return out;
+}

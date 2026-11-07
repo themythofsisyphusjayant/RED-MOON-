@@ -1,0 +1,245 @@
+// Qasida — classical ML (0.6.0).
+// Import with: import "ml_classical.fg";
+// (It imports tensor_autograd.fg for logistic
+// regression; k-NN and k-means are plain code and
+// need no tape.)
+//
+// All functions work on flat row-major matrices:
+// X is [n, d], one row per sample. Labels are [int].
+// Logistic regression trains by gradient descent on
+// the tape (logits = X @ W + b, cross-entropy), so
+// its gradients are exact, not hand-derived.
+
+import "tensor_autograd.fg";
+
+// Logistic regression: W [d, C], b [C], trained
+// `epochs` full-batch Adam steps at `lr`. Returns
+// the flat params [W..., b...]. Adam is implemented
+// inline here so this file needs no nn import (its
+// moments live in local arrays, not an OptimState).
+fn logreg_train(x: [float], n: int, d: int, y: [int], classes: int, epochs: int, lr: float, seed: int) -> [float] {
+    let mut params: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < d * classes + classes {
+        s = (1103515245 * s + 12345) % 2147483647;
+        push(params, (s as float / 2147483647.0 - 0.5) * 0.2);
+        i = i + 1;
+    }
+    // Adam moments, kept here instead of nn's
+    // OptimState so this file needs no nn import.
+    let mut m: [float] = [];
+    let mut v: [float] = [];
+    i = 0;
+    while i < len(params) { push(m, 0.0); push(v, 0.0); i = i + 1; }
+    let mut step: int = 0;
+    let mut ep: int = 0;
+    while ep < epochs {
+        let mut t: TAg = t_leaf(ttape_new(), [d, classes], slice_f(params, 0, d * classes));
+        let w: int = t.last;
+        t = t_leaf(t.tape, [classes], slice_f(params, d * classes, classes));
+        let b: int = t.last;
+        t = t_leaf(t.tape, [n, d], x);
+        let xl: int = t.last;
+        t = t_matmul(t, xl, w);
+        let lg: int = t.last;
+        t = t_add_bias(t, lg, b);
+        let logits: int = t.last;
+        t = t_cross_entropy(t, logits, y);
+        let loss: int = t.last;
+        let grads: [float] = t_backward(t.tape, loss);
+        let gw: [float] = t_grad_of(t.tape, grads, 0);
+        let gb: [float] = t_grad_of(t.tape, grads, 1);
+        let mut all: [float] = [];
+        let mut j: int = 0;
+        while j < len(gw) { push(all, gw[j]); j = j + 1; }
+        j = 0;
+        while j < len(gb) { push(all, gb[j]); j = j + 1; }
+        step = step + 1;
+        let bc1: float = 1.0 - pow(0.9, step as float);
+        let bc2: float = 1.0 - pow(0.999, step as float);
+        j = 0;
+        while j < len(params) {
+            let g: float = all[j];
+            m[j] = 0.9 * m[j] + 0.1 * g;
+            v[j] = 0.999 * v[j] + 0.001 * g * g;
+            let mhat: float = m[j] / bc1;
+            let vhat: float = v[j] / bc2;
+            params[j] = params[j] - lr * mhat / (sqrt(vhat) + 0.00000001);
+            j = j + 1;
+        }
+        ep = ep + 1;
+    }
+    return params;
+}
+
+fn slice_f(a: [float], off: int, n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n { push(out, a[off + i]); i = i + 1; }
+    return out;
+}
+
+// Predict with trained logreg params. Returns labels.
+fn logreg_predict(params: [float], x: [float], n: int, d: int, classes: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < n {
+        let mut best: int = 0;
+        let mut bestv: float = -1000000000.0;
+        let mut c: int = 0;
+        while c < classes {
+            let mut s: float = params[d * classes + c];
+            let mut j: int = 0;
+            while j < d {
+                s = s + x[r * d + j] * params[j * classes + c];
+                j = j + 1;
+            }
+            if s > bestv { bestv = s; best = c; }
+            c = c + 1;
+        }
+        push(out, best);
+        r = r + 1;
+    }
+    return out;
+}
+
+// k-NN classification: for each test row, the k
+// nearest train rows vote (ties break to the
+// smallest label, by strict > comparison).
+fn knn_predict(xtr: [float], ytr: [int], ntr: int, xte: [float], nte: int, d: int, k: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < nte {
+        // k smallest distances, kept as parallel arrays.
+        let mut bd: [float] = [];
+        let mut bl: [int] = [];
+        let mut q: int = 0;
+        while q < k { push(bd, 1000000000.0); push(bl, -1); q = q + 1; }
+        let mut i: int = 0;
+        while i < ntr {
+            let mut dist: float = 0.0;
+            let mut j: int = 0;
+            while j < d {
+                let diff: float = xte[r * d + j] - xtr[i * d + j];
+                dist = dist + diff * diff;
+                j = j + 1;
+            }
+            // Insert if closer than the current worst.
+            let mut worst: int = 0;
+            q = 1;
+            while q < k {
+                if bd[q] > bd[worst] { worst = q; }
+                q = q + 1;
+            }
+            if dist < bd[worst] {
+                bd[worst] = dist;
+                bl[worst] = ytr[i];
+            }
+            i = i + 1;
+        }
+        // Majority vote (labels assumed < 100).
+        let mut counts: [int] = [];
+        q = 0;
+        while q < 100 { push(counts, 0); q = q + 1; }
+        q = 0;
+        while q < k {
+            counts[bl[q]] = counts[bl[q]] + 1;
+            q = q + 1;
+        }
+        let mut best: int = 0;
+        let mut bestc: int = -1;
+        q = 0;
+        while q < 100 {
+            if counts[q] > bestc { bestc = counts[q]; best = q; }
+            q = q + 1;
+        }
+        push(out, best);
+        r = r + 1;
+    }
+    return out;
+}
+
+// k-means (Lloyd's algorithm, deterministic init:
+// the first k rows are the initial centroids).
+// Returns flat centroids [k, d]; assignments come
+// from kmeans_assign.
+fn kmeans(x: [float], n: int, d: int, k: int, iters: int) -> [float] {
+    let mut cent: [float] = [];
+    let mut c: int = 0;
+    while c < k {
+        let mut j: int = 0;
+        while j < d { push(cent, x[c * d + j]); j = j + 1; }
+        c = c + 1;
+    }
+    let mut it: int = 0;
+    while it < iters {
+        let mut sums: [float] = [];
+        let mut cnts: [int] = [];
+        c = 0;
+        while c < k * d { push(sums, 0.0); c = c + 1; }
+        c = 0;
+        while c < k { push(cnts, 0); c = c + 1; }
+        let mut r: int = 0;
+        while r < n {
+            let mut best: int = 0;
+            let mut bestd: float = 1000000000.0;
+            c = 0;
+            while c < k {
+                let mut dist: float = 0.0;
+                let mut j: int = 0;
+                while j < d {
+                    let diff: float = x[r * d + j] - cent[c * d + j];
+                    dist = dist + diff * diff;
+                    j = j + 1;
+                }
+                if dist < bestd { bestd = dist; best = c; }
+                c = c + 1;
+            }
+            cnts[best] = cnts[best] + 1;
+            let mut j: int = 0;
+            while j < d {
+                sums[best * d + j] = sums[best * d + j] + x[r * d + j];
+                j = j + 1;
+            }
+            r = r + 1;
+        }
+        c = 0;
+        while c < k {
+            if cnts[c] > 0 {
+                let mut j: int = 0;
+                while j < d {
+                    cent[c * d + j] = sums[c * d + j] / cnts[c] as float;
+                    j = j + 1;
+                }
+            }
+            c = c + 1;
+        }
+        it = it + 1;
+    }
+    return cent;
+}
+
+fn kmeans_assign(x: [float], n: int, d: int, cent: [float], k: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < n {
+        let mut best: int = 0;
+        let mut bestd: float = 1000000000.0;
+        let mut c: int = 0;
+        while c < k {
+            let mut dist: float = 0.0;
+            let mut j: int = 0;
+            while j < d {
+                let diff: float = x[r * d + j] - cent[c * d + j];
+                dist = dist + diff * diff;
+                j = j + 1;
+            }
+            if dist < bestd { bestd = dist; best = c; }
+            c = c + 1;
+        }
+        push(out, best);
+        r = r + 1;
+    }
+    return out;
+}

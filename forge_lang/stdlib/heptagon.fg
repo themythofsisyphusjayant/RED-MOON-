@@ -1,0 +1,15 @@
+struct Heptagon {
+    s: int;
+}
+
+fn heptagon_new(s: int) -> Heptagon {
+    return Heptagon { s: s };
+}
+
+fn heptagon_area4(h: Heptagon) -> int {
+    return 4 * h.s * h.s;
+}
+
+fn heptagon_perim(h: Heptagon) -> int {
+    return 7 * h.s;
+}

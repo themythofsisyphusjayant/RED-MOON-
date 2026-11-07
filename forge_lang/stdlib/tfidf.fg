@@ -1,0 +1,55 @@
+// Qasida — TF-IDF over small in-memory documents.
+// Import with: import "tfidf.fg";
+// LIMITS (honest v1): tokens are split on single spaces, case
+// sensitive, no stemming and no stopword removal — feed
+// lowercased, cleaned text. idf uses the natural log builtin.
+// Scores are plain floats, not structs (float struct fields are
+// not used here).
+
+fn tfidf_tokens(doc: str) -> [str] {
+    let raw: [str] = split(doc, " ");
+    let mut out: [str] = [];
+    for t in raw {
+        if len(t) > 0 {
+            push(out, t);
+        }
+    }
+    return out;
+}
+
+fn tfidf_contains(tokens: [str], term: str) -> bool {
+    for t in tokens {
+        if t == term {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn tfidf_tf(term: str, doc: str) -> float {
+    let tokens: [str] = tfidf_tokens(doc);
+    if len(tokens) == 0 { return 0.0; }
+    let mut n: int = 0;
+    for t in tokens {
+        if t == term {
+            n = n + 1;
+        }
+    }
+    return n as float / len(tokens) as float;
+}
+
+fn tfidf_idf(term: str, docs: [str]) -> float {
+    if len(docs) == 0 { return 0.0; }
+    let mut df: int = 0;
+    for d in docs {
+        if tfidf_contains(tfidf_tokens(d), term) {
+            df = df + 1;
+        }
+    }
+    if df == 0 { return 0.0; }
+    return log(len(docs) as float / df as float);
+}
+
+fn tfidf(term: str, doc: str, docs: [str]) -> float {
+    return tfidf_tf(term, doc) * tfidf_idf(term, docs);
+}

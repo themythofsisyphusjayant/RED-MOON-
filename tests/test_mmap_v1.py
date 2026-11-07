@@ -33,7 +33,7 @@ DEMO_TMPL = (
 
 CASES = [
     ("mmap_open missing file",
-     "fn main() {\n  let m = mmap_open(\"/tmp/jalpari_mmap_nope.bin\");\n}\n",
+     "fn main() {\n  let m = mmap_open(\"/tmp/qasida_mmap_nope.bin\");\n}\n",
      "mmap: cannot open file"),
     ("mmap_get out of bounds",
      "fn main() {\n  let path = \"{path}\";\n"

@@ -1,0 +1,520 @@
+// Qasida — scaled GPT (0.3.0, multi-block, multi-head).
+// Import with: import "gpt2.fg";  (do NOT also import gpt.fg in
+// the same program — the two share the autograd import path, and
+// this file's functions are all g2_-prefixed so the two libraries
+// never collide by name, but keep imports to one GPT library.)
+// Generalises gpt.fg: any number of blocks L, any head count
+// (D must divide evenly by heads), any vocab/seq/hidden sizes.
+// Layout, all flat [float], in order:
+//   tok_emb  V*D            pos_emb  S*D
+//   per block b (block_size, see g2_block_size):
+//     ln1_g D, ln1_b D,
+//     Wq D*D, bq D, Wk D*D, bk D, Wv D*D, bv D, Wo D*D, bo D,
+//     ln2_g D, ln2_b D,
+//     W1 D*H, b1 H, W2 H*D, b2 D
+//   ln3_g D, ln3_b D
+// Training pattern is the same as gpt.fg: params must be the
+// FIRST nodes in a fresh tape, so param node id == param index.
+
+import "autograd.fg";
+
+fn g2_lcg(seed: int) -> int {
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn g2_block_size(d: int, h: int) -> int {
+    return 2 * d + 4 * (d * d + d) + 2 * d + (d * h + h) + (h * d + d);
+}
+
+fn g2_param_count(v: int, d: int, s: int, h: int, l: int) -> int {
+    return v * d + s * d + l * g2_block_size(d, h) + 2 * d;
+}
+
+fn g2_block_base(v: int, d: int, s: int, h: int, b: int) -> int {
+    return v * d + s * d + b * g2_block_size(d, h);
+}
+
+fn g2_ln3_off(v: int, d: int, s: int, h: int, l: int) -> int {
+    return v * d + s * d + l * g2_block_size(d, h);
+}
+
+fn g2_init_params(v: int, d: int, s: int, h: int, l: int, seed: int) -> [float] {
+    let mut sd: int = seed;
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    let mut scale: float = 0.5;
+    while i < v * d {
+        sd = g2_lcg(sd);
+        push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * 0.5);
+        i = i + 1;
+    }
+    i = 0;
+    while i < s * d {
+        sd = g2_lcg(sd);
+        push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * 0.5);
+        i = i + 1;
+    }
+    let mut b: int = 0;
+    while b < l {
+        i = 0;
+        while i < d {
+            push(out, 1.0);
+            i = i + 1;
+        }
+        i = 0;
+        while i < d {
+            push(out, 0.0);
+            i = i + 1;
+        }
+        scale = 1.0 / sqrt(d as float);
+        let mut q: int = 0;
+        while q < 4 {
+            i = 0;
+            while i < d * d {
+                sd = g2_lcg(sd);
+                push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * scale);
+                i = i + 1;
+            }
+            i = 0;
+            while i < d {
+                push(out, 0.0);
+                i = i + 1;
+            }
+            q = q + 1;
+        }
+        i = 0;
+        while i < d {
+            push(out, 1.0);
+            i = i + 1;
+        }
+        i = 0;
+        while i < d {
+            push(out, 0.0);
+            i = i + 1;
+        }
+        scale = 1.0 / sqrt(d as float);
+        i = 0;
+        while i < d * h {
+            sd = g2_lcg(sd);
+            push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * scale);
+            i = i + 1;
+        }
+        i = 0;
+        while i < h {
+            push(out, 0.0);
+            i = i + 1;
+        }
+        scale = 1.0 / sqrt(h as float);
+        i = 0;
+        while i < h * d {
+            sd = g2_lcg(sd);
+            push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * scale);
+            i = i + 1;
+        }
+        i = 0;
+        while i < d {
+            push(out, 0.0);
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    i = 0;
+    while i < d {
+        push(out, 1.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < d {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn g2_linear(s: Ag, inp: [int], woff: int, boff: int, in_dim: int, out_dim: int) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut out: [int] = [];
+    let mut j: int = 0;
+    while j < out_dim {
+        let mut acc: int = boff + j;
+        let mut i: int = 0;
+        while i < in_dim {
+            cur = ag_mul(cur, inp[i], woff + i * out_dim + j);
+            let prod: int = cur.last;
+            cur = ag_add(cur, acc, prod);
+            acc = cur.last;
+            i = i + 1;
+        }
+        push(out, acc);
+        j = j + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_add(s: Ag, a: [int], b: [int]) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        cur = ag_add(cur, a[i], b[i]);
+        push(out, cur.last);
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_layernorm(s: Ag, inp: [int], goff: int, boff: int) -> NodeVec {
+    let d: int = len(inp);
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, d as float);
+    let const_d: int = cur.last;
+    cur = ag_input(cur.tape, 0.00001);
+    let const_eps: int = cur.last;
+    cur = ag_input(cur.tape, 1.0);
+    let const_1: int = cur.last;
+    let mut acc: int = inp[0];
+    let mut i: int = 1;
+    while i < d {
+        cur = ag_add(cur, acc, inp[i]);
+        acc = cur.last;
+        i = i + 1;
+    }
+    cur = ag_div(cur, acc, const_d);
+    let mean: int = cur.last;
+    let mut sq_sum: int = -1;
+    let mut diffs: [int] = [];
+    i = 0;
+    while i < d {
+        cur = ag_sub(cur, inp[i], mean);
+        let diff: int = cur.last;
+        push(diffs, diff);
+        cur = ag_mul(cur, diff, diff);
+        let sq: int = cur.last;
+        if sq_sum < 0 {
+            sq_sum = sq;
+        } else {
+            cur = ag_add(cur, sq_sum, sq);
+            sq_sum = cur.last;
+        }
+        i = i + 1;
+    }
+    cur = ag_div(cur, sq_sum, const_d);
+    let varn: int = cur.last;
+    cur = ag_add(cur, varn, const_eps);
+    let var_eps: int = cur.last;
+    cur = ag_sqrt(cur, var_eps);
+    let sd: int = cur.last;
+    cur = ag_div(cur, const_1, sd);
+    let inv: int = cur.last;
+    let mut out: [int] = [];
+    i = 0;
+    while i < d {
+        cur = ag_mul(cur, diffs[i], inv);
+        let normed: int = cur.last;
+        cur = ag_mul(cur, normed, goff + i);
+        let scaled: int = cur.last;
+        cur = ag_add(cur, scaled, boff + i);
+        push(out, cur.last);
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_gelu(s: Ag, inp: [int]) -> NodeVec {
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, 1.702);
+    let c: int = cur.last;
+    let mut out: [int] = [];
+    for v in inp {
+        cur = ag_mul(cur, v, c);
+        let scaled: int = cur.last;
+        cur = ag_sigmoid(cur, scaled);
+        let sig: int = cur.last;
+        cur = ag_mul(cur, v, sig);
+        push(out, cur.last);
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_attention(s: Ag, x: [int], seq: int, d: int, heads: int, wq: int, bq: int, wk: int, bk: int, wv: int, bv: int, wo: int, bo: int) -> NodeVec {
+    let hd: int = d / heads;
+    let mut cur: Ag = s;
+    let mut qs: [int] = [];
+    let mut ks: [int] = [];
+    let mut vs: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let qv: NodeVec = g2_linear(cur, pos, wq, bq, d, d);
+        cur = qv.ag;
+        let kv: NodeVec = g2_linear(cur, pos, wk, bk, d, d);
+        cur = kv.ag;
+        let vv: NodeVec = g2_linear(cur, pos, wv, bv, d, d);
+        cur = vv.ag;
+        for a in qv.ids {
+            push(qs, a);
+        }
+        for a in kv.ids {
+            push(ks, a);
+        }
+        for a in vv.ids {
+            push(vs, a);
+        }
+        p = p + 1;
+    }
+    cur = ag_input(cur.tape, 1.0 / sqrt(hd as float));
+    let scale_id: int = cur.last;
+    // Full context, position-major, head-minor: ctx[p*d + h*hd + c].
+    let mut ctx: [int] = [];
+    let mut i: int = 0;
+    while i < seq {
+        let mut hh: int = 0;
+        while hh < heads {
+            let mut exps: [int] = [];
+            let mut sum_id: int = -1;
+            let mut j: int = 0;
+            while j <= i {
+                let mut acc: int = -1;
+                let mut c2: int = 0;
+                while c2 < hd {
+                    cur = ag_mul(cur, qs[i * d + hh * hd + c2], ks[j * d + hh * hd + c2]);
+                    let prod: int = cur.last;
+                    if acc < 0 {
+                        acc = prod;
+                    } else {
+                        cur = ag_add(cur, acc, prod);
+                        acc = cur.last;
+                    }
+                    c2 = c2 + 1;
+                }
+                cur = ag_mul(cur, acc, scale_id);
+                let score: int = cur.last;
+                cur = ag_exp(cur, score);
+                let e: int = cur.last;
+                push(exps, e);
+                if sum_id < 0 {
+                    sum_id = e;
+                } else {
+                    cur = ag_add(cur, sum_id, e);
+                    sum_id = cur.last;
+                }
+                j = j + 1;
+            }
+            let mut probs: [int] = [];
+            for e in exps {
+                cur = ag_div(cur, e, sum_id);
+                push(probs, cur.last);
+            }
+            let mut c3: int = 0;
+            while c3 < hd {
+                let mut acc2: int = -1;
+                let mut j2: int = 0;
+                while j2 <= i {
+                    cur = ag_mul(cur, probs[j2], vs[j2 * d + hh * hd + c3]);
+                    let prod2: int = cur.last;
+                    if acc2 < 0 {
+                        acc2 = prod2;
+                    } else {
+                        cur = ag_add(cur, acc2, prod2);
+                        acc2 = cur.last;
+                    }
+                    j2 = j2 + 1;
+                }
+                push(ctx, acc2);
+                c3 = c3 + 1;
+            }
+            hh = hh + 1;
+        }
+        i = i + 1;
+    }
+    let mut out: [int] = [];
+    i = 0;
+    while i < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, ctx[i * d + c]);
+            c = c + 1;
+        }
+        let proj: NodeVec = g2_linear(cur, pos, wo, bo, d, d);
+        cur = proj.ag;
+        for a in proj.ids {
+            push(out, a);
+        }
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_block(s: Ag, x: [int], seq: int, d: int, heads: int, hidden: int, base: int) -> NodeVec {
+    let ln1g: int = base;
+    let ln1b: int = base + d;
+    let wq: int = base + 2 * d;
+    let bq: int = wq + d * d;
+    let wk: int = bq + d;
+    let bk: int = wk + d * d;
+    let wv: int = bk + d;
+    let bv: int = wv + d * d;
+    let wo: int = bv + d;
+    let bo: int = wo + d * d;
+    let ln2g: int = bo + d;
+    let ln2b: int = ln2g + d;
+    let w1: int = ln2b + d;
+    let b1: int = w1 + d * hidden;
+    let w2: int = b1 + hidden;
+    let b2: int = w2 + hidden * d;
+    let mut cur: Ag = s;
+    let mut ln1: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = g2_layernorm(cur, pos, ln1g, ln1b);
+        cur = ln.ag;
+        for a in ln.ids {
+            push(ln1, a);
+        }
+        p = p + 1;
+    }
+    let att: NodeVec = g2_attention(cur, ln1, seq, d, heads, wq, bq, wk, bk, wv, bv, wo, bo);
+    cur = att.ag;
+    let res1: NodeVec = g2_add(cur, att.ids, x);
+    cur = res1.ag;
+    let mut out: [int] = [];
+    p = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, res1.ids[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = g2_layernorm(cur, pos, ln2g, ln2b);
+        cur = ln.ag;
+        let mlp1: NodeVec = g2_linear(cur, ln.ids, w1, b1, d, hidden);
+        cur = mlp1.ag;
+        let gel: NodeVec = g2_gelu(cur, mlp1.ids);
+        cur = gel.ag;
+        let mlp2: NodeVec = g2_linear(cur, gel.ids, w2, b2, hidden, d);
+        cur = mlp2.ag;
+        let res: NodeVec = g2_add(cur, mlp2.ids, pos);
+        cur = res.ag;
+        for a in res.ids {
+            push(out, a);
+        }
+        p = p + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn g2_logits(s: Ag, x_tokens: [int], seq: int, d: int, heads: int, hidden: int, vocab: int, blocks: int) -> NodeVec {
+    let pos_off: int = vocab * d;
+    let mut cur: Ag = s;
+    let mut x: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let tok: int = x_tokens[p];
+        let mut c: int = 0;
+        while c < d {
+            cur = ag_add(cur, tok * d + c, pos_off + p * d + c);
+            push(x, cur.last);
+            c = c + 1;
+        }
+        p = p + 1;
+    }
+    let mut b: int = 0;
+    while b < blocks {
+        let base: int = pos_off + seq * d + b * g2_block_size(d, hidden);
+        let blk: NodeVec = g2_block(cur, x, seq, d, heads, hidden, base);
+        cur = blk.ag;
+        x = blk.ids;
+        b = b + 1;
+    }
+    let ln3g: int = pos_off + seq * d + blocks * g2_block_size(d, hidden);
+    let ln3b: int = ln3g + d;
+    let mut logits: [int] = [];
+    p = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = g2_layernorm(cur, pos, ln3g, ln3b);
+        cur = ln.ag;
+        let mut v: int = 0;
+        while v < vocab {
+            let mut acc: int = -1;
+            let mut c2: int = 0;
+            while c2 < d {
+                cur = ag_mul(cur, ln.ids[c2], v * d + c2);
+                let prod: int = cur.last;
+                if acc < 0 {
+                    acc = prod;
+                } else {
+                    cur = ag_add(cur, acc, prod);
+                    acc = cur.last;
+                }
+                c2 = c2 + 1;
+            }
+            push(logits, acc);
+            v = v + 1;
+        }
+        p = p + 1;
+    }
+    return NodeVec { ag: cur, ids: logits };
+}
+
+fn g2_loss(s: Ag, logits: [int], targets: [int], seq: int, vocab: int) -> Ag {
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, seq as float);
+    let const_seq: int = cur.last;
+    cur = ag_input(cur.tape, 0.000000001);
+    let const_eps: int = cur.last;
+    let mut total: int = -1;
+    let mut p: int = 0;
+    while p < seq {
+        let mut exps: [int] = [];
+        let mut sum_id: int = -1;
+        let mut v: int = 0;
+        while v < vocab {
+            cur = ag_exp(cur, logits[p * vocab + v]);
+            let e: int = cur.last;
+            push(exps, e);
+            if sum_id < 0 {
+                sum_id = e;
+            } else {
+                cur = ag_add(cur, sum_id, e);
+                sum_id = cur.last;
+            }
+            v = v + 1;
+        }
+        cur = ag_div(cur, exps[targets[p]], sum_id);
+        let prob: int = cur.last;
+        cur = ag_add(cur, prob, const_eps);
+        let prob_eps: int = cur.last;
+        cur = ag_log(cur, prob_eps);
+        let lp: int = cur.last;
+        cur = ag_neg(cur, lp);
+        let ce: int = cur.last;
+        if total < 0 {
+            total = ce;
+        } else {
+            cur = ag_add(cur, total, ce);
+            total = cur.last;
+        }
+        p = p + 1;
+    }
+    cur = ag_div(cur, total, const_seq);
+    return cur;
+}

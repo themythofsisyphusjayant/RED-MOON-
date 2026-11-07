@@ -4,8 +4,8 @@ import "gpt.fg";
 import "tokenizer.fg";
 
 fn main() -> int {
-    let vocab: str = " helopwrdjai";
-    let text: str = "hello world hello jal pari";
+    let vocab: str = " helopwrdjaiqs";
+    let text: str = "hello world hello qasida";
     let ids: [int] = char_encode(text, vocab);
     let mut x: [int] = [];
     let mut y: [int] = [];

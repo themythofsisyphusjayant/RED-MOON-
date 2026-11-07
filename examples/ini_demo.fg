@@ -1,7 +1,7 @@
 import "ini.fg";
 
 fn main() -> int {
-    let text: str = "; demo ini\n[app]\nname = Jal Pari\nversion = 3\n[db]\nhost = localhost\n";
+    let text: str = "; demo ini\n[app]\nname = Qasida\nversion = 3\n[db]\nhost = localhost\n";
     let cfg: Ini = ini_parse(text);
     println("name =", ini_get(cfg, "app.name"));
     println("version =", ini_get(cfg, "app.version"));

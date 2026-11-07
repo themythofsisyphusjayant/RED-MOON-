@@ -1,11 +1,11 @@
-// Moon Notes — a tiny notes app in The Jal Pari Language.
+// Moon Notes — a tiny notes app in Qasida.
 //
 // Usage:
-//   jalpari run moon-notes.fg add TITLE BODY...
-//   jalpari run moon-notes.fg list
-//   jalpari run moon-notes.fg show TITLE
-//   jalpari run moon-notes.fg search WORD
-//   jalpari run moon-notes.fg remove TITLE
+//   qasida run moon-notes.fg add TITLE BODY...
+//   qasida run moon-notes.fg list
+//   qasida run moon-notes.fg show TITLE
+//   qasida run moon-notes.fg search WORD
+//   qasida run moon-notes.fg remove TITLE
 //
 // Storage: one file, notes.txt, in the current directory. One note
 // per line: TITLE, one space, then BODY. Titles come from a single

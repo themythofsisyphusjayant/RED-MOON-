@@ -1,7 +1,7 @@
-# From scratch: making Jal Pari capable of its own OS
+# From scratch: making Qasida capable of its own OS
 
 Goal (set 27 Oct 2026): an operating system **bigger than TempleOS,
-written completely in Jal Pari, with no Linux anywhere in it**.
+written completely in Qasida, with no Linux anywhere in it**.
 Not a Linux distro with a theme (that is what Black Moon OS is today),
 and not a simulation (that is what JalOS is today): a real kernel
 that boots on real hardware — starting with our own CPU, big32 —
@@ -94,7 +94,7 @@ and a RAM round-trip (`A0\n-1\n123456` transcript); native
 generated C contains the volatile helpers; checker rejections;
 WASM rejections. Note for kernel code: the language has no
 address-of operator, so native round-trips cannot be addressed
-from Jal Pari itself — big32 is where these builtins are truly
+from Qasida itself — big32 is where these builtins are truly
 proven.
 
 ### Phase C — Freestanding codegen (DONE 27 Oct 2026)
@@ -102,7 +102,7 @@ proven.
 `forge.py build --freestanding` (also `check`/`emit`): the
 program stands without libc or Linux. Native builds with
 `-nostdlib`; the program's own `_start` entry calls
-`jalpari_main` and exits via the raw Linux `exit_group` syscall
+`qasida_main` and exits via the raw Linux `exit_group` syscall
 with main's return value (int main -> exit code, void main ->
 exit 0), so a freestanding program's only observable output is
 its exit code. The prelude is a minimal header (only the
@@ -119,7 +119,7 @@ exist. big32 runs under the same flag (its output is already
 bare metal); WASM refuses the flag outright. Pinned by
 `tests/test_freestanding.py` (24 checks): native exit codes
 (27 computed, 0 void, 42 fast), ldd statically linked, nm zero
-undefined symbols, `_start` + `jalpari_main` present, checked
+undefined symbols, `_start` + `qasida_main` present, checked
 overflow halts (proven by timeout, not exit), big32 model
 "OK" via poke32 + RAM round-trip, all rejections, and the
 hosted control (the same print program builds fine without the
@@ -230,7 +230,7 @@ scheduler — are all done.**
 In order, each its own checkpoint: physical memory management and
 paging; a real filesystem (start with a tiny read-only one, then
 writable); processes and syscalls; a shell; a window manager and
-GUI toolkit in Jal Pari; keyboard, disk, and display drivers;
+GUI toolkit in Qasida; keyboard, disk, and display drivers;
 networking (the capability TempleOS never had); user programs —
 the Moon apps, rewritten as native OS programs. A PC port comes
 only after the big32 OS is real.
@@ -751,12 +751,12 @@ exact on Contents API).
 
 ## SBI dispatch demo kernel (agent+REA loop, 30 Oct 2026)
 `examples/os/kernel_sbi_demo.fg` + `tests/test_kernel_sbi_demo.py` — the
-agent+REA loop closed in Jal Pari: Ghidra's RISC-V decode of the big32 SBI
+agent+REA loop closed in Qasida: Ghidra's RISC-V decode of the big32 SBI
 firmware (mscratch stack swap, mcause dispatch, EID compare-and-branch table)
 was reimplemented fresh as a freestanding kernel with a `trap_handler` that
 dispatches Base FIDs (0 = spec version 2, 1 = demo impl id 7) and TIME
 (mtime low word) from ecalls, returning -2 for unknown EIDs. Documented
-difference from SBI: Jal Pari's 2-argument `ecall` carries (EID in a7, one
+difference from SBI: Qasida's 2-argument `ecall` carries (EID in a7, one
 argument in a0), so Base FIDs dispatch from a0, not a6; a 3-argument ecall is
 the named future slice for exact SBI ABI. Model-verified transcript
 `2 / 7 / <mtime> / -2 / DONE`, halted (halt via clear-mtvec-then-ecall).

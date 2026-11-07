@@ -1,0 +1,16 @@
+struct Cylinder {
+    r: int;
+    h: int;
+}
+
+fn cylinder_new(r: int, h: int) -> Cylinder {
+    return Cylinder { r: r, h: h };
+}
+
+fn cylinder_volume3(c: Cylinder) -> int {
+    return 3 * c.r * c.r * c.h;
+}
+
+fn cylinder_surface3(c: Cylinder) -> int {
+    return 6 * c.r * c.h + 6 * c.r * c.r;
+}

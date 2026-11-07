@@ -1,0 +1,15 @@
+struct Octagon {
+    s: int;
+}
+
+fn octagon_new(s: int) -> Octagon {
+    return Octagon { s: s };
+}
+
+fn octagon_area5(o: Octagon) -> int {
+    return 5 * o.s * o.s;
+}
+
+fn octagon_perim(o: Octagon) -> int {
+    return 8 * o.s;
+}

@@ -1,4 +1,4 @@
-"""Forge formatter (forge fmt).
+"""Qasida formatter (qasida fmt).
 
 Parses a .fg file and re-emits it in canonical style: 4-space
 indentation, one space around binary operators, `else if` chains

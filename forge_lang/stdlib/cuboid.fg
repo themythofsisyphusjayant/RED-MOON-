@@ -1,0 +1,17 @@
+struct Cuboid {
+    l: int;
+    w: int;
+    h: int;
+}
+
+fn cuboid_new(l: int, w: int, h: int) -> Cuboid {
+    return Cuboid { l: l, w: w, h: h };
+}
+
+fn cuboid_volume(c: Cuboid) -> int {
+    return c.l * c.w * c.h;
+}
+
+fn cuboid_surface(c: Cuboid) -> int {
+    return 2 * (c.l * c.w + c.l * c.h + c.w * c.h);
+}

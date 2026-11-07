@@ -1,0 +1,16 @@
+struct Rhombus {
+    d1: int;
+    d2: int;
+}
+
+fn rhombus_new(d1: int, d2: int) -> Rhombus {
+    return Rhombus { d1: d1, d2: d2 };
+}
+
+fn rhombus_area(r: Rhombus) -> int {
+    return r.d1 * r.d2 / 2;
+}
+
+fn rhombus_perim2(r: Rhombus) -> int {
+    return 2 * (r.d1 * r.d1 + r.d2 * r.d2);
+}

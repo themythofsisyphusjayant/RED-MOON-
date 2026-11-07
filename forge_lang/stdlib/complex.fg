@@ -1,0 +1,36 @@
+// Qasida — complex numbers (roadmap item 6).
+// Import with: import "complex.fg";
+// Struct + functions; no operator overloading in Qasida.
+
+struct Cx {
+    re: float;
+    im: float;
+}
+
+fn cx_new(re: float, im: float) -> Cx {
+    return Cx { re: re, im: im };
+}
+
+fn cx_add(a: Cx, b: Cx) -> Cx {
+    return Cx { re: a.re + b.re, im: a.im + b.im };
+}
+
+fn cx_sub(a: Cx, b: Cx) -> Cx {
+    return Cx { re: a.re - b.re, im: a.im - b.im };
+}
+
+fn cx_mul(a: Cx, b: Cx) -> Cx {
+    return Cx { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+
+fn cx_conj(a: Cx) -> Cx {
+    return Cx { re: a.re, im: 0.0 - a.im };
+}
+
+fn cx_abs2(a: Cx) -> float {
+    return a.re * a.re + a.im * a.im;
+}
+
+fn cx_scale(a: Cx, s: float) -> Cx {
+    return Cx { re: a.re * s, im: a.im * s };
+}

@@ -1,4 +1,4 @@
-# The Jal Pari Language Specification (formerly Forge v2)
+# Qasida Specification
 
 ## 1. Types
 
@@ -129,7 +129,7 @@ import "ml.fg";
 ```
 
 Imports are resolved relative to the importing file, then the
-current directory, then `stdlib/`. `stdlib/ml.fg` provides `dot`,
+current directory, then `forge_lang/stdlib/`. `forge_lang/stdlib/ml.fg` provides `dot`,
 `mean`, `relu`, `sigmoid`, and `matmul` (flat row-major matrices).
 
 ## 6. Modes and compilation
@@ -187,7 +187,7 @@ Generics (which `Option`/`Result` depend on), concurrency
 (channels/actors), GPU kernels, Python interop, a package manager,
 a formatter, and an LSP. Array and string values are not yet freed
 (GC is the Phase B memory-manager item). Structs, file I/O, CLI
-args, and `forge test` are DONE (Phase C, 26 Oct 2026). Claiming
+args, and `qasida test` are DONE (Phase C, 26 Oct 2026). Claiming
 v2 "combines C++, Mojo, and Python" means it combines their
 *approach* — native speed, Python-like ML syntax, Mojo-like
 compiled kernels for small models — not their full ecosystems,

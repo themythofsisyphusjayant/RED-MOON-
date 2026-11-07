@@ -1,0 +1,121 @@
+import "complex.fg";
+
+fn fft_pi() -> float {
+    return 3.14159265358979;
+}
+
+fn fft_cos(x: float) -> float {
+    let pi: float = fft_pi();
+    let two_pi: float = 2.0 * pi;
+    let mut a: float = x;
+    while a > pi {
+        a = a - two_pi;
+    }
+    while a < 0.0 - pi {
+        a = a + two_pi;
+    }
+    let mut sum: float = 1.0;
+    let mut term: float = 1.0;
+    let mut k: int = 1;
+    while k <= 12 {
+        let d1: float = (2 * k - 1) as float;
+        let d2: float = (2 * k) as float;
+        term = (0.0 - term) * a * a / (d1 * d2);
+        sum = sum + term;
+        k = k + 1;
+    }
+    return sum;
+}
+
+fn fft_sin(x: float) -> float {
+    let pi: float = fft_pi();
+    let two_pi: float = 2.0 * pi;
+    let mut a: float = x;
+    while a > pi {
+        a = a - two_pi;
+    }
+    while a < 0.0 - pi {
+        a = a + two_pi;
+    }
+    let mut sum: float = a;
+    let mut term: float = a;
+    let mut k: int = 1;
+    while k <= 12 {
+        let d1: float = (2 * k) as float;
+        let d2: float = (2 * k + 1) as float;
+        term = (0.0 - term) * a * a / (d1 * d2);
+        sum = sum + term;
+        k = k + 1;
+    }
+    return sum;
+}
+
+fn fft_forward(xs: [Cx]) -> [Cx] {
+    let n: int = len(xs);
+    if n <= 0 {
+        fail("fft_forward: empty input");
+    }
+    if (n & n - 1) != 0 {
+        fail("fft_forward: length is not a power of two");
+    }
+    let mut a: [Cx] = [];
+    for v in xs {
+        push(a, v);
+    }
+    let mut j: int = 0;
+    let mut i: int = 1;
+    while i < n {
+        let mut bit: int = n / 2;
+        while (j & bit) != 0 {
+            j = j ^ bit;
+            bit = bit / 2;
+        }
+        j = j ^ bit;
+        if i < j {
+            let t: Cx = a[i];
+            a[i] = a[j];
+            a[j] = t;
+        }
+        i = i + 1;
+    }
+    let mut size: int = 2;
+    while size <= n {
+        let half: int = size / 2;
+        let ang: float = (0.0 - 2.0 * fft_pi()) / size as float;
+        let wlen: Cx = cx_new(fft_cos(ang), fft_sin(ang));
+        let mut base: int = 0;
+        while base < n {
+            let mut w: Cx = cx_new(1.0, 0.0);
+            let mut k: int = 0;
+            while k < half {
+                let u: Cx = a[base + k];
+                let v: Cx = cx_mul(w, a[base + k + half]);
+                a[base + k] = cx_add(u, v);
+                a[base + k + half] = cx_sub(u, v);
+                w = cx_mul(w, wlen);
+                k = k + 1;
+            }
+            base = base + size;
+        }
+        size = size * 2;
+    }
+    return a;
+}
+
+fn fft_inverse(xs: [Cx]) -> [Cx] {
+    let n: int = len(xs);
+    let mut conj: [Cx] = [];
+    for v in xs {
+        push(conj, cx_conj(v));
+    }
+    let f: [Cx] = fft_forward(conj);
+    let mut out: [Cx] = [];
+    for v in f {
+        push(out, cx_scale(cx_conj(v), 1.0 / n as float));
+    }
+    return out;
+}
+
+fn fft_mag(a: Cx) -> float {
+    return sqrt(cx_abs2(a));
+}

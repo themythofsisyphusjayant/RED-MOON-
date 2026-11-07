@@ -1,0 +1,41 @@
+// Qasida — calendar arithmetic (roadmap item 22).
+// Import with: import "calendar.fg";
+// Weekday uses Zeller's congruence; 0 = Sunday .. 6 = Saturday.
+// No timezone tables: this is civil-date arithmetic only.
+
+fn is_leap(y: int) -> bool {
+    if y % 400 == 0 {
+        return true;
+    }
+    if y % 100 == 0 {
+        return false;
+    }
+    return y % 4 == 0;
+}
+
+fn days_in_month(y: int, m: int) -> int {
+    if m == 2 {
+        if is_leap(y) {
+            return 29;
+        }
+        return 28;
+    }
+    if m == 4 || m == 6 || m == 9 || m == 11 {
+        return 30;
+    }
+    return 31;
+}
+
+fn weekday(y: int, m: int, d: int) -> int {
+    let mut yy: int = y;
+    let mut mm: int = m;
+    if mm <= 2 {
+        mm = mm + 12;
+        yy = yy - 1;
+    }
+    let k: int = yy % 100;
+    let j: int = yy / 100;
+    let h: int = (d + (13 * (mm + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
+    // Zeller: 0 = Saturday, so shift to 0 = Sunday.
+    return (h + 6) % 7;
+}

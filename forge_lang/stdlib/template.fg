@@ -1,0 +1,56 @@
+// Qasida — mustache-style templates (roadmap item 33).
+// Import with: import "template.fg";
+// render replaces {{name}} from parallel keys/vals arrays. A name
+// with no matching key is left in place, so a missing value is
+// visible instead of silently vanishing.
+
+fn template_lookup(keys: [str], vals: [str], name: str) -> str {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == name {
+            return vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn template_has(keys: [str], name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn template_render(tmpl: str, keys: [str], vals: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(tmpl) {
+        if i + 1 < len(tmpl) && substr(tmpl, i, 2) == "{{" {
+            let mut j: int = i + 2;
+            while j + 1 < len(tmpl) && substr(tmpl, j, 2) != "}}" {
+                j = j + 1;
+            }
+            if j + 1 < len(tmpl) {
+                let name: str = trim(substr(tmpl, i + 2, j - (i + 2)));
+                if template_has(keys, name) {
+                    out = out + template_lookup(keys, vals, name);
+                } else {
+                    out = out + substr(tmpl, i, (j + 2) - i);
+                }
+                i = j + 2;
+            } else {
+                out = out + substr(tmpl, i, 1);
+                i = i + 1;
+            }
+        } else {
+            out = out + substr(tmpl, i, 1);
+            i = i + 1;
+        }
+    }
+    return out;
+}

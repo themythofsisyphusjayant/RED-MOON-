@@ -1,0 +1,35 @@
+fn repeat_str(s: str, n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + s;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn word_count(s: str) -> int {
+    let lines: [str] = split(s, "\n");
+    let mut n: int = 0;
+    for line in lines {
+        let parts: [str] = split(trim(line), " ");
+        for p in parts {
+            if len(p) > 0 {
+                n = n + 1;
+            }
+        }
+    }
+    return n;
+}
+
+fn csv_fields(line: str) -> [str] {
+    return split(line, ",");
+}
+
+fn lines_of(text: str) -> [str] {
+    return split(text, "\n");
+}
+
+fn is_blank(s: str) -> bool {
+    return len(trim(s)) == 0;
+}

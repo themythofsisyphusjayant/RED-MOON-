@@ -1,4 +1,4 @@
-"""Recursive-descent parser for The Jal Pari Language.
+"""Recursive-descent parser for Qasida.
 
 Precedence: || -> && -> == != -> < <= > >= -> + - -> * / % -> unary -> postfix -> primary
 Postfix: indexing a[i], cast expr as float

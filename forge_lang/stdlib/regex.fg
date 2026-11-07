@@ -1,0 +1,247 @@
+// regex: a small backtracking regex engine in pure Qasida.
+// No dependencies, no structs, no char indexing (all character access
+// goes through substr) — which is why the design is what it is.
+//
+// API:
+//   regex_match(pat, text) -> bool       // true if pat matches anywhere in text
+//   regex_find(pat, text) -> int        // start index of the match, or -1
+//   regex_full_match(pat, text) -> bool  // true if pat matches the whole text
+//   (regex_full_match wraps pat in ^...$ for you; do not add your own
+//   anchors — a leading ^ is stripped, a trailing unescaped $ is stripped.)
+//
+// Supported in v1:
+//   literals, . (any single character), * + ? (greedy, backtracking),
+//   [...] classes with ranges (a-z, A-Z, 0-9), [^...] negation,
+//   escapes \d \w \s and literal escapes (\. \* \\ ...), ^ $ anchors.
+// NOT supported in v1, and matched literally instead:
+//   groups (...) and alternation | — there are no closures or function
+//   values to represent them, so ( ) | are literal characters.
+//   A pattern like "(ab)+" therefore means: literal "(ab" then one or
+//   more ")". This is documented, not a bug to work around silently.
+// Other v1 limits, stated plainly:
+//   - Ranges only work inside the three alphabets a-z, A-Z, 0-9.
+//     A range across alphabets (e.g. [z-a]) never matches.
+//   - An unterminated [ is a literal '['. A ']' as the first class
+//     character ends the class (escape it if you mean it literally).
+//   - A quantifier after a quantifier is literal: "a**" means zero or
+//     more 'a' followed by a literal '*'.
+//   - Matching is exponential in the worst case (classic backtracking);
+//     keep patterns and inputs small.
+
+fn rx_is_digit(c: str) -> bool {
+    let digits: str = "0123456789";
+    let mut i: int = 0;
+    while i < len(digits) {
+        if substr(digits, i, 1) == c { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn rx_is_word(c: str) -> bool {
+    let word: str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+    let mut i: int = 0;
+    while i < len(word) {
+        if substr(word, i, 1) == c { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn rx_is_space(c: str) -> bool {
+    return c == " " || c == "\t" || c == "\n" || c == "\r";
+}
+
+// Position of c inside alphabet, or -1. This is how ranges work
+// without any char-to-int conversion in the language.
+fn rx_alpha_pos(c: str, alpha: str) -> int {
+    let mut i: int = 0;
+    while i < len(alpha) {
+        if substr(alpha, i, 1) == c { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rx_range_match(c: str, lo: str, hi: str) -> bool {
+    let lower: str = "abcdefghijklmnopqrstuvwxyz";
+    let upper: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let digits: str = "0123456789";
+    let plo: int = rx_alpha_pos(lo, lower);
+    if plo >= 0 {
+        let phi: int = rx_alpha_pos(hi, lower);
+        let pc: int = rx_alpha_pos(c, lower);
+        if phi < 0 { return false; }
+        if pc < 0 { return false; }
+        return plo <= pc && pc <= phi;
+    }
+    let plo2: int = rx_alpha_pos(lo, upper);
+    if plo2 >= 0 {
+        let phi: int = rx_alpha_pos(hi, upper);
+        let pc: int = rx_alpha_pos(c, upper);
+        if phi < 0 { return false; }
+        if pc < 0 { return false; }
+        return plo2 <= pc && pc <= phi;
+    }
+    let plo3: int = rx_alpha_pos(lo, digits);
+    if plo3 >= 0 {
+        let phi: int = rx_alpha_pos(hi, digits);
+        let pc: int = rx_alpha_pos(c, digits);
+        if phi < 0 { return false; }
+        if pc < 0 { return false; }
+        return plo3 <= pc && pc <= phi;
+    }
+    return false;
+}
+
+// Index of the ']' closing the class opened at pi, or -1.
+fn rx_class_end(pat: str, pi: int) -> int {
+    let mut j: int = pi + 1;
+    while j < len(pat) {
+        let ch: str = substr(pat, j, 1);
+        if ch == "\\" { j = j + 2; } else if ch == "]" { return j; } else { j = j + 1; }
+    }
+    return -1;
+}
+
+// Does c belong to the class with content pat[cs..ce] (ce = index of ']')?
+fn rx_class_match(c: str, pat: str, cs: int, ce: int, neg: bool) -> bool {
+    let mut found: bool = false;
+    let mut j: int = cs;
+    while j < ce {
+        let ch: str = substr(pat, j, 1);
+        if ch == "\\" {
+            if j + 1 < ce {
+                let e: str = substr(pat, j + 1, 1);
+                if e == "d" { if rx_is_digit(c) { found = true; } }
+                else if e == "w" { if rx_is_word(c) { found = true; } }
+                else if e == "s" { if rx_is_space(c) { found = true; } }
+                else { if c == e { found = true; } }
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        } else if j + 2 < ce && substr(pat, j + 1, 1) == "-" {
+            if rx_range_match(c, ch, substr(pat, j + 2, 1)) { found = true; }
+            j = j + 3;
+        } else {
+            if c == ch { found = true; }
+            j = j + 1;
+        }
+    }
+    if neg { return !found; }
+    return found;
+}
+
+// Does the single element at pat[pi] match character c?
+fn rx_elem_matches(pat: str, pi: int, c: str) -> bool {
+    let ch: str = substr(pat, pi, 1);
+    if ch == "." { return true; }
+    if ch == "\\" {
+        if pi + 1 >= len(pat) { return c == "\\"; }
+        let e: str = substr(pat, pi + 1, 1);
+        if e == "d" { return rx_is_digit(c); }
+        if e == "w" { return rx_is_word(c); }
+        if e == "s" { return rx_is_space(c); }
+        return c == e;
+    }
+    if ch == "[" {
+        let ce: int = rx_class_end(pat, pi);
+        if ce < 0 { return c == "["; }
+        let mut cs: int = pi + 1;
+        let mut neg: bool = false;
+        if cs < ce && substr(pat, cs, 1) == "^" { neg = true; cs = cs + 1; }
+        return rx_class_match(c, pat, cs, ce, neg);
+    }
+    return c == ch;
+}
+
+// Index just past the element at pat[pi].
+fn rx_elem_end(pat: str, pi: int) -> int {
+    let ch: str = substr(pat, pi, 1);
+    if ch == "\\" {
+        if pi + 1 >= len(pat) { return pi + 1; }
+        return pi + 2;
+    }
+    if ch == "[" {
+        let ce: int = rx_class_end(pat, pi);
+        if ce < 0 { return pi + 1; }
+        return ce + 1;
+    }
+    return pi + 1;
+}
+
+// Does pat[pi..] match text[ti..]? Pattern exhaustion means match
+// (search semantics: trailing text is allowed).
+fn rx_match_at(pat: str, pi: int, text: str, ti: int) -> bool {
+    if pi >= len(pat) { return true; }
+    let ch: str = substr(pat, pi, 1);
+    if ch == "$" && pi == len(pat) - 1 { return ti == len(text); }
+    let pe: int = rx_elem_end(pat, pi);
+    if pe < len(pat) {
+        let q: str = substr(pat, pe, 1);
+        if q == "*" { return rx_match_star(pat, pe + 1, pi, text, ti); }
+        if q == "+" { return rx_match_plus(pat, pe + 1, pi, text, ti); }
+        if q == "?" { return rx_match_opt(pat, pe + 1, pi, text, ti); }
+    }
+    if ti < len(text) && rx_elem_matches(pat, pi, substr(text, ti, 1)) {
+        return rx_match_at(pat, pe, text, ti + 1);
+    }
+    return false;
+}
+
+fn rx_match_star(pat: str, after: int, elem_pi: int, text: str, ti: int) -> bool {
+    if rx_match_at(pat, after, text, ti) { return true; }
+    if ti < len(text) && rx_elem_matches(pat, elem_pi, substr(text, ti, 1)) {
+        return rx_match_star(pat, after, elem_pi, text, ti + 1);
+    }
+    return false;
+}
+
+fn rx_match_plus(pat: str, after: int, elem_pi: int, text: str, ti: int) -> bool {
+    if ti < len(text) && rx_elem_matches(pat, elem_pi, substr(text, ti, 1)) {
+        return rx_match_star(pat, after, elem_pi, text, ti + 1);
+    }
+    return false;
+}
+
+fn rx_match_opt(pat: str, after: int, elem_pi: int, text: str, ti: int) -> bool {
+    if rx_match_at(pat, after, text, ti) { return true; }
+    if ti < len(text) && rx_elem_matches(pat, elem_pi, substr(text, ti, 1)) {
+        return rx_match_at(pat, after, text, ti + 1);
+    }
+    return false;
+}
+
+fn rx_search_from(pat: str, text: str, start: int) -> int {
+    let mut s: int = start;
+    while s <= len(text) {
+        if rx_match_at(pat, 0, text, s) { return s; }
+        s = s + 1;
+    }
+    return -1;
+}
+
+fn regex_find(pat: str, text: str) -> int {
+    if len(pat) > 0 && substr(pat, 0, 1) == "^" {
+        let sub: str = substr(pat, 1, len(pat) - 1);
+        if rx_match_at(sub, 0, text, 0) { return 0; }
+        return -1;
+    }
+    return rx_search_from(pat, text, 0);
+}
+
+fn regex_match(pat: str, text: str) -> bool {
+    return regex_find(pat, text) >= 0;
+}
+
+fn regex_full_match(pat: str, text: str) -> bool {
+    let mut p: str = pat;
+    if len(p) > 0 && substr(p, 0, 1) == "^" { p = substr(p, 1, len(p) - 1); }
+    if len(p) > 0 && substr(p, len(p) - 1, 1) == "$" {
+        if len(p) < 2 || substr(p, len(p) - 2, 1) != "\\" {
+            p = substr(p, 0, len(p) - 1);
+        }
+    }
+    return regex_match("^" + p + "$", text);
+}

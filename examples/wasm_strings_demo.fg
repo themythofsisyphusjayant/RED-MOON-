@@ -4,7 +4,7 @@
 // (see docs/WASM_STRINGS.md); main returns the sum,
 // so the stock runner prints 23.
 // Expected stdout buffer:
-//   hello jal pari
+//   hello qasida
 //   len = 14
 //   xs len = 5
 //   xs[2] = 4
@@ -15,7 +15,7 @@
 //   sum = 23
 fn main() -> int {
     let greeting: str = "hello";
-    let name: str = "jal pari";
+    let name: str = "qasida";
     let full: str = greeting + " " + name;
     println(full);
     println("len =", len(full));

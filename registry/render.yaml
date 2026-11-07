@@ -9,7 +9,7 @@
 # instance) or use Fly (volume below) / a VPS instead.
 services:
   - type: web
-    name: jalpari-registry
+    name: qasida-registry
     env: docker
     dockerfilePath: ./registry/Dockerfile
     envVars:

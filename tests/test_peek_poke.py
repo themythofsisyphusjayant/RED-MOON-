@@ -14,7 +14,7 @@ through a raw address. Semantics, pinned here:
     address is a valid device register.
   * WASM rejects both loudly: WASM has no raw addresses.
   * There is no address-of operator in the language, so a native
-    runtime round-trip cannot be addressed from Jal Pari code
+    runtime round-trip cannot be addressed from Qasida code
     itself; native coverage is build + generated-C inspection +
     a guarded (never executed) poke, and the real runtime proof
     is the big32 model run below.

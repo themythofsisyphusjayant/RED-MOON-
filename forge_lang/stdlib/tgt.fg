@@ -1,0 +1,311 @@
+// Qasida — tensor GPT (0.5.0).
+// Import with: import "tgt.fg";
+// (It imports tensor_autograd.fg; import it alone — never
+// alongside nn.fg or gpt2.fg in the same program, because
+// those pull in tensor.fg / autograd.fg a second way.)
+//
+// The same transformer as gpt2.fg, rebuilt on tensor
+// autograd: one tape node per tensor op instead of one per
+// scalar. Same parameter count for the same sizes (12,608
+// for V=500, d=16, seq=8, hidden=32, 2 blocks), tied output
+// head, causal multi-head attention, GELU MLP.
+// Param tensors, in layout order (param_ids[k] is the leaf
+// node id of the k-th tensor):
+//   tok [V,d], pos [S,d],
+//   per block: ln1_gamma [d], ln1_beta [d], qkv_w [d,3d],
+//     qkv_b [3d], out_w [d,d], out_b [d], ln2_gamma [d],
+//     ln2_beta [d], mlp_w1 [d,H], mlp_b1 [H], mlp_w2 [H,d],
+//     mlp_b2 [d],
+//   lnf_gamma [d], lnf_beta [d].
+// Init differs from gpt2.fg on purpose: weights uniform
+// [-0.1, 0.1], layernorm gamma 1, beta 0, biases 0 — the
+// standard scheme, not gpt2's 0.5-scaled embeddings.
+
+import "tensor_autograd.fg";
+
+fn tgt_block_size(d: int, h: int) -> int {
+    return 4 * d * d + 2 * d * h + 9 * d + h;
+}
+
+fn tgt_param_count(v: int, d: int, s: int, h: int, l: int) -> int {
+    return v * d + s * d + l * tgt_block_size(d, h) + 2 * d;
+}
+
+fn tgt_param_sizes(v: int, d: int, s: int, h: int, l: int) -> [int] {
+    let mut out: [int] = [];
+    push(out, v * d);
+    push(out, s * d);
+    let mut b: int = 0;
+    while b < l {
+        push(out, d);
+        push(out, d);
+        push(out, d * 3 * d);
+        push(out, 3 * d);
+        push(out, d * d);
+        push(out, d);
+        push(out, d);
+        push(out, d);
+        push(out, d * h);
+        push(out, h);
+        push(out, h * d);
+        push(out, d);
+        b = b + 1;
+    }
+    push(out, d);
+    push(out, d);
+    return out;
+}
+
+fn tgt_param_shapes(v: int, d: int, s: int, h: int, l: int) -> [int] {
+    // Flat shapes, 2 ints per tensor, same order as sizes.
+    let mut out: [int] = [];
+    push(out, v);
+    push(out, d);
+    push(out, s);
+    push(out, d);
+    let mut b: int = 0;
+    while b < l {
+        push(out, d);
+        push(out, 0);
+        push(out, d);
+        push(out, 0);
+        push(out, d);
+        push(out, 3 * d);
+        push(out, 3 * d);
+        push(out, 0);
+        push(out, d);
+        push(out, d);
+        push(out, d);
+        push(out, 0);
+        push(out, d);
+        push(out, 0);
+        push(out, d);
+        push(out, 0);
+        push(out, d);
+        push(out, h);
+        push(out, h);
+        push(out, 0);
+        push(out, h);
+        push(out, d);
+        push(out, d);
+        push(out, 0);
+        b = b + 1;
+    }
+    push(out, d);
+    push(out, 0);
+    push(out, d);
+    push(out, 0);
+    return out;
+}
+
+fn tgt_lcg(seed: int) -> int {
+    // Same bound as gpt2's lcg: the seed stays below
+    // 2147483647, so the product stays below 2.4e18 and
+    // cannot overflow i64; the modulo brings it back down.
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn tgt_init_params(v: int, d: int, s: int, h: int, l: int, seed: int) -> [float] {
+    let sizes: [int] = tgt_param_sizes(v, d, s, h, l);
+    let mut sd: int = seed;
+    let mut out: [float] = [];
+    let mut k: int = 0;
+    while k < len(sizes) {
+        // Param kinds in layout order repeat every 12 after
+        // the first two: gamma indices are 2, 8, ... within
+        // a block (ln1_gamma, ln2_gamma) and the final two
+        // are lnf_gamma, lnf_beta. Detect by position:
+        // kind 0 = tok, 1 = pos, then blocks of 12, then 2.
+        let mut i: int = 0;
+        while i < sizes[k] {
+            if k == 0 || k == 1 {
+                sd = tgt_lcg(sd);
+                push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * 0.1);
+            } else {
+                let pos_in_block: int = (k - 2) % 12;
+                if pos_in_block == 0 || pos_in_block == 6 {
+                    push(out, 1.0);
+                } else if pos_in_block == 1 || pos_in_block == 7 || pos_in_block == 3 || pos_in_block == 5 || pos_in_block == 9 || pos_in_block == 11 {
+                    push(out, 0.0);
+                } else {
+                    sd = tgt_lcg(sd);
+                    push(out, (sd as float / 2147483647.0 * 2.0 - 1.0) * 0.1);
+                }
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn tgt_logits(s: TAg, x: [int], pids: [int], v: int, d: int, seq: int, hidden: int, blocks: int, heads: int) -> TAg {
+    let tok: int = pids[0];
+    let pos: int = pids[1];
+    let mut cur: TAg = t_gather(s, tok, x);
+    let emb: int = cur.last;
+    let mut pos_idx: [int] = [];
+    let mut i: int = 0;
+    while i < seq {
+        push(pos_idx, i);
+        i = i + 1;
+    }
+    cur = t_gather(cur, pos, pos_idx);
+    let pos_e: int = cur.last;
+    cur = t_add(cur, emb, pos_e);
+    let mut h: int = cur.last;
+    let hdim: int = d / heads;
+    let scale: float = 1.0 / sqrt(hdim as float);
+    let mut b: int = 0;
+    while b < blocks {
+        let base: int = 2 + b * 12;
+        let ln1g: int = pids[base];
+        let ln1b: int = pids[base + 1];
+        let qkvw: int = pids[base + 2];
+        let qkvb: int = pids[base + 3];
+        let outw: int = pids[base + 4];
+        let outb: int = pids[base + 5];
+        let ln2g: int = pids[base + 6];
+        let ln2b: int = pids[base + 7];
+        let w1: int = pids[base + 8];
+        let b1: int = pids[base + 9];
+        let w2: int = pids[base + 10];
+        let b2: int = pids[base + 11];
+        cur = t_layernorm(cur, h, ln1g, ln1b);
+        let ln1: int = cur.last;
+        cur = t_matmul(cur, ln1, qkvw);
+        let qkvm: int = cur.last;
+        cur = t_add_bias(cur, qkvm, qkvb);
+        let qkv: int = cur.last;
+        cur = t_col_slice(cur, qkv, 0, d);
+        let q: int = cur.last;
+        cur = t_col_slice(cur, qkv, d, d);
+        let kk: int = cur.last;
+        cur = t_col_slice(cur, qkv, 2 * d, d);
+        let vv: int = cur.last;
+        let mut concat: int = -1;
+        let mut hd: int = 0;
+        while hd < heads {
+            let off: int = hd * hdim;
+            cur = t_col_slice(cur, q, off, hdim);
+            let qh: int = cur.last;
+            cur = t_col_slice(cur, kk, off, hdim);
+            let kh: int = cur.last;
+            cur = t_col_slice(cur, vv, off, hdim);
+            let vh: int = cur.last;
+            cur = t_transpose(cur, kh);
+            let kt: int = cur.last;
+            cur = t_matmul(cur, qh, kt);
+            let sc: int = cur.last;
+            cur = t_scale(cur, sc, scale);
+            let sc2: int = cur.last;
+            cur = t_causal_softmax(cur, sc2);
+            let pr: int = cur.last;
+            cur = t_matmul(cur, pr, vh);
+            let hout: int = cur.last;
+            if concat == -1 {
+                concat = hout;
+            } else {
+                cur = t_concat_cols(cur, concat, hout);
+                concat = cur.last;
+            }
+            hd = hd + 1;
+        }
+        cur = t_matmul(cur, concat, outw);
+        let attn_m: int = cur.last;
+        cur = t_add_bias(cur, attn_m, outb);
+        let attn: int = cur.last;
+        cur = t_add(cur, h, attn);
+        h = cur.last;
+        cur = t_layernorm(cur, h, ln2g, ln2b);
+        let ln2: int = cur.last;
+        cur = t_matmul(cur, ln2, w1);
+        let m1: int = cur.last;
+        cur = t_add_bias(cur, m1, b1);
+        let m1b: int = cur.last;
+        cur = t_gelu(cur, m1b);
+        let mg: int = cur.last;
+        cur = t_matmul(cur, mg, w2);
+        let m2: int = cur.last;
+        cur = t_add_bias(cur, m2, b2);
+        let mout: int = cur.last;
+        cur = t_add(cur, h, mout);
+        h = cur.last;
+        b = b + 1;
+    }
+    let lnf_base: int = 2 + blocks * 12;
+    cur = t_layernorm(cur, h, pids[lnf_base], pids[lnf_base + 1]);
+    let lnf: int = cur.last;
+    cur = t_transpose(cur, tok);
+    let tok_t: int = cur.last;
+    cur = t_matmul(cur, lnf, tok_t);
+    return cur;
+}
+
+struct TAdam {
+    params: [float];
+    m: [float];
+    v: [float];
+    step: int;
+}
+
+fn tgt_adam_new(params: [float]) -> TAdam {
+    let mut m: [float] = [];
+    let mut vv: [float] = [];
+    let mut i: int = 0;
+    while i < len(params) {
+        push(m, 0.0);
+        push(vv, 0.0);
+        i = i + 1;
+    }
+    return TAdam { params: params, m: m, v: vv, step: 0 };
+}
+
+fn tgt_adam_step(st: TAdam, grads: [float], lr: float) -> TAdam {
+    let mut params: [float] = [];
+    let mut m: [float] = [];
+    let mut vv: [float] = [];
+    let step: int = st.step + 1;
+    let bc1: float = 1.0 - 0.9;
+    let bc2: float = 1.0 - 0.999;
+    let mut bc1p: float = 1.0;
+    let mut bc2p: float = 1.0;
+    let mut i: int = 0;
+    while i < step {
+        bc1p = bc1p * 0.9;
+        bc2p = bc2p * 0.999;
+        i = i + 1;
+    }
+    let mhat_denom: float = 1.0 - bc1p;
+    let vhat_denom: float = 1.0 - bc2p;
+    i = 0;
+    while i < len(st.params) {
+        let g: float = grads[i];
+        let mi: float = 0.9 * st.m[i] + 0.1 * g;
+        let vi: float = 0.999 * st.v[i] + 0.001 * g * g;
+        let mh: float = mi / mhat_denom;
+        let vh: float = vi / vhat_denom;
+        push(params, st.params[i] - lr * mh / (sqrt(vh) + 0.00000001));
+        push(m, mi);
+        push(vv, vi);
+        i = i + 1;
+    }
+    return TAdam { params: params, m: m, v: vv, step: step };
+}
+
+fn tgt_grad_clip(grads: [float], max_norm: float) -> [float] {
+    let mut n: float = 0.0;
+    for g in grads {
+        n = n + g * g;
+    }
+    n = sqrt(n);
+    if n <= max_norm {
+        return grads;
+    }
+    let sc: float = max_norm / n;
+    let mut out: [float] = [];
+    for g in grads {
+        push(out, g * sc);
+    }
+    return out;
+}

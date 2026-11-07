@@ -1,0 +1,41 @@
+// Qasida — checksums (roadmap item 57).
+// Import with: import "checksum.fg";
+// Byte-array API: bytes are [int] values 0-255, because Qasida
+// has no ord() builtin to read a character's code from a string.
+// All results are masked to 32 bits (native int is 64-bit).
+
+fn crc32_bytes(data: [int]) -> int {
+    let mut crc: int = 4294967295;
+    for b in data {
+        crc = crc ^ b;
+        let mut k: int = 0;
+        while k < 8 {
+            if crc % 2 == 1 {
+                crc = (crc >> 1) ^ 3988292384;
+            } else {
+                crc = crc >> 1;
+            }
+            k = k + 1;
+        }
+    }
+    return (crc ^ 4294967295) & 4294967295;
+}
+
+fn fnv1a_bytes(data: [int]) -> int {
+    let mut h: int = 2166136261;
+    for b in data {
+        h = h ^ b;
+        h = (h * 16777619) & 4294967295;
+    }
+    return h;
+}
+
+fn adler32_bytes(data: [int]) -> int {
+    let mut a: int = 1;
+    let mut b: int = 0;
+    for x in data {
+        a = (a + x) % 65521;
+        b = (b + a) % 65521;
+    }
+    return (b << 16) + a;
+}

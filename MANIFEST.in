@@ -1,0 +1,5 @@
+include README.md CHANGELOG.md LICENSE
+recursive-include examples *.fg *.md
+recursive-include docs *.md
+global-exclude *.pyc
+global-exclude __pycache__

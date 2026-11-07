@@ -1,7 +1,7 @@
 # Top-500 program tracker
 
 The user ordered (31 Oct 2026) that all 500 items in
-docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
+docs/TOP_500_FEATURES.md be added to Qasida.
 
 ## Rules
 - Work the catalog in priority order, respecting dependencies
@@ -13,7 +13,7 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
 - Every item lands only with a real verification: a test in
   tests/, a native run, or a big32 model run. No item is claimed
   from an estimate.
-- The full forge test suite must stay green; a batch that breaks
+- The full qasida test suite must stay green; a batch that breaks
   it is not done.
 - Catalog statuses are updated as items land ([GAP]/[PARTIAL] to
   [HAVE], with a date note), so the catalog stays the source of
@@ -226,9 +226,9 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   HAVE 56, PARTIAL 61, GAP 383, to build 444. Next
   in priority: #22 allocator-as-value.
 - Batch 17 (31 Oct 2026): #22 allocator-as-value
-  v1 (stdlib/allocator.fg + examples/
+  v1 (forge_lang/stdlib/allocator.fg + examples/
   allocator_demo.fg + tests/test_allocator_v1.py,
-  ALL PASS). Pure Jal Pari, no compiler change:
+  ALL PASS). Pure Qasida, no compiler change:
   one Allocator struct passed explicitly to
   functions, never a global, in three kinds
   (bump, freelist with slot reuse, arena with
@@ -239,9 +239,9 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   to build 443. Next in priority: #24 arena
   allocation.
 - Batch 18 (31 Oct 2026): #24 arena allocation
-  v1 (stdlib/arena.fg + examples/arena_demo.fg
+  v1 (forge_lang/stdlib/arena.fg + examples/arena_demo.fg
   + tests/test_arena_v1.py, ALL PASS, plus a
-  clean AddressSanitizer run). Pure Jal Pari: a
+  clean AddressSanitizer run). Pure Qasida: a
   growing region with mark/restore; alloc never
   fails; individual frees are no-ops. The batch
   also fixed two real compiler ownership bugs
@@ -255,7 +255,7 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   HAVE 58, PARTIAL 59, GAP 383, to build 442.
   Next in priority: #25 reference counting.
 - Batch 19 (1 Nov 2026): #25 reference
-  counting v1 (a `refcount` builtin + stdlib/
+  counting v1 (a `refcount` builtin + forge_lang/stdlib/
   rc.fg + examples/rc_demo.fg + tests/
   test_rc_v1.py, ALL PASS). The builtin reads
   an array's live holder count without gaining
@@ -309,10 +309,10 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   1 Nov daily push) and rides the next push.
   Next in priority: #28 copy-on-write arrays.
 - Batch 22 (1 Nov 2026): #28 copy-on-write
-  arrays v1, opt-in (stdlib/cow.fg + examples/
+  arrays v1, opt-in (forge_lang/stdlib/cow.fg + examples/
   cow_demo.fg + tests/test_cow_v1.py, ALL
   PASS, plus a clean AddressSanitizer run).
-  Pure Jal Pari, no compiler change: a Cow
+  Pure Qasida, no compiler change: a Cow
   shares its buffer until a write (shared
   writer gets a private copy, sole holder
   writes in place). Marked [PARTIAL], not
@@ -328,10 +328,10 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   total). Next in priority: #29 stack-
   allocated slices.
 - Batch 23 (1 Nov 2026): #29 stack-allocated
-  slices v1 (stdlib/slice.fg + examples/
+  slices v1 (forge_lang/stdlib/slice.fg + examples/
   slice_demo.fg + tests/test_slice_v1.py, ALL
   PASS, plus a clean AddressSanitizer run).
-  Pure Jal Pari, no compiler change: a Slice
+  Pure Qasida, no compiler change: a Slice
   is a stack-allocated header over an
   existing array's buffer — no copy, writes
   through to the original, bounds are the
@@ -346,10 +346,10 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   as the kernel allocator — promote it to an
   allocator API, or confirm and move on).
 - Batch 24 (1 Nov 2026): #30 lifetime-ordered
-  placement v1 (stdlib/lifetime.fg + examples/
+  placement v1 (forge_lang/stdlib/lifetime.fg + examples/
   lifetime_demo.fg + tests/test_lifetime_v1.py,
   ALL PASS, plus a clean AddressSanitizer
-  run). Pure Jal Pari, no compiler change:
+  run). Pure Qasida, no compiler change:
   the kernel allocator's idea promoted to a
   stdlib API — shorts from the front, longs
   from the back, one reset frees all shorts
@@ -378,7 +378,7 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   436. Next in priority: #32 allocator-aware
   collections.
 - Batch 26 (1 Nov 2026): #32 allocator-aware
-  collections v1 (stdlib/avec.fg +
+  collections v1 (forge_lang/stdlib/avec.fg +
   examples/avec_demo.fg + tests/
   test_avec_v1.py, ALL PASS, plus a clean
   AddressSanitizer run). AVec holds one element

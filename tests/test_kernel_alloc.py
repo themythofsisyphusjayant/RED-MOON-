@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end test for Phase F checkpoint 1: bump allocator kernel.
 
-An allocator needs no pointers in Jal Pari: addresses are plain
+An allocator needs no pointers in Qasida: addresses are plain
 ints, peek32/poke32 are the read/write. The heap is [0xA000,
 0xC000), the bump pointer lives in RAM scratch 0x8040.
 alloc(size) aligns up to 4, fails with -1 past the heap end, else

@@ -4,7 +4,7 @@ live one-per-slot in an Allocator's backing, so
 growth behaviour follows the allocator: a bump
 pool stays exhausted after a pop, a freelist pool
 reuses the freed slot. Out-of-memory is a value
-(false), not a crash. Pure Jal Pari — no compiler
+(false), not a crash. Pure Qasida — no compiler
 change. Maps are the named next slice (their
 string keys cannot live in an [int]-backed
 allocator), so #32 lands PARTIAL.
@@ -61,7 +61,7 @@ def main():
                      and "avec index out of bounds" in ro.stderr,
                      ro.stderr.strip().splitlines()[-1] if ro.stderr else ""):
             failures.append("oob fails")
-    fmt = os.path.join(ROOT, "stdlib", "avec.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "avec.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

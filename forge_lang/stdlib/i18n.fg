@@ -1,0 +1,34 @@
+// Qasida — message catalogs (roadmap item 34).
+// Import with: import "i18n.fg";
+// Two-locale catalog in v1 (English + one other locale, held
+// as parallel arrays). A missing key falls back to the key
+// itself so callers never fail on a missing translation;
+// i18n_plural picks the _one / _other key by count.
+
+struct I18n {
+    keys: [str];
+    en: [str];
+    other: [str];
+    other_code: str;
+}
+
+fn i18n_get(cat: I18n, locale: str, key: str) -> str {
+    let mut i: int = 0;
+    while i < len(cat.keys) {
+        if cat.keys[i] == key {
+            if locale == cat.other_code {
+                return cat.other[i];
+            }
+            return cat.en[i];
+        }
+        i = i + 1;
+    }
+    return key;
+}
+
+fn i18n_plural(cat: I18n, locale: str, key_one: str, key_other: str, n: int) -> str {
+    if n == 1 {
+        return i18n_get(cat, locale, key_one);
+    }
+    return i18n_get(cat, locale, key_other);
+}

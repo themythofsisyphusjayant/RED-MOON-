@@ -1,0 +1,497 @@
+// Qasida — tiny GPT on the autograd tape
+// (Mojo-level ML, step 4). Import with: import "gpt.fg";
+// A real 1-block, 1-head transformer trained by reverse-mode
+// autograd — no hand-written backward formulas. The forward pass
+// is built from ag_* ops, so gradients flow through embeddings,
+// attention, LayerNorm, GELU and the tied output head exactly
+// (LayerNorm uses the ag_sqrt node, so its backward is exact too).
+//
+// PARAM LAYOUT (flat [float], 776 values, d=8, hidden=16, vocab=12):
+//   tok_emb  0..95    (12 x 8)     pos_emb  96..159  (8 x 8)
+//   ln1_g    160..167 ln1_b       168..175
+//   Wq       176..239 bq          240..247
+//   Wk       248..311 bk          312..319
+//   Wv       320..383 bv          384..391
+//   Wo       392..455 bo          456..463
+//   ln2_g    464..471 ln2_b       472..479
+//   W1       480..607 b1          608..623  (8 -> 16)
+//   W2       624..751 b2          752..759  (16 -> 8)
+//   ln3_g    760..767 ln3_b       768..775
+// TRAINING PATTERN (params must be the FIRST nodes in a fresh
+// tape, so param node id == param index — that is what makes the
+// offsets below double as node ids):
+//   let mut s: Ag = <empty tape as Ag, see gpt_empty()>;
+//   ... append one ag_input node per param, in layout order ...
+//   let logits: NodeVec = gpt_logits(s, x_tokens, seq, 8, 16, 12);
+//   let loss: Ag = gpt_loss(logits.ag, logits.ids, targets, seq, 12);
+//   let back: Ag = ag_backward(loss, loss.last);
+//   grads[i] = back.tape.grads[i]   (i = 0..775)
+// This file does NOT import rand.fg (it would clash with nn.fg's
+// rand import when both are used); it uses its own tiny LCG.
+
+import "autograd.fg";
+
+fn gpt_param_count() -> int {
+    return 776;
+}
+
+fn gpt_lcg(seed: int) -> int {
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn gpt_init_params(seed: int) -> [float] {
+    let mut s: int = seed;
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < 96 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.5);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 64 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.5);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 1.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 64 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.35355339);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 64 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.35355339);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 64 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.35355339);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 64 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.35355339);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 1.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 128 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.35355339);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 16 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 128 {
+        s = gpt_lcg(s);
+        push(out, (s as float / 2147483647.0 * 2.0 - 1.0) * 0.25);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 1.0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn nv_linear(s: Ag, inp: [int], woff: int, boff: int, in_dim: int, out_dim: int) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut out: [int] = [];
+    let mut j: int = 0;
+    while j < out_dim {
+        let mut acc: int = boff + j;
+        let mut i: int = 0;
+        while i < in_dim {
+            cur = ag_mul(cur, inp[i], woff + i * out_dim + j);
+            let prod: int = cur.last;
+            cur = ag_add(cur, acc, prod);
+            acc = cur.last;
+            i = i + 1;
+        }
+        push(out, acc);
+        j = j + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn nv_add_vec(s: Ag, a: [int], b: [int]) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        cur = ag_add(cur, a[i], b[i]);
+        push(out, cur.last);
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn nv_layernorm(s: Ag, inp: [int], goff: int, boff: int) -> NodeVec {
+    let d: int = len(inp);
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, d as float);
+    let const_d: int = cur.last;
+    cur = ag_input(cur.tape, 0.00001);
+    let const_eps: int = cur.last;
+    cur = ag_input(cur.tape, 1.0);
+    let const_1: int = cur.last;
+    let mut acc: int = inp[0];
+    let mut i: int = 1;
+    while i < d {
+        cur = ag_add(cur, acc, inp[i]);
+        acc = cur.last;
+        i = i + 1;
+    }
+    cur = ag_div(cur, acc, const_d);
+    let mean: int = cur.last;
+    let mut sq_sum: int = -1;
+    let mut diffs: [int] = [];
+    i = 0;
+    while i < d {
+        cur = ag_sub(cur, inp[i], mean);
+        let diff: int = cur.last;
+        push(diffs, diff);
+        cur = ag_mul(cur, diff, diff);
+        let sq: int = cur.last;
+        if sq_sum < 0 {
+            sq_sum = sq;
+        } else {
+            cur = ag_add(cur, sq_sum, sq);
+            sq_sum = cur.last;
+        }
+        i = i + 1;
+    }
+    cur = ag_div(cur, sq_sum, const_d);
+    let varn: int = cur.last;
+    cur = ag_add(cur, varn, const_eps);
+    let var_eps: int = cur.last;
+    cur = ag_sqrt(cur, var_eps);
+    let sd: int = cur.last;
+    cur = ag_div(cur, const_1, sd);
+    let inv: int = cur.last;
+    let mut out: [int] = [];
+    i = 0;
+    while i < d {
+        cur = ag_mul(cur, diffs[i], inv);
+        let normed: int = cur.last;
+        cur = ag_mul(cur, normed, goff + i);
+        let scaled: int = cur.last;
+        cur = ag_add(cur, scaled, boff + i);
+        push(out, cur.last);
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn nv_gelu(s: Ag, inp: [int]) -> NodeVec {
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, 1.702);
+    let c: int = cur.last;
+    let mut out: [int] = [];
+    for v in inp {
+        cur = ag_mul(cur, v, c);
+        let scaled: int = cur.last;
+        cur = ag_sigmoid(cur, scaled);
+        let sig: int = cur.last;
+        cur = ag_mul(cur, v, sig);
+        push(out, cur.last);
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn nv_attention(s: Ag, x: [int], seq: int, d: int) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut qs: [int] = [];
+    let mut ks: [int] = [];
+    let mut vs: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let qv: NodeVec = nv_linear(cur, pos, 176, 240, d, d);
+        cur = qv.ag;
+        let kv: NodeVec = nv_linear(cur, pos, 248, 312, d, d);
+        cur = kv.ag;
+        let vv: NodeVec = nv_linear(cur, pos, 320, 384, d, d);
+        cur = vv.ag;
+        for a in qv.ids {
+            push(qs, a);
+        }
+        for a in kv.ids {
+            push(ks, a);
+        }
+        for a in vv.ids {
+            push(vs, a);
+        }
+        p = p + 1;
+    }
+    cur = ag_input(cur.tape, 1.0 / sqrt(d as float));
+    let scale_id: int = cur.last;
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < seq {
+        let mut exps: [int] = [];
+        let mut sum_id: int = -1;
+        let mut j: int = 0;
+        while j <= i {
+            let mut acc: int = -1;
+            let mut c2: int = 0;
+            while c2 < d {
+                cur = ag_mul(cur, qs[i * d + c2], ks[j * d + c2]);
+                let prod: int = cur.last;
+                if acc < 0 {
+                    acc = prod;
+                } else {
+                    cur = ag_add(cur, acc, prod);
+                    acc = cur.last;
+                }
+                c2 = c2 + 1;
+            }
+            cur = ag_mul(cur, acc, scale_id);
+            let score: int = cur.last;
+            cur = ag_exp(cur, score);
+            let e: int = cur.last;
+            push(exps, e);
+            if sum_id < 0 {
+                sum_id = e;
+            } else {
+                cur = ag_add(cur, sum_id, e);
+                sum_id = cur.last;
+            }
+            j = j + 1;
+        }
+        let mut probs: [int] = [];
+        for e in exps {
+            cur = ag_div(cur, e, sum_id);
+            push(probs, cur.last);
+        }
+        let mut ctx: [int] = [];
+        let mut c3: int = 0;
+        while c3 < d {
+            let mut acc2: int = -1;
+            let mut j2: int = 0;
+            while j2 <= i {
+                cur = ag_mul(cur, probs[j2], vs[j2 * d + c3]);
+                let prod2: int = cur.last;
+                if acc2 < 0 {
+                    acc2 = prod2;
+                } else {
+                    cur = ag_add(cur, acc2, prod2);
+                    acc2 = cur.last;
+                }
+                j2 = j2 + 1;
+            }
+            push(ctx, acc2);
+            c3 = c3 + 1;
+        }
+        let proj: NodeVec = nv_linear(cur, ctx, 392, 456, d, d);
+        cur = proj.ag;
+        for a in proj.ids {
+            push(out, a);
+        }
+        i = i + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn nv_block(s: Ag, x: [int], seq: int, d: int, hidden: int) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut ln1: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = nv_layernorm(cur, pos, 160, 168);
+        cur = ln.ag;
+        for a in ln.ids {
+            push(ln1, a);
+        }
+        p = p + 1;
+    }
+    let att: NodeVec = nv_attention(cur, ln1, seq, d);
+    cur = att.ag;
+    let res1: NodeVec = nv_add_vec(cur, att.ids, x);
+    cur = res1.ag;
+    let mut out: [int] = [];
+    p = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, res1.ids[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = nv_layernorm(cur, pos, 464, 472);
+        cur = ln.ag;
+        let mlp1: NodeVec = nv_linear(cur, ln.ids, 480, 608, d, hidden);
+        cur = mlp1.ag;
+        let gel: NodeVec = nv_gelu(cur, mlp1.ids);
+        cur = gel.ag;
+        let mlp2: NodeVec = nv_linear(cur, gel.ids, 624, 752, hidden, d);
+        cur = mlp2.ag;
+        let res: NodeVec = nv_add_vec(cur, mlp2.ids, pos);
+        cur = res.ag;
+        for a in res.ids {
+            push(out, a);
+        }
+        p = p + 1;
+    }
+    return NodeVec { ag: cur, ids: out };
+}
+
+fn gpt_logits(s: Ag, x_tokens: [int], seq: int, d: int, hidden: int, vocab: int) -> NodeVec {
+    let mut cur: Ag = s;
+    let mut x: [int] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let tok: int = x_tokens[p];
+        let mut c: int = 0;
+        while c < d {
+            cur = ag_add(cur, tok * d + c, 96 + p * d + c);
+            push(x, cur.last);
+            c = c + 1;
+        }
+        p = p + 1;
+    }
+    let blk: NodeVec = nv_block(cur, x, seq, d, hidden);
+    cur = blk.ag;
+    let mut logits: [int] = [];
+    p = 0;
+    while p < seq {
+        let mut pos: [int] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, blk.ids[p * d + c]);
+            c = c + 1;
+        }
+        let ln: NodeVec = nv_layernorm(cur, pos, 760, 768);
+        cur = ln.ag;
+        let mut v: int = 0;
+        while v < vocab {
+            let mut acc: int = -1;
+            let mut c2: int = 0;
+            while c2 < d {
+                cur = ag_mul(cur, ln.ids[c2], v * d + c2);
+                let prod: int = cur.last;
+                if acc < 0 {
+                    acc = prod;
+                } else {
+                    cur = ag_add(cur, acc, prod);
+                    acc = cur.last;
+                }
+                c2 = c2 + 1;
+            }
+            push(logits, acc);
+            v = v + 1;
+        }
+        p = p + 1;
+    }
+    return NodeVec { ag: cur, ids: logits };
+}
+
+fn gpt_loss(s: Ag, logits: [int], targets: [int], seq: int, vocab: int) -> Ag {
+    let mut cur: Ag = s;
+    cur = ag_input(cur.tape, seq as float);
+    let const_seq: int = cur.last;
+    let mut total: int = -1;
+    let mut p: int = 0;
+    while p < seq {
+        let mut exps: [int] = [];
+        let mut sum_id: int = -1;
+        let mut v: int = 0;
+        while v < vocab {
+            cur = ag_exp(cur, logits[p * vocab + v]);
+            let e: int = cur.last;
+            push(exps, e);
+            if sum_id < 0 {
+                sum_id = e;
+            } else {
+                cur = ag_add(cur, sum_id, e);
+                sum_id = cur.last;
+            }
+            v = v + 1;
+        }
+        cur = ag_div(cur, exps[targets[p]], sum_id);
+        let prob: int = cur.last;
+        cur = ag_log(cur, prob);
+        let lp: int = cur.last;
+        cur = ag_neg(cur, lp);
+        let ce: int = cur.last;
+        if total < 0 {
+            total = ce;
+        } else {
+            cur = ag_add(cur, total, ce);
+            total = cur.last;
+        }
+        p = p + 1;
+    }
+    cur = ag_div(cur, total, const_seq);
+    return cur;
+}

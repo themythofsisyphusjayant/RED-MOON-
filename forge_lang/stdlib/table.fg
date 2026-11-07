@@ -1,0 +1,71 @@
+// Forge Table stdlib: a tiny relational table (not SQL).
+// Import with: import "table.fg";
+// Rows are flattened into one [str] array: row i, column j lives
+// at i * ncols + j. There is no SQL parser in this version —
+// filtering is table_select(table, column_name, value).
+
+struct Table {
+    cols: [str];
+    rows: [str];
+    ncols: int;
+}
+
+fn table_new(cols: [str]) -> Table {
+    return Table { cols: cols, rows: [], ncols: len(cols) };
+}
+
+fn table_col_index(t: Table, col: str) -> int {
+    let mut i: int = 0;
+    while i < len(t.cols) {
+        if t.cols[i] == col {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn table_insert(t: Table, row: [str]) -> Table {
+    if len(row) != t.ncols {
+        fail("table_insert: row length must match column count");
+    }
+    let mut i: int = 0;
+    while i < len(row) {
+        push(t.rows, row[i]);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn table_get(t: Table, row: int, col: int) -> str {
+    return t.rows[row * t.ncols + col];
+}
+
+fn table_row_count(t: Table) -> int {
+    if t.ncols == 0 {
+        return 0;
+    }
+    return len(t.rows) / t.ncols;
+}
+
+fn table_select(t: Table, col: str, val: str) -> Table {
+    let ci: int = table_col_index(t, col);
+    if ci < 0 {
+        fail("table_select: unknown column");
+    }
+    let mut out: Table = table_new(t.cols);
+    let mut r: int = 0;
+    while r < table_row_count(t) {
+        if table_get(t, r, ci) == val {
+            let mut row: [str] = [];
+            let mut c: int = 0;
+            while c < t.ncols {
+                push(row, table_get(t, r, c));
+                c = c + 1;
+            }
+            out = table_insert(out, row);
+        }
+        r = r + 1;
+    }
+    return out;
+}

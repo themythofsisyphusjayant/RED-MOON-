@@ -1,0 +1,15 @@
+// Deterministic PRNG, in pure Qasida — there is no random
+// builtin yet, so training code can thread a seed through this
+// LCG (Numerical Recipes constants, 32-bit, kept in int range
+// by masking with 2147483647). rand_next(seed) returns the next
+// seed; rand_float(seed) returns a value in [0, 1) from it.
+// Callers keep the seed in a let mut and update it each call:
+//   seed = rand_next(seed);
+
+fn rand_next(seed: int) -> int {
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn rand_float(seed: int) -> float {
+    return rand_next(seed) as float / 2147483647.0;
+}

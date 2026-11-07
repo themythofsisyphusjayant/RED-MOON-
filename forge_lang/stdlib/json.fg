@@ -1,0 +1,18 @@
+fn json_get(text: str, key: str) -> str {
+    let needle: str = "\"" + key + "\":";
+    let parts: [str] = split(text, needle);
+    if len(parts) < 2 {
+        return "";
+    }
+    let rest: str = trim(parts[1]);
+    if !starts_with(rest, "\"") {
+        return "";
+    }
+    let after: str = substr(rest, 1, len(rest) - 1);
+    let val_parts: [str] = split(after, "\"");
+    return val_parts[0];
+}
+
+fn json_make(key: str, value: str) -> str {
+    return "{\"" + key + "\": \"" + value + "\"}";
+}

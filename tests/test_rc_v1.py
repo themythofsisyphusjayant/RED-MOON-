@@ -59,7 +59,7 @@ def main():
             if not check(f"{name} rejected", ok,
                          (rr.stderr.strip().splitlines() or [""])[-1]):
                 failures.append(name)
-    fmt = os.path.join(ROOT, "stdlib", "rc.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "rc.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

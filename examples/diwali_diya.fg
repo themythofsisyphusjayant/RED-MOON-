@@ -8,7 +8,7 @@ fn diya() {
 }
 
 fn main() -> int {
-    println("Happy Diwali from Jal Pari!");
+    println("Happy Diwali from Qasida!");
     println("");
     let mut lit: int = 0;
     for i in range(5) {

@@ -1,0 +1,151 @@
+// Qasida — image loading (0.7.0).
+// Import with: import "image.fg";
+// Two formats, both dependency-free:
+//   PPM P3 (ASCII): parsed from text with split.
+//   BMP 24-bit uncompressed: parsed from bytes
+//     with the read_bytes builtin (0.7.0).
+// Pixels are RGB triples, row-major, top row
+// first, values 0-255. PNG/JPEG are NOT supported
+// (they need inflate/DCT decoders) — that limit is
+// stated here, not hidden behind the word "image".
+
+struct Image {
+    w: int;
+    h: int;
+    pixels: [int];
+}
+
+fn le32(b: [int], off: int) -> int {
+    return b[off] + b[off + 1] * 256 + b[off + 2] * 65536 + b[off + 3] * 16777216;
+}
+
+fn le16(b: [int], off: int) -> int {
+    return b[off] + b[off + 1] * 256;
+}
+
+// Tokens of a PPM file: split lines, then spaces.
+fn ppm_tokens(text: str) -> [str] {
+    let mut toks: [str] = [];
+    let lines: [str] = split(text, "\n");
+    for line in lines {
+        let tline: str = trim(line);
+        if len(tline) > 0 && starts_with(tline, "#") == false {
+            let parts: [str] = split(tline, " ");
+            for p in parts {
+                if len(p) > 0 {
+                    push(toks, p);
+                }
+            }
+        }
+    }
+    return toks;
+}
+
+fn ppm_p3_load(path: str) -> Image {
+    let text: str = read_file(path);
+    let toks: [str] = ppm_tokens(text);
+    if toks[0] != "P3" {
+        fail("ppm_p3_load: not a P3 file");
+    }
+    let w: int = parse_int(toks[1]);
+    let h: int = parse_int(toks[2]);
+    let maxv: int = parse_int(toks[3]);
+    let mut pixels: [int] = [];
+    let mut i: int = 0;
+    while i < w * h * 3 {
+        let mut v: int = parse_int(toks[4 + i]);
+        if maxv != 255 {
+            v = v * 255 / maxv;
+        }
+        push(pixels, v);
+        i = i + 1;
+    }
+    return Image { w: w, h: h, pixels: pixels };
+}
+
+// 24-bit uncompressed BMP. Bottom-up when height
+// is positive, top-down when negative; rows are
+// padded to a 4-byte boundary; pixels are BGR.
+fn bmp_load(path: str) -> Image {
+    let b: [int] = read_bytes(path);
+    if b[0] != 66 || b[1] != 77 {
+        fail("bmp_load: not a BMP file");
+    }
+    let data_off: int = le32(b, 10);
+    let w: int = le32(b, 18);
+    let mut h: int = le32(b, 22);
+    let bpp: int = le16(b, 28);
+    if bpp != 24 {
+        fail("bmp_load: only 24-bit BMP supported");
+    }
+    let mut top_down: bool = false;
+    if h < 0 {
+        h = -h;
+        top_down = true;
+    }
+    let row_bytes: int = ((w * 3 + 3) / 4) * 4;
+    let mut pixels: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut src_row: int = r;
+        if top_down == false {
+            src_row = h - 1 - r;
+        }
+        let mut c: int = 0;
+        while c < w {
+            let base: int = data_off + src_row * row_bytes + c * 3;
+            push(pixels, b[base + 2]);
+            push(pixels, b[base + 1]);
+            push(pixels, b[base]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return Image { w: w, h: h, pixels: pixels };
+}
+
+// Luminance grayscale, 0.0-1.0, one value per pixel.
+fn image_gray(img: Image) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < img.w * img.h {
+        let r: float = img.pixels[i * 3] as float;
+        let g: float = img.pixels[i * 3 + 1] as float;
+        let bl: float = img.pixels[i * 3 + 2] as float;
+        push(out, (0.299 * r + 0.587 * g + 0.114 * bl) / 255.0);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Local int->str (same digit trick as nn's
+// int_to_str, kept here so image.fg needs no
+// nn import for one helper).
+fn img_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    let mut x: int = n;
+    while x > 0 {
+        let d: int = x % 10;
+        out = substr(digits, d, 1) + out;
+        x = x / 10;
+    }
+    return out;
+}
+
+// Save as PPM P3 (text), so any image can be
+// round-tripped through ppm_p3_load.
+fn image_save_ppm_p3(path: str, img: Image) -> bool {
+    let mut text: str = "P3\n";
+    text = text + img_int_str(img.w) + " " + img_int_str(img.h) + "\n255\n";
+    let mut i: int = 0;
+    while i < img.w * img.h * 3 {
+        text = text + img_int_str(img.pixels[i]) + " ";
+        i = i + 1;
+    }
+    text = text + "\n";
+    return write_file(path, text);
+}

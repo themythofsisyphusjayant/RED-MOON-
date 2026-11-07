@@ -1,0 +1,153 @@
+// Qasida — dataset pipeline (Mojo-level ML, step 3).
+// Import with: import "dataset.fg";
+// Next-token data: a SeqData holds sliding windows over an id
+// sequence. Window i has input ids[i .. i+seq_len-1] and target
+// ids[i+1 .. i+seq_len]. Windows are stored flat: xs holds
+// count * seq_len ids, ys the same shape, window i at offset
+// i * seq_len. Splits and batches are views rebuilt as SeqData
+// (Qasida functions return one value, so train/test are two
+// functions over the same split point).
+
+// NOTE: seq_shuffle needs rand.fg — import it in your program
+// (e.g. import "rand.fg";) alongside this file. This file does
+// not import it itself, so it can be combined with nn.fg, which
+// already brings rand in, without duplicate definitions.
+
+struct SeqData {
+    xs: [int];
+    ys: [int];
+    seq_len: int;
+    count: int;
+}
+
+fn make_sequences(ids: [int], seq_len: int) -> SeqData {
+    if len(ids) <= seq_len {
+        fail("make_sequences: need more ids than seq_len");
+    }
+    let count: int = len(ids) - seq_len;
+    let mut xs: [int] = [];
+    let mut ys: [int] = [];
+    let mut s: int = 0;
+    while s < count {
+        let mut p: int = 0;
+        while p < seq_len {
+            push(xs, ids[s + p]);
+            push(ys, ids[s + p + 1]);
+            p = p + 1;
+        }
+        s = s + 1;
+    }
+    return SeqData { xs: xs, ys: ys, seq_len: seq_len, count: count };
+}
+
+fn seq_get_x(d: SeqData, i: int) -> [int] {
+    let mut out: [int] = [];
+    let mut p: int = 0;
+    while p < d.seq_len {
+        push(out, d.xs[i * d.seq_len + p]);
+        p = p + 1;
+    }
+    return out;
+}
+
+fn seq_get_y(d: SeqData, i: int) -> [int] {
+    let mut out: [int] = [];
+    let mut p: int = 0;
+    while p < d.seq_len {
+        push(out, d.ys[i * d.seq_len + p]);
+        p = p + 1;
+    }
+    return out;
+}
+
+fn seq_split_count(d: SeqData, train_pct: int) -> int {
+    return d.count * train_pct / 100;
+}
+
+fn seq_train(d: SeqData, train_pct: int) -> SeqData {
+    let n: int = seq_split_count(d, train_pct);
+    let mut xs: [int] = [];
+    let mut ys: [int] = [];
+    let mut i: int = 0;
+    while i < n * d.seq_len {
+        push(xs, d.xs[i]);
+        push(ys, d.ys[i]);
+        i = i + 1;
+    }
+    return SeqData { xs: xs, ys: ys, seq_len: d.seq_len, count: n };
+}
+
+fn seq_test(d: SeqData, train_pct: int) -> SeqData {
+    let n: int = seq_split_count(d, train_pct);
+    let mut xs: [int] = [];
+    let mut ys: [int] = [];
+    let mut i: int = n * d.seq_len;
+    while i < len(d.xs) {
+        push(xs, d.xs[i]);
+        push(ys, d.ys[i]);
+        i = i + 1;
+    }
+    return SeqData { xs: xs, ys: ys, seq_len: d.seq_len, count: d.count - n };
+}
+
+fn seq_batch(d: SeqData, batch_idx: int, batch_size: int) -> SeqData {
+    let start: int = batch_idx * batch_size;
+    if start >= d.count {
+        fail("seq_batch: batch index out of range");
+    }
+    let mut n: int = batch_size;
+    if start + n > d.count {
+        n = d.count - start;
+    }
+    let mut xs: [int] = [];
+    let mut ys: [int] = [];
+    let mut i: int = start * d.seq_len;
+    while i < (start + n) * d.seq_len {
+        push(xs, d.xs[i]);
+        push(ys, d.ys[i]);
+        i = i + 1;
+    }
+    return SeqData { xs: xs, ys: ys, seq_len: d.seq_len, count: n };
+}
+
+fn shuffle_indices(n: int, seed: int) -> [int] {
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut s: int = seed;
+    let mut j: int = n - 1;
+    while j > 0 {
+        s = rand_next(s);
+        // Pick in [0, j] from the seed's remainder (seed should
+        // be positive; a negative remainder is flipped above).
+        let mut pick: int = s % (j + 1);
+        if pick < 0 {
+            pick = -pick;
+        }
+        let t: int = idx[j];
+        idx[j] = idx[pick];
+        idx[pick] = t;
+        j = j - 1;
+    }
+    return idx;
+}
+
+fn seq_shuffle(d: SeqData, seed: int) -> SeqData {
+    let order: [int] = shuffle_indices(d.count, seed);
+    let mut xs: [int] = [];
+    let mut ys: [int] = [];
+    for oi in order {
+        let x: [int] = seq_get_x(d, oi);
+        let y: [int] = seq_get_y(d, oi);
+        for v in x {
+            push(xs, v);
+        }
+        for v in y {
+            push(ys, v);
+        }
+    }
+    return SeqData { xs: xs, ys: ys, seq_len: d.seq_len, count: d.count };
+}

@@ -1,0 +1,71 @@
+// Qasida — command-line parsing (0.6.0).
+// Import with: import "cli.fg";
+// Works on args() output. Two option forms are
+// accepted: `--lr 0.05` and `--lr=0.05`. Positional
+// arguments are the ones that are not flags and do
+// not follow an option that consumed a value — the
+// simple rule here is: anything not starting with
+// "--" and not directly after a known option is a
+// positional. For exact parsing, pass the option
+// names to cli_positional as well.
+
+fn cli_has(a: [str], name: str) -> bool {
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag { return true; }
+        if starts_with(a[i], flag + "=") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Value of --name, or `fallback` when absent.
+fn cli_opt(a: [str], name: str, fallback: str) -> str {
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag {
+            if i + 1 < len(a) { return a[i + 1]; }
+            return fallback;
+        }
+        if starts_with(a[i], flag + "=") {
+            return substr(a[i], len(flag) + 1, len(a[i]) - len(flag) - 1);
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn cli_opt_float(a: [str], name: str, fallback: float) -> float {
+    let v: str = cli_opt(a, name, "");
+    if v == "" { return fallback; }
+    return parse_float(v);
+}
+
+fn cli_opt_int(a: [str], name: str, fallback: int) -> int {
+    let v: str = cli_opt(a, name, "");
+    if v == "" { return fallback; }
+    return parse_int(v);
+}
+
+// The idx-th positional (0-based), or "".
+fn cli_positional(a: [str], idx: int) -> str {
+    let mut count: int = 0;
+    let mut i: int = 0;
+    while i < len(a) {
+        if starts_with(a[i], "--") == false {
+            if count == idx { return a[i]; }
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn cli_usage(lines: [str]) -> int {
+    for line in lines {
+        println(line);
+    }
+    return 0;
+}

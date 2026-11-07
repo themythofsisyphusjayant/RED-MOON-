@@ -1,0 +1,41 @@
+// Qasida — 2D toy physics (physics2d).
+// Import with: import "physics2d.fg";
+// LIMITS (honest v1): point bodies only (no shapes, no rotation);
+// gravity is a constant downward acceleration; the floor is y=0
+// with a restitution bounce; AABB overlap is axis-aligned only.
+
+struct Body {
+    x: float;
+    y: float;
+    vx: float;
+    vy: float;
+}
+
+fn phys_new(x: float, y: float, vx: float, vy: float) -> Body {
+    return Body { x: x, y: y, vx: vx, vy: vy };
+}
+
+fn phys_step(b: Body, dt: float, gravity: float) -> Body {
+    let mut q = b;
+    q.vy = q.vy - gravity * dt;
+    q.x = q.x + q.vx * dt;
+    q.y = q.y + q.vy * dt;
+    return q;
+}
+
+fn phys_floor_bounce(b: Body, restitution: float) -> Body {
+    let mut q = b;
+    if q.y < 0.0 {
+        q.y = 0.0;
+        q.vy = 0.0 - q.vy * restitution;
+    }
+    return q;
+}
+
+fn phys_aabb_hit(ax: float, ay: float, aw: float, ah: float, bx: float, by: float, bw: float, bh: float) -> bool {
+    if ax + aw < bx { return false; }
+    if bx + bw < ax { return false; }
+    if ay + ah < by { return false; }
+    if by + bh < ay { return false; }
+    return true;
+}

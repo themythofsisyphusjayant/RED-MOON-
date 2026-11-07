@@ -1,0 +1,6 @@
+// Qasida — a short demo.
+fn main() -> int {
+    println("Qasida");
+    println("Safe. Simple. Natively fast.");
+    return 0;
+}

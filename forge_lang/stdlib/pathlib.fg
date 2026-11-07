@@ -1,0 +1,78 @@
+// Qasida — path helpers (roadmap item 49).
+// Import with: import "pathlib.fg";
+// POSIX-style '/' paths only in v1 (no Windows drive letters).
+// path_dir of a bare name is ".", path_ext of a dotfile with
+// no other dot is "".
+
+fn path_is_abs(p: str) -> bool {
+    return starts_with(p, "/");
+}
+
+fn path_last_slash(p: str) -> int {
+    let mut last: int = 0 - 1;
+    let mut i: int = 0;
+    while i < len(p) {
+        if p[i] == "/" {
+            last = i;
+        }
+        i = i + 1;
+    }
+    return last;
+}
+
+fn path_join(a: str, b: str) -> str {
+    if path_is_abs(b) {
+        return b;
+    }
+    if len(a) == 0 {
+        return b;
+    }
+    if ends_with(a, "/") {
+        return a + b;
+    }
+    return a + "/" + b;
+}
+
+fn path_dir(p: str) -> str {
+    let last: int = path_last_slash(p);
+    if last < 0 {
+        return ".";
+    }
+    if last == 0 {
+        return "/";
+    }
+    return substr(p, 0, last);
+}
+
+fn path_base(p: str) -> str {
+    let last: int = path_last_slash(p);
+    if last < 0 {
+        return p;
+    }
+    return substr(p, last + 1, len(p) - (last + 1));
+}
+
+fn path_ext(p: str) -> str {
+    let base: str = path_base(p);
+    let mut last: int = 0 - 1;
+    let mut i: int = 0;
+    while i < len(base) {
+        if base[i] == "." {
+            last = i;
+        }
+        i = i + 1;
+    }
+    if last <= 0 {
+        return "";
+    }
+    return substr(base, last, len(base) - last);
+}
+
+fn path_stem(p: str) -> str {
+    let base: str = path_base(p);
+    let ext: str = path_ext(p);
+    if len(ext) == 0 {
+        return base;
+    }
+    return substr(base, 0, len(base) - len(ext));
+}

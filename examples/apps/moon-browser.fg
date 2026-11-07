@@ -1,15 +1,15 @@
-// Moon Browser — a TEXT browser (honest naming: Jal Pari has no
+// Moon Browser — a TEXT browser (honest naming: Qasida has no
 // rendering engine, no layout, and no JavaScript, so this fetches a
 // page and prints its readable text, with all HTML tags stripped).
 //
 // Usage:
-//   jalpari run moon-browser.fg <url>
+//   qasida run moon-browser.fg <url>
 //
 // The URL check below mirrors JalOS's httpget command: the URL must
 // start with http:// or https://. Network failures (unresolvable
 // host, refused connection, malformed response) are reported by the
-// language runtime itself as "jalpari: runtime error: http_get: ..."
-// with exit code 1 — Jal Pari has no try/catch, so the app cannot
+// language runtime itself as "qasida: runtime error: http_get: ..."
+// with exit code 1 — Qasida has no try/catch, so the app cannot
 // intercept them, but they are a clean error line, not a crash.
 // An empty page body is reported by the app itself, below.
 // LIMIT: the tag stripper is naive — a literal < or > in page text

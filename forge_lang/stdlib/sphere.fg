@@ -1,0 +1,15 @@
+struct Sphere {
+    r: int;
+}
+
+fn sphere_new(r: int) -> Sphere {
+    return Sphere { r: r };
+}
+
+fn sphere_volume3(s: Sphere) -> int {
+    return 4 * s.r * s.r * s.r;
+}
+
+fn sphere_surface3(s: Sphere) -> int {
+    return 12 * s.r * s.r;
+}

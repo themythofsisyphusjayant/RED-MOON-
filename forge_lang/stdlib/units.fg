@@ -1,0 +1,43 @@
+// Qasida — units + constants (roadmap item 12).
+// Import with: import "units.fg";
+// Pure conversion functions; no hidden state.
+
+fn c_to_f(c: float) -> float {
+    return c * 9.0 / 5.0 + 32.0;
+}
+
+fn f_to_c(f: float) -> float {
+    return (f - 32.0) * 5.0 / 9.0;
+}
+
+fn km_to_mi(km: float) -> float {
+    return km * 0.621371;
+}
+
+fn mi_to_km(mi: float) -> float {
+    return mi * 1.609344;
+}
+
+fn kg_to_lb(kg: float) -> float {
+    return kg * 2.204623;
+}
+
+fn lb_to_kg(lb: float) -> float {
+    return lb * 0.453592;
+}
+
+fn m_to_ft(m: float) -> float {
+    return m * 3.28084;
+}
+
+fn ft_to_m(ft: float) -> float {
+    return ft * 0.3048;
+}
+
+fn cm_to_in(cm: float) -> float {
+    return cm * 0.393701;
+}
+
+fn in_to_cm(i: float) -> float {
+    return i * 2.54;
+}

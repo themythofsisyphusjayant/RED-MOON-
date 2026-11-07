@@ -1,0 +1,74 @@
+// Qasida — statistics extras (roadmap item 4).
+// Import with: import "statistics.fg";
+// Complements stats.fg (mean/median/variance/stddev) with mode,
+// generic quantiles (linear interpolation), and IQR.
+
+fn stats_sorted(xs: [float]) -> [float] {
+    let mut sorted: [float] = [];
+    for v in xs {
+        push(sorted, v);
+    }
+    let mut i: int = 0;
+    while i < len(sorted) {
+        let mut j: int = 0;
+        while j + 1 < len(sorted) - i {
+            if sorted[j] > sorted[j + 1] {
+                let t: float = sorted[j];
+                sorted[j] = sorted[j + 1];
+                sorted[j + 1] = t;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return sorted;
+}
+
+fn mode_int(xs: [int]) -> int {
+    if len(xs) == 0 {
+        fail("mode_int: empty array");
+    }
+    let mut best: int = xs[0];
+    let mut best_n: int = 0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        let mut n: int = 0;
+        let mut j: int = 0;
+        while j < len(xs) {
+            if xs[j] == xs[i] {
+                n = n + 1;
+            }
+            j = j + 1;
+        }
+        if n > best_n {
+            best_n = n;
+            best = xs[i];
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+// q in [0, 1]: position q*(n-1), linearly interpolated.
+fn quantile_float(xs: [float], q: float) -> float {
+    if len(xs) == 0 {
+        fail("quantile_float: empty array");
+    }
+    let sorted: [float] = stats_sorted(xs);
+    let n: int = len(sorted);
+    if n == 1 {
+        return sorted[0];
+    }
+    let p: float = q * (n - 1) as float;
+    let lo: int = p as int;
+    let hi: int = lo + 1;
+    if hi >= n {
+        return sorted[n - 1];
+    }
+    let frac: float = p - lo as float;
+    return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
+}
+
+fn iqr_float(xs: [float]) -> float {
+    return quantile_float(xs, 0.75) - quantile_float(xs, 0.25);
+}

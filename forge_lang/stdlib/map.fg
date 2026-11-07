@@ -1,0 +1,44 @@
+struct MapStrInt {
+    keys: [str];
+    vals: [int];
+}
+
+fn map_new() -> MapStrInt {
+    return MapStrInt { keys: [], vals: [] };
+}
+
+fn map_get(m: MapStrInt, key: str, fallback: int) -> int {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            return m.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn map_has(m: MapStrInt, key: str) -> bool {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn map_put(m: MapStrInt, key: str, val: int) -> MapStrInt {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            m.vals[i] = val;
+            return m;
+        }
+        i = i + 1;
+    }
+    push(m.keys, key);
+    push(m.vals, val);
+    return m;
+}

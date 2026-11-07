@@ -1,0 +1,54 @@
+// Qasida — section timers (profiler).
+// Import with: import "profiler.fg";
+// LIMITS (honest v1): fixed stamps in, totals out — the caller
+// supplies clock_micros values; sections are matched by name in
+// a linear scan (few sections expected); nested sections of the
+// same name share one total. Report is plain text lines.
+
+import "svg.fg";
+
+struct Profiler {
+    names: [str];
+    totals: [int];
+    counts: [int];
+}
+
+fn profiler_new() -> Profiler {
+    return Profiler { names: [], totals: [], counts: [] };
+}
+
+fn profiler_add(p: Profiler, name: str, start_us: int, end_us: int) -> Profiler {
+    let mut q = p;
+    let mut i: int = 0;
+    while i < len(q.names) {
+        if q.names[i] == name {
+            q.totals[i] = q.totals[i] + (end_us - start_us);
+            q.counts[i] = q.counts[i] + 1;
+            return q;
+        }
+        i = i + 1;
+    }
+    push(q.names, name);
+    push(q.totals, end_us - start_us);
+    push(q.counts, 1);
+    return q;
+}
+
+fn profiler_total(p: Profiler, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(p.names) {
+        if p.names[i] == name { return p.totals[i]; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn profiler_report(p: Profiler) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(p.names) {
+        out = out + p.names[i] + ": " + svg_int_str(p.totals[i]) + "us x" + svg_int_str(p.counts[i]) + "\n";
+        i = i + 1;
+    }
+    return out;
+}

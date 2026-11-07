@@ -1,26 +1,24 @@
-![Jal Pari header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=180&section=header&text=The%20Jal%20Pari%20Language&fontSize=42&animation=fadeIn)
+![Qasida header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=180&section=header&text=Qasida&fontSize=42&animation=fadeIn)
 
-![Typing](https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1000&color=F472B6&width=650&lines=Safe.+Simple.+Natively+fast.;No+null.+No+silent+overflow.;Now+building+100%2B+libraries+in+Jal+Pari)
+![Typing](https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1000&color=F472B6&width=650&lines=Safe.+Simple.+Natively+fast.;No+null.+No+silent+overflow.;Now+building+100%2B+libraries+in+Qasida)
 
-# 🧜‍♀️ The Jal Pari Language — a production-oriented language, rebuilt from research
+# Qasida — a production-oriented language, rebuilt from research
 
-> **Dedicated to Tejaswini — Jal Pari.**
-> See [DEDICATION.md](DEDICATION.md). Formerly called Forge v2;
-> technical names (`forge.py`, `forge_lang`, `.fg` files) are unchanged
+> Technical names (`forge.py`, `forge_lang`, `.fg` files) are unchanged
 > for compatibility, so existing programs keep working.
 
 > **Safe. Simple. Natively fast.**
 > Static types, no null, immutable by default, checked arithmetic —
 > with C++-style latency and Mojo/Python-style ML ease, in one binary.
 
-![Jal Pari](https://img.shields.io/badge/Jal_Pari-v1.5.1-pink)
-[![PyPI](https://img.shields.io/pypi/v/jalpari.svg)](https://pypi.org/project/jalpari/)
+![Qasida](https://img.shields.io/badge/Qasida-v2.0.0-blue)
+[![PyPI](https://img.shields.io/pypi/v/qasida.svg)](https://pypi.org/project/qasida/)
 ![Native](https://img.shields.io/badge/compiled-native-blue)
 ![Safe mode](https://img.shields.io/badge/safe--mode-checked-green)
 ![Fast mode](https://img.shields.io/badge/fast--mode--O3-orange)
 ![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
 
-The Jal Pari Language is a statically typed language that compiles to native code.
+Qasida is a statically typed language that compiles to native code.
 It was restarted from scratch after a research pass over what people
 are actually building in 2025–2026 — Zig, Mojo, Carbon, Gleam, Odin,
 Hare, Roc, Vale/Valen, and others — and what developers praise and
@@ -32,7 +30,7 @@ tools, CLIs, and small ML programs.
 
 ## 🔗 Links
 
-- **PyPI:** [pypi.org/project/jalpari](https://pypi.org/project/jalpari/) — `pip install jalpari` (latest: 1.5.1)
+- **PyPI:** [pypi.org/project/qasida](https://pypi.org/project/qasida/) — `pip install qasida` (2.0.0; publishing with the release)
 - **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest GitHub release: [v1.5.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v1.5.0)
 - **Source:** [github.com/themythofsisyphusjayant/RED-MOON-](https://github.com/themythofsisyphusjayant/RED-MOON-)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
@@ -183,19 +181,19 @@ flowchart LR
 
 **New to programming? Start here, in simple words:**
 [docs/HIGH_SCHOOL_GUIDE.md](docs/HIGH_SCHOOL_GUIDE.md) — steps to run
-Jal Pari, what each line means, and where it is used in real life.
+Qasida, what each line means, and where it is used in real life.
 
 Requirements: Python 3 and a C compiler (`cc` / `gcc`).
 
-**Install — easiest, from PyPI (1.5.1):**
+**Install — easiest, from PyPI (2.0.0):**
 
 ```sh
-pip install jalpari
-jalpari --version       # The Jal Pari Language 1.5.1
+pip install qasida
+qasida --version       # Qasida 2.0.0
 ```
 
-[PyPI page](https://pypi.org/project/jalpari/) — the package is
-`jalpari`, version 1.5.1. New releases auto-publish to PyPI from
+[PyPI page](https://pypi.org/project/qasida/) — the package is
+`qasida`, version 2.0.0. New releases auto-publish to PyPI from
 version tags (see `.github/workflows/release.yml`).
 
 **Install from source:**
@@ -203,20 +201,20 @@ version tags (see `.github/workflows/release.yml`).
 ```sh
 git clone https://github.com/themythofsisyphusjayant/RED-MOON-
 cd RED-MOON-
-sh scripts/install.sh   # checks python3 + cc, installs jalpari to ~/.local/bin
-jalpari --version
+sh scripts/install.sh   # checks python3 + cc, installs qasida to ~/.local/bin
+qasida --version
 ```
 
-`jalpari` is the new command name; `python3 forge.py` still works
+`qasida` is the command name; `python3 forge.py` still works
 exactly the same, for compatibility.
 
 ```sh
-jalpari run examples/hello2.fg
-jalpari run examples/matrix.fg
-jalpari run examples/ml_linear_regression.fg
-jalpari run examples/ml_mlp_xor.fg
-jalpari run examples/benchmark_scaling.fg
-jalpari build examples/benchmark.fg -o bench
+qasida run examples/hello2.fg
+qasida run examples/matrix.fg
+qasida run examples/ml_linear_regression.fg
+qasida run examples/ml_mlp_xor.fg
+qasida run examples/benchmark_scaling.fg
+qasida build examples/benchmark.fg -o bench
 python3 forge.py test   # all tests pass
 ```
 
@@ -272,7 +270,7 @@ How it works (see `forge_lang/codegen_rv.py` for the full contract):
   hook: define `fn trap_handler()` and `_start` points mtvec at
   a stub that saves all registers, calls it, restores, and
   `mret`s. The full roadmap is `docs/FREESTANDING.md` — this is
-  the path to a bootable Jal Pari kernel, not just programs
+  the path to a bootable Qasida kernel, not just programs
   running on big32.
 
 Supported on big32 (v1): `int` (32-bit here, not Forge's 64-bit
@@ -381,7 +379,7 @@ forge_lang/           lexer, parser, checker, inference, C codegen, big32 + WASM
 forge_lang/stdlib/ml.fg          dot, mean, relu, sigmoid, matmul
 examples/             hello2, matrix, benchmark, benchmark_scaling,
                       ML regression, regression trace, MLP XOR, big32/, os/, cuda/
-editors/vscode/jalpari/   VS Code extension (LSP client, snippets, grammar)
+editors/vscode/qasida/   VS Code extension (LSP client, snippets, grammar)
 packages/             30 registry packages (units, money, geometry, interest, ...)
 docs/FREESTANDING.md  the from-scratch OS roadmap (Phases A–D done, kernel next)
 figures/              README figures (regenerate: scripts/make_figures.py)
@@ -408,10 +406,10 @@ later — the most common ways new languages stall.
 
 The full tooling is documented in `docs/ECOSYSTEM.md`:
 
-- **Package manager:** `forge pkg init/add/build/run/test/list` — vendored dependencies, no registry needed
-- **Formatter:** `forge fmt <file.fg> [--check]` — idempotent, canonical style
-- **Language server:** `forge lsp` — real-checker diagnostics + completion, with a full VS Code extension in `editors/vscode/jalpari/` (highlighting, snippets, diagnostics + completion via LSP, Run/Check/Format/Build commands; packaged as `jalpari-1.0.0.vsix`). The old grammar-only extension stays in `editors/vscode/forge/`.
-- **REPL:** `forge repl` — keep `let` definitions, evaluate expressions
+- **Package manager:** `qasida pkg init/add/build/run/test/list` — vendored dependencies, no registry needed
+- **Formatter:** `qasida fmt <file.fg> [--check]` — idempotent, canonical style
+- **Language server:** `qasida lsp` — real-checker diagnostics + completion, with a full VS Code extension in `editors/vscode/qasida/` (highlighting, snippets, diagnostics + completion via LSP, Run/Check/Format/Build commands; packaged as `qasida-1.0.0.vsix`). The old grammar-only extension stays in `editors/vscode/forge/`.
+- **REPL:** `qasida repl` — keep `let` definitions, evaluate expressions
 - **Stdlib:** `ml.fg`, `strings.fg`, `stats.fg` — plus string builtins `split/join/substr/trim/starts_with/ends_with`
 - **AI/ML libraries (0.6.0):** `tensor_autograd.fg` (21 ops), `rnn.fg` (LSTM/GRU), `cnn.fg` (conv+pool), `ml_classical.fg` (logreg/k-NN/k-means), `preprocess.fg`, `metrics.fg`, `csv.fg` — plus `test.fg`, `log.fg`, `cli.fg`, `collections.fg` for general development. Import dedup means libraries now combine freely (nn + tensor training in one program).
 - **0.7.0 additions:** source-level debugger (`build --debug` emits `#line`), binary I/O + image loading (`image.fg`: PPM P3 + BMP), tape-native im2col + stacked convs, curriculum RNN (len-8 wall cracked), big32 structs + soft-float v1 (+ - *, 60/60 fuzz vs Python float32 on model + Verilog), WASM strings + arrays, and a fuzzer (`tools/fuzz.py`). Big TinyStories run: 153,744 params, held-out ppl 2128.55 → 651.44 — better, still not fluent.
@@ -424,9 +422,9 @@ The full tooling is documented in `docs/ECOSYSTEM.md`:
 - **1.2.0 additions (27 Oct 2026):** HTTPS proxy (`CONNECT`)
   tunnelling in `http_get`, a Windows port (compile-verified via
   MinGW), the Moon apps (Notes, Gallery, Browser, Code — all in
-  Jal Pari, on the new `read_line` builtin), and a brand-new VS
-  Code extension (`editors/vscode/jalpari/`, LSP client, 16
-  snippets, `jalpari-1.0.0.vsix`).
+  Qasida, on the new `read_line` builtin), and a brand-new VS
+  Code extension (`editors/vscode/qasida/`, LSP client, 16
+  snippets, `qasida-1.0.0.vsix`).
 - **Freestanding track (27 Oct 2026, on main after 1.2.0):** the
   language can now stand without Linux underneath —
   `--freestanding` builds (no libc, own `_start`, raw exit
@@ -440,9 +438,9 @@ The full tooling is documented in `docs/ECOSYSTEM.md`:
 ## ⚠️ Honest gaps
 
 Forge v2 is production-*oriented*, not a finished Rust/Go/Mojo
-rival. Structs, file I/O, CLI args, `forge test`, the ecosystem,
+rival. Structs, file I/O, CLI args, `qasida test`, the ecosystem,
 enums+match, spawn threads, C FFI, HTTP, Map/JSON stdlib, assert,
-`forge doc`, a package lockfile, and now generics, `Option`/
+`qasida doc`, a package lockfile, and now generics, `Option`/
 `Result`, TLS, a local registry, a tiny KV DB, a big32
 backend, `?`, generic enums with payloads, a table DB, a SQL
 parser, a self-hosted HTTP registry, a WASM backend, string
@@ -475,8 +473,8 @@ ecall-driven), and full `sbiret` SBI calls are follow-up work.
 Still blocked on the user's
 accounts and token scope, as before: a public registry
 host, CI upload, repo rename, and VS Code Marketplace
-publish. PyPI publish is done — [`jalpari` 1.5.1](https://pypi.org/project/jalpari/)
-is live, and releases auto-publish from version tags. The playground's end-to-end run in
+publish. PyPI: the `qasida` package publishes from version tags
+(2.0.0 pending). The playground's end-to-end run in
 a real browser is not yet verified here (it needs a
 browser to open it); its compiler pipeline and JS are
 verified, and every example program is verified.
@@ -500,7 +498,7 @@ How the pieces fit — compiler, backends, libraries, and the from-scratch OS tr
 
 ```mermaid
 flowchart TD
-    CLI["forge.py — CLI (jalpari)"] --> LANG["forge_lang — lexer, parser, checker"]
+    CLI["forge.py — CLI (qasida)"] --> LANG["forge_lang — lexer, parser, checker"]
     LANG --> NAT["codegen: native C → gcc"]
     LANG --> WASM["codegen_wasm: WebAssembly"]
     LANG --> RV["codegen_rv: big32 RISC-V"]
@@ -520,5 +518,5 @@ flowchart TD
 | Tree size | 53,116 lines (.py, .fg, .js, .sh, .toml) |
 | Standard libraries added 29 Oct | 16 (numpy, pandas, complex, fractions, statistics, checksum, base64, semver, units, polynomials, optimization, fuzzy, calendar, template, color, money) |
 | OS kernels added 29 Oct | 10 (lifetime allocator, terminal UART core, shell v2, page allocator, IPC ring, scheduler, FS v3, net loopback, calculator, clock) |
-| Library program | [120-item roadmap](docs/LIBRARY_ROADMAP_100.md) — Mojo / Python / Rust / Go equivalents, 100% in Jal Pari |
+| Library program | [120-item roadmap](docs/LIBRARY_ROADMAP_100.md) — Mojo / Python / Rust / Go equivalents, 100% in Qasida |
 | License | MIT |

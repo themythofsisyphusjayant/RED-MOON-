@@ -1,0 +1,59 @@
+// Qasida — deterministic UUID-style identifiers.
+// Import with: import "uuid.fg";
+// LIMITS (honest v1): deterministic, NOT random and NOT cryptographic.
+// The same seed always yields the same id, so it is safe for tests,
+// fixtures, and stable ids — never use it for secrets or tokens.
+// Format is 8-4-4-4-12 hex, version nibble '4', variant nibble 8/9/a/b.
+// Qasida has no ord() and no int-to-string builtin, so hex digits
+// come from a table and the id is built by string concatenation.
+
+fn uuid_hex_digit(d: int) -> str {
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    if d == 9 { return "9"; }
+    if d == 10 { return "a"; }
+    if d == 11 { return "b"; }
+    if d == 12 { return "c"; }
+    if d == 13 { return "d"; }
+    if d == 14 { return "e"; }
+    return "f";
+}
+
+fn uuid_from_seed(seed: int) -> str {
+    let mut state: int = seed;
+    if state < 0 { state = 0 - state; }
+    state = state + 12345;
+    let mut hex: str = "";
+    let mut i: int = 0;
+    while i < 32 {
+        state = (state * 1103515245 + 12345) & 2147483647;
+        hex = hex + uuid_hex_digit((state >> 16) % 16);
+        i = i + 1;
+    }
+    let mut out: str = substr(hex, 0, 8) + "-" + substr(hex, 8, 4) + "-4" + substr(hex, 13, 3) + "-";
+    let mut v: int = seed % 4;
+    if v < 0 { v = 0 - v; }
+    if v == 0 { out = out + "8"; }
+    if v == 1 { out = out + "9"; }
+    if v == 2 { out = out + "a"; }
+    if v == 3 { out = out + "b"; }
+    out = out + substr(hex, 17, 3) + "-" + substr(hex, 20, 12);
+    return out;
+}
+
+fn uuid_is_formatted(s: str) -> bool {
+    if len(s) != 36 { return false; }
+    if s[8] != "-" { return false; }
+    if s[13] != "-" { return false; }
+    if s[18] != "-" { return false; }
+    if s[23] != "-" { return false; }
+    if s[14] != "4" { return false; }
+    return true;
+}

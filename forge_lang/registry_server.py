@@ -20,8 +20,8 @@ runs anywhere Python runs. See registry/Dockerfile and
 registry/README.md for a one-command Docker deploy and for
 Render/Fly/VPS instructions. Central hosting still needs a host
 you control — this repo provides the server and the deploy
-files, not the host itself. Clients are `forge pkg
-publish-remote` and `forge pkg add-remote` in pkg.py.
+files, not the host itself. Clients are `qasida pkg
+publish-remote` and `qasida pkg add-remote` in pkg.py.
 """
 
 import json
@@ -56,7 +56,7 @@ def make_handler(root, token=None):
         def do_GET(self):
             path = urlparse(self.path).path
             if path in ("/", "/health"):
-                return self._json({"ok": True, "service": "jalpari-registry"})
+                return self._json({"ok": True, "service": "qasida-registry"})
             parts = [unquote(p) for p in path.split("/") if p]
             if parts == ["api", "packages"]:
                 pkgs = []

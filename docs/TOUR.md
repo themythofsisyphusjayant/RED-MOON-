@@ -1,4 +1,4 @@
-# The Jal Pari Language — A Guided Tour
+# Qasida — A Guided Tour
 
 Ten steps, each a runnable program in `examples/tour/`. Run
 any step with:
@@ -13,9 +13,9 @@ Every output below was produced by running the step.
 
 `examples/tour/step01_hello.fg`
 
-```jalpari
+```qasida
 fn main() -> int {
-    println("Hello, Jal Pari!");
+    println("Hello, Qasida!");
     return 0;
 }
 ```
@@ -23,7 +23,7 @@ fn main() -> int {
 Output:
 
 ```
-Hello, Jal Pari!
+Hello, Qasida!
 ```
 
 `main` returns `int` (or nothing). `println` prints its
@@ -33,7 +33,7 @@ arguments separated by spaces, then a newline.
 
 `examples/tour/step02_vars.fg`
 
-```jalpari
+```qasida
 fn main() -> int {
     let name: str = "teju";
     let mut count: int = 0;
@@ -60,7 +60,7 @@ convert explicitly with `x as float` or `x as int`.
 
 `examples/tour/step03_flow.fg`
 
-```jalpari
+```qasida
 fn main() -> int {
     let mut total: int = 0;
     for v in [1, 2, 3, 4, 5] {
@@ -90,7 +90,7 @@ fix.
 
 `examples/tour/step04_funcs.fg`
 
-```jalpari
+```qasida
 fn twice(n: int) -> int {
     return n * 2;
 }
@@ -115,7 +115,7 @@ rather than letting the C compiler fail cryptically.
 
 `examples/tour/step05_arrays.fg`
 
-```jalpari
+```qasida
 fn main() -> int {
     let mut xs: [int] = [1, 2, 3];
     push(xs, 4);
@@ -140,7 +140,7 @@ see `examples/struct_array_demo.fg` and
 
 `examples/tour/step06_strings.fg`
 
-```jalpari
+```qasida
 fn main() -> int {
     let s: str = "banana";
     println(s[0], s[1], s[2]);
@@ -166,7 +166,7 @@ error. String builtins: `split`, `join`, `substr`, `trim`,
 
 `examples/tour/step07_structs.fg`
 
-```jalpari
+```qasida
 struct Point {
     x: int;
     y: int;
@@ -191,7 +191,7 @@ struct must be defined in the same file, after the inner one.
 
 `examples/tour/step08_enums.fg`
 
-```jalpari
+```qasida
 enum Color { Red, Green, Blue }
 fn name(c: Color) -> str {
     let mut s: str = "";
@@ -224,7 +224,7 @@ work the same way; see `examples/option_result_demo.fg`.
 
 `examples/tour/step09_scope.fg`
 
-```jalpari
+```qasida
 fn worker(n: int) {
     println("worker done", n);
 }
@@ -257,7 +257,7 @@ spawned outside any scope are joined when `main` returns.
 
 `examples/tour/step10_wasm.fg`
 
-```jalpari
+```qasida
 fn add(a: int, b: int) -> int {
     return a + b;
 }
@@ -284,7 +284,7 @@ aborts. Declare the interface first with WIT
 ## Where next
 
 - The full reference: `docs/BOOK.md`, `SPEC_V2.md`.
-- Packages: `forge pkg init / publish / add` — see
+- Packages: `qasida pkg init / publish / add` — see
   `docs/ECOSYSTEM.md` (30 seed packages).
 - The HTTP server, ML stack, and big32 RISC-V backend: also in
   `docs/ECOSYSTEM.md`.

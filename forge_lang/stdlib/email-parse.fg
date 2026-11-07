@@ -1,0 +1,44 @@
+// Qasida — email address parsing.
+// Import with: import "email-parse.fg";
+// LIMITS (honest v1): syntax check only, no DNS/MX lookup and no
+// full RFC 5322 grammar. Valid means: exactly one '@', a nonempty
+// local part, and a domain containing at least one '.' with
+// nonempty parts on both sides. Quoted local parts are not parsed.
+
+struct EmailAddr {
+    local: str;
+    domain: str;
+    valid: bool;
+}
+
+fn email_find(s: str, pat: str, from: int) -> int {
+    let mut i: int = from;
+    while i + len(pat) <= len(s) {
+        if substr(s, i, len(pat)) == pat {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn email_parse(s: str) -> EmailAddr {
+    let parts: [str] = split(s, "@");
+    if len(parts) != 2 {
+        return EmailAddr { local: "", domain: "", valid: false };
+    }
+    let local: str = parts[0];
+    let domain: str = parts[1];
+    if len(local) == 0 { return EmailAddr { local: local, domain: domain, valid: false }; }
+    if len(domain) == 0 { return EmailAddr { local: local, domain: domain, valid: false }; }
+    let dot: int = email_find(domain, ".", 0);
+    if dot <= 0 { return EmailAddr { local: local, domain: domain, valid: false }; }
+    if dot >= len(domain) - 1 { return EmailAddr { local: local, domain: domain, valid: false }; }
+    return EmailAddr { local: local, domain: domain, valid: true };
+}
+
+fn email_domain(s: str) -> str {
+    let e: EmailAddr = email_parse(s);
+    if !e.valid { return ""; }
+    return e.domain;
+}

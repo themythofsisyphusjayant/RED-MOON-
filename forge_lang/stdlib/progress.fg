@@ -1,0 +1,28 @@
+// Qasida — text progress bars.
+// Import with: import "progress.fg";
+// Pure string building: no terminal control codes, no cursor
+// movement, no timing in v1. pct is clamped to 0..100, so
+// out-of-range input can never overflow the bar.
+
+fn progress_bar(pct: int, width: int) -> str {
+    let mut p: int = pct;
+    if p < 0 { p = 0; }
+    if p > 100 { p = 100; }
+    let filled: int = p * width / 100;
+    let mut out: str = "[";
+    let mut i: int = 0;
+    while i < filled {
+        out = out + "#";
+        i = i + 1;
+    }
+    while i < width {
+        out = out + "-";
+        i = i + 1;
+    }
+    out = out + "]";
+    return out;
+}
+
+fn progress_done(pct: int) -> bool {
+    return pct >= 100;
+}

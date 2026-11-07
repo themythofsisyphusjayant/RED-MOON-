@@ -1,17 +1,17 @@
-# The Jal Pari ML stack (0.2.0) — what it is, and what it is not
+# The Qasida ML stack (0.2.0) — what it is, and what it is not
 
 The Mojo-level batch, in one place. The goal was never "train a
-1B model in Jal Pari" — that needs a cluster and distributed
+1B model in Qasida" — that needs a cluster and distributed
 training, and this document does not claim it. The goal was: a
 language a person can use for real small-model LLM work —
 tensors, gradients that are actually computed (not hand-written),
 a transformer that trains, a tokenizer, data loading, an
 inference engine with a cache, and GPU kernels for the hot parts.
 
-## 1. Tensors — `stdlib/tensor.fg`
+## 1. Tensors — `forge_lang/stdlib/tensor.fg`
 
 A `Tensor` is `{ data: [float], shape: [int] }`, flat row-major.
-Jal Pari had no nested arrays when this was built, so this is the honest shape
+Qasida had no nested arrays when this was built, so this is the honest shape
 for multi-dimensional values, and it matches how real frameworks
 store tensors underneath. Ops: add/sub/mul/scale, matmul,
 transpose, reshape, flatten, sum/mean, ReLU, GELU (sigmoid
@@ -19,7 +19,7 @@ approximation — there is no erf builtin yet), softmax (1-D and
 row-wise), bias-add for rows, row extraction, argmax, dot.
 Demo: `examples/tensor_demo.fg` → matmul 19 22 43 50.
 
-## 2. Autograd — `stdlib/autograd.fg`
+## 2. Autograd — `forge_lang/stdlib/autograd.fg`
 
 A real reverse-mode tape. Nodes are parallel flat arrays
 (`vals`, `grads`, `left`, `right`, `op`); the tape predates struct
@@ -34,21 +34,21 @@ must see `Ag`'s full definition before a struct containing it
 df/dx = 10.0452, numeric gradient 10.0452 (exact at printed
 precision).
 
-## 3. Neural nets — `stdlib/nn.fg`
+## 3. Neural nets — `forge_lang/stdlib/nn.fg`
 
 Linear, LayerNorm, single-head causal attention, MLP (GELU),
 Adam and AdamW, cosine / step-decay / warmup-cosine schedules,
 gradient clipping by global norm, checkpoints, int8
 quantization, and sampling (greedy, temperature, top-k, top-p).
 Checkpoints are one float per line, 6 decimal places
-(truncation, via `float_to_fixed` — built on a Jal Pari
+(truncation, via `float_to_fixed` — built on a Qasida
 `int_to_str`, since there is no int-to-string builtin).
 New builtin in this batch: `parse_float(str) -> float`, needed
 to load checkpoints and imported weights.
 Demo: `examples/nn_demo.fg` — Adam step 1 moves 1.0 → 0.99,
 clip norm exactly 2.5, checkpoint round-trips 0.5 / -0.25 / 1.5.
 
-## 4. Tokenizer + data — `stdlib/tokenizer.fg`, `stdlib/dataset.fg`
+## 4. Tokenizer + data — `forge_lang/stdlib/tokenizer.fg`, `forge_lang/stdlib/dataset.fg`
 
 Character tokenizer (vocab = distinct characters, first-seen
 order) and BPE (merge the most frequent adjacent pair, count
@@ -61,7 +61,7 @@ Functions: `make_sequences`, `seq_get_x/y`, `seq_train/test`
 (split by percentage), `seq_batch`, `seq_shuffle` (needs
 `rand.fg` imported by the program — see Gotchas).
 
-## 5. Tiny GPT — `stdlib/gpt.fg`, `examples/tiny_gpt.fg`
+## 5. Tiny GPT — `forge_lang/stdlib/gpt.fg`, `examples/tiny_gpt.fg`
 
 1 block, 1 head, d=8, hidden=16, tied output head, 776 params,
 layout documented at the top of `gpt.fg`. Training pattern:
@@ -72,7 +72,7 @@ LayerNorm with sqrt, QKV linears, causal softmax over j <= i
 only, GELU, tied head, cross-entropy) — so no backward formula
 is hand-written anywhere.
 Verified run, 26 Oct 2026, ~5 seconds total:
-text "hello world hello jal pari", 6 windows of length 8, Adam
+text "hello world hello qasida", 6 windows of length 8, Adam
 lr 0.03, clip 1.0, 20 epochs — average loss 2.274 (epoch 0) →
 0.360 (epoch 19), minimum 0.199 (epoch 16). Generation from
 "hello wo": greedy loops on spaces, temperature sampling
@@ -80,7 +80,7 @@ lr 0.03, clip 1.0, 20 epochs — average loss 2.274 (epoch 0) →
 result for 776 parameters on one sentence: the training is the
 proof, the generation is a loop demo, not fluent text.
 
-## 6. Inference — `stdlib/inference.fg`
+## 6. Inference — `forge_lang/stdlib/inference.fg`
 
 `infer_step` runs one transformer block for one new token with
 a KV-cache (`Cache { k, v, len }`): it appends the new token's K
@@ -109,7 +109,7 @@ as GPU-verified until that run exists.
 
 Reads a text weight file (`# name` + whitespace floats) or, on
 a machine with torch installed, a `.pt` state dict, and writes
-a Jal Pari file with one function per tensor returning its
+a Qasida file with one function per tensor returning its
 `[float]` array. The text path is verified end to end
 (`examples/imported_demo.fg`); the `.pt` path is provided but
 not run in this VM, because torch is not installed here.
@@ -186,12 +186,12 @@ Each needs its own pass; none is half-claimed here.
   4.49469, 4.41384; held-out ppl 1078.88 -> 385.06
   (differs from 0.4.0's 247.39 because the old runs
   reset Adam moments each epoch).
-- Tensor autograd (stdlib/tensor_autograd.fg, 17 ops,
-  flat tape) + tensor GPT (stdlib/tgt.fg): forward 100
+- Tensor autograd (forge_lang/stdlib/tensor_autograd.fg, 17 ops,
+  flat tape) + tensor GPT (forge_lang/stdlib/tgt.fg): forward 100
   nodes vs 221,844 scalar; gradients checked against
   finite differences to ~1e-9; small TinyStories run
   1500 steps in 6.5 s, held-out ppl 548.97 -> 283.20.
-- KV-cache for gpt2 (stdlib/inference_gpt2.fg): matches
+- KV-cache for gpt2 (forge_lang/stdlib/inference_gpt2.fg): matches
   full forward to 4.44e-16 on the demo prompt.
 - Scaled tensor run (49,664 params, 500 stories,
   75,000 words, vocab 1000): held-out ppl 1118.87 ->

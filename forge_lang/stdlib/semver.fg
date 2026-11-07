@@ -1,0 +1,58 @@
+// Qasida — semantic versions (roadmap item 85).
+// Import with: import "semver.fg";
+// Versions are structs, not strings, because Qasida has no
+// int-to-string builtin: semver_parse builds the struct, and
+// bumps return structs. Printing a version is the caller's
+// println of its three fields.
+
+struct SemVer {
+    major: int;
+    minor: int;
+    patch: int;
+}
+
+fn semver_parse(s: str) -> SemVer {
+    let mut t: str = s;
+    if starts_with(t, "v") {
+        t = substr(t, 1, len(t) - 1);
+    }
+    let parts: [str] = split(t, ".");
+    if len(parts) != 3 {
+        fail("semver_parse: expected major.minor.patch");
+    }
+    return SemVer { major: parse_int(trim(parts[0])), minor: parse_int(trim(parts[1])), patch: parse_int(trim(parts[2])) };
+}
+
+fn semver_cmp(a: SemVer, b: SemVer) -> int {
+    if a.major != b.major {
+        if a.major < b.major {
+            return -1;
+        }
+        return 1;
+    }
+    if a.minor != b.minor {
+        if a.minor < b.minor {
+            return -1;
+        }
+        return 1;
+    }
+    if a.patch != b.patch {
+        if a.patch < b.patch {
+            return -1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+fn semver_bump_patch(a: SemVer) -> SemVer {
+    return SemVer { major: a.major, minor: a.minor, patch: a.patch + 1 };
+}
+
+fn semver_bump_minor(a: SemVer) -> SemVer {
+    return SemVer { major: a.major, minor: a.minor + 1, patch: 0 };
+}
+
+fn semver_bump_major(a: SemVer) -> SemVer {
+    return SemVer { major: a.major + 1, minor: 0, patch: 0 };
+}

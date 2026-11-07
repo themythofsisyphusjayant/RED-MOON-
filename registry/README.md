@@ -1,4 +1,4 @@
-# Jal Pari dynamic registry — deploy
+# Qasida dynamic registry — deploy
 
 This is a dynamic registry: clients publish with POST, not git push.
 It is a single Python file with no dependencies
@@ -34,7 +34,7 @@ use Fly / a VPS below.
 From the repo root, in order:
 
     fly launch --no-deploy
-    fly volumes create jalpari_data --size 1 --region iad
+    fly volumes create qasida_data --size 1 --region iad
     fly secrets set FORGE_REGISTRY_TOKEN=secret
     fly deploy --config registry/fly.toml --dockerfile registry/Dockerfile
 
@@ -44,12 +44,12 @@ launch` suggested a different app name, change the `app` line in
 
 ## VPS without Docker (systemd)
 
-    # clone the repo to /opt/jalpari (or edit WorkingDirectory)
-    sudo mkdir -p /var/lib/jalpari-registry
-    sudo chown nobody:nogroup /var/lib/jalpari-registry
-    # optional token: FORGE_REGISTRY_TOKEN=secret in /etc/jalpari-registry.env
-    sudo cp registry/jalpari-registry.service /etc/systemd/system/
-    sudo systemctl daemon-reload && sudo systemctl enable --now jalpari-registry
+    # clone the repo to /opt/qasida (or edit WorkingDirectory)
+    sudo mkdir -p /var/lib/qasida-registry
+    sudo chown nobody:nogroup /var/lib/qasida-registry
+    # optional token: FORGE_REGISTRY_TOKEN=secret in /etc/qasida-registry.env
+    sudo cp registry/qasida-registry.service /etc/systemd/system/
+    sudo systemctl daemon-reload && sudo systemctl enable --now qasida-registry
 
 Put nginx/Caddy with HTTPS in front for public use — the server
 itself is HTTP only, and the Bearer token must not travel over
@@ -60,9 +60,9 @@ plain HTTP on the public internet.
 Once the server is up at `https://<your-host>` (or
 `http://<your-host>:8765` for a local test):
 
-    forge pkg publish-remote https://<your-host> --token secret
-    forge pkg add-remote https://<your-host> checks@0.1.0
-    forge pkg list-remote https://<your-host>
+    qasida pkg publish-remote https://<your-host> --token secret
+    qasida pkg add-remote https://<your-host> checks@0.1.0
+    qasida pkg list-remote https://<your-host>
 
 ## What is NOT provided here
 

@@ -1,0 +1,27 @@
+fn rl_q_update(q: float, alpha: float, reward: float) -> float {
+    return q + alpha * (reward - q);
+}
+
+fn rl_greedy(values: [float]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(values) {
+        if values[i] > values[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn rl_least_tried(counts: [int]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(counts) {
+        if counts[i] < counts[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

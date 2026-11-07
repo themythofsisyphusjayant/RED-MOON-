@@ -1,7 +1,7 @@
 import "config.fg";
 
 fn main() -> int {
-    let c: Config = config_parse("# demo config\nAPP_NAME = jalpari\nPORT = 8080\nURL = http://x.test/a=b\n");
+    let c: Config = config_parse("# demo config\nAPP_NAME = qasida\nPORT = 8080\nURL = http://x.test/a=b\n");
     println("app =", config_get(c, "APP_NAME", "none"));
     println("port =", config_get_int(c, "PORT", 0));
     println("url =", config_get(c, "URL", "none"));

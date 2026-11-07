@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SBI-style dispatch demo kernel test (big32 model).
 
-Fresh Jal Pari reimplementation of the dispatch pattern Ghidra decoded from
+Fresh Qasida reimplementation of the dispatch pattern Ghidra decoded from
 the big32 SBI firmware: EID compare-and-branch, Base FIDs from a0, TIME from
 mtime, unknown EID -> -2. Expects transcript lines "2", "7", "<digits>",
 "-2", "DONE" (the mtime line is timing-dependent, so only its shape is

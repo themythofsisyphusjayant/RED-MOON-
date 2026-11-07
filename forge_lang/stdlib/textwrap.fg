@@ -1,0 +1,43 @@
+fn tw_words(text: str) -> [str] {
+    let parts: [str] = split(text, " ");
+    let mut out: [str] = [];
+    for p in parts {
+        if len(p) > 0 {
+            push(out, p);
+        }
+    }
+    return out;
+}
+
+fn tw_wrap(text: str, width: int) -> [str] {
+    let words: [str] = tw_words(text);
+    let mut lines: [str] = [];
+    let mut cur: str = "";
+    for w in words {
+        if len(cur) == 0 {
+            cur = w;
+        } else if len(cur) + 1 + len(w) <= width {
+            cur = cur + " " + w;
+        } else {
+            push(lines, cur);
+            cur = w;
+        }
+    }
+    if len(cur) > 0 {
+        push(lines, cur);
+    }
+    return lines;
+}
+
+fn tw_fill(text: str, width: int) -> str {
+    return join(tw_wrap(text, width), "\n");
+}
+
+fn tw_indent(text: str, prefix: str) -> str {
+    let lines: [str] = split(text, "\n");
+    let mut out: [str] = [];
+    for ln in lines {
+        push(out, prefix + ln);
+    }
+    return join(out, "\n");
+}

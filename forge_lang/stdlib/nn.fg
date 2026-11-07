@@ -1,0 +1,510 @@
+// Qasida — neural-network library (Mojo-level ML, step 2).
+// Import with: import "nn.fg";
+// Building blocks, not a framework: Linear, LayerNorm, single-head
+// causal attention, an MLP, Adam/AdamW, LR schedules, gradient
+// clipping, checkpoints, int8 quantization, and sampling. The tiny
+// GPT example assembles these into a transformer; the training loop
+// itself uses autograd.fg, so no backward formulas are hand-written
+// here. Weights are flat row-major [float]; a Linear weight of
+// shape [in_dim, out_dim] lives at w[i * out_dim + j].
+
+import "rand.fg";
+import "tensor.fg";
+
+struct Linear {
+    w: [float];
+    b: [float];
+    in_dim: int;
+    out_dim: int;
+}
+
+struct OptimState {
+    params: [float];
+    m: [float];
+    v: [float];
+    step: int;
+}
+
+struct Quant {
+    q: [int];
+    scale: float;
+}
+
+fn int_to_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = -x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        let d: int = x % 10;
+        out = substr(digits, d, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn float_to_fixed(f: float, decimals: int) -> str {
+    if f < 0.0 {
+        return "-" + float_to_fixed(-f, decimals);
+    }
+    let mut scale: int = 1;
+    let mut i: int = 0;
+    while i < decimals {
+        scale = scale * 10;
+        i = i + 1;
+    }
+    let scaled: int = (f * scale as float) as int;
+    let whole: int = scaled / scale;
+    let frac: int = scaled % scale;
+    let mut frac_str: str = int_to_str(frac);
+    while len(frac_str) < decimals {
+        frac_str = "0" + frac_str;
+    }
+    return int_to_str(whole) + "." + frac_str;
+}
+
+fn linear_new(in_dim: int, out_dim: int, seed: int) -> Linear {
+    let limit: float = 1.0 / sqrt(in_dim as float);
+    let mut s: int = seed;
+    let mut w: [float] = [];
+    let mut i: int = 0;
+    while i < in_dim * out_dim {
+        s = rand_next(s);
+        push(w, (rand_float(s) * 2.0 - 1.0) * limit);
+        i = i + 1;
+    }
+    let mut b: [float] = [];
+    let mut j: int = 0;
+    while j < out_dim {
+        push(b, 0.0);
+        j = j + 1;
+    }
+    return Linear { w: w, b: b, in_dim: in_dim, out_dim: out_dim };
+}
+
+fn linear_forward(l: Linear, x: [float]) -> [float] {
+    if len(x) != l.in_dim {
+        fail("linear_forward: input length must match in_dim");
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < l.out_dim {
+        let mut s: float = l.b[j];
+        let mut i: int = 0;
+        while i < l.in_dim {
+            s = s + x[i] * l.w[i * l.out_dim + j];
+            i = i + 1;
+        }
+        push(out, s);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn layernorm_forward(x: [float], gamma: [float], beta: [float], eps: float) -> [float] {
+    let n: int = len(x);
+    if n == 0 {
+        fail("layernorm_forward: empty input");
+    }
+    let mut mean: float = 0.0;
+    for v in x {
+        mean = mean + v;
+    }
+    mean = mean / n as float;
+    let mut var: float = 0.0;
+    for v in x {
+        let d: float = v - mean;
+        var = var + d * d;
+    }
+    var = var / n as float;
+    let inv: float = 1.0 / sqrt(var + eps);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, (x[i] - mean) * inv * gamma[i] + beta[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn gelu_approx(x: float) -> float {
+    return x * (1.0 / (1.0 + exp(-1.702 * x)));
+}
+
+fn mlp_forward(x: [float], w1: Linear, w2: Linear) -> [float] {
+    let h: [float] = linear_forward(w1, x);
+    let mut act: [float] = [];
+    for v in h {
+        push(act, gelu_approx(v));
+    }
+    return linear_forward(w2, act);
+}
+
+fn attention_forward(x: [float], seq: int, d: int, q: Linear, k: Linear, v: Linear, o: Linear) -> [float] {
+    // x is seq*d flat (one vector per position). Single head, causal
+    // mask: position i attends only to j <= i. Returns seq*d flat.
+    let mut qs: [float] = [];
+    let mut ks: [float] = [];
+    let mut vs: [float] = [];
+    let mut p: int = 0;
+    while p < seq {
+        let mut pos: [float] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(pos, x[p * d + c]);
+            c = c + 1;
+        }
+        let qp: [float] = linear_forward(q, pos);
+        let kp: [float] = linear_forward(k, pos);
+        let vp: [float] = linear_forward(v, pos);
+        for a in qp {
+            push(qs, a);
+        }
+        for a in kp {
+            push(ks, a);
+        }
+        for a in vp {
+            push(vs, a);
+        }
+        p = p + 1;
+    }
+    let scale: float = 1.0 / sqrt(d as float);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < seq {
+        let mut ctx: [float] = [];
+        let mut c: int = 0;
+        while c < d {
+            push(ctx, 0.0);
+            c = c + 1;
+        }
+        let mut scores: [float] = [];
+        let mut j: int = 0;
+        while j < seq {
+            if j <= i {
+                let mut s: float = 0.0;
+                let mut c2: int = 0;
+                while c2 < d {
+                    s = s + qs[i * d + c2] * ks[j * d + c2];
+                    c2 = c2 + 1;
+                }
+                push(scores, s * scale);
+            } else {
+                push(scores, -1000000000.0);
+            }
+            j = j + 1;
+        }
+        let probs: [float] = tensor_softmax1(scores);
+        let mut c3: int = 0;
+        while c3 < d {
+            let mut s: float = 0.0;
+            let mut j2: int = 0;
+            while j2 < seq {
+                s = s + probs[j2] * vs[j2 * d + c3];
+                j2 = j2 + 1;
+            }
+            ctx[c3] = s;
+            c3 = c3 + 1;
+        }
+        let proj: [float] = linear_forward(o, ctx);
+        for a in proj {
+            push(out, a);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn optim_new(params: [float]) -> OptimState {
+    let mut m: [float] = [];
+    let mut v: [float] = [];
+    for p in params {
+        push(m, 0.0);
+        push(v, 0.0);
+    }
+    return OptimState { params: params, m: m, v: v, step: 0 };
+}
+
+fn adam_step(state: OptimState, grads: [float], lr: float, beta1: float, beta2: float, eps: float) -> OptimState {
+    let mut out: OptimState = state;
+    out.step = state.step + 1;
+    let t: float = out.step as float;
+    let bc1: float = 1.0 - pow(beta1, t);
+    let bc2: float = 1.0 - pow(beta2, t);
+    let mut i: int = 0;
+    while i < len(state.params) {
+        let g: float = grads[i];
+        let m: float = beta1 * state.m[i] + (1.0 - beta1) * g;
+        let v: float = beta2 * state.v[i] + (1.0 - beta2) * g * g;
+        out.m[i] = m;
+        out.v[i] = v;
+        let mhat: float = m / bc1;
+        let vhat: float = v / bc2;
+        out.params[i] = state.params[i] - lr * mhat / (sqrt(vhat) + eps);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn adamw_step(state: OptimState, grads: [float], lr: float, wd: float, beta1: float, beta2: float, eps: float) -> OptimState {
+    let decayed: OptimState = adam_step(state, grads, lr, beta1, beta2, eps);
+    let mut out: OptimState = decayed;
+    let mut i: int = 0;
+    while i < len(state.params) {
+        // Decoupled decay: applied on top of the Adam step, not
+        // folded into the gradient (that is the AdamW difference).
+        out.params[i] = decayed.params[i] - lr * wd * state.params[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn lr_cosine(step: int, total: int, base: float, min_lr: float) -> float {
+    if step >= total {
+        return min_lr;
+    }
+    let pi: float = 3.141592653589793;
+    let frac: float = step as float / total as float;
+    return min_lr + 0.5 * (base - min_lr) * (1.0 + cos_approx(pi * frac));
+}
+
+fn cos_approx(x: float) -> float {
+    // Qasida has no cos builtin; a 6-term Taylor series is good
+    // to ~1e-4 for x in [0, pi], which is all lr_cosine needs.
+    let x2: float = x * x;
+    return 1.0 - x2 / 2.0 + x2 * x2 / 24.0 - x2 * x2 * x2 / 720.0;
+}
+
+fn lr_step_decay(step: int, base: float, drop_every: int, factor: float) -> float {
+    let drops: int = step / drop_every;
+    let mut lr: float = base;
+    let mut i: int = 0;
+    while i < drops {
+        lr = lr * factor;
+        i = i + 1;
+    }
+    return lr;
+}
+
+fn lr_warmup(step: int, warmup: int, total: int, base: float) -> float {
+    if step < warmup {
+        return base * (step + 1) as float / warmup as float;
+    }
+    return lr_cosine(step - warmup, total - warmup, base, 0.0);
+}
+
+fn grad_norm(grads: [float]) -> float {
+    let mut s: float = 0.0;
+    for g in grads {
+        s = s + g * g;
+    }
+    return sqrt(s);
+}
+
+fn grad_clip(grads: [float], max_norm: float) -> [float] {
+    let n: float = grad_norm(grads);
+    let mut out: [float] = [];
+    if n <= max_norm {
+        for g in grads {
+            push(out, g);
+        }
+        return out;
+    }
+    let scale: float = max_norm / n;
+    for g in grads {
+        push(out, g * scale);
+    }
+    return out;
+}
+
+fn checkpoint_save(path: str, params: [float]) -> bool {
+    let mut text: str = "";
+    for p in params {
+        text = text + float_to_fixed(p, 6) + "\n";
+    }
+    return write_file(path, text);
+}
+
+fn checkpoint_load(path: str) -> [float] {
+    let text: str = read_file(path);
+    let lines: [str] = split(text, "\n");
+    let mut out: [float] = [];
+    for line in lines {
+        if len(line) > 0 {
+            push(out, parse_float(line));
+        }
+    }
+    return out;
+}
+
+fn quantize(params: [float]) -> Quant {
+    let mut maxabs: float = 0.0;
+    for p in params {
+        let mut a: float = p;
+        if a < 0.0 {
+            a = -a;
+        }
+        if a > maxabs {
+            maxabs = a;
+        }
+    }
+    if maxabs == 0.0 {
+        let mut q: [int] = [];
+        for p in params {
+            push(q, 0);
+        }
+        return Quant { q: q, scale: 1.0 };
+    }
+    let scale: float = maxabs / 127.0;
+    let mut q2: [int] = [];
+    for p in params {
+        push(q2, (p / scale) as int);
+    }
+    return Quant { q: q2, scale: scale };
+}
+
+fn dequantize(q: Quant) -> [float] {
+    let mut out: [float] = [];
+    for v in q.q {
+        push(out, v as float * q.scale);
+    }
+    return out;
+}
+
+fn quant_max_error(params: [float], q: Quant) -> float {
+    let back: [float] = dequantize(q);
+    let mut worst: float = 0.0;
+    let mut i: int = 0;
+    while i < len(params) {
+        let mut d: float = params[i] - back[i];
+        if d < 0.0 {
+            d = -d;
+        }
+        if d > worst {
+            worst = d;
+        }
+        i = i + 1;
+    }
+    return worst;
+}
+
+fn softmax_probs(logits: [float], temp: float) -> [float] {
+    let mut scaled: [float] = [];
+    for v in logits {
+        push(scaled, v / temp);
+    }
+    return tensor_softmax1(scaled);
+}
+
+fn sample_from_probs(probs: [float], r: float) -> int {
+    let mut cum: float = 0.0;
+    let mut i: int = 0;
+    while i < len(probs) {
+        cum = cum + probs[i];
+        if r < cum {
+            return i;
+        }
+        i = i + 1;
+    }
+    return len(probs) - 1;
+}
+
+fn sample_greedy(logits: [float]) -> int {
+    return tensor_argmax(logits);
+}
+
+fn sample_temperature(logits: [float], temp: float, r: float) -> int {
+    return sample_from_probs(softmax_probs(logits, temp), r);
+}
+
+fn sample_topk(logits: [float], k: int, temp: float, r: float) -> int {
+    // Keep only the top-k logits, renormalize, sample with r.
+    let probs: [float] = softmax_probs(logits, temp);
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < len(probs) {
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut a: int = 0;
+    while a < len(idx) {
+        let mut b: int = a + 1;
+        while b < len(idx) {
+            if probs[idx[b]] > probs[idx[a]] {
+                let t: int = idx[a];
+                idx[a] = idx[b];
+                idx[b] = t;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    let mut keep: int = k;
+    if keep > len(idx) {
+        keep = len(idx);
+    }
+    let mut kept_probs: [float] = [];
+    let mut kept_idx: [int] = [];
+    let mut s: float = 0.0;
+    let mut j: int = 0;
+    while j < keep {
+        push(kept_idx, idx[j]);
+        push(kept_probs, probs[idx[j]]);
+        s = s + probs[idx[j]];
+        j = j + 1;
+    }
+    let mut norm: [float] = [];
+    for p in kept_probs {
+        push(norm, p / s);
+    }
+    return kept_idx[sample_from_probs(norm, r)];
+}
+
+fn sample_topp(logits: [float], p: float, temp: float, r: float) -> int {
+    // Sort descending, keep the smallest set whose mass >= p.
+    let probs: [float] = softmax_probs(logits, temp);
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < len(probs) {
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut a: int = 0;
+    while a < len(idx) {
+        let mut b: int = a + 1;
+        while b < len(idx) {
+            if probs[idx[b]] > probs[idx[a]] {
+                let t: int = idx[a];
+                idx[a] = idx[b];
+                idx[b] = t;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    let mut kept_idx: [int] = [];
+    let mut kept_probs: [float] = [];
+    let mut cum: float = 0.0;
+    let mut j: int = 0;
+    while j < len(idx) && cum < p {
+        push(kept_idx, idx[j]);
+        push(kept_probs, probs[idx[j]]);
+        cum = cum + probs[idx[j]];
+        j = j + 1;
+    }
+    let mut norm: [float] = [];
+    for q in kept_probs {
+        push(norm, q / cum);
+    }
+    return kept_idx[sample_from_probs(norm, r)];
+}

@@ -1,0 +1,259 @@
+// Qasida — sklearn-lite library (AI/ML program item 6).
+// Import with: import "sklearn.fg";
+// Pure Qasida, 1D-first v1: linear + logistic regression (gradient
+// descent), binary kNN, 1D k-means, accuracy / confusion / precision /
+// recall / F1. Function-call style throughout (no operator overloading).
+// Modest sizes only, per the 0.4.0 OOM lesson.
+
+fn sk_linreg_gd(xs: [float], ys: [float], lr: float, steps: int) -> [float] {
+    if len(xs) != len(ys) {
+        fail("sk_linreg_gd: length mismatch");
+    }
+    let mut w: float = 0.0;
+    let mut b: float = 0.0;
+    let mut s: int = 0;
+    while s < steps {
+        let mut dw: float = 0.0;
+        let mut db: float = 0.0;
+        let mut i: int = 0;
+        while i < len(xs) {
+            let pred: float = w * xs[i] + b;
+            let err: float = pred - ys[i];
+            dw = dw + err * xs[i];
+            db = db + err;
+            i = i + 1;
+        }
+        let n: float = len(xs) as float;
+        dw = 2.0 * dw / n;
+        db = 2.0 * db / n;
+        w = w - lr * dw;
+        b = b - lr * db;
+        s = s + 1;
+    }
+    let mut out: [float] = [];
+    push(out, w);
+    push(out, b);
+    return out;
+}
+
+fn sk_linreg_predict(wb: [float], x: float) -> float {
+    return wb[0] * x + wb[1];
+}
+
+fn sk_sigmoid(z: float) -> float {
+    return 1.0 / (1.0 + exp(0.0 - z));
+}
+
+fn sk_logreg_gd(xs: [float], ys: [float], lr: float, steps: int) -> [float] {
+    if len(xs) != len(ys) {
+        fail("sk_logreg_gd: length mismatch");
+    }
+    let mut w: float = 0.0;
+    let mut b: float = 0.0;
+    let mut s: int = 0;
+    while s < steps {
+        let mut dw: float = 0.0;
+        let mut db: float = 0.0;
+        let mut i: int = 0;
+        while i < len(xs) {
+            let p: float = sk_sigmoid(w * xs[i] + b);
+            let e: float = p - ys[i];
+            dw = dw + e * xs[i];
+            db = db + e;
+            i = i + 1;
+        }
+        let n: float = len(xs) as float;
+        dw = dw / n;
+        db = db / n;
+        w = w - lr * dw;
+        b = b - lr * db;
+        s = s + 1;
+    }
+    let mut out: [float] = [];
+    push(out, w);
+    push(out, b);
+    return out;
+}
+
+fn sk_logreg_prob(wb: [float], x: float) -> float {
+    return sk_sigmoid(wb[0] * x + wb[1]);
+}
+
+fn sk_knn_predict(train_x: [float], train_y: [int], x: float, k: int) -> int {
+    if k > len(train_x) {
+        fail("sk_knn_predict: k larger than training set");
+    }
+    let mut picked: [int] = [];
+    let mut i: int = 0;
+    while i < len(train_x) {
+        push(picked, 0);
+        i = i + 1;
+    }
+    let mut votes1: int = 0;
+    let mut votes0: int = 0;
+    let mut r: int = 0;
+    while r < k {
+        let mut best: int = 0 - 1;
+        let mut bestd: float = 0.0;
+        let mut first: int = 1;
+        let mut j: int = 0;
+        while j < len(train_x) {
+            if picked[j] == 0 {
+                let mut d: float = train_x[j] - x;
+                if d < 0.0 {
+                    d = 0.0 - d;
+                }
+                if first == 1 {
+                    bestd = d;
+                    best = j;
+                    first = 0;
+                } else {
+                    if d < bestd {
+                        bestd = d;
+                        best = j;
+                    }
+                }
+            }
+            j = j + 1;
+        }
+        picked[best] = 1;
+        if train_y[best] == 1 {
+            votes1 = votes1 + 1;
+        } else {
+            votes0 = votes0 + 1;
+        }
+        r = r + 1;
+    }
+    if votes1 > votes0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn sk_kmeans(xs: [float], k: int, steps: int) -> [float] {
+    let mut centers: [float] = [];
+    let mut i: int = 0;
+    while i < k {
+        push(centers, xs[i]);
+        i = i + 1;
+    }
+    let mut s: int = 0;
+    while s < steps {
+        let mut sums: [float] = [];
+        let mut counts: [int] = [];
+        let mut c: int = 0;
+        while c < k {
+            push(sums, 0.0);
+            push(counts, 0);
+            c = c + 1;
+        }
+        let mut j: int = 0;
+        while j < len(xs) {
+            let mut best: int = 0;
+            let mut bestd: float = 0.0;
+            let mut firstf: int = 1;
+            let mut cc: int = 0;
+            while cc < k {
+                let mut d: float = xs[j] - centers[cc];
+                if d < 0.0 {
+                    d = 0.0 - d;
+                }
+                if firstf == 1 {
+                    bestd = d;
+                    best = cc;
+                    firstf = 0;
+                } else {
+                    if d < bestd {
+                        bestd = d;
+                        best = cc;
+                    }
+                }
+                cc = cc + 1;
+            }
+            sums[best] = sums[best] + xs[j];
+            counts[best] = counts[best] + 1;
+            j = j + 1;
+        }
+        let mut c2: int = 0;
+        while c2 < k {
+            if counts[c2] > 0 {
+                centers[c2] = sums[c2] / counts[c2] as float;
+            }
+            c2 = c2 + 1;
+        }
+        s = s + 1;
+    }
+    return centers;
+}
+
+fn sk_accuracy(pred: [int], truth: [int]) -> float {
+    if len(pred) != len(truth) {
+        fail("sk_accuracy: length mismatch");
+    }
+    let mut good: int = 0;
+    let mut i: int = 0;
+    while i < len(pred) {
+        if pred[i] == truth[i] {
+            good = good + 1;
+        }
+        i = i + 1;
+    }
+    return good as float / len(pred) as float;
+}
+
+fn sk_confusion(pred: [int], truth: [int]) -> [int] {
+    if len(pred) != len(truth) {
+        fail("sk_confusion: length mismatch");
+    }
+    let mut tp: int = 0;
+    let mut fp: int = 0;
+    let mut tn: int = 0;
+    let mut fn_: int = 0;
+    let mut i: int = 0;
+    while i < len(pred) {
+        if truth[i] == 1 {
+            if pred[i] == 1 {
+                tp = tp + 1;
+            } else {
+                fn_ = fn_ + 1;
+            }
+        } else {
+            if pred[i] == 1 {
+                fp = fp + 1;
+            } else {
+                tn = tn + 1;
+            }
+        }
+        i = i + 1;
+    }
+    let mut out: [int] = [];
+    push(out, tp);
+    push(out, fp);
+    push(out, tn);
+    push(out, fn_);
+    return out;
+}
+
+fn sk_prf(pred: [int], truth: [int]) -> [float] {
+    let cm: [int] = sk_confusion(pred, truth);
+    let tp: float = cm[0] as float;
+    let fp: float = cm[1] as float;
+    let fn_: float = cm[3] as float;
+    let mut prec: float = 0.0;
+    let mut rec: float = 0.0;
+    if tp + fp > 0.0 {
+        prec = tp / (tp + fp);
+    }
+    if tp + fn_ > 0.0 {
+        rec = tp / (tp + fn_);
+    }
+    let mut f1: float = 0.0;
+    if prec + rec > 0.0 {
+        f1 = 2.0 * prec * rec / (prec + rec);
+    }
+    let mut out: [float] = [];
+    push(out, prec);
+    push(out, rec);
+    push(out, f1);
+    return out;
+}

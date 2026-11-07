@@ -1,7 +1,7 @@
 import "markdown.fg";
 
 fn main() -> int {
-    let doc: str = "# Hello World\n\n- apples\n- oranges\n\nSome **bold** and `code` text, see [Jal Pari](https://example.com/x).";
+    let doc: str = "# Hello World\n\n- apples\n- oranges\n\nSome **bold** and `code` text, see [Qasida](https://example.com/x).";
     println(md_to_text(doc));
     println("headings =", len(md_headings(doc)));
     println(md_headings(doc)[0]);

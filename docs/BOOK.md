@@ -1,6 +1,6 @@
-# The Jal Pari Language — Book
+# Qasida — Book
 
-Dedicated to Tejaswini — Jal Pari. See DEDICATION.md.
+Dedicated to Tejaswini — Qasida. See DEDICATION.md.
 Formerly Forge v2; commands are still `forge.py`, files are `.fg`.
 
 New to programming? Read [HIGH_SCHOOL_GUIDE.md](HIGH_SCHOOL_GUIDE.md)
@@ -12,7 +12,7 @@ by running the program.
 
 ## 1. What this language is
 
-The Jal Pari Language is a small compiled language with a
+Qasida is a small compiled language with a
 Python-like surface and native speed: source compiles to C,
 then to a native binary. It was built problem-first — the
 problems it fixes are memory unsafety, null, runtime type and
@@ -38,7 +38,7 @@ Two modes: **safe** (default, `-O2`, checked arithmetic,
 bounds-checked indexing, readable aborts) and **fast**
 (`--mode fast`, `-O3 -march=native`, unchecked). Use fast only
 for hot code you already validated in safe mode. The C
-compiler is selectable with `JALPARI_CC` (default `cc`).
+compiler is selectable with `QASIDA_CC` (default `cc`).
 
 ## 2. Types and values
 
@@ -55,7 +55,7 @@ compiler is selectable with `JALPARI_CC` (default `cc`).
   "add a return statement of type int at the end of the
   function".
 
-```jalpari
+```qasida
 let name: str = "teju";
 let mut count: int = 0;
 count = count + 5;
@@ -81,7 +81,7 @@ from a loop.
 
 ## 4. Functions and generics
 
-```jalpari
+```qasida
 fn twice(n: int) -> int {
     return n * 2;
 }
@@ -258,13 +258,13 @@ compiler.
 ## 11. Packages
 
 ```
-forge pkg init        # forge.toml + src/main.fg + tests/smoke.fg
-forge pkg publish     # into $FORGE_REGISTRY/<name>/<version>/
-forge pkg add name@ver
-forge pkg serve --dir D --port P [--token T]
-forge pkg publish-remote <url> [--token T]
-forge pkg add-remote <url> name@ver
-forge pkg list-remote <url>
+qasida pkg init        # forge.toml + src/main.fg + tests/smoke.fg
+qasida pkg publish     # into $FORGE_REGISTRY/<name>/<version>/
+qasida pkg add name@ver
+qasida pkg serve --dir D --port P [--token T]
+qasida pkg publish-remote <url> [--token T]
+qasida pkg add-remote <url> name@ver
+qasida pkg list-remote <url>
 ```
 
 Packages are self-contained (no stdlib imports, no cross-package

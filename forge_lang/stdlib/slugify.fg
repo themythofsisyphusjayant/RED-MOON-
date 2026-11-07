@@ -1,0 +1,124 @@
+// Qasida — URL slugs (roadmap item 35).
+// Import with: import "slugify.fg";
+// Lowercases ASCII, keeps [a-z0-9], folds every other run of
+// characters into one '-', and trims leading/trailing '-'.
+// Non-ASCII input is folded to '-' too (ASCII-only v1).
+
+fn slug_lower_char(c: str) -> str {
+    if c == "A" {
+        return "a";
+    }
+    if c == "B" {
+        return "b";
+    }
+    if c == "C" {
+        return "c";
+    }
+    if c == "D" {
+        return "d";
+    }
+    if c == "E" {
+        return "e";
+    }
+    if c == "F" {
+        return "f";
+    }
+    if c == "G" {
+        return "g";
+    }
+    if c == "H" {
+        return "h";
+    }
+    if c == "I" {
+        return "i";
+    }
+    if c == "J" {
+        return "j";
+    }
+    if c == "K" {
+        return "k";
+    }
+    if c == "L" {
+        return "l";
+    }
+    if c == "M" {
+        return "m";
+    }
+    if c == "N" {
+        return "n";
+    }
+    if c == "O" {
+        return "o";
+    }
+    if c == "P" {
+        return "p";
+    }
+    if c == "Q" {
+        return "q";
+    }
+    if c == "R" {
+        return "r";
+    }
+    if c == "S" {
+        return "s";
+    }
+    if c == "T" {
+        return "t";
+    }
+    if c == "U" {
+        return "u";
+    }
+    if c == "V" {
+        return "v";
+    }
+    if c == "W" {
+        return "w";
+    }
+    if c == "X" {
+        return "x";
+    }
+    if c == "Y" {
+        return "y";
+    }
+    if c == "Z" {
+        return "z";
+    }
+    return c;
+}
+
+fn slug_is_lower_digit(c: str) -> bool {
+    if c == "0" || c == "1" || c == "2" || c == "3" || c == "4" {
+        return true;
+    }
+    if c == "5" || c == "6" || c == "7" || c == "8" || c == "9" {
+        return true;
+    }
+    let l: str = slug_lower_char(c);
+    if l != c {
+        return false;
+    }
+    return c == "a" || c == "b" || c == "c" || c == "d" || c == "e" || c == "f" || c == "g" || c == "h" || c == "i" || c == "j" || c == "k" || c == "l" || c == "m" || c == "n" || c == "o" || c == "p" || c == "q" || c == "r" || c == "s" || c == "t" || c == "u" || c == "v" || c == "w" || c == "x" || c == "y" || c == "z";
+}
+
+fn slugify(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        let l: str = slug_lower_char(c);
+        if slug_is_lower_digit(c) {
+            out = out + l;
+        } else if l != c {
+            out = out + l;
+        } else if len(out) > 0 {
+            if !ends_with(out, "-") {
+                out = out + "-";
+            }
+        }
+        i = i + 1;
+    }
+    if ends_with(out, "-") {
+        out = substr(out, 0, len(out) - 1);
+    }
+    return out;
+}

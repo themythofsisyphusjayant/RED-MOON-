@@ -1,8 +1,8 @@
-# The Jal Pari Language for VS Code
+# Qasida for VS Code
 
 > Legacy grammar-only extension. The full extension (highlighting,
 > snippets, diagnostics + completion via LSP, Run/Check/Format/Build
-> commands) is now `../jalpari/` — if you have that one installed,
+> commands) is now `../qasida/` — if you have that one installed,
 > uninstall or disable this one first, since both register `.fg`
 > files and only one should own them.
 
@@ -24,4 +24,4 @@ function/struct names from the open document.
 
 This extension folder is intentionally client-free: it ships the
 grammar and language configuration, and the server is the Forge
-compiler itself, so diagnostics can never drift from `forge check`.
+compiler itself, so diagnostics can never drift from `qasida check`.

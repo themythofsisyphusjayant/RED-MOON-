@@ -4,7 +4,7 @@
 Spins up, all on 127.0.0.1 with stdlib only:
   - a TLS server with a cert from a throwaway CA (via the openssl CLI),
   - a CONNECT proxy (good / refusing / auth-checking modes),
-then builds a tiny Jal Pari program that http_get()s the TLS server
+then builds a tiny Qasida program that http_get()s the TLS server
 and runs it under different proxy envs.
 
 Tests:
@@ -206,7 +206,7 @@ def main():
         if not ok:
             fails.append(name)
 
-    with tempfile.TemporaryDirectory(prefix="jalpari-proxy-") as d:
+    with tempfile.TemporaryDirectory(prefix="qasida-proxy-") as d:
         make_certs(d)
         tls = TLSServer(d)
         tls.start()

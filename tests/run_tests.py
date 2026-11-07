@@ -105,10 +105,8 @@ def main():
     expect("examples/kernel_demo.fg", "parallel dot = 70\nmatmul = 19 22 43 50\n")
     expect("examples/gc_struct_demo.fg",
            "person = b 2 3\nstr allocs = 101 str frees = 100\narr allocs = 101 arr frees = 100\nshared q = b 2 3\n")
-    expect("examples/jal_pari_demo.fg",
-           "The Jal Pari Language\nFor Teju, my Jal Pari\nSafe. Simple. Natively fast.\n")
-    expect("examples/teju_special.fg",
-           "For Teju, my Jal Pari\n\n   \\ | /\n    \\|/\n  -- * --\n    /|\\\n   / | \\\n     |\n     |\n    \\|/\n\nThat smile.\nGolden hour suits her.\n\n*\n**\n***\n****\n*****\n\nTeju, you are special.\nSmiles, sunsets, good songs.\nNo pressure, just this: you are thought of kindly,\nand the door is open, whenever you want.\n- Jayant\n")
+    expect("examples/qasida_demo.fg",
+           "Qasida\nSafe. Simple. Natively fast.\n")
     expect("examples/dates_rand_demo.fg",
            "epoch = 0\n2026-10-26 minus 2026-01-01 = 298\nleap 2024 = true\nleap 2025 = false\nfeb 2024 = 29\nrand seed = 1250496048\nrand float = 0.610197\n")
     expect("examples/tensor_demo.fg",
@@ -318,7 +316,7 @@ def main():
     from forge_lang.pretty import format_source
     import glob
     for path in sorted(glob.glob("examples/**/*.fg", recursive=True)
-                       + glob.glob("stdlib/*.fg")):
+                       + glob.glob("forge_lang/stdlib/*.fg")):
         try:
             with open(path, encoding="utf-8") as f:
                 original = f.read()
@@ -483,7 +481,7 @@ def main():
 
     # JalOS: the complete teaching OS demo tour (offline, deterministic).
     expect("examples/os/jalos.fg",
-           "JalOS 0.1.0 -- a teaching OS in Jal Pari\n" +
+           "JalOS 0.1.0 -- a teaching OS in Qasida\n" +
            "[  OK  ] memory test: 1024 words\n" +
            "created directory: /etc\n" +
            "created directory: /var\n" +
@@ -493,14 +491,14 @@ def main():
            "created directory: /pkg\n" +
            "wrote 0 bytes to /etc/passwd\n" +
            "wrote 0 bytes to /var/log/syslog\n" +
-           "wrote 117 bytes to /README\n" +
+           "wrote 115 bytes to /README\n" +
            "[  OK  ] mounted rootfs\n" +
            "[  OK  ] init: syslogd, cron, netd started\n" +
            "jalos login: root (uid 0)\n" +
            "root@jalos:~# echo Welcome to JalOS\n" +
            "Welcome to JalOS\n" +
            "root@jalos:~# uname\n" +
-           "JalOS jalpari-kernel 0.1.0 x86_64-sim\n" +
+           "JalOS qasida-kernel 0.1.0 x86_64-sim\n" +
            "root@jalos:~# hostname\n" +
            "jalos\n" +
            "root@jalos:~# whoami\n" +
@@ -524,7 +522,7 @@ def main():
            "\n" +
            "root@jalos:~# cat /README\n" +
            "Welcome to JalOS.\n" +
-           "A complete teaching OS written in Jal Pari.\n" +
+           "A complete teaching OS written in Qasida.\n" +
            "Try: help, ls, ps, run counter, sched, mem, pkg search\n" +
            "\n" +
            "root@jalos:~# mkdir /home/guest/docs\n" +
@@ -630,7 +628,7 @@ def main():
            "pid 4 printer done ticks 3 result 3 user root\n" +
            "pid 5 idler done ticks 2 result 0 user root\n" +
            "root@jalos:~# df\n" +
-           "filesystem: files = 13 content chars = 277\n" +
+           "filesystem: files = 13 content chars = 275\n" +
            "root@jalos:~# ping localhost\n" +
            "reply from 127.0.0.1: bytes=32 time<1ms TTL=64\n" +
            "reply from 127.0.0.1: bytes=32 time<1ms TTL=64\n" +

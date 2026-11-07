@@ -1,7 +1,7 @@
-# Jal Pari AI/ML Program — every best AI/ML library, 100% in Jal Pari
+# Qasida AI/ML Program — every best AI/ML library, 100% in Qasida
 
 Goal (user, 29 Oct 2026 ~20:04 IST): add every best AI/ML library
-possible to The Jal Pari Language, completely written in Jal Pari
+possible to Qasida, completely written in Qasida
 (.fg code only — no bindings, no borrowed code inside the libraries).
 
 This is the AI/ML shelf of the 100+ library program
@@ -12,11 +12,11 @@ separately from the 10+ OS items).
 
 Rules (standing): every library verified by a real run with exact
 outputs; numbers from verified runs only; function-call style (no
-operator overloading); when a library cannot be built in Jal Pari,
-extend Jal Pari until it can (language-evolution rule) — never fake
+operator overloading); when a library cannot be built in Qasida,
+extend Qasida until it can (language-evolution rule) — never fake
 the missing piece.
 
-Status codes: DONE = exists in tree | BUILD = pure Jal Pari with
+Status codes: DONE = exists in tree | BUILD = pure Qasida with
 existing builtins | NEEDS = needs a new capability first (named).
 
 ## A. Core numerics (5)
@@ -29,7 +29,7 @@ existing builtins | NEEDS = needs a new capability first (named).
     choice, shuffle, seedable generators).
 
 ## B. Classical ML — scikit-learn style (8)
-6.  sklearn-lite (py) — v1 DONE 29 Oct 2026 (stdlib/sklearn.fg +
+6.  sklearn-lite (py) — v1 DONE 29 Oct 2026 (forge_lang/stdlib/sklearn.fg +
     examples/sklearn_demo.fg, verified first run: linreg w 2.00013
     b 0.999526, logreg prob 2.5 = 0.1146 / 4.5 = 0.922931, kNN
     2.5 -> 0 / 8.5 -> 1, k-means centers 2 / 11, accuracy 0.6,
@@ -51,7 +51,7 @@ existing builtins | NEEDS = needs a new capability first (named).
     search, pipelines (with optuna-lite, §G).
 
 ## C. Deep learning — PyTorch / Keras style (7)
-14. tensor (mo) — DONE: stdlib/tensor.fg.
+14. tensor (mo) — DONE: forge_lang/stdlib/tensor.fg.
 15. autograd-extended (mo) — BUILD: grow the tensor tape from 20
     ops toward 60 (conv, pooling, gather, scatter-lite, norms).
 16. nn-extended (mo) — BUILD: Conv1d/2d-lite, Embedding, Dropout,
@@ -142,7 +142,7 @@ detection, full pretrained-weight loading).
 ## Honestly NOT possible as pure libraries (yet)
 - Distributed multi-GPU training (needs sockets + cluster infra).
 - GPU-cluster-scale training (CUDA emit is limited; local first).
-- Loading 1B+ pretrained weights into the Jal Pari runtime
+- Loading 1B+ pretrained weights into the Qasida runtime
   (binary weight formats + memory; safetensors/gguf parsing is a
   language+format slice of its own).
 - Real-time video pipelines at scale.

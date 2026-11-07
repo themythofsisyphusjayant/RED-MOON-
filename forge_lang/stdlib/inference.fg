@@ -1,0 +1,95 @@
+// Qasida — inference engine (Mojo-level ML, step 6).
+// Import with: import "inference.fg";  (it brings nn.fg with it —
+// do NOT also import nn.fg, rand.fg or tensor.fg in the same
+// program, or the duplicate-definition check will fire.)
+// One transformer block, one token at a time, with a KV-cache:
+// the cache holds the K and V of every token seen so far, so
+// generating token t+1 costs one QKV projection and one attention
+// over the cache — not a full re-forward over the whole context.
+// Causality falls out for free: the cache only ever contains
+// past tokens plus the current one. Sampling lives in nn.fg
+// (greedy / temperature / top-k / top-p); int8 quantization
+// lives there too (quantize/dequantize). The demo proves the
+// cache correct: step-by-step output must match a full-sequence
+// forward over the same weights.
+
+import "nn.fg";
+
+struct Cache {
+    k: [float];
+    v: [float];
+    len: int;
+}
+
+struct KvOut {
+    cache: Cache;
+    out: [float];
+}
+
+fn kv_cache_new() -> Cache {
+    return Cache { k: [], v: [], len: 0 };
+}
+
+fn infer_step(cache: Cache, x: [float], q: Linear, k: Linear, v: Linear, o: Linear, mlp1: Linear, mlp2: Linear, ln1_g: [float], ln1_b: [float], ln2_g: [float], ln2_b: [float]) -> KvOut {
+    let d: int = len(x);
+    let ln1: [float] = layernorm_forward(x, ln1_g, ln1_b, 0.00001);
+    let qv: [float] = linear_forward(q, ln1);
+    let kv: [float] = linear_forward(k, ln1);
+    let vv: [float] = linear_forward(v, ln1);
+    let mut nk: [float] = [];
+    for a in cache.k {
+        push(nk, a);
+    }
+    for a in kv {
+        push(nk, a);
+    }
+    let mut nv: [float] = [];
+    for a in cache.v {
+        push(nv, a);
+    }
+    for a in vv {
+        push(nv, a);
+    }
+    let nlen: int = cache.len + 1;
+    let mut scores: [float] = [];
+    let mut j: int = 0;
+    while j < nlen {
+        let mut s: float = 0.0;
+        let mut c: int = 0;
+        while c < d {
+            s = s + qv[c] * nk[j * d + c];
+            c = c + 1;
+        }
+        push(scores, s / sqrt(d as float));
+        j = j + 1;
+    }
+    let probs: [float] = tensor_softmax1(scores);
+    let mut ctx: [float] = [];
+    let mut c2: int = 0;
+    while c2 < d {
+        let mut s: float = 0.0;
+        let mut j2: int = 0;
+        while j2 < nlen {
+            s = s + probs[j2] * nv[j2 * d + c2];
+            j2 = j2 + 1;
+        }
+        push(ctx, s);
+        c2 = c2 + 1;
+    }
+    let proj: [float] = linear_forward(o, ctx);
+    let mut res1: [float] = [];
+    let mut i: int = 0;
+    while i < d {
+        push(res1, proj[i] + x[i]);
+        i = i + 1;
+    }
+    let ln2: [float] = layernorm_forward(res1, ln2_g, ln2_b, 0.00001);
+    let mlp: [float] = mlp_forward(ln2, mlp1, mlp2);
+    let mut out: [float] = [];
+    i = 0;
+    while i < d {
+        push(out, mlp[i] + res1[i]);
+        i = i + 1;
+    }
+    return KvOut { cache: Cache { k: nk, v: nv, len: nlen }, out: out };
+}

@@ -1,0 +1,70 @@
+// Forge DB stdlib: a tiny file-backed key-value store (str -> str).
+// Import with: import "db.fg";
+// This is NOT SQL and NOT SQLite: it is a tab-separated text file,
+// one entry per line, serialised with db_serialize() and parsed
+// with db_parse(). Pair it with write_file()/read_file() to persist:
+//   let mut d: MapStrStr = db_new();
+//   d = db_put(d, "user", "jayant");
+//   let ok: bool = write_file("db.txt", db_serialize(d));
+// Values must not contain a tab or a newline (the format has no
+// escaping in this version).
+
+struct MapStrStr {
+    keys: [str];
+    vals: [str];
+}
+
+fn db_new() -> MapStrStr {
+    return MapStrStr { keys: [], vals: [] };
+}
+
+fn db_put(m: MapStrStr, key: str, val: str) -> MapStrStr {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            m.vals[i] = val;
+            return m;
+        }
+        i = i + 1;
+    }
+    push(m.keys, key);
+    push(m.vals, val);
+    return m;
+}
+
+fn db_get(m: MapStrStr, key: str, fallback: str) -> str {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            return m.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn db_serialize(m: MapStrStr) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        out = out + m.keys[i] + "\t" + m.vals[i] + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn db_parse(text: str) -> MapStrStr {
+    let mut m: MapStrStr = db_new();
+    let lines: [str] = split(text, "\n");
+    let mut i: int = 0;
+    while i < len(lines) {
+        if lines[i] != "" {
+            let parts: [str] = split(lines[i], "\t");
+            if len(parts) == 2 {
+                m = db_put(m, parts[0], parts[1]);
+            }
+        }
+        i = i + 1;
+    }
+    return m;
+}

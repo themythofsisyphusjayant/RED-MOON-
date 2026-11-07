@@ -1,13 +1,13 @@
 #!/bin/sh
-# Install The Jal Pari Language (1.0.0) for the current user.
+# Install Qasida (2.0.0) for the current user.
 # Usage, from a checkout of RED-MOON-:
 #   sh scripts/install.sh
 # Usage, without cloning first (needs git):
 #   git clone https://github.com/harshhdubeyyyy/RED-MOON- && cd RED-MOON- && sh scripts/install.sh
 # What it does:
 #   1. Checks python3 and a C compiler (cc) are present.
-#   2. Symlinks bin/jalpari into ~/.local/bin/jalpari.
-#   3. Verifies: jalpari --version and jalpari run examples/jal_pari_demo.fg
+#   2. Symlinks bin/qasida into ~/.local/bin/qasida.
+#   3. Verifies: qasida --version and qasida run examples/qasida_demo.fg
 # It does NOT need root, and it does NOT change your system Python.
 set -e
 if ! command -v python3 >/dev/null 2>&1; then
@@ -25,12 +25,12 @@ if [ ! -f "$REPO_DIR/forge.py" ]; then
     exit 1
 fi
 mkdir -p "$HOME/.local/bin"
-ln -sf "$REPO_DIR/bin/jalpari" "$HOME/.local/bin/jalpari"
-chmod +x "$REPO_DIR/bin/jalpari"
+ln -sf "$REPO_DIR/bin/qasida" "$HOME/.local/bin/qasida"
+chmod +x "$REPO_DIR/bin/qasida"
 export PATH="$HOME/.local/bin:$PATH"
-echo "installed: $HOME/.local/bin/jalpari"
-"$HOME/.local/bin/jalpari" --version
-"$HOME/.local/bin/jalpari" run "$REPO_DIR/examples/jal_pari_demo.fg"
+echo "installed: $HOME/.local/bin/qasida"
+"$HOME/.local/bin/qasida" --version
+"$HOME/.local/bin/qasida" run "$REPO_DIR/examples/qasida_demo.fg"
 echo ""
-echo "Done. If 'jalpari' is not found in a new terminal, add this line to your shell profile:"
+echo "Done. If 'qasida' is not found in a new terminal, add this line to your shell profile:"
 echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""

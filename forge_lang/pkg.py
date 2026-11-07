@@ -1,37 +1,37 @@
-"""Forge package manager (forge pkg).
+"""Forge package manager (qasida pkg).
 
 A package is a directory with:
   forge.toml        [package] name/version, [dependencies] name = "path"
   src/main.fg       the program (entry point)
-  tests/*.fg        programs that must exit 0 (run by `forge pkg test`)
-  vendor/<name>/    vendored dependencies (copied by `forge pkg add`)
+  tests/*.fg        programs that must exit 0 (run by `qasida pkg test`)
+  vendor/<name>/    vendored dependencies (copied by `qasida pkg add`)
 
 Commands (run from the package directory):
-  forge pkg init [name]     create a new package skeleton
-  forge pkg add <path>      vendor another package's src/*.fg into vendor/
-  forge pkg build [--mode safe|fast]   build src/main.fg to build/<name>
-  forge pkg run [-- args...]           build, then run the binary
-  forge pkg test            run every tests/*.fg, each must exit 0
-  forge pkg list            show name, version, dependencies
-  forge pkg lock            write forge.lock with sha256 of vendor files
-  forge pkg verify          check vendor files against forge.lock
-  forge pkg publish         copy this package into the local registry
-  forge pkg add name@ver    vendor a package from the local registry
+  qasida pkg init [name]     create a new package skeleton
+  qasida pkg add <path>      vendor another package's src/*.fg into vendor/
+  qasida pkg build [--mode safe|fast]   build src/main.fg to build/<name>
+  qasida pkg run [-- args...]           build, then run the binary
+  qasida pkg test            run every tests/*.fg, each must exit 0
+  qasida pkg list            show name, version, dependencies
+  qasida pkg lock            write forge.lock with sha256 of vendor files
+  qasida pkg verify          check vendor files against forge.lock
+  qasida pkg publish         copy this package into the local registry
+  qasida pkg add name@ver    vendor a package from the local registry
                             (registry dir: $FORGE_REGISTRY or ~/.forge_registry)
-  forge pkg serve --dir D --port P
+  qasida pkg serve --dir D --port P
                             run the HTTP registry server (see
                             forge_lang/registry_server.py; no auth)
-  forge pkg publish-remote <url>
+  qasida pkg publish-remote <url>
                             POST this package to an HTTP registry
-  forge pkg add-remote <url> name@ver
+  qasida pkg add-remote <url> name@ver
                             vendor a package from an HTTP registry
 
-Dependencies are vendored, Go-style, not downloaded: `forge pkg add`
+Dependencies are vendored, Go-style, not downloaded: `qasida pkg add`
 copies files, so a build never needs the network or a registry.
 Import a vendored package from src/main.fg with a path relative
 to the package root, e.g. `import "vendor/stats/stats.fg";` — the
 compiler resolves imports relative to the file, then the current
-directory (the package root when you run `forge pkg build`).
+directory (the package root when you run `qasida pkg build`).
 """
 import hashlib
 import json
@@ -52,7 +52,7 @@ def registry_dir():
 def read_manifest(cwd):
     path = os.path.join(cwd, "forge.toml")
     if not os.path.exists(path):
-        raise ForgeError("no forge.toml in this directory (run 'forge pkg init' first)")
+        raise ForgeError("no forge.toml in this directory (run 'qasida pkg init' first)")
     with open(path, encoding="utf-8") as f:
         text = f.read()
     section = None
@@ -75,7 +75,7 @@ def read_manifest(cwd):
 
 def cmd_init(cwd, name):
     if os.path.exists(os.path.join(cwd, "forge.toml")):
-        print("forge pkg: forge.toml already exists here", file=sys.stderr)
+        print("qasida pkg: forge.toml already exists here", file=sys.stderr)
         return 1
     if not name:
         name = os.path.basename(os.path.abspath(cwd)) or "mytool"
@@ -92,8 +92,8 @@ def cmd_init(cwd, name):
     with open(os.path.join(cwd, "tests", "smoke.fg"), "w", encoding="utf-8") as f:
         f.write('fn main() -> int {\n    println("smoke ok");\n    return 0;\n}\n')
     with open(os.path.join(cwd, "README.md"), "w", encoding="utf-8") as f:
-        f.write(f"# {name}\n\nA Forge package. Build with `forge pkg build`, "
-                f"test with `forge pkg test`.\n")
+        f.write(f"# {name}\n\nA Forge package. Build with `qasida pkg build`, "
+                f"test with `qasida pkg test`.\n")
     with open(os.path.join(cwd, ".gitignore"), "w", encoding="utf-8") as f:
         f.write("build/\n")
     print(f"created package '{name}' in {cwd}")
@@ -105,18 +105,18 @@ def cmd_add(cwd, src_path):
     src_abs = os.path.abspath(os.path.join(cwd, src_path))
     src_manifest = os.path.join(src_abs, "forge.toml")
     if not os.path.exists(src_manifest):
-        print(f"forge pkg: {src_path} is not a Forge package (no forge.toml)",
+        print(f"qasida pkg: {src_path} is not a Forge package (no forge.toml)",
               file=sys.stderr)
         return 1
     # Reuse read_manifest on the source package directory.
     _sp, _st, src_pkg, _sd = read_manifest(src_abs)
     dep_name = src_pkg.get("name")
     if not dep_name:
-        print("forge pkg: source package has no name in forge.toml", file=sys.stderr)
+        print("qasida pkg: source package has no name in forge.toml", file=sys.stderr)
         return 1
     src_dir = os.path.join(src_abs, "src")
     if not os.path.isdir(src_dir):
-        print("forge pkg: source package has no src/ directory", file=sys.stderr)
+        print("qasida pkg: source package has no src/ directory", file=sys.stderr)
         return 1
     dest = os.path.join(cwd, "vendor", dep_name)
     os.makedirs(dest, exist_ok=True)
@@ -144,7 +144,7 @@ def cmd_publish(cwd):
     name = pkg.get("name")
     version = pkg.get("version", "0.1.0")
     if not name:
-        print("forge pkg: package has no name", file=sys.stderr)
+        print("qasida pkg: package has no name", file=sys.stderr)
         return 1
     dest = os.path.join(registry_dir(), name, version)
     os.makedirs(os.path.join(dest, "src"), exist_ok=True)
@@ -194,7 +194,7 @@ def cmd_publish_remote(cwd, url, token=None):
     name = pkg.get("name")
     version = pkg.get("version", "0.1.0")
     if not name:
-        print("forge pkg: package has no name", file=sys.stderr)
+        print("qasida pkg: package has no name", file=sys.stderr)
         return 1
     src_dir = os.path.join(cwd, "src")
     files = {}
@@ -203,13 +203,13 @@ def cmd_publish_remote(cwd, url, token=None):
             with open(os.path.join(src_dir, fn), encoding="utf-8") as f:
                 files[fn] = f.read()
     if not files:
-        print("forge pkg: nothing to publish (src/ has no library files)", file=sys.stderr)
+        print("qasida pkg: nothing to publish (src/ has no library files)", file=sys.stderr)
         return 1
     status, body = _http_json(url.rstrip("/") + "/api/publish", method="POST",
                               body={"name": name, "version": version, "files": files},
                               token=token)
     if status != 200:
-        print(f"forge pkg: publish failed ({status}): {body}", file=sys.stderr)
+        print(f"qasida pkg: publish failed ({status}): {body}", file=sys.stderr)
         return 1
     print(f"published {name}@{version} to {url}")
     return 0
@@ -219,12 +219,12 @@ def cmd_add_remote(cwd, url, spec):
     import urllib.request
     name, _, version = spec.partition("@")
     if not name or not version:
-        print("usage: forge pkg add-remote <url> name@version", file=sys.stderr)
+        print("usage: qasida pkg add-remote <url> name@version", file=sys.stderr)
         return 1
     base = url.rstrip("/")
     status, body = _http_json(f"{base}/api/packages/{name}/{version}")
     if status != 200:
-        print(f"forge pkg: {name}@{version} not on {url} ({status})", file=sys.stderr)
+        print(f"qasida pkg: {name}@{version} not on {url} ({status})", file=sys.stderr)
         return 1
     files = json.loads(body).get("files", [])
     # Stage the remote package as a local package directory, then reuse cmd_add.
@@ -244,11 +244,11 @@ def cmd_add_remote(cwd, url, spec):
 def cmd_add_registry(cwd, spec):
     name, _, version = spec.partition("@")
     if not name or not version:
-        print("usage: forge pkg add name@version", file=sys.stderr)
+        print("usage: qasida pkg add name@version", file=sys.stderr)
         return 1
     src = os.path.join(registry_dir(), name, version)
     if not os.path.isdir(src):
-        print(f"forge pkg: {name}@{version} not in registry {registry_dir()}",
+        print(f"qasida pkg: {name}@{version} not in registry {registry_dir()}",
               file=sys.stderr)
         return 1
     return cmd_add(cwd, src)
@@ -259,7 +259,7 @@ def _build(cwd, mode):
     name = pkg.get("name", "app")
     main = os.path.join(cwd, "src", "main.fg")
     if not os.path.exists(main):
-        print("forge pkg: src/main.fg not found", file=sys.stderr)
+        print("qasida pkg: src/main.fg not found", file=sys.stderr)
         return 1, None
     out_dir = os.path.join(cwd, "build")
     os.makedirs(out_dir, exist_ok=True)
@@ -267,7 +267,7 @@ def _build(cwd, mode):
     try:
         forge_build(main, out, mode=mode)
     except ForgeError as e:
-        print(f"jalpari: error: {e}", file=sys.stderr)
+        print(f"qasida: error: {e}", file=sys.stderr)
         return 1, None
     print(f"built: {out} (mode={mode})")
     return 0, out
@@ -275,7 +275,7 @@ def _build(cwd, mode):
 
 def dispatch(argv, forge_path, cwd):
     if not argv:
-        print("usage: forge pkg <init|add|build|run|test|list> ...", file=sys.stderr)
+        print("usage: qasida pkg <init|add|build|run|test|list> ...", file=sys.stderr)
         return 1
     cmd = argv[0]
     rest = argv[1:]
@@ -284,7 +284,7 @@ def dispatch(argv, forge_path, cwd):
             return cmd_init(cwd, rest[0] if rest else None)
         if cmd == "add":
             if not rest:
-                print("usage: forge pkg add <path-to-package> or <name@version>", file=sys.stderr)
+                print("usage: qasida pkg add <path-to-package> or <name@version>", file=sys.stderr)
                 return 1
             if "@" in rest[0] and not os.path.exists(rest[0]):
                 return cmd_add_registry(cwd, rest[0])
@@ -295,56 +295,56 @@ def dispatch(argv, forge_path, cwd):
             return cmd_serve(cwd, rest)
         if cmd == "publish-remote":
             if not rest:
-                print("usage: forge pkg publish-remote <url> [--token TOKEN]", file=sys.stderr)
+                print("usage: qasida pkg publish-remote <url> [--token TOKEN]", file=sys.stderr)
                 return 1
             token = rest[rest.index("--token") + 1] if "--token" in rest else None
             return cmd_publish_remote(cwd, rest[0], token=token)
         if cmd == "add-remote":
             if len(rest) < 2:
-                print("usage: forge pkg add-remote <url> name@version", file=sys.stderr)
+                print("usage: qasida pkg add-remote <url> name@version", file=sys.stderr)
                 return 1
             return cmd_add_remote(cwd, rest[0], rest[1])
         if cmd == "list-remote":
             if not rest:
-                print("usage: forge pkg list-remote <url>", file=sys.stderr)
+                print("usage: qasida pkg list-remote <url>", file=sys.stderr)
                 return 1
             status, body = _http_json(rest[0].rstrip("/") + "/api/packages")
             if status != 200:
-                print(f"forge pkg: registry unreachable ({status})", file=sys.stderr)
+                print(f"qasida pkg: registry unreachable ({status})", file=sys.stderr)
                 return 1
             for pkg in json.loads(body).get("packages", []):
                 print(f"{pkg['name']} {', '.join(pkg['versions'])}")
             return 0
         if cmd == "list-static":
             if not rest:
-                print("usage: forge pkg list-static <base_url>", file=sys.stderr)
+                print("usage: qasida pkg list-static <base_url>", file=sys.stderr)
                 return 1
             status, body = _http_json(rest[0].rstrip("/") + "/packages.json")
             if status != 200:
-                print(f"forge pkg: static registry unreachable ({status})", file=sys.stderr)
+                print(f"qasida pkg: static registry unreachable ({status})", file=sys.stderr)
                 return 1
             for pkg in json.loads(body).get("packages", []):
                 print(f"{pkg['name']} {', '.join(pkg['versions'])}")
             return 0
         if cmd == "add-static":
             if len(rest) < 2:
-                print("usage: forge pkg add-static <base_url> name@version", file=sys.stderr)
+                print("usage: qasida pkg add-static <base_url> name@version", file=sys.stderr)
                 return 1
             base, spec = rest[0].rstrip("/"), rest[1]
             if "@" not in spec:
-                print("usage: forge pkg add-static <base_url> name@version", file=sys.stderr)
+                print("usage: qasida pkg add-static <base_url> name@version", file=sys.stderr)
                 return 1
             name, version = spec.split("@", 1)
             status, body = _http_json(f"{base}/packages.json")
             if status != 200:
-                print(f"forge pkg: static registry unreachable ({status})", file=sys.stderr)
+                print(f"qasida pkg: static registry unreachable ({status})", file=sys.stderr)
                 return 1
             files = None
             for pkg in json.loads(body).get("packages", []):
                 if pkg["name"] == name:
                     files = pkg.get("files", {}).get(version)
             if files is None:
-                print(f"forge pkg: {spec} not in static registry", file=sys.stderr)
+                print(f"qasida pkg: {spec} not in static registry", file=sys.stderr)
                 return 1
             # Vendor via the same path as a local package.
             import tempfile
@@ -357,7 +357,7 @@ def dispatch(argv, forge_path, cwd):
                 for fname in files:
                     status, body = _http_json(f"{base}/packages/{name}/{version}/{fname}")
                     if status != 200:
-                        print(f"forge pkg: could not fetch {fname} ({status})", file=sys.stderr)
+                        print(f"qasida pkg: could not fetch {fname} ({status})", file=sys.stderr)
                         return 1
                     with open(os.path.join(pkg_dir, "src", fname), "w", encoding="utf-8") as f:
                         f.write(body)
@@ -402,9 +402,9 @@ def dispatch(argv, forge_path, cwd):
                 else:
                     print(f"PASS {fn}")
             if failures:
-                print(f"forge pkg test: {len(failures)} failure(s)")
+                print(f"qasida pkg test: {len(failures)} failure(s)")
                 return 1
-            print(f"forge pkg test: all {len(files)} test(s) passed")
+            print(f"qasida pkg test: all {len(files)} test(s) passed")
             return 0
         if cmd == "list":
             _mp, _text, pkg, deps = read_manifest(cwd)
@@ -434,7 +434,7 @@ def dispatch(argv, forge_path, cwd):
         if cmd == "verify":
             lock_path = os.path.join(cwd, "forge.lock")
             if not os.path.exists(lock_path):
-                print("forge pkg: no forge.lock (run 'forge pkg lock' first)", file=sys.stderr)
+                print("qasida pkg: no forge.lock (run 'qasida pkg lock' first)", file=sys.stderr)
                 return 1
             with open(lock_path, encoding="utf-8") as f:
                 lock = json.load(f)
@@ -455,8 +455,8 @@ def dispatch(argv, forge_path, cwd):
                 return 1
             print("forge.lock verified: all vendored files match")
             return 0
-        print(f"forge pkg: unknown subcommand '{cmd}'", file=sys.stderr)
+        print(f"qasida pkg: unknown subcommand '{cmd}'", file=sys.stderr)
         return 1
     except ForgeError as e:
-        print(f"jalpari: error: {e}", file=sys.stderr)
+        print(f"qasida: error: {e}", file=sys.stderr)
         return 1

@@ -1,7 +1,7 @@
 import "dotenv.fg";
 
 fn main() -> int {
-    let text: str = "# demo env\nAPP_NAME=Jal Pari\nPORT=8080\nSECRET=\"a=b=c\"\nEMPTY=\n";
+    let text: str = "# demo env\nAPP_NAME=Qasida\nPORT=8080\nSECRET=\"a=b=c\"\nEMPTY=\n";
     let env: Env = env_parse(text);
     println("app =", env_get(env, "APP_NAME"));
     println("port =", env_get(env, "PORT"));

@@ -1,0 +1,79 @@
+// Qasida — run-length encoding (roadmap item 58, RLE part).
+// Import with: import "compress.fg";
+// Format is count+character pairs, e.g. "aaabbc" -> "3a2b1c".
+// Counts are single digits: runs longer than 9 are split
+// ("aaaaaaaaaaaa" -> "9a3a"), so decoding never needs a
+// multi-digit count parser. Huffman and gzip are later slices.
+
+fn rle_digit(d: int) -> str {
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    return "9";
+}
+
+fn rle_encode(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        let mut run: int = 1;
+        while i + run < len(s) {
+            if s[i + run] != c {
+                break;
+            }
+            run = run + 1;
+        }
+        let mut left: int = run;
+        while left > 0 {
+            let mut chunk: int = left;
+            if chunk > 9 {
+                chunk = 9;
+            }
+            out = out + rle_digit(chunk) + c;
+            left = left - chunk;
+        }
+        i = i + run;
+    }
+    return out;
+}
+
+fn rle_decode(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i + 1 < len(s) + 1 {
+        if i + 1 >= len(s) {
+            break;
+        }
+        let count: int = parse_int(substr(s, i, 1));
+        let c: str = s[i + 1];
+        let mut k: int = 0;
+        while k < count {
+            out = out + c;
+            k = k + 1;
+        }
+        i = i + 2;
+    }
+    return out;
+}

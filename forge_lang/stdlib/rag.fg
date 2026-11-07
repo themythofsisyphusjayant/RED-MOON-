@@ -1,0 +1,36 @@
+fn rag_score(query: str, doc: str) -> int {
+    let qwords: [str] = split(query, " ");
+    let dwords: [str] = split(doc, " ");
+    let mut score: int = 0;
+    let mut i: int = 0;
+    while i < len(qwords) {
+        let mut j: int = 0;
+        let mut found: bool = false;
+        while j < len(dwords) {
+            if dwords[j] == qwords[i] {
+                found = true;
+            }
+            j = j + 1;
+        }
+        if found {
+            score = score + 1;
+        }
+        i = i + 1;
+    }
+    return score;
+}
+
+fn rag_best(docs: [str], query: str) -> int {
+    let mut best: int = 0;
+    let mut best_score: int = -1;
+    let mut i: int = 0;
+    while i < len(docs) {
+        let s = rag_score(query, docs[i]);
+        if s > best_score {
+            best_score = s;
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

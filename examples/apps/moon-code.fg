@@ -1,5 +1,5 @@
-// Moon Code — a tiny line editor, written in The Jal Pari Language.
-// It is the first interactive terminal program in Jal Pari, made
+// Moon Code — a tiny line editor, written in Qasida.
+// It is the first interactive terminal program in Qasida, made
 // possible by the read_line builtin (stdin, one line at a time).
 //
 // Commands (one per line on stdin):

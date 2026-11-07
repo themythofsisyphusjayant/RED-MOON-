@@ -1,0 +1,20 @@
+struct Mock {
+    count: int;
+    canned: int;
+}
+
+fn mock_new(canned: int) -> Mock {
+    return Mock { count: 0, canned: canned };
+}
+
+fn mock_call(m: Mock) -> Mock {
+    return Mock { count: m.count + 1, canned: m.canned };
+}
+
+fn mock_value(m: Mock) -> int {
+    return m.canned;
+}
+
+fn mock_calls(m: Mock) -> int {
+    return m.count;
+}

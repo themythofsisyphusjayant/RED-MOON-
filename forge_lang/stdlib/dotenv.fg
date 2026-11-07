@@ -1,0 +1,82 @@
+// Qasida — .env parser (roadmap item 60).
+// Import with: import "dotenv.fg";
+// Lines are KEY=VALUE; '#' comments and blank lines are
+// skipped; values may be single- or double-quoted; a value
+// containing '=' is kept whole. No variable expansion in v1
+// ($FOO stays literal) — expansion is a later slice.
+
+struct Env {
+    keys: [str];
+    vals: [str];
+}
+
+fn env_unquote(v: str) -> str {
+    if len(v) >= 2 {
+        if starts_with(v, "\"") {
+            if ends_with(v, "\"") {
+                return substr(v, 1, len(v) - 2);
+            }
+        }
+        if starts_with(v, "'") {
+            if ends_with(v, "'") {
+                return substr(v, 1, len(v) - 2);
+            }
+        }
+    }
+    return v;
+}
+
+fn env_join_rest(parts: [str], from: int) -> str {
+    let mut out: str = "";
+    let mut i: int = from;
+    while i < len(parts) {
+        if i > from {
+            out = out + "=";
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn env_parse(text: str) -> Env {
+    let mut keys: [str] = [];
+    let mut vals: [str] = [];
+    let lines: [str] = split(text, "\n");
+    for raw in lines {
+        let ln: str = trim(raw);
+        if len(ln) > 0 {
+            if !starts_with(ln, "#") {
+                let parts: [str] = split(ln, "=");
+                if len(parts) >= 2 {
+                    push(keys, trim(parts[0]));
+                    push(vals, env_unquote(trim(env_join_rest(parts, 1))));
+                }
+            }
+        }
+    }
+    return Env { keys: keys, vals: vals };
+}
+
+fn env_get(env: Env, key: str) -> str {
+    let mut i: int = 0;
+    while i < len(env.keys) {
+        if env.keys[i] == key {
+            return env.vals[i];
+        }
+        i = i + 1;
+    }
+    fail("env_get: key not found");
+    return "";
+}
+
+fn env_get_or(env: Env, key: str, fallback: str) -> str {
+    let mut i: int = 0;
+    while i < len(env.keys) {
+        if env.keys[i] == key {
+            return env.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}

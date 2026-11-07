@@ -1,4 +1,4 @@
-// http_server_demo: a routing server in Jal Pari.
+// http_server_demo: a routing server in Qasida.
 // Usage: ./http_server_demo [port] [count]
 //   port: default 18765. count: requests to serve before exiting, default 100.
 // Routes: / -> greeting, /health -> ok, anything else -> 404.
@@ -22,7 +22,7 @@ fn main() -> int {
         let path: str = http_get_path(req);
         println("request:", path);
         if path == "/" {
-            bytes = bytes + http_respond(client, "hello from the Jal Pari language");
+            bytes = bytes + http_respond(client, "hello from the Qasida language");
         } else if path == "/health" {
             bytes = bytes + http_respond(client, "ok");
         } else {

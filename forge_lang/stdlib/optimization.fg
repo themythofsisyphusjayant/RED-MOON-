@@ -1,0 +1,46 @@
+// Qasida — optimization-lite (roadmap item 10).
+// Import with: import "optimization.fg";
+// Gradient descent on a one-variable quadratic, and ordinary
+// least squares for a straight line. Both are closed-form or
+// fixed-iteration, so runtimes are predictable.
+
+struct LinFit {
+    slope: float;
+    intercept: float;
+}
+
+// Minimize (x - target)^2 by gradient descent from x0.
+fn gd_quad(x0: float, target: float, lr: float, iters: int) -> float {
+    let mut x: float = x0;
+    let mut i: int = 0;
+    while i < iters {
+        x = x - lr * 2.0 * (x - target);
+        i = i + 1;
+    }
+    return x;
+}
+
+fn least_squares(xs: [float], ys: [float]) -> LinFit {
+    if len(xs) != len(ys) {
+        fail("least_squares: length mismatch");
+    }
+    if len(xs) == 0 {
+        fail("least_squares: empty arrays");
+    }
+    let n: float = len(xs) as float;
+    let mut sx: float = 0.0;
+    let mut sy: float = 0.0;
+    let mut sxx: float = 0.0;
+    let mut sxy: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        sx = sx + xs[i];
+        sy = sy + ys[i];
+        sxx = sxx + xs[i] * xs[i];
+        sxy = sxy + xs[i] * ys[i];
+        i = i + 1;
+    }
+    let slope: float = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+    let intercept: float = (sy - slope * sx) / n;
+    return LinFit { slope: slope, intercept: intercept };
+}

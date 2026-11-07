@@ -1,0 +1,17 @@
+struct Trapezoid {
+    a: int;
+    b: int;
+    h: int;
+}
+
+fn trapezoid_new(a: int, b: int, h: int) -> Trapezoid {
+    return Trapezoid { a: a, b: b, h: h };
+}
+
+fn trapezoid_area(t: Trapezoid) -> int {
+    return (t.a + t.b) * t.h / 2;
+}
+
+fn trapezoid_midline(t: Trapezoid) -> int {
+    return (t.a + t.b) / 2;
+}

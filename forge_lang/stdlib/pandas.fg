@@ -1,0 +1,104 @@
+// Qasida — pandas library (roadmap item 13).
+// Import with: import "pandas.fg";
+// A DataFrame is one flat row-major [float] array plus column
+// names — the same layout as csv.fg's Csv struct. Flat, not
+// nested, because a [[float]] struct field currently breaks the
+// C codegen (unknown ForgeArray_ForgeFloatArray type); the flat
+// layout is the honest workaround, not a hidden limitation.
+// Numeric columns only in v1; string columns are table.fg's job.
+
+struct Frame {
+    names: [str];
+    data: [float];
+    nrows: int;
+    ncols: int;
+}
+
+fn df_col_index(f: Frame, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(f.names) {
+        if f.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn df_get(f: Frame, r: int, c: int) -> float {
+    return f.data[r * f.ncols + c];
+}
+
+fn df_row_count(f: Frame) -> int {
+    return f.nrows;
+}
+
+fn df_mean_col(f: Frame, name: str) -> float {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("df_mean_col: unknown column");
+    }
+    if f.nrows == 0 {
+        fail("df_mean_col: empty frame");
+    }
+    let mut s: float = 0.0;
+    let mut r: int = 0;
+    while r < f.nrows {
+        s = s + df_get(f, r, ci);
+        r = r + 1;
+    }
+    return s / f.nrows as float;
+}
+
+fn df_filter_gt(f: Frame, name: str, v: float) -> Frame {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("df_filter_gt: unknown column");
+    }
+    let mut out: [float] = [];
+    let mut n: int = 0;
+    let mut r: int = 0;
+    while r < f.nrows {
+        if df_get(f, r, ci) > v {
+            let mut c: int = 0;
+            while c < f.ncols {
+                push(out, df_get(f, r, c));
+                c = c + 1;
+            }
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    return Frame { names: f.names, data: out, nrows: n, ncols: f.ncols };
+}
+
+// Sort rows ascending by one column (bubble sort, whole rows
+// swapped together so columns stay aligned).
+fn df_sort_by(f: Frame, name: str) -> Frame {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("df_sort_by: unknown column");
+    }
+    let mut data: [float] = [];
+    for v in f.data {
+        push(data, v);
+    }
+    let mut i: int = 0;
+    while i < f.nrows {
+        let mut j: int = 0;
+        while j + 1 < f.nrows - i {
+            if data[j * f.ncols + ci] > data[(j + 1) * f.ncols + ci] {
+                let mut c: int = 0;
+                while c < f.ncols {
+                    let t: float = data[j * f.ncols + c];
+                    data[j * f.ncols + c] = data[(j + 1) * f.ncols + c];
+                    data[(j + 1) * f.ncols + c] = t;
+                    c = c + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return Frame { names: f.names, data: data, nrows: f.nrows, ncols: f.ncols };
+}

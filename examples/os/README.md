@@ -1,4 +1,4 @@
-# JalOS — a complete teaching OS in Jal Pari
+# JalOS — a complete teaching OS in Qasida
 
 One file, `jalos.fg` (1408 lines), implementing every subsystem a
 modern OS has, at the architecture level:
@@ -32,14 +32,14 @@ The demo tour is offline and deterministic, and it is wired into
 
 - **Not bootable — yet.** JalOS itself still runs on top of a
   host OS: it is a simulation, not a kernel. But the language
-  underneath it has changed since this was written: Jal Pari now
+  underneath it has changed since this was written: Qasida now
   has a freestanding mode (`--freestanding`: no libc, own
   `_start`), raw memory (`peek32`/`poke32`), bitwise operators,
   CSR builtins, an `ecall` builtin, and a `trap_handler` hook —
   the pieces a bootable kernel needs. The from-scratch kernel
   track (Phases A–D done, first kernel next) lives in
   `docs/FREESTANDING.md`; JalOS's ideas feed that kernel, but
-  JalOS the program does not become it. What Jal Pari still
+  JalOS the program does not become it. What Qasida still
   lacks for kernel work: pointers and inline assembly.
 - **No GUI.** No graphics builtins exist, so the desktop is the
   text shell. A TUI window manager over ANSI escapes is possible

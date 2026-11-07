@@ -1,4 +1,4 @@
-"""The Jal Pari Language -> big32 (RV32IMAC) assembly code generator.
+"""Qasida -> big32 (RV32IMAC) assembly code generator.
 
 Reuses Forge's parser, checker and type inference; only the backend is
 new. Target: big32 v7, single-cycle, 16KB IMEM, 64KB DMEM, UART TX
@@ -711,7 +711,7 @@ class RVGen:
             # Trap entry: save every register the handler could
             # touch on the stack (sp is always valid at a trap in
             # well-formed programs), pass the trap-frame pointer in
-            # a0 (no-arg handlers ignore it), call the Jal Pari
+            # a0 (no-arg handlers ignore it), call the Qasida
             # handler, then check mscratch: if the handler wrote a
             # non-zero frame pointer there, switch stacks to it
             # (this is how the scheduler context-switches) and clear

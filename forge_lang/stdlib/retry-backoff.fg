@@ -1,0 +1,36 @@
+// Qasida — retry backoff delays.
+// Import with: import "retry-backoff.fg";
+// Exponential delay with a cap, no jitter in v1 (deterministic, so
+// tests can assert exact values). Attempt 0 waits base_ms; each
+// later attempt doubles, capped at cap_ms. This library only
+// computes delays — it does not sleep or retry anything itself.
+
+fn retry_delay_ms(attempt: int, base_ms: int, cap_ms: int) -> int {
+    let mut d: int = base_ms;
+    let mut a: int = 0;
+    while a < attempt {
+        d = d * 2;
+        if d > cap_ms { d = cap_ms; }
+        a = a + 1;
+    }
+    return d;
+}
+
+fn retry_delays(count: int, base_ms: int, cap_ms: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < count {
+        push(out, retry_delay_ms(i, base_ms, cap_ms));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn retry_total_ms(count: int, base_ms: int, cap_ms: int) -> int {
+    let ds: [int] = retry_delays(count, base_ms, cap_ms);
+    let mut total: int = 0;
+    for d in ds {
+        total = total + d;
+    }
+    return total;
+}

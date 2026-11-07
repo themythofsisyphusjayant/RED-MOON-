@@ -1,6 +1,6 @@
 // Self-hosting front-end prototype (0.7.0): a
 // lexer + recursive-descent expression parser for
-// Jal Pari itself, written IN Jal Pari. This is the
+// Qasida itself, written IN Qasida. This is the
 // first hosted piece of a self-hosted compiler —
 // not the compiler (no checker, no codegen yet),
 // and it is labelled exactly that.

@@ -1,9 +1,9 @@
-// registry_server: a package registry server written in Jal Pari itself.
+// registry_server: a package registry server written in Qasida itself.
 //
 // The killer-app test of the language's HTTP server, JSON, string,
 // and file builtins: it speaks the same HTTP API as the Python
 // reference server (forge_lang/registry_server.py), so the real
-// `forge pkg publish-remote` / `forge pkg add-remote` clients work
+// `qasida pkg publish-remote` / `qasida pkg add-remote` clients work
 // against it unchanged.
 //
 // Run (from an empty directory that will hold the registry):
@@ -27,7 +27,7 @@
 // the Python server's nested directories):
 //   registry-index.txt  — one line per file: "name version file"
 //   reg_<name>__<version>__<file> — flat file contents
-// The index exists because Jal Pari has no directory-listing
+// The index exists because Qasida has no directory-listing
 // builtin: the server tracks what it published instead of
 // scanning the disk.
 //
@@ -42,7 +42,7 @@
 //   - Publish bodies are parsed as JSON; non-ASCII file contents
 //     arrive as \u escapes, which this port renders as "?" —
 //     publish ASCII-only packages (all 30 seed packages are).
-//   - Listings come back in publish order, not sorted (Jal Pari
+//   - Listings come back in publish order, not sorted (Qasida
 //     has no string ordering); clients look names up, so order
 //     does not matter.
 
@@ -481,7 +481,7 @@ fn main() -> int {
     if len(a) >= 2 { token = a[1]; }
     let mut idx: [str] = load_index();
     let fd: int = http_listen(port);
-    println("jalpari registry on port", port);
+    println("qasida registry on port", port);
     while true {
         let client: int = http_accept(fd);
         let req: str = read_full_request(client);

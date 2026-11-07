@@ -1,0 +1,15 @@
+struct Tetrahedron {
+    a: int;
+}
+
+fn tetrahedron_new(a: int) -> Tetrahedron {
+    return Tetrahedron { a: a };
+}
+
+fn tetrahedron_volume8(t: Tetrahedron) -> int {
+    return t.a * t.a * t.a;
+}
+
+fn tetrahedron_surface2(t: Tetrahedron) -> int {
+    return 2 * t.a * t.a;
+}

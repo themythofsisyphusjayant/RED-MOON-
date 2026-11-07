@@ -1,0 +1,54 @@
+fn dot(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("dot: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn mean(a: [float]) -> float {
+    if len(a) == 0 {
+        fail("mean: empty array");
+    }
+    let mut s: float = 0.0;
+    for v in a {
+        s = s + v;
+    }
+    return s / len(a) as float;
+}
+
+fn relu(x: float) -> float {
+    if x > 0.0 {
+        return x;
+    }
+    return 0.0;
+}
+
+fn sigmoid(x: float) -> float {
+    return 1.0 / (1.0 + exp(-x));
+}
+
+fn matmul(a: [float], b: [float], n: int, m: int, p: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        let mut j: int = 0;
+        while j < p {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < m {
+                s = s + a[i * m + k] * b[k * p + j];
+                k = k + 1;
+            }
+            push(out, s);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

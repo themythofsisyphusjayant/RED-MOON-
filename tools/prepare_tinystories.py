@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare TinyStories for Jal Pari word-level training.
+"""Prepare TinyStories for Qasida word-level training.
 
 Downloads the first N stories of roneneldan/TinyStories (train
 split) through the Hugging Face datasets-server rows API — the
@@ -11,7 +11,7 @@ same API route this workspace already uses for HF dataset rows
   data/tinystories_ids.txt    space-separated word ids
   data/tinystories_README.md  provenance + cleaning rules
 
-Cleaning (documented, so the Jal Pari side can be audited):
+Cleaning (documented, so the Qasida side can be audited):
   * lowercase everything (TinyStories sentence-case is dropped;
     a 200-word vocab cannot afford two cases of every word)
   * apostrophes and quotes are removed, so don't -> dont
@@ -43,7 +43,7 @@ def fetch_stories(n):
     while len(stories) < n:
         length = min(100, n - len(stories))
         url = API.format(offset=offset, length=length)
-        req = urllib.request.Request(url, headers={"User-Agent": "jalpari/0.4"})
+        req = urllib.request.Request(url, headers={"User-Agent": "qasida/0.4"})
         with urllib.request.urlopen(req, timeout=120) as r:
             data = json.load(r)
         rows = data.get("rows", [])
@@ -92,7 +92,7 @@ def main():
     out.mkdir(exist_ok=True)
     (out / "tinystories_vocab.txt").write_text("\n".join(vocab) + "\n", encoding="utf-8")
     (out / "tinystories_ids.txt").write_text(" ".join(str(i) for i in ids), encoding="utf-8")
-    readme = f"""# TinyStories data for Jal Pari
+    readme = f"""# TinyStories data for Qasida
 
 Source: roneneldan/TinyStories, train split, first {len(stories)} stories,
 fetched {__import__('datetime').date.today().isoformat()} via the Hugging Face

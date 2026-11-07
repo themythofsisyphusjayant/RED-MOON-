@@ -1,4 +1,4 @@
-// The Jal Pari Language — a real app: a tiny todo CLI.
+// Qasida — a real app: a tiny todo CLI.
 // Usage:
 //   python3 forge.py run examples/apps/todo.fg -- add "buy milk"
 //   python3 forge.py run examples/apps/todo.fg -- list

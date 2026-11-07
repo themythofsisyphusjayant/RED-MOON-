@@ -1,13 +1,13 @@
 // Moon Gallery — build a simple HTML gallery page from image paths.
 //
 // Usage:
-//   jalpari run moon-gallery.fg <image1> [image2 ...]
+//   qasida run moon-gallery.fg <image1> [image2 ...]
 //
 // Writes gallery.html in the current directory, with one
 // <img src="..."> per path given, and prints a line like:
 //   gallery: 2 images -> gallery.html
 //
-// LIMIT (honest): Jal Pari has no directory-scanning builtin (no
+// LIMIT (honest): Qasida has no directory-scanning builtin (no
 // readdir, no mkdir), so this app CANNOT scan a folder for images.
 // Pass the image paths explicitly as program arguments.
 

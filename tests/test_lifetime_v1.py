@@ -3,7 +3,7 @@
 two regions: shorts bump from the front, longs
 from the back; one reset frees all shorts while
 longs survive. Out-of-memory is a value (-1).
-Pure Jal Pari — no compiler change.
+Pure Qasida — no compiler change.
 """
 
 import os
@@ -66,7 +66,7 @@ def main():
         elif not check("overflow results", ro.stdout == OVERFLOW_EXPECTED,
                        repr(ro.stdout)):
             failures.append("overflow results")
-    fmt = os.path.join(ROOT, "stdlib", "lifetime.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "lifetime.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

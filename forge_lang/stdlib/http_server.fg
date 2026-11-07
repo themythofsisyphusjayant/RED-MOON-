@@ -1,0 +1,38 @@
+// http_server: a minimal HTTP server on the new builtins (native only).
+// One request per connection, single read up to 8191 bytes, no TLS,
+// no chunked bodies, IPv4 0.0.0.0. Enough for small services, CLIs
+// with a status page, and webhooks — not a production web server.
+//
+// Builtins (see docs/HTTP_SERVER.md):
+//   http_listen(port: int) -> int          // listener fd, fails on error
+//   http_accept(fd: int) -> int           // client fd, blocking
+//   http_read_request(client: int) -> str // raw request text, one read
+//   http_respond(client: int, body: str) -> int            // 200 + close
+//   http_respond_status(client, status, body) -> int       // any status + close
+//   http_close(fd: int) -> int
+
+// Path of "GET /path HTTP/1.1 ..." — first line, second token.
+// Returns "/" for anything unparseable (empty request, garbage).
+fn http_get_path(request: str) -> str {
+    let lines: [str] = split(request, "\r\n");
+    if len(lines) == 0 { return "/"; }
+    let parts: [str] = split(lines[0], " ");
+    if len(parts) < 2 { return "/"; }
+    return parts[1];
+}
+
+// Serve exactly n requests with a fixed body, then close. Returns
+// total bytes sent. Useful for tests and tiny services.
+fn http_serve_n(port: int, body: str, n: int) -> int {
+    let fd: int = http_listen(port);
+    let mut total: int = 0;
+    let mut i: int = 0;
+    while i < n {
+        let client: int = http_accept(fd);
+        let _req: str = http_read_request(client);
+        total = total + http_respond(client, body);
+        i = i + 1;
+    }
+    let _closed: int = http_close(fd);
+    return total;
+}

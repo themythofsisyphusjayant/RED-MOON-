@@ -1,4 +1,4 @@
-# Benchmarks — The Jal Pari Language (0.5.0)
+# Benchmarks — Qasida (0.5.0)
 
 Measured 26 Oct 2026 in this VM (Linux x86_64, compiled C
 via `cc`, safe mode unless noted). All numbers are from
@@ -12,7 +12,7 @@ python3 forge.py run examples/tgt_tinystories.fg  # prints train micros
 
 ## Headline table
 
-| Workload | Jal Pari | NumPy | Pure Python loops |
+| Workload | Qasida | NumPy | Pure Python loops |
 |---|---|---|---|
 | dot(5000) | **8 µs** | 29 µs | 788 µs |
 | matmul 64×64 | 615 µs | **343 µs** | 476,501 µs |
@@ -20,16 +20,16 @@ python3 forge.py run examples/tgt_tinystories.fg  # prints train micros
 
 Notes, stated plainly:
 
-- Jal Pari beats pure Python loops by ~100x on dot and
+- Qasida beats pure Python loops by ~100x on dot and
   ~775x on matmul, because it compiles to C. That is the
   honest comparison for "Python-like code, C-like speed".
 - NumPy wins matmul (343 vs 615 µs) because it calls BLAS;
-  Jal Pari's `tensor_matmul` is plain triple loops. At
-  dot(5000) Jal Pari wins only because NumPy's call
+  Qasida's `tensor_matmul` is plain triple loops. At
+  dot(5000) Qasida wins only because NumPy's call
   overhead dominates at that size — do not read that as
-  "Jal Pari beats NumPy in general". A BLAS-backed matmul
+  "Qasida beats NumPy in general". A BLAS-backed matmul
   is future work, not a claim.
-- Dot result agrees across all three: 83308.335 (Jal Pari
+- Dot result agrees across all three: 83308.335 (Qasida
   prints 83308.3 — same value, shorter float printing).
 
 ## ML training (the numbers that motivated 0.5.0)

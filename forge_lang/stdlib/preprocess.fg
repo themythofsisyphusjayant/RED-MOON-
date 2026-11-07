@@ -1,0 +1,175 @@
+// Qasida — data preprocessing (0.6.0).
+// Import with: import "preprocess.fg";
+// Plain functions, no tape: standardisation,
+// min-max scaling, one-hot encoding, deterministic
+// train/test splits, and a small word vocabulary
+// builder (needs map.fg's MapStrInt for counting).
+
+import "map.fg";
+
+// Column means and stds of X [n, d]. Returns
+// [means..., stds...] (2*d values).
+fn col_stats(x: [float], n: int, d: int) -> [float] {
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < d {
+        let mut s: float = 0.0;
+        let mut r: int = 0;
+        while r < n { s = s + x[r * d + j]; r = r + 1; }
+        push(out, s / n as float);
+        j = j + 1;
+    }
+    j = 0;
+    while j < d {
+        let m: float = out[j];
+        let mut v: float = 0.0;
+        let mut r: int = 0;
+        while r < n {
+            let diff: float = x[r * d + j] - m;
+            v = v + diff * diff;
+            r = r + 1;
+        }
+        let sd: float = sqrt(v / n as float);
+        if sd == 0.0 { push(out, 1.0); } else { push(out, sd); }
+        j = j + 1;
+    }
+    return out;
+}
+
+// Standardise X with stats from col_stats.
+fn standardize(x: [float], n: int, d: int, stats: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < n {
+        let mut j: int = 0;
+        while j < d {
+            push(out, (x[r * d + j] - stats[j]) / stats[d + j]);
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+// Min-max scale X to [0, 1] per column. Returns
+// [scaled..., mins..., maxs...] (n*d + 2*d values).
+fn minmax_scale(x: [float], n: int, d: int) -> [float] {
+    let mut mins: [float] = [];
+    let mut maxs: [float] = [];
+    let mut j: int = 0;
+    while j < d {
+        let mut mn: float = x[j];
+        let mut mx: float = x[j];
+        let mut r: int = 0;
+        while r < n {
+            if x[r * d + j] < mn { mn = x[r * d + j]; }
+            if x[r * d + j] > mx { mx = x[r * d + j]; }
+            r = r + 1;
+        }
+        push(mins, mn);
+        push(maxs, mx);
+        j = j + 1;
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < n {
+        j = 0;
+        while j < d {
+            let span: float = maxs[j] - mins[j];
+            if span == 0.0 { push(out, 0.0); } else { push(out, (x[r * d + j] - mins[j]) / span); }
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    j = 0;
+    while j < d { push(out, mins[j]); j = j + 1; }
+    j = 0;
+    while j < d { push(out, maxs[j]); j = j + 1; }
+    return out;
+}
+
+// One-hot encode a label into a [classes] row.
+fn one_hot(label: int, classes: int) -> [float] {
+    let mut out: [float] = [];
+    let mut c: int = 0;
+    while c < classes {
+        if c == label { push(out, 1.0); } else { push(out, 0.0); }
+        c = c + 1;
+    }
+    return out;
+}
+
+// Deterministic shuffle of 0..n-1 (Fisher-Yates
+// with the same LCG constants as the rest of the
+// ecosystem), then the first `n_test` indices are
+// the test set. Returns [test..., train...].
+fn split_indices(n: int, n_test: int, seed: int) -> [int] {
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < n { push(idx, i); i = i + 1; }
+    let mut s: int = seed;
+    i = n - 1;
+    while i > 0 {
+        s = (1103515245 * s + 12345) % 2147483647;
+        let j: int = s % (i + 1);
+        let tmp: int = idx[i];
+        idx[i] = idx[j];
+        idx[j] = tmp;
+        i = i - 1;
+    }
+    return idx;
+}
+
+// Build a word vocabulary from whitespace-separated
+// text: returns the words in order of first
+// appearance (counts live in a MapStrInt, order in
+// the returned array). vocab_encode maps each word
+// to its index, or -1 for out-of-vocabulary words.
+// Tokenisation is split-on-lines then split-on-space
+// (the language has no string indexing, so a
+// character scan is not possible — split/trim are
+// the builtins it does have).
+fn vocab_words(text: str) -> [str] {
+    let mut words: [str] = [];
+    let lines: [str] = split(text, "\n");
+    for line in lines {
+        let parts: [str] = split(trim(line), " ");
+        for p in parts {
+            if len(p) > 0 {
+                push(words, trim(p));
+            }
+        }
+    }
+    return words;
+}
+
+fn vocab_build(text: str) -> [str] {
+    let mut counts: MapStrInt = map_new();
+    let mut vocab: [str] = [];
+    let words: [str] = vocab_words(text);
+    for w in words {
+        if map_has(counts, w) == false {
+            push(vocab, w);
+        }
+        counts = map_put(counts, w, map_get(counts, w, 0) + 1);
+    }
+    return vocab;
+}
+
+fn vocab_encode(vocab: [str], text: str) -> [int] {
+    let mut out: [int] = [];
+    let words: [str] = vocab_words(text);
+    for w in words {
+        push(out, vocab_index(vocab, w));
+    }
+    return out;
+}
+
+fn vocab_index(vocab: [str], w: str) -> int {
+    let mut i: int = 0;
+    while i < len(vocab) {
+        if vocab[i] == w { return i; }
+        i = i + 1;
+    }
+    return -1;
+}

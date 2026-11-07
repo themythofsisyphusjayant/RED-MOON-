@@ -1,7 +1,7 @@
 import "xml.fg";
 
 fn main() -> int {
-    let doc: str = "<book title=\"Jal Pari\" year=\"2026\"><author>Jayant</author></book>";
+    let doc: str = "<book title=\"Qasida\" year=\"2026\"><author>Jayant</author></book>";
     println("tag =", xml_tag(doc));
     println("title =", xml_attr(doc, "title"));
     println("year =", xml_attr(doc, "year"));

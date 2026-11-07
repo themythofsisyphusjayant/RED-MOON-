@@ -1,0 +1,9 @@
+import "svg.fg";
+
+fn tempfile_name(prefix: str, n: int) -> str {
+    return prefix + "_tmp_" + svg_int_str(n);
+}
+
+fn tempfile_path(dir: str, prefix: str, n: int) -> str {
+    return dir + "/" + tempfile_name(prefix, n);
+}

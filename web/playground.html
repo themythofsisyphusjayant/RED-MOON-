@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>The Jal Pari Language — Live Playground</title>
+<title>Qasida — Live Playground</title>
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.1/full/pyodide.js"></script>
 <style>body{font-family:system-ui;max-width:780px;margin:40px auto;padding:0 20px;line-height:1.55}textarea{width:100%;height:280px;font-family:ui-monospace,monospace;font-size:14px}button{padding:10px 18px;margin:4px 4px 4px 0}pre{background:#f4f4f4;padding:14px;overflow:auto;white-space:pre-wrap}#status{color:#555}select{padding:8px}</style>
 </head><body>
-<h1>🧜‍♀️ The Jal Pari Language — Live Playground</h1>
-<p>Dedicated to Teju — Jal Pari. Type Jal Pari code, hit Run, and it compiles
+<h1>Qasida — Live Playground</h1>
+<p>Type Qasida code, hit Run, and it compiles
 <b>in your browser</b> — the real compiler runs under Pyodide, the program runs
 as WebAssembly, no server, no install, and your code never leaves this machine.</p>
 <p id="status">Loading Pyodide (first visit downloads ~10 MB, cached after that)…</p>
@@ -20,7 +20,7 @@ as WebAssembly, no server, no install, and your code never leaves this machine.<
 <pre id="out">Pick an example, then Run.</pre>
 <h2>What works here, honestly</h2>
 <ul>
-<li>Full Jal Pari programs that fit the <b>WASM subset</b>: int, float, bool, str,
+<li>Full Qasida programs that fit the <b>WASM subset</b>: int, float, bool, str,
 flat arrays, functions, if/while/for, <code>print</code>/<code>println</code> of str/int/bool.
 The compiler's own errors are shown verbatim when code doesn't fit.</li>
 <li><code>import</code> works only for stdlib files that fit the subset too
@@ -37,8 +37,8 @@ the first load; after that, runs are fully local.</li>
 <p><a href="landing/index.html">Back to the landing page</a> ·
 <a href="https://github.com/jayantt1dubeyy/RED-MOON-">Repo</a></p>
 <script>
-const COMPILER_FILES = ["forge_lang/__init__.py", "forge_lang/ast_nodes.py", "forge_lang/checker.py", "forge_lang/codegen.py", "forge_lang/codegen_cuda.py", "forge_lang/codegen_rv.py", "forge_lang/codegen_wasm.py", "forge_lang/compiler.py", "forge_lang/docgen.py", "forge_lang/errors.py", "forge_lang/generics.py", "forge_lang/infer.py", "forge_lang/lexer.py", "forge_lang/lsp.py", "forge_lang/parser.py", "forge_lang/pkg.py", "forge_lang/pretty.py", "forge_lang/registry_server.py", "forge_lang/repl.py", "stdlib/autograd.fg", "stdlib/cli.fg", "stdlib/cnn.fg", "stdlib/collections.fg", "stdlib/csv.fg", "stdlib/dataset.fg", "stdlib/dates.fg", "stdlib/db.fg", "stdlib/gpt.fg", "stdlib/gpt2.fg", "stdlib/image.fg", "stdlib/inference.fg", "stdlib/inference_gpt2.fg", "stdlib/json.fg", "stdlib/log.fg", "stdlib/map.fg", "stdlib/metrics.fg", "stdlib/ml.fg", "stdlib/ml_classical.fg", "stdlib/nn.fg", "stdlib/option.fg", "stdlib/preprocess.fg", "stdlib/rand.fg", "stdlib/result.fg", "stdlib/rnn.fg", "stdlib/sql.fg", "stdlib/stats.fg", "stdlib/strings.fg", "stdlib/table.fg", "stdlib/tensor.fg", "stdlib/tensor_autograd.fg", "stdlib/test.fg", "stdlib/tgt.fg", "stdlib/tokenizer.fg"];
-const EXAMPLES = {"hello": "fn main() -> int {\n    let greeting: str = \"hello\";\n    let name: str = \"jal pari\";\n    let full: str = greeting + \" \" + name;\n    println(full);\n    println(\"len =\", len(full));\n    let mut xs: [int] = [3, 1, 4, 1, 5];\n    push(xs, 9);\n    println(\"after push len =\", len(xs));\n    println(\"xs[5] =\", xs[5]);\n    return 0;\n}\n", "fib": "fn fib(n: int) -> int {\n    if n < 2 { return n; }\n    return fib(n - 1) + fib(n - 2);\n}\nfn main() -> int {\n    let f: int = fib(10);\n    println(\"fib(10) =\", f);\n    return f;\n}\n", "sum": "fn main() -> int {\n    let mut xs: [int] = [3, 1, 4, 1, 5, 9, 2, 6];\n    let mut total: int = 0;\n    let mut i: int = 0;\n    while i < len(xs) {\n        total = total + xs[i];\n        i = i + 1;\n    }\n    println(\"sum =\", total);\n    println(\"len =\", len(xs));\n    return total;\n}\n", "dice": "import \"rand.fg\";\nfn main() -> int {\n    let mut seed: int = 42;\n    let mut i: int = 0;\n    while i < 5 {\n        seed = rand_next(seed);\n        println(\"rand =\", seed);\n        i = i + 1;\n    }\n    return 0;\n}\n"};
+const COMPILER_FILES = ["forge_lang/__init__.py", "forge_lang/ast_nodes.py", "forge_lang/checker.py", "forge_lang/codegen.py", "forge_lang/codegen_cuda.py", "forge_lang/codegen_rv.py", "forge_lang/codegen_wasm.py", "forge_lang/compiler.py", "forge_lang/docgen.py", "forge_lang/errors.py", "forge_lang/generics.py", "forge_lang/infer.py", "forge_lang/lexer.py", "forge_lang/lsp.py", "forge_lang/parser.py", "forge_lang/pkg.py", "forge_lang/pretty.py", "forge_lang/registry_server.py", "forge_lang/repl.py", "forge_lang/stdlib/autograd.fg", "forge_lang/stdlib/cli.fg", "forge_lang/stdlib/cnn.fg", "forge_lang/stdlib/collections.fg", "forge_lang/stdlib/csv.fg", "forge_lang/stdlib/dataset.fg", "forge_lang/stdlib/dates.fg", "forge_lang/stdlib/db.fg", "forge_lang/stdlib/gpt.fg", "forge_lang/stdlib/gpt2.fg", "forge_lang/stdlib/image.fg", "forge_lang/stdlib/inference.fg", "forge_lang/stdlib/inference_gpt2.fg", "forge_lang/stdlib/json.fg", "forge_lang/stdlib/log.fg", "forge_lang/stdlib/map.fg", "forge_lang/stdlib/metrics.fg", "forge_lang/stdlib/ml.fg", "forge_lang/stdlib/ml_classical.fg", "forge_lang/stdlib/nn.fg", "forge_lang/stdlib/option.fg", "forge_lang/stdlib/preprocess.fg", "forge_lang/stdlib/rand.fg", "forge_lang/stdlib/result.fg", "forge_lang/stdlib/rnn.fg", "forge_lang/stdlib/sql.fg", "forge_lang/stdlib/stats.fg", "forge_lang/stdlib/strings.fg", "forge_lang/stdlib/table.fg", "forge_lang/stdlib/tensor.fg", "forge_lang/stdlib/tensor_autograd.fg", "forge_lang/stdlib/test.fg", "forge_lang/stdlib/tgt.fg", "forge_lang/stdlib/tokenizer.fg"];
+const EXAMPLES = {"hello": "fn main() -> int {\n    let greeting: str = \"hello\";\n    let name: str = \"qasida\";\n    let full: str = greeting + \" \" + name;\n    println(full);\n    println(\"len =\", len(full));\n    let mut xs: [int] = [3, 1, 4, 1, 5];\n    push(xs, 9);\n    println(\"after push len =\", len(xs));\n    println(\"xs[5] =\", xs[5]);\n    return 0;\n}\n", "fib": "fn fib(n: int) -> int {\n    if n < 2 { return n; }\n    return fib(n - 1) + fib(n - 2);\n}\nfn main() -> int {\n    let f: int = fib(10);\n    println(\"fib(10) =\", f);\n    return f;\n}\n", "sum": "fn main() -> int {\n    let mut xs: [int] = [3, 1, 4, 1, 5, 9, 2, 6];\n    let mut total: int = 0;\n    let mut i: int = 0;\n    while i < len(xs) {\n        total = total + xs[i];\n        i = i + 1;\n    }\n    println(\"sum =\", total);\n    println(\"len =\", len(xs));\n    return total;\n}\n", "dice": "import \"rand.fg\";\nfn main() -> int {\n    let mut seed: int = 42;\n    let mut i: int = 0;\n    while i < 5 {\n        seed = rand_next(seed);\n        println(\"rand =\", seed);\n        i = i + 1;\n    }\n    return 0;\n}\n"};
 const editor = document.getElementById("editor");
 const out = document.getElementById("out");
 const status = document.getElementById("status");
@@ -63,12 +63,12 @@ const SHIM = [
 async function init() {
   try {
     pyodide = await loadPyodide();
-    status.textContent = "Fetching the Jal Pari compiler (" + COMPILER_FILES.length + " files)…";
-    pyodide.runPython("import os; os.makedirs('/jalpari/forge_lang', exist_ok=True); os.makedirs('/jalpari/stdlib', exist_ok=True); import sys; sys.path.insert(0, '/jalpari')");
+    status.textContent = "Fetching the Qasida compiler (" + COMPILER_FILES.length + " files)…";
+    pyodide.runPython("import os; os.makedirs('/qasida/forge_lang', exist_ok=True); os.makedirs('/qasida/forge_lang/stdlib', exist_ok=True); import sys; sys.path.insert(0, '/qasida')");
     await Promise.all(COMPILER_FILES.map(async (p) => {
       const r = await fetch("https://cdn.jsdelivr.net/gh/jayantt1dubeyy/RED-MOON-@main/" + p);
       if (!r.ok) throw new Error("fetch failed for " + p + " (" + r.status + ")");
-      pyodide.FS.writeFile("/jalpari/" + p, await r.text());
+      pyodide.FS.writeFile("/qasida/" + p, await r.text());
     }));
     status.textContent = "Ready — the compiler is loaded. Hit Run.";
     runBtn.disabled = false;

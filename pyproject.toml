@@ -1,3 +1,31 @@
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "qasida"
+dynamic = ["version"]
+description = "Qasida — a small, safe, fast language with an ML stack"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jayant Dubey" }]
+
+[project.urls]
+Homepage = "https://github.com/themythofsisyphusjayant/RED-MOON-"
+Repository = "https://github.com/themythofsisyphusjayant/RED-MOON-"
+
+[project.optional-dependencies]
+ml = ["torch", "numpy"]
+
+[project.scripts]
+qasida = "forge_lang.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "forge_lang.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["forge_lang*"]
+
+[tool.setuptools.package-data]
+forge_lang = ["stdlib/*.fg"]

@@ -1,0 +1,50 @@
+// Qasida — tiny SVG charts (plot-lite).
+// Import with: import "plot.fg";
+// LIMITS (honest v1): integer data only; bars scale linearly to
+// the chart height; line/scatter plots join integer points. The
+// chart is an SVG string built on svg.fg — no axes, labels, or
+// legends yet (those arrive with a text-measurement helper).
+
+import "svg.fg";
+
+fn plot_scale(v: int, vmax: int, h: int) -> int {
+    if vmax == 0 { return 0; }
+    return v * h / vmax;
+}
+
+fn plot_max(values: [int]) -> int {
+    let mut m: int = 0;
+    let mut i: int = 0;
+    while i < len(values) {
+        if values[i] > m { m = values[i]; }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn plot_bar_svg(values: [int], w: int, h: int) -> str {
+    let vmax = plot_max(values);
+    let bw = w / len(values);
+    let mut inner: str = "";
+    let mut i: int = 0;
+    while i < len(values) {
+        let bh = plot_scale(values[i], vmax, h);
+        inner = inner + svg_rect(i * bw, h - bh, bw - 2, bh, "steelblue");
+        i = i + 1;
+    }
+    return svg_wrap(w, h, inner);
+}
+
+fn plot_line_svg(xs: [int], ys: [int], w: int, h: int) -> str {
+    return svg_wrap(w, h, svg_polyline(xs, ys));
+}
+
+fn plot_scatter_svg(xs: [int], ys: [int], w: int, h: int) -> str {
+    let mut inner: str = "";
+    let mut i: int = 0;
+    while i < len(xs) {
+        inner = inner + svg_circle(xs[i], ys[i], 3, "red");
+        i = i + 1;
+    }
+    return svg_wrap(w, h, inner);
+}

@@ -1,0 +1,161 @@
+// Qasida — recurrent layers on tensor autograd (0.6.0).
+// Import with: import "rnn.fg";
+// (It imports tensor_autograd.fg; since 0.6.0 it combines
+// freely with nn.fg — use nn's Adam for training.)
+//
+// Why cells, not a sequence runner: Qasida functions
+// return one value, and a cell produces a new tape plus
+// new state. So each cell takes the tape and the current
+// state node ids, returns the new tape, and writes the
+// new state ids into `out` by index assignment (out[0]
+// = h, out[1] = c for LSTM; out[0] = h for GRU/RNN).
+// Index assignment mutates the caller's array — that is
+// the language's out-parameter idiom. The new hidden
+// state is also the tape's last node, so `s.last`
+// agrees with out[0] after the call.
+//
+// Param layouts (flat, concatenated in this order):
+//   LSTM: W [in+hid, 4*hid] (gates i, f, g, o, each hid
+//     wide), b [4*hid]. Count = (in+hid)*4*hid + 4*hid.
+//   GRU: W_zr [in+hid, 2*hid] (gates z, r), b_zr [2*hid],
+//     W_n [in+hid, hid], b_n [hid]. Total is the same
+//     (in+hid)*3*hid + 3*hid, but the candidate gate has
+//     its own weight because it reads [x, r*h], not
+//     [x, h] — sharing one matmul for all three gates
+//     would be wrong, and an earlier draft of this file
+//     made exactly that mistake before it was caught.
+//   RNN: W [in+hid, hid], b [hid] (tanh).
+// Init is uniform [-0.1, 0.1] from a small LCG, same
+// constants as tgt_lcg, so results are reproducible.
+// There is no subtraction op on the tape, so GRU's
+// (1 - z) * h + z * n is written as h + z * (n - h),
+// with the negation done by t_scale(., -1.0).
+
+import "tensor_autograd.fg";
+
+fn rnn_lcg(seed: int) -> int {
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn rnn_init(n: int, seed: int) -> [float] {
+    let mut out: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        s = rnn_lcg(s);
+        push(out, (s as float / 2147483647.0 - 0.5) * 0.2);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn lstm_param_count(in_dim: int, hid: int) -> int {
+    return (in_dim + hid) * 4 * hid + 4 * hid;
+}
+
+fn gru_param_count(in_dim: int, hid: int) -> int {
+    return (in_dim + hid) * 3 * hid + 3 * hid;
+}
+
+fn rnn_param_count(in_dim: int, hid: int) -> int {
+    return (in_dim + hid) * hid + hid;
+}
+
+// One LSTM step. x, h, c are node ids of shapes
+// [1, in_dim], [1, hid], [1, hid]. w, b are leaf node
+// ids. Returns the new tape; out[0] = new h, out[1] = new c.
+fn lstm_cell(s: TAg, x: int, h: int, c: int, w: int, b: int, hid: int, out: [int]) -> TAg {
+    let mut t: TAg = s;
+    t = t_concat_cols(t, x, h);
+    let xh: int = t.last;
+    t = t_matmul(t, xh, w);
+    let pre: int = t.last;
+    t = t_add_bias(t, pre, b);
+    let gates: int = t.last;
+    t = t_col_slice(t, gates, 0, hid);
+    let gi: int = t.last;
+    t = t_sigmoid(t, gi);
+    let ig: int = t.last;
+    t = t_col_slice(t, gates, hid, hid);
+    let gf: int = t.last;
+    t = t_sigmoid(t, gf);
+    let fg: int = t.last;
+    t = t_col_slice(t, gates, 2 * hid, hid);
+    let gg: int = t.last;
+    t = t_tanh(t, gg);
+    let cand: int = t.last;
+    t = t_col_slice(t, gates, 3 * hid, hid);
+    let go: int = t.last;
+    t = t_sigmoid(t, go);
+    let og: int = t.last;
+    t = t_mul(t, fg, c);
+    let fc: int = t.last;
+    t = t_mul(t, ig, cand);
+    let ic: int = t.last;
+    t = t_add(t, fc, ic);
+    let nc: int = t.last;
+    t = t_tanh(t, nc);
+    let tc: int = t.last;
+    t = t_mul(t, og, tc);
+    let nh: int = t.last;
+    out[0] = nh;
+    out[1] = nc;
+    return t;
+}
+
+// One GRU step. w_zr/b_zr are the z,r weights/bias;
+// w_n/b_n are the candidate weights/bias. Returns the
+// new tape; out[0] = new h.
+fn gru_cell(s: TAg, x: int, h: int, w_zr: int, b_zr: int, w_n: int, b_n: int, hid: int, out: [int]) -> TAg {
+    let mut t: TAg = s;
+    t = t_concat_cols(t, x, h);
+    let xh: int = t.last;
+    t = t_matmul(t, xh, w_zr);
+    let pre: int = t.last;
+    t = t_add_bias(t, pre, b_zr);
+    let gates: int = t.last;
+    t = t_col_slice(t, gates, 0, hid);
+    let gz: int = t.last;
+    t = t_sigmoid(t, gz);
+    let zg: int = t.last;
+    t = t_col_slice(t, gates, hid, hid);
+    let gr: int = t.last;
+    t = t_sigmoid(t, gr);
+    let rg: int = t.last;
+    t = t_mul(t, rg, h);
+    let rh: int = t.last;
+    t = t_concat_cols(t, x, rh);
+    let xrh: int = t.last;
+    t = t_matmul(t, xrh, w_n);
+    let pren: int = t.last;
+    t = t_add_bias(t, pren, b_n);
+    let gn: int = t.last;
+    t = t_tanh(t, gn);
+    let cand: int = t.last;
+    t = t_scale(t, h, -1.0);
+    let negh: int = t.last;
+    t = t_add(t, cand, negh);
+    let nmh: int = t.last;
+    t = t_mul(t, zg, nmh);
+    let zt: int = t.last;
+    t = t_add(t, h, zt);
+    let nh: int = t.last;
+    out[0] = nh;
+    return t;
+}
+
+// One plain RNN step (tanh). Returns the new tape;
+// out[0] = new h.
+fn rnn_cell(s: TAg, x: int, h: int, w: int, b: int, hid: int, out: [int]) -> TAg {
+    let mut t: TAg = s;
+    t = t_concat_cols(t, x, h);
+    let xh: int = t.last;
+    t = t_matmul(t, xh, w);
+    let pre: int = t.last;
+    t = t_add_bias(t, pre, b);
+    let pb: int = t.last;
+    t = t_tanh(t, pb);
+    let nh: int = t.last;
+    out[0] = nh;
+    return t;
+}

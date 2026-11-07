@@ -1,4 +1,4 @@
-# The Jal Pari Language — full restart (26 Oct 2026, formerly Forge v2)
+# Qasida — full restart (26 Oct 2026)
 
 ## Why restart, not patch
 
@@ -84,8 +84,8 @@ from scratch, and do not silently drop a phase.
 - Phase C (26 Oct 2026, "keep going to Mojo/Rust/Go level"): structs
   (definition, literal, field access, `let mut` field assignment,
   by-value params/returns, recursive/array-of-structs rejected),
-  file I/O (read_file/write_file), CLI args() + `forge run -- args`,
-  parse_int, and `forge test`. Examples structs_point.fg
+  file I/O (read_file/write_file), CLI args() + `qasida run -- args`,
+  parse_int, and `qasida test`. Examples structs_point.fg
   (distance 5, then 7.2111 after q.x=6) and file_and_args.fg.
   Two real bugs caught by the old test suite during this phase
   and fixed: (1) `for v in xs {` was misparsed as a struct
@@ -95,12 +95,12 @@ from scratch, and do not silently drop a phase.
   including new struct/file/missing-field tests. Push Phase C
   next; do not claim generics/Option/Result/concurrency/GPU/
   package manager/LSP yet.
-- Ecosystem (26 Oct 2026, "build a complete ecosystem"): forge pkg
+- Ecosystem (26 Oct 2026, "build a complete ecosystem"): qasida pkg
   (init/add/build/run/test/list, vendored deps, forge.toml),
-  forge fmt (AST pretty-printer, idempotent, --check, right-operand
+  qasida fmt (AST pretty-printer, idempotent, --check, right-operand
   parens kept for int-division/float-rounding safety),
-  forge lsp (stdio JSON-RPC, checker diagnostics, keyword/builtin/
-  fn/struct completion), forge repl (kept let defs inside main,
+  qasida lsp (stdio JSON-RPC, checker diagnostics, keyword/builtin/
+  fn/struct completion), qasida repl (kept let defs inside main,
   rejected defs not kept), string builtins split/join/substr/trim/
   starts_with/ends_with (C helpers, single evaluation),
   stdlib/strings.fg + stats.fg (word_count fixed twice: first for
@@ -117,7 +117,7 @@ from scratch, and do not silently drop a phase.
   assert builtin, extern C FFI (const char * str, C int, fixes
   puts/system conflicting-type error), http_get (HTTP only, local
   server test passed), stdlib/map.fg + json.fg (flat objects only),
-  forge doc, forge pkg lock/verify (tamper detected). Two
+  qasida doc, qasida pkg lock/verify (tamper detected). Two
   supporting fixes that Map needed: index assignment and push
   through a struct field (m.vals[i] = v, push(m.keys, k)), and
   empty array literals in struct literals (map_new). Full suite

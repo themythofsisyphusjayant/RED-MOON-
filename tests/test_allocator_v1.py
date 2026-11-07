@@ -1,7 +1,7 @@
 """Top-500 #22: allocator-as-value v1
 (tests/test_allocator_v1.py) — to be moved into tests/ once the
-defer suite run lands, together with stdlib/allocator.fg and
-examples/allocator_demo.fg. Pure Jal Pari module: bump,
+defer suite run lands, together with forge_lang/stdlib/allocator.fg and
+examples/allocator_demo.fg. Pure Qasida module: bump,
 freelist, and arena allocators passed explicitly as values.
 """
 
@@ -36,7 +36,7 @@ def main():
     elif not check("allocator results", r.stdout == EXPECTED,
                    repr(r.stdout)):
         failures.append("allocator results")
-    fmt = os.path.join(ROOT, "stdlib", "allocator.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "allocator.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

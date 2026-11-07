@@ -1,0 +1,152 @@
+// Forge SQL stdlib: a small SELECT parser over a Table.
+// Import with: import "sql.fg"; (also import "table.fg"; first,
+// or rely on sql.fg's own import below).
+// Grammar (v1, single table, values are strings):
+//   SELECT * FROM t
+//   SELECT name, city FROM t WHERE city = 'Gorakhpur'
+//   SELECT name FROM t WHERE city != 'Delhi'
+//   SELECT name FROM t WHERE age > '20'
+// Quoted values must not contain spaces. Column names and
+// operators are separated by single spaces. WHERE is optional,
+// and takes exactly one condition: column, operator, value.
+// Operators: = != < > <= >=. Numeric comparison parses both
+// sides as integers when both sides are integer strings,
+// otherwise it compares strings. This is NOT a full SQL engine
+// and NOT SQLite: no JOIN, no ORDER BY, no INSERT/UPDATE.
+
+import "table.fg";
+
+fn sql_unquote(s: str) -> str {
+    if len(s) >= 2 && starts_with(s, "'") && ends_with(s, "'") {
+        return substr(s, 1, len(s) - 2);
+    }
+    return s;
+}
+
+fn sql_is_int(s: str) -> bool {
+    if s == "" {
+        return false;
+    }
+    let mut i: int = 0;
+    if starts_with(s, "-") {
+        if len(s) == 1 {
+            return false;
+        }
+        i = 1;
+    }
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c != "0" && c != "1" && c != "2" && c != "3" && c != "4" && c != "5" && c != "6" && c != "7" && c != "8" && c != "9" {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn sql_matches(a: str, op: str, b: str) -> bool {
+    if sql_is_int(a) && sql_is_int(b) {
+        let ai: int = parse_int(a);
+        let bi: int = parse_int(b);
+        if op == "=" {
+            return ai == bi;
+        }
+        if op == "!=" {
+            return ai != bi;
+        }
+        if op == "<" {
+            return ai < bi;
+        }
+        if op == ">" {
+            return ai > bi;
+        }
+        if op == "<=" {
+            return ai <= bi;
+        }
+        if op == ">=" {
+            return ai >= bi;
+        }
+        return false;
+    }
+    if op == "=" {
+        return a == b;
+    }
+    if op == "!=" {
+        return a != b;
+    }
+    // String ordering is not available in Forge (no char codes),
+    // so < > <= >= need integer values.
+    fail("sql: < > <= >= need integer values");
+    return false;
+}
+
+fn sql_query(t: Table, query: str) -> Table {
+    let toks: [str] = split(query, " ");
+    if len(toks) < 4 || toks[0] != "SELECT" {
+        fail("sql: query must start with SELECT");
+    }
+    // Columns: tokens until FROM.
+    let mut cols: [str] = [];
+    let mut i: int = 1;
+    while i < len(toks) && toks[i] != "FROM" {
+        let part: [str] = split(toks[i], ",");
+        let mut j: int = 0;
+        while j < len(part) {
+            if part[j] != "" {
+                push(cols, part[j]);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if i >= len(toks) {
+        fail("sql: missing FROM");
+    }
+    // Optional WHERE: FROM <table> WHERE col op 'value'.
+    // toks[i] is FROM, toks[i+1] is the table name.
+    let mut has_where: bool = false;
+    let mut wcol: str = "";
+    let mut wop: str = "";
+    let mut wval: str = "";
+    if i + 2 < len(toks) && toks[i + 2] == "WHERE" {
+        if i + 5 >= len(toks) {
+            fail("sql: WHERE needs column, operator, value");
+        }
+        has_where = true;
+        wcol = toks[i + 3];
+        wop = toks[i + 4];
+        wval = sql_unquote(toks[i + 5]);
+    }
+    // Project columns: * means all columns.
+    let mut out_cols: [str] = t.cols;
+    if !(len(cols) == 1 && cols[0] == "*") {
+        out_cols = cols;
+    }
+    let mut out: Table = table_new(out_cols);
+    let mut r: int = 0;
+    while r < table_row_count(t) {
+        let mut keep: bool = true;
+        if has_where {
+            let ci: int = table_col_index(t, wcol);
+            if ci < 0 {
+                fail("sql: unknown WHERE column");
+            }
+            keep = sql_matches(table_get(t, r, ci), wop, wval);
+        }
+        if keep {
+            let mut row: [str] = [];
+            let mut c: int = 0;
+            while c < len(out_cols) {
+                let ci2: int = table_col_index(t, out_cols[c]);
+                if ci2 < 0 {
+                    fail("sql: unknown SELECT column");
+                }
+                push(row, table_get(t, r, ci2));
+                c = c + 1;
+            }
+            out = table_insert(out, row);
+        }
+        r = r + 1;
+    }
+    return out;
+}

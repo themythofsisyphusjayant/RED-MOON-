@@ -1,4 +1,4 @@
-# The Jal Pari Language ecosystem (formerly Forge)
+# Qasida ecosystem (formerly Forge)
 
 This is the complete tooling around the Forge language, in one
 place. Everything below is implemented in this repo, not planned.
@@ -17,15 +17,15 @@ Safe mode (default) checks integer arithmetic and array bounds;
 fast mode is `-O3 -march=native`, unchecked, for hot code you have
 already validated in safe mode.
 
-## Package manager — `forge pkg`
+## Package manager — `qasida pkg`
 
 ```
-forge pkg init [name]     # forge.toml + src/main.fg + tests/ + README
-forge pkg add <path>      # vendor another package into vendor/<name>/
-forge pkg build           # src/main.fg -> build/<name>
-forge pkg run [-- args]   # build, then run
-forge pkg test            # every tests/*.fg must exit 0
-forge pkg list            # name, version, dependencies
+qasida pkg init [name]     # forge.toml + src/main.fg + tests/ + README
+qasida pkg add <path>      # vendor another package into vendor/<name>/
+qasida pkg build           # src/main.fg -> build/<name>
+qasida pkg run [-- args]   # build, then run
+qasida pkg test            # every tests/*.fg must exit 0
+qasida pkg list            # name, version, dependencies
 ```
 
 Dependencies are vendored (copied), not downloaded, so builds
@@ -35,11 +35,11 @@ a path from the package root: `import "vendor/stats/stats.fg";`.
 See `examples/ecosystem/word_stats.fg` for a package-style program
 that uses the stdlib, file I/O, and CLI args together.
 
-## Formatter — `forge fmt`
+## Formatter — `qasida fmt`
 
 ```
-forge fmt <file.fg>          # rewrite in canonical style, in place
-forge fmt <file.fg> --check  # exit 1 if the file would change
+qasida fmt <file.fg>          # rewrite in canonical style, in place
+qasida fmt <file.fg> --check  # exit 1 if the file would change
 ```
 
 The formatter parses the file and re-emits it (4-space indent,
@@ -47,7 +47,7 @@ The formatter parses the file and re-emits it (4-space indent,
 where they matter for integer division and float rounding). It is
 idempotent: formatting formatted code gives the same text.
 
-## Language server — `forge lsp`
+## Language server — `qasida lsp`
 
 ```
 python3 forge.py lsp
@@ -58,11 +58,11 @@ diagnostics from the real Forge checker, completion for keywords,
 builtins, and function/struct names in the open document,
 `shutdown`/`exit`. The full VS Code extension (grammar, snippets,
 language configuration, and a dependency-free LSP client) is in
-`editors/vscode/jalpari/`; the old grammar-only extension stays in
+`editors/vscode/qasida/`; the old grammar-only extension stays in
 `editors/vscode/forge/`. Point any LSP client at the command above
-for diagnostics that can never drift from `forge check`.
+for diagnostics that can never drift from `qasida check`.
 
-## REPL — `forge repl`
+## REPL — `qasida repl`
 
 ```
 python3 forge.py repl
@@ -78,10 +78,10 @@ to check is not kept. Commands: `:help`, `:defs`, `:reset`, `:quit`.
 
 ## Standard library
 
-- `stdlib/ml.fg` — dot, mean, relu, sigmoid, matmul
-- `stdlib/strings.fg` — repeat_str, word_count, csv_fields,
+- `forge_lang/stdlib/ml.fg` — dot, mean, relu, sigmoid, matmul
+- `forge_lang/stdlib/strings.fg` — repeat_str, word_count, csv_fields,
   lines_of, is_blank (on top of the split/join/substr/trim builtins)
-- `stdlib/stats.fg` — sum_float, min_float, max_float, variance,
+- `forge_lang/stdlib/stats.fg` — sum_float, min_float, max_float, variance,
   stddev, median (median sorts a copy, never the caller's array)
 
 Builtins: print/println, push, fail, len, range, clock_micros,
@@ -90,7 +90,7 @@ split/join/substr/trim/starts_with/ends_with.
 
 ## CI
 
-`.github/workflows/ci.yml` runs `forge test`, a formatter check
+`.github/workflows/ci.yml` runs `qasida test`, a formatter check
 over examples and stdlib, and the ecosystem example on every push
 and pull request.
 
@@ -110,14 +110,14 @@ and pull request.
 - **HTTP:** `http_get(url) -> str` — HTTP only, no TLS yet; the
   body is returned, headers are stripped. Tested against a local
   HTTP server.
-- **Collections + JSON:** `stdlib/map.fg` (str->int map, put
-  returns the updated map) and `stdlib/json.fg` (flat string
+- **Collections + JSON:** `forge_lang/stdlib/map.fg` (str->int map, put
+  returns the updated map) and `forge_lang/stdlib/json.fg` (flat string
   objects only, documented as such).
 - **Tests:** `assert(condition, "message")` as a statement builtin.
-- **Docs:** `forge doc <file.fg>` — Markdown from // comments
+- **Docs:** `qasida doc <file.fg>` — Markdown from // comments
   above structs, enums, and functions.
-- **Lockfile:** `forge pkg lock` writes `forge.lock` with sha256
-  of every vendored file; `forge pkg verify` detects changes
+- **Lockfile:** `qasida pkg lock` writes `forge.lock` with sha256
+  of every vendored file; `qasida pkg verify` detects changes
   (tested: tampering a vendored file is reported as MISMATCH).
 
 ## New in the "do it then" pass (26 Oct 2026)
@@ -131,9 +131,9 @@ and pull request.
   explicitly), a generic function cannot be called with an
   abstract type from another generic function, and arrays of
   generic structs are not supported.
-- **Option/Result stdlib:** `stdlib/option.fg` (`opt_some`,
+- **Option/Result stdlib:** `forge_lang/stdlib/option.fg` (`opt_some`,
   `opt_value_or`; none is a literal with a dummy value, because
-  Forge has no null) and `stdlib/result.fg` (`result_value_or`).
+  Forge has no null) and `forge_lang/stdlib/result.fg` (`result_value_or`).
 - **TLS:** `http_get` now handles `https://` too, with
   certificate verification on (OpenSSL, SNI, default verify
   paths). Tested against a local TLS server with a private CA
@@ -151,17 +151,17 @@ and pull request.
   local CONNECT proxy + local TLS server (`tests/test_proxy_connect.py`,
   6/6: direct, via proxy, bypass, refusal, auth, non-http scheme
   ignored). Plain `http://` stays direct; WASM/big32 unaffected.
-- **Local registry:** `forge pkg publish` copies a package into
+- **Local registry:** `qasida pkg publish` copies a package into
   `$FORGE_REGISTRY` (default `~/.forge_registry`) as
-  `<name>/<version>/`, and `forge pkg add name@version` vendors
+  `<name>/<version>/`, and `qasida pkg add name@version` vendors
   it. Tested end to end (quad 7 = 28). This is a local registry,
   not a hosted server.
-- **Tiny DB stdlib:** `stdlib/db.fg` — a tab-separated text
+- **Tiny DB stdlib:** `forge_lang/stdlib/db.fg` — a tab-separated text
   key-value store (str -> str) with serialise/parse, to pair
   with `write_file`/`read_file`. NOT SQL, NOT SQLite, and values
   must not contain tabs/newlines (no escaping yet).
 - **big32 backend (landed in the workspace 26 Oct 11:53, verified
-  here):** `forge emit-big32` / `forge build --target big32`
+  here):** `qasida emit-big32` / `qasida build --target big32`
   generate RV32IMAC assembly for the big32 v7 CPU (see
   `forge_lang/codegen_rv.py`, `examples/big32/`). Emit and
   assemble to .hex verified (sum.fg -> .hex); the Verilog
@@ -189,7 +189,7 @@ and pull request.
   still work unchanged, and a no-payload variant of a
   non-generic payload enum can be written bare.
   Limitation: a variant takes at most one payload in v1.
-- **Table DB stdlib:** `stdlib/table.fg` — a tiny relational
+- **Table DB stdlib:** `forge_lang/stdlib/table.fg` — a tiny relational
   table (flattened rows, insert/select by column value).
   NOT SQL (no SQL parser yet), and not SQLite.
   Tested: 3 rows, select city=Gorakhpur -> 2 rows,
@@ -197,7 +197,7 @@ and pull request.
 
 ## New in the "then do it" pass (26 Oct 2026)
 
-- **SQL parser:** `stdlib/sql.fg` — `sql_query(table, query)`
+- **SQL parser:** `forge_lang/stdlib/sql.fg` — `sql_query(table, query)`
   with `SELECT name, city FROM t WHERE city = 'Gorakhpur'`,
   `SELECT * FROM t`, and numeric `WHERE age > '20'`.
   Tested: Gorakhpur = 2 (jayant, teju), older = 2, all = 3.
@@ -207,14 +207,14 @@ and pull request.
   INSERT/UPDATE, and string `<`/`>` need integer values
   (Forge has no char codes for string ordering).
 - **Hosted registry:** `forge_lang/registry_server.py` — a
-  simple HTTP server (`forge pkg serve --dir D --port P`,
+  simple HTTP server (`qasida pkg serve --dir D --port P`,
   no auth, run it on your own machine/trusted network) plus
-  `forge pkg publish-remote <url>` and
-  `forge pkg add-remote <url> name@version`.
+  `qasida pkg publish-remote <url>` and
+  `qasida pkg add-remote <url> name@version`.
   Tested end to end on localhost: publish hostlib, add-remote
   into another package, septuple 6 = 42.
 - **WASM backend:** `forge_lang/codegen_wasm.py` —
-  `forge emit-wasm` / `forge build --target wasm` write a
+  `qasida emit-wasm` / `qasida build --target wasm` write a
   real .wasm binary directly (no clang/wasm-ld needed),
   run with node (`tools/run_wasm.mjs out.wasm`).
   Subset v1: int (i64), bool (i32), void, functions,
@@ -252,7 +252,7 @@ and pull request.
   the serial results. No speedup is claimed on this 2-core
   VM; the kernel shape and correctness are the deliverable,
   and a real GPU backend still needs GPU hardware.
-- **Python interop:** `forge build --shared lib.fg -o lib.so`
+- **Python interop:** `qasida build --shared lib.fg -o lib.so`
   compiles a Forge library with no main required, and
   `tools/forge_py.py` calls it from Python via ctypes
   (int/bool/float/str). Verified: add(40, 2) = 42,
@@ -261,7 +261,7 @@ and pull request.
   but ctypes passed a Python-owned buffer — the helper now
   mallocs string arguments so Forge can safely free them.
   Arrays/structs are not passed through this helper in v1.
-- **Public registry discovery:** `forge pkg list-remote <url>`
+- **Public registry discovery:** `qasida pkg list-remote <url>`
   lists every package and version on a registry, so a
   registry you run is discoverable, not just add-by-name.
   Verified: published hostlib@0.1.0, list-remote showed
@@ -302,7 +302,7 @@ and pull request.
   point_sum(Point(10,32)) = 42, make_point(3,4) = (3,4).
   Str fields in structs must be malloc'd, as for plain str
   arguments, because Forge frees them on return.
-- **CUDA codegen:** `forge emit-cuda` emits a .cu file with
+- **CUDA codegen:** `qasida emit-cuda` emits a .cu file with
   __global__ dot and matmul kernels, grid/block launches,
   and host code. Verified structurally (kernel signatures,
   <<<grid, block>>> launches, cudaMalloc calls) — NOT run,
@@ -311,7 +311,7 @@ and pull request.
 - **Centrally hosted static registry:** `tools/make_static_registry.py`
   converts a local registry into a static dir (packages.json
   + packages/<name>/<version>/<file>.fg) that can be pushed
-  to GitHub and served by Pages, and `forge pkg list-static`
+  to GitHub and served by Pages, and `qasida pkg list-static`
   / `add-static <base_url>` discover and pull from it with
   no server code running. Verified end to end via a local
   HTTP server simulating Pages: static registry listed
@@ -454,7 +454,7 @@ text checkpoints is closed in 0.7.0, plus three
 backend jumps:
 
 - Images/binary data: CLOSED. `read_bytes` /
-  `write_bytes` builtins; `stdlib/image.fg` loads
+  `write_bytes` builtins; `forge_lang/stdlib/image.fg` loads
   PPM P3 and 24-bit BMP, grayscales, saves PPM P3.
   BMP == PPM verified on the same 2x2 image.
   PNG/JPEG still NOT supported (inflate/DCT).
@@ -507,7 +507,7 @@ backend jumps:
   / 150k words. Needs far more scale.
 - Full self-hosting compiler: the front-end
   prototype (lexer + parser) exists; checker and
-  codegen in Jal Pari do not.
+  codegen in Qasida do not.
 - Public registry host, CI upload, repo rename,
   PyPI publish: all still blocked on the user's
   accounts/token scope, as before.
@@ -520,12 +520,12 @@ backend jumps:
 - Live playground: web/playground.html — real compiler under
   Pyodide, real WebAssembly runs, no install. Four verified
   examples. Browser end-to-end open still pending (needs a browser).
-- HTTP server: six builtins + stdlib/http_server.fg + routing demo,
+- HTTP server: six builtins + forge_lang/stdlib/http_server.fg + routing demo,
   verified live with curl (200/200/404, correct bodies, clean
   shutdown). Limits: one request per connection, single 8191-byte
   read, no TLS, no chunked bodies, IPv4 only.
 - Killer app: examples/apps/registry_server.fg — a package
-  registry server written in Jal Pari itself, speaking the same
+  registry server written in Qasida itself, speaking the same
   HTTP API as the Python reference server, so the real `forge
   pkg publish-remote` / `add-remote` clients work against it.
   Verified live: publish (incl. 401/409), list, versions, files,
@@ -534,7 +534,7 @@ backend jumps:
   (no directory-listing builtin); publish order, not sorted;
   ASCII-only publish bodies. HTTP status reasons gained 401
   Unauthorized and 409 Conflict.
-- Regex: stdlib/regex.fg (36-check demo passes). No groups or
+- Regex: forge_lang/stdlib/regex.fg (36-check demo passes). No groups or
   alternation — those characters are literal in v1.
 - Packages: packages/ — now 30 boring packages at 0.1.0 each: the
   original seven (units, money, geometry, interest, roman, bases,
@@ -549,7 +549,7 @@ backend jumps:
 - VS Code extension: editors/vscode/forge/forge-1.0.0.vsix,
   packaged and contents-verified. Marketplace publish still needs
   the maintainer's publisher account.
-- Benchmarks: docs/BENCHMARKS_VS.md — Jal Pari vs Python/Go/Rust/C
+- Benchmarks: docs/BENCHMARKS_VS.md — Qasida vs Python/Go/Rust/C
   on identical tasks, results verified equal. ~31x/49x/259x vs
   Python; in the compiled cluster with Go/Rust/C.
   docs/BENCHMARKS_SAFETY.md — the cost of safety: safe vs fast

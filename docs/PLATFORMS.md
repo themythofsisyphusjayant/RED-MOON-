@@ -1,4 +1,4 @@
-# Platforms — The Jal Pari Language
+# Platforms — Qasida
 
 What runs where, what blocks the rest, and what would unblock it.
 Verified 26 Oct 2026 on a Linux VM (x86_64, gcc, OpenSSL headers
@@ -11,15 +11,15 @@ with `cc` (`-std=gnu11 -pthread`, `-lm -lssl -lcrypto`, falling
 back to `-lm` if the SSL libraries are missing). Install is
 verified on a clean HOME and a clean pip venv (1.0.0).
 
-## The C compiler is selectable: `JALPARI_CC`
+## The C compiler is selectable: `QASIDA_CC`
 
 `forge.py run`, `forge.py build`, and the shared-library build all
-use `JALPARI_CC` when it is set, and `cc` otherwise. The default
+use `QASIDA_CC` when it is set, and `cc` otherwise. The default
 is unchanged, so this is an addition, not a behavior change:
 
 ```
-JALPARI_CC=/usr/bin/gcc python3 forge.py run examples/fib.fg
-JALPARI_CC=x86_64-w64-mingw32-gcc-posix python3 forge.py build prog.fg -o prog.exe
+QASIDA_CC=/usr/bin/gcc python3 forge.py run examples/fib.fg
+QASIDA_CC=x86_64-w64-mingw32-gcc-posix python3 forge.py build prog.fg -o prog.exe
 ```
 
 Setting it to a cross compiler produces a binary for another
@@ -44,7 +44,7 @@ Verified 27 Oct 2026 with `gcc-mingw-w64-x86-64` 13.2.0
 (`x86_64-w64-mingw32-gcc-posix`), safe mode unless noted:
 
 ```
-JALPARI_CC=x86_64-w64-mingw32-gcc-posix python3 forge.py build prog.fg -o prog.exe
+QASIDA_CC=x86_64-w64-mingw32-gcc-posix python3 forge.py build prog.fg -o prog.exe
 ```
 
 Programs cross-compiled to working `.exe` files: a hello
@@ -66,8 +66,8 @@ Limits, stated honestly:
   ("HTTPS is not supported in this build"). Plain HTTP
   and non-network programs are unaffected. A Windows
   user with MSYS2 OpenSSL can opt back in with
-  `JALPARI_HAVE_OPENSSL=1` (untested here).
-- **Same opt-out exists everywhere:** `JALPARI_NO_OPENSSL=1`
+  `QASIDA_HAVE_OPENSSL=1` (untested here).
+- **Same opt-out exists everywhere:** `QASIDA_NO_OPENSSL=1`
   builds any platform without OpenSSL (same stub). This
   is also the macOS-without-Homebrew-OpenSSL path.
 
@@ -86,7 +86,7 @@ installed, so no macOS binary was built or tested. By analysis:
   to the compiler), or the same conditional-HTTPS work as
   Windows item 2 above.
 - A native build ON a Mac (Xcode command-line tools + Homebrew
-  OpenSSL + `JALPARI_CC` if a specific clang is wanted) is the
+  OpenSSL + `QASIDA_CC` if a specific clang is wanted) is the
   plausible first macOS binary. Cross-compiling macOS binaries
   from Linux needs an Apple SDK or zig, neither of which is
   present here.

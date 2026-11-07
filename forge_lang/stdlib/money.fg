@@ -1,0 +1,25 @@
+// Qasida — fixed-point money (roadmap item 112).
+// Import with: import "money.fg";
+// Amounts are integer cents: no float rounding anywhere.
+// money_tax truncates toward zero (integer division), which is
+// stated here rather than hidden behind a rounding choice.
+
+fn money_add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn money_sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+fn money_mul_int(cents: int, qty: int) -> int {
+    return cents * qty;
+}
+
+fn money_tax(cents: int, pct: int) -> int {
+    return cents + cents * pct / 100;
+}
+
+fn money_dollars(cents: int) -> float {
+    return cents as float / 100.0;
+}

@@ -7,6 +7,6 @@ fn main() -> int {
     println("valid =", b.valid);
     let c: EmailAddr = email_parse("a@b");
     println("valid =", c.valid);
-    println("domain =", email_domain("teju@jalpari.dev"));
+    println("domain =", email_domain("teju@qasida.dev"));
     return 0;
 }

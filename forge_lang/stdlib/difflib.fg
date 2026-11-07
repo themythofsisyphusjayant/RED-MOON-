@@ -1,0 +1,63 @@
+fn dl_lcs_len(a: str, b: str) -> int {
+    let m: int = len(a);
+    let n: int = len(b);
+    let mut d: [int] = [];
+    let mut k: int = 0;
+    while k < (m + 1) * (n + 1) {
+        push(d, 0);
+        k = k + 1;
+    }
+    let mut i: int = 1;
+    while i <= m {
+        let mut j: int = 1;
+        while j <= n {
+            if a[i - 1] == b[j - 1] {
+                d[i * (n + 1) + j] = d[(i - 1) * (n + 1) + (j - 1)] + 1;
+            } else if d[(i - 1) * (n + 1) + j] >= d[i * (n + 1) + (j - 1)] {
+                d[i * (n + 1) + j] = d[(i - 1) * (n + 1) + j];
+            } else {
+                d[i * (n + 1) + j] = d[i * (n + 1) + (j - 1)];
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return d[m * (n + 1) + n];
+}
+
+fn dl_ratio(a: str, b: str) -> float {
+    let m: int = len(a);
+    let n: int = len(b);
+    if m + n == 0 {
+        return 1.0;
+    }
+    return 2.0 * dl_lcs_len(a, b) as float / (m + n) as float;
+}
+
+fn dl_common_prefix(a: str, b: str) -> int {
+    let mut i: int = 0;
+    while i < len(a) {
+        if i >= len(b) {
+            return i;
+        }
+        if a[i] != b[i] {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+fn dl_common_suffix(a: str, b: str) -> int {
+    let mut i: int = 0;
+    while i < len(a) {
+        if i >= len(b) {
+            return i;
+        }
+        if a[len(a) - 1 - i] != b[len(b) - 1 - i] {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}

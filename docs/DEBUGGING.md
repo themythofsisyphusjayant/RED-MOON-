@@ -1,4 +1,4 @@
-# Debugging Jal Pari programs (0.5.0)
+# Debugging Qasida programs (0.5.0)
 
 There is no source-level debugger yet — this page documents
 what exists today, honestly, and what is missing.

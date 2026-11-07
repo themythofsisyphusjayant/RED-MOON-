@@ -1,5 +1,5 @@
-// Tiny GPT, trained for real in Jal Pari.
-// Text: "hello world hello jal pari" (26 chars, 12-char vocab).
+// Tiny GPT, trained for real in Qasida.
+// Text: "hello world hello qasida" (26 chars, 12-char vocab).
 // Model: 1 block, 1 head, d=8, hidden=16, tied head, 776 params.
 // Training: Adam (lr 0.05) on the first 6 sliding windows of
 // length 8, gradients from the autograd tape, clipped to norm 1.
@@ -65,7 +65,7 @@ fn gen_text(params: [float], ctx0: [int], vocab: str, steps: int, sampled: bool)
 
 fn main() -> int {
     let vocab: str = " helopwrdjai";
-    let text: str = "hello world hello jal pari";
+    let text: str = "hello world hello qasida";
     let ids: [int] = char_encode(text, vocab);
     let mut st: OptimState = optim_new(gpt_init_params(42));
     let lr: float = 0.03;

@@ -1,0 +1,51 @@
+struct EventLog {
+    ids: [int];
+    counts: [int];
+}
+
+fn events_new() -> EventLog {
+    return EventLog { ids: [], counts: [] };
+}
+
+fn events_emit(e: EventLog, id: int) -> EventLog {
+    let mut ids: [int] = [];
+    let mut counts: [int] = [];
+    let mut found: bool = false;
+    let mut i: int = 0;
+    while i < len(e.ids) {
+        push(ids, e.ids[i]);
+        if e.ids[i] == id {
+            push(counts, e.counts[i] + 1);
+            found = true;
+        } else {
+            push(counts, e.counts[i]);
+        }
+        i = i + 1;
+    }
+    if found == false {
+        push(ids, id);
+        push(counts, 1);
+    }
+    return EventLog { ids: ids, counts: counts };
+}
+
+fn events_count(e: EventLog, id: int) -> int {
+    let mut i: int = 0;
+    while i < len(e.ids) {
+        if e.ids[i] == id {
+            return e.counts[i];
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn events_total(e: EventLog) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(e.counts) {
+        n = n + e.counts[i];
+        i = i + 1;
+    }
+    return n;
+}

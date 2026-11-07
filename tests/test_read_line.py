@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end tests for the read_line builtin (stdin, one line at a time).
 
-Builds small Jal Pari programs that use read_line, feeds them piped
+Builds small Qasida programs that use read_line, feeds them piped
 stdin, and asserts exact outputs. No network, no repo changes.
 
 Tests:

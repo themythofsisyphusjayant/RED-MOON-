@@ -1,4 +1,4 @@
-"""The Jal Pari Language compiler driver: source -> imports -> checked AST -> C -> binary."""
+"""Qasida compiler driver: source -> imports -> checked AST -> C -> binary."""
 
 import os
 import subprocess
@@ -14,9 +14,9 @@ from . import ast_nodes as A
 
 
 def _cc():
-    """C compiler binary for native builds. Override with JALPARI_CC
+    """C compiler binary for native builds. Override with QASIDA_CC
     (e.g. a cross compiler); the default is "cc" and is unchanged."""
-    return os.environ.get("JALPARI_CC", "cc")
+    return os.environ.get("QASIDA_CC", "cc")
 
 
 def load_program(path, seen=None):
@@ -65,9 +65,14 @@ def load_program(path, seen=None):
     all_aliases = list(prog.aliases or [])
     all_newtypes = list(prog.newtypes or [])
     for imp in prog.imports:
+        # Stdlib lookup: in-package first (forge_lang/stdlib/ — works
+        # both from a checkout and from an installed wheel), then the
+        # legacy repo-root stdlib/ as a fallback for old checkouts.
         candidates = [
             os.path.join(base, imp),
             os.path.join(os.getcwd(), imp),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "stdlib", os.path.basename(imp)),
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "stdlib", os.path.basename(imp)),
         ]
@@ -187,7 +192,7 @@ def build(source_path, output_path, mode="safe", keep_c=None, debug=False, frees
         # without it (programs that never call http_get still link,
         # because the unused SSL helper is optimised away). On MinGW,
         # Winsock needs -lws2_32, and OpenSSL is off by default in the
-        # generated C (JALPARI_HAVE_OPENSSL=1 opts back in).
+        # generated C (QASIDA_HAVE_OPENSSL=1 opts back in).
         # Freestanding: no libc at all, so no -pthread, no -lm, no
         # SSL libs — just -nostdlib. The _start asm is x86_64 Linux
         # only, so freestanding native refuses MinGW outright.
@@ -197,8 +202,8 @@ def build(source_path, output_path, mode="safe", keep_c=None, debug=False, frees
         flags = _cc_flags(mode) + (["-g"] if debug else [])
         if freestanding:
             flags = [f for f in flags if f != "-pthread"] + ["-nostdlib"]
-        have_ssl = os.environ.get("JALPARI_HAVE_OPENSSL") == "1"
-        no_ssl = os.environ.get("JALPARI_NO_OPENSSL") == "1"
+        have_ssl = os.environ.get("QASIDA_HAVE_OPENSSL") == "1"
+        no_ssl = os.environ.get("QASIDA_NO_OPENSSL") == "1"
         if no_ssl:
             flags = flags + ["-DFORGE_NO_OPENSSL"]
         elif have_ssl and _is_mingw():

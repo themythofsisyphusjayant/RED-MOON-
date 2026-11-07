@@ -1,0 +1,23 @@
+// Forge Option stdlib: a value that may be absent, without null.
+// Import with: import "option.fg";
+//   let o: Option<int> = opt_some(42);
+//   if o.present { println(o.value); }
+// None has no null to put in the value field (Forge has no null),
+// so write it as a literal with a dummy of the right type:
+//   let n: Option<int> = Option { present: false, value: 0 };
+
+struct Option<T> {
+    present: bool;
+    value: T;
+}
+
+fn opt_some<T>(v: T) -> Option<T> {
+    return Option { present: true, value: v };
+}
+
+fn opt_value_or<T>(o: Option<T>, fallback: T) -> T {
+    if o.present {
+        return o.value;
+    }
+    return fallback;
+}

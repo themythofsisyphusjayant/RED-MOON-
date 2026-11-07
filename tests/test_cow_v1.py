@@ -38,7 +38,7 @@ def main():
     elif not check("cow results", r.stdout == EXPECTED,
                    repr(r.stdout)):
         failures.append("cow results")
-    fmt = os.path.join(ROOT, "stdlib", "cow.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "cow.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

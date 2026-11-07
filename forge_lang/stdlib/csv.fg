@@ -1,0 +1,97 @@
+// Qasida — CSV loading (0.6.0).
+// Import with: import "csv.fg";
+// (It imports strings.fg for lines_of/csv_fields.)
+//
+// csv_load returns a Csv struct: numeric rows in
+// `data` ([n, ncols] flat), the last column's string
+// labels in `labels` (when the file has a label
+// column), and the header names. Numeric parsing
+// uses parse_float; a field that is not numeric is
+// treated as 0.0 in `data` and kept in `labels`
+// only when it is the last column. Quoted commas
+// are NOT supported — this is a plain CSV reader,
+// and that limit is stated here, not hidden.
+
+import "strings.fg";
+
+struct Csv {
+    data: [float];
+    labels: [str];
+    header: [str];
+    nrows: int;
+    ncols: int;
+}
+
+// Parse CSV text. has_header skips the first line
+// (kept as `header`); label_col makes the last
+// column a string label instead of a number.
+fn csv_parse(text: str, has_header: bool, label_col: bool) -> Csv {
+    let lines: [str] = lines_of(text);
+    let mut data: [float] = [];
+    let mut labels: [str] = [];
+    let mut header: [str] = [];
+    let mut nrows: int = 0;
+    let mut ncols: int = 0;
+    let mut li: int = 0;
+    while li < len(lines) {
+        let line: str = trim(lines[li]);
+        if len(line) > 0 {
+            let fields: [str] = csv_fields(line);
+            if li == 0 && has_header {
+                header = fields;
+                ncols = len(fields);
+            } else {
+                if ncols == 0 { ncols = len(fields); }
+                let mut fi: int = 0;
+                while fi < len(fields) {
+                    if label_col && fi == len(fields) - 1 {
+                        push(labels, trim(fields[fi]));
+                    } else {
+                        push(data, parse_float(trim(fields[fi])));
+                    }
+                    fi = fi + 1;
+                }
+                nrows = nrows + 1;
+            }
+        }
+        li = li + 1;
+    }
+    let mut dc: int = ncols;
+    if label_col { dc = ncols - 1; }
+    return Csv { data: data, labels: labels, header: header, nrows: nrows, ncols: dc };
+}
+
+fn csv_load(path: str, has_header: bool, label_col: bool) -> Csv {
+    let text: str = read_file(path);
+    return csv_parse(text, has_header, label_col);
+}
+
+// Map string labels to integer ids in order of
+// first appearance (vocabulary from label_vocab).
+fn label_ids(labels: [str]) -> [int] {
+    let vocab: [str] = label_vocab(labels);
+    let mut out: [int] = [];
+    for lab in labels {
+        push(out, vocab_index_str(vocab, lab));
+    }
+    return out;
+}
+
+fn label_vocab(labels: [str]) -> [str] {
+    let mut vocab: [str] = [];
+    for lab in labels {
+        if vocab_index_str(vocab, lab) == -1 {
+            push(vocab, lab);
+        }
+    }
+    return vocab;
+}
+
+fn vocab_index_str(vocab: [str], w: str) -> int {
+    let mut i: int = 0;
+    while i < len(vocab) {
+        if vocab[i] == w { return i; }
+        i = i + 1;
+    }
+    return -1;
+}

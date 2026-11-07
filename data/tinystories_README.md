@@ -1,4 +1,4 @@
-# TinyStories data for Jal Pari
+# TinyStories data for Qasida
 
 Source: roneneldan/TinyStories, train split, first 200 stories,
 fetched 2026-10-26 via the Hugging Face

@@ -1,4 +1,4 @@
-# Stability promise — The Jal Pari Language 1.0
+# Stability promise — Qasida 1.0
 
 From 1.0.0 onward, the language follows semantic versioning for real:
 
@@ -19,11 +19,11 @@ From 1.0.0 onward, the language follows semantic versioning for real:
   docs/HIGH_SCHOOL_GUIDE.md: syntax, types, control flow, builtins,
   and safe-mode semantics (checked arithmetic, bounds checks, no null,
   no implicit conversions).
-- The stdlib APIs in `stdlib/` as documented in docs/ECOSYSTEM.md
+- The stdlib APIs in `forge_lang/stdlib/` as documented in docs/ECOSYSTEM.md
   (function names, argument order, return types).
-- The `jalpari` command-line interface: `run`, `build`, `test`, `fmt`,
+- The `qasida` command-line interface: `run`, `build`, `test`, `fmt`,
   `pkg`, `emit-wasm`, `emit-big32`, and their flags as documented.
-- The package format and lockfile produced by `forge pkg`.
+- The package format and lockfile produced by `qasida pkg`.
 
 ## What it does NOT cover (honest limits)
 

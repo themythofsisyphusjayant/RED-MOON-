@@ -1,4 +1,4 @@
-"""Forge REPL (forge repl).
+"""Forge REPL (qasida repl).
 
 Forge is compiled, so the REPL works the way Rust's evcxr-style
 tools do: it keeps your `let` definitions, and for each expression
@@ -45,7 +45,7 @@ def run_program(source):
         try:
             compile_file(src)
         except ForgeError as e:
-            return 1, "", f"jalpari: error: {e}\n"
+            return 1, "", f"qasida: error: {e}\n"
         # Reuse forge.py run via a direct compile+cc, to avoid
         # importing the CLI's argparse machinery here.
         from .compiler import compile_file as _cf

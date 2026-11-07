@@ -1,0 +1,799 @@
+// Qasida — tensor-level autograd (0.5.0, ops 17–20 added 0.6.0).
+// Import with: import "tensor_autograd.fg";
+// (It imports tensor.fg. Since 0.6.0 the compiler dedupes
+// imports, so it now combines freely with nn.fg and any
+// other library that shares tensor.fg — the old
+// "import it alone" restriction is gone.)
+//
+// Why this exists: the scalar tape (autograd.fg) makes one
+// node per scalar multiply, so a TinyStories forward is
+// ~221,844 nodes. A tensor tape makes one node per tensor
+// op, so the same forward is ~60 nodes and each node's
+// value is a whole tensor. Same chain rule, ~100x fewer
+// nodes, and the memory that used to grow with every scalar
+// now grows with every tensor.
+//
+// Tape layout (Qasida has no arrays of structs, so, like
+// the scalar tape, nodes are parallel flat arrays):
+//   vals/shapes hold every node's value/shape concatenated;
+//   voff/vlen and soff/slen give each node's slice.
+//   aux/auxi hold per-node float/int auxiliaries (layernorm
+//   means, gather indices, loss targets, ...).
+// Op codes: 0 input, 1 matmul, 2 add, 3 add_bias_rows,
+//   4 transpose, 5 softmax_rows, 6 gelu, 7 layernorm,
+//   8 mul, 9 scale, 10 gather, 11 cross_entropy,
+//   12 relu, 13 col_slice, 14 concat_cols, 15 reshape,
+//   16 causal_softmax_rows, 17 maxpool2d, 18 sigmoid,
+//   19 tanh, 20 mse_loss, 21 im2col (0.7.0).
+// Backward rules are in t_backward below; every rule was
+// checked against finite differences (see
+// examples/tensor_autograd_demo.fg).
+
+import "tensor.fg";
+
+struct TTape {
+    vals: [float];
+    voff: [int];
+    vlen: [int];
+    shapes: [int];
+    soff: [int];
+    slen: [int];
+    op: [int];
+    a: [int];
+    b: [int];
+    c: [int];
+    aux: [float];
+    auxoff: [int];
+    auxlen: [int];
+    auxi: [int];
+    auxioff: [int];
+    auxilen: [int];
+}
+
+struct TAg {
+    tape: TTape;
+    last: int;
+}
+
+fn ttape_new() -> TTape {
+    return TTape {
+        vals: [], voff: [], vlen: [], shapes: [], soff: [], slen: [],
+        op: [], a: [], b: [], c: [],
+        aux: [], auxoff: [], auxlen: [], auxi: [], auxioff: [], auxilen: []
+    };
+}
+
+fn fslice(data: [float], off: int, n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, data[off + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn islice(data: [int], off: int, n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, data[off + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn tvals_of(t: TTape, id: int) -> [float] {
+    return fslice(t.vals, t.voff[id], t.vlen[id]);
+}
+
+fn tshape_of(t: TTape, id: int) -> [int] {
+    return islice(t.shapes, t.soff[id], t.slen[id]);
+}
+
+fn t_tensor(t: TTape, id: int) -> Tensor {
+    return Tensor { data: tvals_of(t, id), shape: tshape_of(t, id) };
+}
+
+fn tnode(t: TTape, shape: [int], data: [float], op: int, a: int, b: int, c: int, aux: [float], auxi: [int]) -> TAg {
+    let mut nt: TTape = t;
+    push(nt.voff, len(nt.vals));
+    for v in data {
+        push(nt.vals, v);
+    }
+    push(nt.vlen, len(data));
+    push(nt.soff, len(nt.shapes));
+    for s in shape {
+        push(nt.shapes, s);
+    }
+    push(nt.slen, len(shape));
+    push(nt.op, op);
+    push(nt.a, a);
+    push(nt.b, b);
+    push(nt.c, c);
+    push(nt.auxoff, len(nt.aux));
+    for v in aux {
+        push(nt.aux, v);
+    }
+    push(nt.auxlen, len(aux));
+    push(nt.auxioff, len(nt.auxi));
+    for v in auxi {
+        push(nt.auxi, v);
+    }
+    push(nt.auxilen, len(auxi));
+    return TAg { tape: nt, last: len(nt.voff) - 1 };
+}
+
+fn t_leaf(t: TTape, shape: [int], data: [float]) -> TAg {
+    return tnode(t, shape, data, 0, -1, -1, -1, [], []);
+}
+
+fn t_matmul(s: TAg, a: int, b: int) -> TAg {
+    let out: Tensor = tensor_matmul(t_tensor(s.tape, a), t_tensor(s.tape, b));
+    return tnode(s.tape, out.shape, out.data, 1, a, b, -1, [], []);
+}
+
+fn t_add(s: TAg, a: int, b: int) -> TAg {
+    let out: Tensor = tensor_add(t_tensor(s.tape, a), t_tensor(s.tape, b));
+    return tnode(s.tape, out.shape, out.data, 2, a, b, -1, [], []);
+}
+
+fn t_add_bias(s: TAg, a: int, b: int) -> TAg {
+    let out: Tensor = tensor_add_bias_rows(t_tensor(s.tape, a), tvals_of(s.tape, b));
+    return tnode(s.tape, out.shape, out.data, 3, a, b, -1, [], []);
+}
+
+fn t_transpose(s: TAg, a: int) -> TAg {
+    let out: Tensor = tensor_transpose2(t_tensor(s.tape, a));
+    return tnode(s.tape, out.shape, out.data, 4, a, -1, -1, [], []);
+}
+
+fn t_softmax_rows(s: TAg, a: int) -> TAg {
+    let out: Tensor = tensor_softmax_rows(t_tensor(s.tape, a));
+    return tnode(s.tape, out.shape, out.data, 5, a, -1, -1, [], []);
+}
+
+fn t_causal_softmax(s: TAg, a: int) -> TAg {
+    let tin: Tensor = t_tensor(s.tape, a);
+    let rows: int = tin.shape[0];
+    let cols: int = tin.shape[1];
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut m: float = tin.data[r * cols];
+        let mut c: int = 1;
+        while c <= r {
+            if tin.data[r * cols + c] > m {
+                m = tin.data[r * cols + c];
+            }
+            c = c + 1;
+        }
+        let mut es: [float] = [];
+        let mut sum: float = 0.0;
+        c = 0;
+        while c < cols {
+            if c <= r {
+                let e: float = exp(tin.data[r * cols + c] - m);
+                push(es, e);
+                sum = sum + e;
+            } else {
+                push(es, 0.0);
+            }
+            c = c + 1;
+        }
+        for e in es {
+            push(out, e / sum);
+        }
+        r = r + 1;
+    }
+    return tnode(s.tape, tin.shape, out, 16, a, -1, -1, [], []);
+}
+
+fn t_gelu(s: TAg, a: int) -> TAg {
+    let out: Tensor = tensor_gelu(t_tensor(s.tape, a));
+    return tnode(s.tape, out.shape, out.data, 6, a, -1, -1, [], []);
+}
+
+fn t_relu(s: TAg, a: int) -> TAg {
+    let out: Tensor = tensor_relu(t_tensor(s.tape, a));
+    return tnode(s.tape, out.shape, out.data, 12, a, -1, -1, [], []);
+}
+
+fn t_mul(s: TAg, a: int, b: int) -> TAg {
+    let out: Tensor = tensor_mul(t_tensor(s.tape, a), t_tensor(s.tape, b));
+    return tnode(s.tape, out.shape, out.data, 8, a, b, -1, [], []);
+}
+
+fn t_scale(s: TAg, a: int, sc: float) -> TAg {
+    let out: Tensor = tensor_scale(t_tensor(s.tape, a), sc);
+    return tnode(s.tape, out.shape, out.data, 9, a, -1, -1, [sc], []);
+}
+
+fn t_layernorm(s: TAg, x: int, gamma: int, beta: int) -> TAg {
+    let tin: Tensor = t_tensor(s.tape, x);
+    let g: [float] = tvals_of(s.tape, gamma);
+    let be: [float] = tvals_of(s.tape, beta);
+    let rows: int = tin.shape[0];
+    let cols: int = tin.shape[1];
+    let mut out: [float] = [];
+    let mut aux: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut mean: float = 0.0;
+        let mut c: int = 0;
+        while c < cols {
+            mean = mean + tin.data[r * cols + c];
+            c = c + 1;
+        }
+        mean = mean / cols as float;
+        let mut var: float = 0.0;
+        c = 0;
+        while c < cols {
+            let d: float = tin.data[r * cols + c] - mean;
+            var = var + d * d;
+            c = c + 1;
+        }
+        var = var / cols as float;
+        let inv: float = 1.0 / sqrt(var + 0.00001);
+        push(aux, mean);
+        push(aux, inv);
+        c = 0;
+        while c < cols {
+            push(out, (tin.data[r * cols + c] - mean) * inv * g[c] + be[c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return tnode(s.tape, tin.shape, out, 7, x, gamma, beta, aux, []);
+}
+
+fn t_gather(s: TAg, w: int, indices: [int]) -> TAg {
+    let tw: Tensor = t_tensor(s.tape, w);
+    let d: int = tw.shape[1];
+    let mut out: [float] = [];
+    for idx in indices {
+        let mut j: int = 0;
+        while j < d {
+            push(out, tw.data[idx * d + j]);
+            j = j + 1;
+        }
+    }
+    let shape: [int] = [len(indices), d];
+    return tnode(s.tape, shape, out, 10, w, -1, -1, [], indices);
+}
+
+fn t_cross_entropy(s: TAg, logits: int, targets: [int]) -> TAg {
+    let tl: Tensor = t_tensor(s.tape, logits);
+    let probs: Tensor = tensor_softmax_rows(tl);
+    let seq: int = tl.shape[0];
+    let v: int = tl.shape[1];
+    let mut loss: float = 0.0;
+    let mut r: int = 0;
+    while r < seq {
+        let p: float = probs.data[r * v + targets[r]] + 0.000000001;
+        loss = loss - log(p);
+        r = r + 1;
+    }
+    loss = loss / seq as float;
+    let shape: [int] = [1];
+    let data: [float] = [loss];
+    return tnode(s.tape, shape, data, 11, logits, -1, -1, [], targets);
+}
+
+fn t_col_slice(s: TAg, a: int, start: int, ncols: int) -> TAg {
+    let tin: Tensor = t_tensor(s.tape, a);
+    let rows: int = tin.shape[0];
+    let cols: int = tin.shape[1];
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut c: int = 0;
+        while c < ncols {
+            push(out, tin.data[r * cols + start + c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    let shape: [int] = [rows, ncols];
+    let auxi: [int] = [start, ncols];
+    return tnode(s.tape, shape, out, 13, a, -1, -1, [], auxi);
+}
+
+fn t_concat_cols(s: TAg, a: int, b: int) -> TAg {
+    let ta: Tensor = t_tensor(s.tape, a);
+    let tb: Tensor = t_tensor(s.tape, b);
+    let rows: int = ta.shape[0];
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut c: int = 0;
+        while c < ta.shape[1] {
+            push(out, ta.data[r * ta.shape[1] + c]);
+            c = c + 1;
+        }
+        c = 0;
+        while c < tb.shape[1] {
+            push(out, tb.data[r * tb.shape[1] + c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    let shape: [int] = [rows, ta.shape[1] + tb.shape[1]];
+    return tnode(s.tape, shape, out, 14, a, b, -1, [], []);
+}
+
+fn t_reshape(s: TAg, a: int, shape: [int]) -> TAg {
+    let data: [float] = tvals_of(s.tape, a);
+    let mut n: int = 1;
+    for d in shape {
+        n = n * d;
+    }
+    if n != len(data) {
+        fail("t_reshape: size mismatch");
+    }
+    return tnode(s.tape, shape, data, 15, a, -1, -1, [], []);
+}
+
+// MaxPool 2x2, stride 2, single channel: input shape
+// [h, w] with h, w even -> output [h/2, w/2]. The argmax
+// flat input index of each output cell is stored in auxi,
+// so backward routes each output gradient to exactly the
+// winning input cell (all other cells get 0).
+fn t_maxpool2d(s: TAg, a: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let shape: [int] = tshape_of(s.tape, a);
+    let h: int = shape[0];
+    let w: int = shape[1];
+    let oh: int = h / 2;
+    let ow: int = w / 2;
+    let mut out: [float] = [];
+    let mut argmax: [int] = [];
+    let mut r: int = 0;
+    while r < oh {
+        let mut c: int = 0;
+        while c < ow {
+            let mut best: float = x[(2 * r) * w + 2 * c];
+            let mut bi: int = (2 * r) * w + 2 * c;
+            let mut dr: int = 0;
+            while dr < 2 {
+                let mut dc: int = 0;
+                while dc < 2 {
+                    let v: float = x[(2 * r + dr) * w + 2 * c + dc];
+                    if v > best {
+                        best = v;
+                        bi = (2 * r + dr) * w + 2 * c + dc;
+                    }
+                    dc = dc + 1;
+                }
+                dr = dr + 1;
+            }
+            push(out, best);
+            push(argmax, bi);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    let oshape: [int] = [oh, ow];
+    return tnode(s.tape, oshape, out, 17, a, -1, -1, [], argmax);
+}
+
+// im2col (0.7.0): input [h, w] -> patches
+// [oh*ow, kh*kw], stride 1, no padding, row-major
+// patches. Unlike cnn_conv2d's plain-data im2col,
+// this is a TAPE op: its input can be any earlier
+// tape node, so conv layers now stack — the backward
+// pass scatters each patch gradient back to its
+// input pixels, accumulating where patches overlap.
+fn t_im2col(s: TAg, a: int, kh: int, kw: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let shape: [int] = tshape_of(s.tape, a);
+    let h: int = shape[0];
+    let w: int = shape[1];
+    let oh: int = h - kh + 1;
+    let ow: int = w - kw + 1;
+    let mut out: [float] = [];
+    let mut pr: int = 0;
+    while pr < oh {
+        let mut pc: int = 0;
+        while pc < ow {
+            let mut dr: int = 0;
+            while dr < kh {
+                let mut dc: int = 0;
+                while dc < kw {
+                    push(out, x[(pr + dr) * w + pc + dc]);
+                    dc = dc + 1;
+                }
+                dr = dr + 1;
+            }
+            pc = pc + 1;
+        }
+        pr = pr + 1;
+    }
+    let oshape: [int] = [oh * ow, kh * kw];
+    return tnode(s.tape, oshape, out, 21, a, -1, -1, [], [h, w, kh, kw]);
+}
+
+// Elementwise sigmoid: y = 1 / (1 + exp(-x)).
+fn t_sigmoid(s: TAg, a: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, 1.0 / (1.0 + exp(-x[j])));
+        j = j + 1;
+    }
+    return tnode(s.tape, tshape_of(s.tape, a), out, 18, a, -1, -1, [], []);
+}
+
+// Elementwise tanh, clamped past |x| > 20 where exp(2x)
+// would overflow a float. Backward uses (1 - y^2).
+fn t_tanh(s: TAg, a: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        if x[j] > 20.0 {
+            push(out, 1.0);
+        } else if x[j] < -20.0 {
+            push(out, -1.0);
+        } else {
+            let e: float = exp(2.0 * x[j]);
+            push(out, (e - 1.0) / (e + 1.0));
+        }
+        j = j + 1;
+    }
+    return tnode(s.tape, tshape_of(s.tape, a), out, 19, a, -1, -1, [], []);
+}
+
+// Mean squared error against targets (stored in aux).
+// Output is a [1] loss node, like cross_entropy.
+fn t_mse_loss(s: TAg, a: int, targets: [float]) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    if len(x) != len(targets) {
+        fail("t_mse_loss: size mismatch");
+    }
+    let mut loss: float = 0.0;
+    let mut j: int = 0;
+    while j < len(x) {
+        let d: float = x[j] - targets[j];
+        loss = loss + d * d;
+        j = j + 1;
+    }
+    loss = loss / len(x) as float;
+    let shape: [int] = [1];
+    return tnode(s.tape, shape, [loss], 20, a, -1, -1, targets, []);
+}
+
+// Backward: walk nodes in reverse, accumulating each node's
+// gradient into a flat array parallel to the tape's vals.
+// The loss node's gradient is seeded with 1.0. Every rule
+// below is the exact derivative of its forward op; the demo
+// checks them against finite differences.
+fn t_backward(t: TTape, out: int) -> [float] {
+    let mut grads: [float] = [];
+    let mut k: int = 0;
+    while k < len(t.vals) {
+        push(grads, 0.0);
+        k = k + 1;
+    }
+    grads[t.voff[out]] = 1.0;
+    let mut i: int = len(t.voff) - 1;
+    while i >= 0 {
+        let g: [float] = fslice(grads, t.voff[i], t.vlen[i]);
+        let opc: int = t.op[i];
+        if opc == 1 {
+            let gt: Tensor = Tensor { data: g, shape: tshape_of(t, i) };
+            let dA: Tensor = tensor_matmul(gt, tensor_transpose2(t_tensor(t, t.b[i])));
+            let dB: Tensor = tensor_matmul(tensor_transpose2(t_tensor(t, t.a[i])), gt);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(dA.data) {
+                grads[offa + j] = grads[offa + j] + dA.data[j];
+                j = j + 1;
+            }
+            let offb: int = t.voff[t.b[i]];
+            j = 0;
+            while j < len(dB.data) {
+                grads[offb + j] = grads[offb + j] + dB.data[j];
+                j = j + 1;
+            }
+        } else if opc == 2 {
+            let offa: int = t.voff[t.a[i]];
+            let offb: int = t.voff[t.b[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j];
+                grads[offb + j] = grads[offb + j] + g[j];
+                j = j + 1;
+            }
+        } else if opc == 3 {
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j];
+                j = j + 1;
+            }
+            let shape: [int] = tshape_of(t, i);
+            let rows: int = shape[0];
+            let cols: int = shape[1];
+            let offb: int = t.voff[t.b[i]];
+            let mut c: int = 0;
+            while c < cols {
+                let mut s: float = 0.0;
+                let mut r: int = 0;
+                while r < rows {
+                    s = s + g[r * cols + c];
+                    r = r + 1;
+                }
+                grads[offb + c] = grads[offb + c] + s;
+                c = c + 1;
+            }
+        } else if opc == 4 {
+            let gt: Tensor = Tensor { data: g, shape: tshape_of(t, i) };
+            let dA: Tensor = tensor_transpose2(gt);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(dA.data) {
+                grads[offa + j] = grads[offa + j] + dA.data[j];
+                j = j + 1;
+            }
+        } else if opc == 5 || opc == 16 {
+            let y: [float] = tvals_of(t, i);
+            let shape: [int] = tshape_of(t, i);
+            let rows: int = shape[0];
+            let cols: int = shape[1];
+            let offa: int = t.voff[t.a[i]];
+            let mut r: int = 0;
+            while r < rows {
+                let mut dot: float = 0.0;
+                let mut c: int = 0;
+                while c < cols {
+                    dot = dot + g[r * cols + c] * y[r * cols + c];
+                    c = c + 1;
+                }
+                c = 0;
+                while c < cols {
+                    let dv: float = y[r * cols + c] * (g[r * cols + c] - dot);
+                    grads[offa + r * cols + c] = grads[offa + r * cols + c] + dv;
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 6 {
+            let x: [float] = tvals_of(t, t.a[i]);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                let sig: float = 1.0 / (1.0 + exp(-1.702 * x[j]));
+                let d: float = sig + x[j] * 1.702 * sig * (1.0 - sig);
+                grads[offa + j] = grads[offa + j] + g[j] * d;
+                j = j + 1;
+            }
+        } else if opc == 7 {
+            let x: [float] = tvals_of(t, t.a[i]);
+            let gamma: [float] = tvals_of(t, t.b[i]);
+            let aux: [float] = fslice(t.aux, t.auxoff[i], t.auxlen[i]);
+            let shape: [int] = tshape_of(t, i);
+            let rows: int = shape[0];
+            let cols: int = shape[1];
+            let offa: int = t.voff[t.a[i]];
+            let offg: int = t.voff[t.b[i]];
+            let offb: int = t.voff[t.c[i]];
+            let mut r: int = 0;
+            while r < rows {
+                let mean: float = aux[r * 2];
+                let inv: float = aux[r * 2 + 1];
+                let mut xhat: [float] = [];
+                let mut dxhat: [float] = [];
+                let mut c: int = 0;
+                while c < cols {
+                    let xh: float = (x[r * cols + c] - mean) * inv;
+                    push(xhat, xh);
+                    push(dxhat, g[r * cols + c] * gamma[c]);
+                    c = c + 1;
+                }
+                let mut s1: float = 0.0;
+                let mut s2: float = 0.0;
+                c = 0;
+                while c < cols {
+                    s1 = s1 + dxhat[c];
+                    s2 = s2 + dxhat[c] * xhat[c];
+                    c = c + 1;
+                }
+                c = 0;
+                while c < cols {
+                    let dx: float = inv / cols as float * (cols as float * dxhat[c] - s1 - xhat[c] * s2);
+                    grads[offa + r * cols + c] = grads[offa + r * cols + c] + dx;
+                    grads[offg + c] = grads[offg + c] + g[r * cols + c] * xhat[c];
+                    grads[offb + c] = grads[offb + c] + g[r * cols + c];
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 8 {
+            let av: [float] = tvals_of(t, t.a[i]);
+            let bv: [float] = tvals_of(t, t.b[i]);
+            let offa: int = t.voff[t.a[i]];
+            let offb: int = t.voff[t.b[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] * bv[j];
+                grads[offb + j] = grads[offb + j] + g[j] * av[j];
+                j = j + 1;
+            }
+        } else if opc == 9 {
+            let sc: float = t.aux[t.auxoff[i]];
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] * sc;
+                j = j + 1;
+            }
+        } else if opc == 10 {
+            let indices: [int] = islice(t.auxi, t.auxioff[i], t.auxilen[i]);
+            let shape: [int] = tshape_of(t, i);
+            let d: int = shape[1];
+            let offa: int = t.voff[t.a[i]];
+            let mut r: int = 0;
+            while r < len(indices) {
+                let mut j: int = 0;
+                while j < d {
+                    grads[offa + indices[r] * d + j] = grads[offa + indices[r] * d + j] + g[r * d + j];
+                    j = j + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 11 {
+            let logits: [float] = tvals_of(t, t.a[i]);
+            let targets: [int] = islice(t.auxi, t.auxioff[i], t.auxilen[i]);
+            let shape: [int] = tshape_of(t, t.a[i]);
+            let seq: int = shape[0];
+            let v: int = shape[1];
+            let offa: int = t.voff[t.a[i]];
+            let mut r: int = 0;
+            while r < seq {
+                let mut row: [float] = [];
+                let mut c: int = 0;
+                while c < v {
+                    push(row, logits[r * v + c]);
+                    c = c + 1;
+                }
+                let probs: [float] = tensor_softmax1(row);
+                c = 0;
+                while c < v {
+                    let dv: float = probs[c];
+                    if c == targets[r] {
+                        grads[offa + r * v + c] = grads[offa + r * v + c] + (dv - 1.0) / seq as float;
+                    } else {
+                        grads[offa + r * v + c] = grads[offa + r * v + c] + dv / seq as float;
+                    }
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 12 {
+            let x: [float] = tvals_of(t, t.a[i]);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                if x[j] > 0.0 {
+                    grads[offa + j] = grads[offa + j] + g[j];
+                }
+                j = j + 1;
+            }
+        } else if opc == 13 {
+            let auxi: [int] = islice(t.auxi, t.auxioff[i], t.auxilen[i]);
+            let start: int = auxi[0];
+            let ncols: int = auxi[1];
+            let ashape: [int] = tshape_of(t, t.a[i]);
+            let acols: int = ashape[1];
+            let offa: int = t.voff[t.a[i]];
+            let rows: int = tshape_of(t, i)[0];
+            let mut r: int = 0;
+            while r < rows {
+                let mut c: int = 0;
+                while c < ncols {
+                    grads[offa + r * acols + start + c] = grads[offa + r * acols + start + c] + g[r * ncols + c];
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 14 {
+            let ashape: [int] = tshape_of(t, t.a[i]);
+            let acols: int = ashape[1];
+            let bcols: int = tshape_of(t, t.b[i])[1];
+            let rows: int = ashape[0];
+            let offa: int = t.voff[t.a[i]];
+            let offb: int = t.voff[t.b[i]];
+            let mut r: int = 0;
+            while r < rows {
+                let mut c: int = 0;
+                while c < acols {
+                    grads[offa + r * acols + c] = grads[offa + r * acols + c] + g[r * (acols + bcols) + c];
+                    c = c + 1;
+                }
+                c = 0;
+                while c < bcols {
+                    grads[offb + r * bcols + c] = grads[offb + r * bcols + c] + g[r * (acols + bcols) + acols + c];
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        } else if opc == 15 {
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j];
+                j = j + 1;
+            }
+        } else if opc == 17 {
+            let argmax: [int] = islice(t.auxi, t.auxioff[i], t.auxilen[i]);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + argmax[j]] = grads[offa + argmax[j]] + g[j];
+                j = j + 1;
+            }
+        } else if opc == 18 {
+            let y: [float] = tvals_of(t, i);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] * y[j] * (1.0 - y[j]);
+                j = j + 1;
+            }
+        } else if opc == 19 {
+            let y: [float] = tvals_of(t, i);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] * (1.0 - y[j] * y[j]);
+                j = j + 1;
+            }
+        } else if opc == 20 {
+            let x: [float] = tvals_of(t, t.a[i]);
+            let targets: [float] = fslice(t.aux, t.auxoff[i], t.auxlen[i]);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(x) {
+                grads[offa + j] = grads[offa + j] + g[0] * 2.0 * (x[j] - targets[j]) / len(x) as float;
+                j = j + 1;
+            }
+        } else if opc == 21 {
+            let dims: [int] = islice(t.auxi, t.auxioff[i], t.auxilen[i]);
+            let h: int = dims[0];
+            let w: int = dims[1];
+            let kh: int = dims[2];
+            let kw: int = dims[3];
+            let oh: int = h - kh + 1;
+            let ow: int = w - kw + 1;
+            let offa: int = t.voff[t.a[i]];
+            let mut pr: int = 0;
+            while pr < oh {
+                let mut pc: int = 0;
+                while pc < ow {
+                    let mut dr: int = 0;
+                    while dr < kh {
+                        let mut dc: int = 0;
+                        while dc < kw {
+                            let row: int = pr * ow + pc;
+                            let col: int = dr * kw + dc;
+                            let idx: int = (pr + dr) * w + pc + dc;
+                            grads[offa + idx] = grads[offa + idx] + g[row * kh * kw + col];
+                            dc = dc + 1;
+                        }
+                        dr = dr + 1;
+                    }
+                    pc = pc + 1;
+                }
+                pr = pr + 1;
+            }
+        }
+        i = i - 1;
+    }
+    return grads;
+}
+
+fn t_grad_of(t: TTape, grads: [float], id: int) -> [float] {
+    return fslice(grads, t.voff[id], t.vlen[id]);
+}

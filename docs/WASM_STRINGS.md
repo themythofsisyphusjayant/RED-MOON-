@@ -95,7 +95,7 @@ import("node:fs").then(async ({ readFileSync }) => {
 Expected stdout buffer for the demo:
 
 ```text
-hello jal pari
+hello qasida
 len = 14
 xs len = 5
 xs[2] = 4

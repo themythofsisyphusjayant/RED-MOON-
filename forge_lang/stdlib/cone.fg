@@ -1,0 +1,20 @@
+struct Cone {
+    r: int;
+    h: int;
+}
+
+fn cone_new(r: int, h: int) -> Cone {
+    return Cone { r: r, h: h };
+}
+
+fn cone_volume(c: Cone) -> int {
+    return c.r * c.r * c.h;
+}
+
+fn cone_slant2(c: Cone) -> int {
+    return c.r * c.r + c.h * c.h;
+}
+
+fn cone_surface3(c: Cone) -> int {
+    return 3 * c.r * c.r + 3 * c.r * c.h;
+}

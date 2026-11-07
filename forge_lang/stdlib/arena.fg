@@ -1,0 +1,50 @@
+struct Arena {
+    mem: [int];
+    next: int;
+}
+
+fn arena_new() -> Arena {
+    let a: Arena = Arena { mem: [], next: 0 };
+    return a;
+}
+
+fn arena_alloc(a: Arena) -> (int, Arena) {
+    let mut m = a;
+    if m.next < len(m.mem) {
+        let slot: int = m.next;
+        m.next = m.next + 1;
+        return (slot, m);
+    }
+    let mut mem = m.mem;
+    push(mem, 0);
+    m.mem = mem;
+    let slot: int = m.next;
+    m.next = m.next + 1;
+    return (slot, m);
+}
+
+fn arena_free(a: Arena, addr: int) -> Arena {
+    return a;
+}
+
+fn arena_mark(a: Arena) -> (int, Arena) {
+    return (a.next, a);
+}
+
+fn arena_restore(a: Arena, mark: int) -> Arena {
+    let mut m = a;
+    if mark <= m.next {
+        m.next = mark;
+    }
+    return m;
+}
+
+fn arena_reset(a: Arena) -> Arena {
+    let mut m = a;
+    m.next = 0;
+    return m;
+}
+
+fn arena_len(a: Arena) -> int {
+    return a.next;
+}

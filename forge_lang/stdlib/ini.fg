@@ -1,0 +1,79 @@
+// Qasida — INI parser (roadmap item 18).
+// Import with: import "ini.fg";
+// [section] headers, key = value lines, ';' and '#' comments,
+// blank lines skipped. All values are strings; callers parse
+// numbers with parse_int / parse_float. Duplicate keys: the
+// first occurrence wins in ini_get.
+
+struct Ini {
+    keys: [str];
+    vals: [str];
+}
+
+fn ini_parse(text: str) -> Ini {
+    let mut keys: [str] = [];
+    let mut vals: [str] = [];
+    let mut section: str = "";
+    let lines: [str] = split(text, "\n");
+    for raw in lines {
+        let ln: str = trim(raw);
+        if len(ln) > 0 {
+            if !starts_with(ln, ";") {
+                if !starts_with(ln, "#") {
+                    if starts_with(ln, "[") {
+                        if ends_with(ln, "]") {
+                            section = substr(ln, 1, len(ln) - 2);
+                        }
+                    } else {
+                        let parts: [str] = split(ln, "=");
+                        if len(parts) >= 2 {
+                            let key: str = trim(parts[0]);
+                            let mut val: str = trim(parts[1]);
+                            let mut fkey: str = key;
+                            if len(section) > 0 {
+                                fkey = section + "." + key;
+                            }
+                            push(keys, fkey);
+                            push(vals, val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return Ini { keys: keys, vals: vals };
+}
+
+fn ini_get(cfg: Ini, key: str) -> str {
+    let mut i: int = 0;
+    while i < len(cfg.keys) {
+        if cfg.keys[i] == key {
+            return cfg.vals[i];
+        }
+        i = i + 1;
+    }
+    fail("ini_get: key not found");
+    return "";
+}
+
+fn ini_get_or(cfg: Ini, key: str, fallback: str) -> str {
+    let mut i: int = 0;
+    while i < len(cfg.keys) {
+        if cfg.keys[i] == key {
+            return cfg.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn ini_has(cfg: Ini, key: str) -> bool {
+    let mut i: int = 0;
+    while i < len(cfg.keys) {
+        if cfg.keys[i] == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}

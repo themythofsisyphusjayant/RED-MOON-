@@ -1,0 +1,110 @@
+// Qasida — base64 + hex (roadmap item 63).
+// Import with: import "base64.fg";
+// Byte-array API ([int] 0-255), same reason as checksum.fg:
+// no ord() builtin. Decoding searches the alphabet by character
+// comparison, so no character codes are needed anywhere.
+
+fn b64_val(c: str) -> int {
+    let alpha: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut j: int = 0;
+    while j < 64 {
+        if alpha[j] == c {
+            return j;
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+fn b64_encode(data: [int]) -> str {
+    let alpha: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(data) {
+        let b0: int = data[i];
+        let mut b1: int = 0;
+        let mut b2: int = 0;
+        let mut rem: int = 1;
+        if i + 1 < len(data) {
+            b1 = data[i + 1];
+            rem = 2;
+        }
+        if i + 2 < len(data) {
+            b2 = data[i + 2];
+            rem = 3;
+        }
+        out = out + alpha[b0 >> 2];
+        out = out + alpha[((b0 & 3) << 4) | (b1 >> 4)];
+        if rem >= 2 {
+            out = out + alpha[((b1 & 15) << 2) | (b2 >> 6)];
+        } else {
+            out = out + "=";
+        }
+        if rem >= 3 {
+            out = out + alpha[b2 & 63];
+        } else {
+            out = out + "=";
+        }
+        i = i + 3;
+    }
+    return out;
+}
+
+fn b64_decode(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i + 3 < len(s) + 1 && i < len(s) {
+        if i + 3 >= len(s) {
+            break;
+        }
+        let c0: str = substr(s, i, 1);
+        let c1: str = substr(s, i + 1, 1);
+        let c2: str = substr(s, i + 2, 1);
+        let c3: str = substr(s, i + 3, 1);
+        let v0: int = b64_val(c0);
+        let v1: int = b64_val(c1);
+        let v2: int = b64_val(c2);
+        let v3: int = b64_val(c3);
+        push(out, (v0 << 2) | (v1 >> 4));
+        if c2 != "=" {
+            push(out, ((v1 & 15) << 4) | (v2 >> 2));
+        }
+        if c3 != "=" {
+            push(out, ((v2 & 3) << 6) | v3);
+        }
+        i = i + 4;
+    }
+    return out;
+}
+
+fn hex_encode(data: [int]) -> str {
+    let alpha: str = "0123456789abcdef";
+    let mut out: str = "";
+    for b in data {
+        out = out + alpha[b >> 4];
+        out = out + alpha[b & 15];
+    }
+    return out;
+}
+
+fn hex_val(c: str) -> int {
+    let alpha: str = "0123456789abcdef";
+    let mut j: int = 0;
+    while j < 16 {
+        if alpha[j] == c {
+            return j;
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+fn hex_decode(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i + 1 < len(s) {
+        push(out, hex_val(substr(s, i, 1)) * 16 + hex_val(substr(s, i + 1, 1)));
+        i = i + 2;
+    }
+    return out;
+}

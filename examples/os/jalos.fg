@@ -1,12 +1,12 @@
-// JalOS 0.1.0 — a complete teaching operating system written in Jal Pari.
+// JalOS 0.1.0 — a complete teaching operating system written in Qasida.
 //
 // What this IS: every subsystem a modern OS has — bootloader, kernel,
 // scheduler, virtual memory allocator, hierarchical filesystem with
 // permissions, users, devices, networking, a package manager, system
 // services, logging, and a shell with ~30 commands — implemented
-// faithfully and running as one Jal Pari program.
+// faithfully and running as one Qasida program.
 //
-// What this IS NOT (honesty first): a bootable kernel. Jal Pari has
+// What this IS NOT (honesty first): a bootable kernel. Qasida has
 // no pointers, no inline assembly, no interrupts, and no freestanding
 // mode — its programs run on top of a host OS through libc. So there
 // are no hardware drivers here: devices are simulated, the network
@@ -1103,7 +1103,7 @@ fn cmd_dispatch(parts: [str], procs: [Proc], files: [File], users: [User], heap:
         return 0;
     }
     if cmd == "uname" {
-        println("JalOS jalpari-kernel 0.1.0 x86_64-sim");
+        println("JalOS qasida-kernel 0.1.0 x86_64-sim");
         return 0;
     }
     if cmd == "hostname" {
@@ -1250,7 +1250,7 @@ fn cmd_dispatch(parts: [str], procs: [Proc], files: [File], users: [User], heap:
                 return 1;
             }
             if sub == "info" {
-                println(name, "0.1.0 (from the Jal Pari registry)");
+                println(name, "0.1.0 (from the Qasida registry)");
                 return 0;
             }
             if sub == "remove" {
@@ -1370,7 +1370,7 @@ fn main() -> int {
     files[0] = File { name: "/", parent: 0, is_dir: true, content: "", owner: 0, alive: true };
     users[0] = User { name: "root", uid: 0, pass: "root", alive: true };
     users[1] = User { name: "guest", uid: 1, pass: "guest", alive: true };
-    println("JalOS 0.1.0 -- a teaching OS in Jal Pari");
+    println("JalOS 0.1.0 -- a teaching OS in Qasida");
     if heap[0] == 1024 {
         println("[  OK  ] memory test: 1024 words");
     } else {
@@ -1386,7 +1386,7 @@ fn main() -> int {
     d = rebuild_passwd(files, users);
     d = fs_write(files, regs, "/var/log/syslog", "");
     regs[4] = fs_resolve(files, "/var/log/syslog");
-    d = fs_write(files, regs, "/README", "Welcome to JalOS.\nA complete teaching OS written in Jal Pari.\nTry: help, ls, ps, run counter, sched, mem, pkg search\n");
+    d = fs_write(files, regs, "/README", "Welcome to JalOS.\nA complete teaching OS written in Qasida.\nTry: help, ls, ps, run counter, sched, mem, pkg search\n");
     println("[  OK  ] mounted rootfs");
     d = append_log(files, regs, "boot: kernel started");
     d = append_log(files, regs, "boot: init done");

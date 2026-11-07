@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cost-of-safety benchmarks: Jal Pari safe mode vs fast mode.
+"""Cost-of-safety benchmarks: Qasida safe mode vs fast mode.
 
 Same program, same inputs, self-timed (clock_micros), 3 runs, median.
 Two comparisons per task:

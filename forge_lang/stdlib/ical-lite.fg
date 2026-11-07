@@ -1,0 +1,55 @@
+// Qasida — minimal iCalendar event text.
+// Import with: import "ical-lite.fg";
+// LIMITS (honest v1): builds one VEVENT block as text only — no
+// parsing, no recurrence rules, no timezone handling (all times
+// are written as UTC with a trailing Z), and the caller supplies
+// both start and end times (no duration arithmetic in v1).
+// Qasida has no int-to-string builtin, so numbers come from
+// a digit table.
+
+fn ical_digit(d: int) -> str {
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    return "9";
+}
+
+fn ical_int_str(n: int) -> str {
+    if n == 0 { return "0"; }
+    let mut v: int = n;
+    let mut neg: bool = false;
+    if n < 0 { neg = true; v = 0 - n; }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + ical_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + rev[i];
+        i = i - 1;
+    }
+    if neg { out = "-" + out; }
+    return out;
+}
+
+fn ical_pad2(n: int) -> str {
+    if n < 10 { return "0" + ical_int_str(n); }
+    return ical_int_str(n);
+}
+
+fn ical_stamp(y: int, m: int, d: int, h: int, mi: int, s: int) -> str {
+    return ical_int_str(y) + ical_pad2(m) + ical_pad2(d) + "T" + ical_pad2(h) + ical_pad2(mi) + ical_pad2(s) + "Z";
+}
+
+fn ical_event(uid: str, summary: str, sy: int, sm: int, sd: int, sh: int, smi: int, ss: int, ey: int, em: int, ed: int, eh: int, emi: int, es: int) -> str {
+    let out: str = "BEGIN:VEVENT\nUID:" + uid + "\nSUMMARY:" + summary + "\nDTSTART:" + ical_stamp(sy, sm, sd, sh, smi, ss) + "\nDTEND:" + ical_stamp(ey, em, ed, eh, emi, es) + "\nEND:VEVENT";
+    return out;
+}

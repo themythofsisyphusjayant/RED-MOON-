@@ -1,7 +1,7 @@
 import "toml.fg";
 
 fn main() -> int {
-    let text: str = "# demo config\ntitle = \"Jal Pari\"\n[server]\nhost = \"localhost\"\nport = 8080\nratio = 1.5\nenabled = true\n";
+    let text: str = "# demo config\ntitle = \"Qasida\"\n[server]\nhost = \"localhost\"\nport = 8080\nratio = 1.5\nenabled = true\n";
     let cfg: Toml = toml_parse(text);
     println("title =", toml_get(cfg, "title"));
     println("host =", toml_get(cfg, "server.host"));

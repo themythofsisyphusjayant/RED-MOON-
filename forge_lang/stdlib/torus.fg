@@ -1,0 +1,16 @@
+struct Torus {
+    major: int;
+    minor: int;
+}
+
+fn torus_new(major: int, minor: int) -> Torus {
+    return Torus { major: major, minor: minor };
+}
+
+fn torus_volume18(t: Torus) -> int {
+    return 18 * t.major * t.minor * t.minor;
+}
+
+fn torus_surface36(t: Torus) -> int {
+    return 36 * t.major * t.minor;
+}

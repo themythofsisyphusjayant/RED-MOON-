@@ -1,4 +1,4 @@
-"""The Jal Pari Language -> C code generator.
+"""Qasida -> C code generator.
 
 Safe mode (default): checked int arithmetic, bounds-checked indexing.
 Fast mode (--mode fast): unchecked arithmetic/indexing, -O3 -march=native
@@ -112,7 +112,7 @@ static void forge_str_array_free(ForgeStrArray a) {
 }
 
 static void forge_fail(const char *msg) {
-    fprintf(stderr, "jalpari: runtime error: %s\n", msg);
+    fprintf(stderr, "qasida: runtime error: %s\n", msg);
     exit(1);
 }
 
@@ -395,7 +395,7 @@ static bool forge_write_bytes(const char *path, ForgeIntArray data) {
         if (fwrite(&byte, 1, 1, f) != 1) { ok = false; break; }
     }
     fclose(f);
-    /* Consume the param hold (mirrors Jal Pari fn params,
+    /* Consume the param hold (mirrors Qasida fn params,
        which are freed at fn end): a fresh literal's hold
        is freed here, a shared array's param hold is just
        dec'd and the caller's hold survives. Without this,
@@ -405,7 +405,7 @@ static bool forge_write_bytes(const char *path, ForgeIntArray data) {
 }
 
 /* Memory-mapped files (Top-500 #31): a runtime table
-   of mappings, keyed by an int id (Jal Pari has no
+   of mappings, keyed by an int id (Qasida has no
    pointer type, so the mapping cannot be an array
    value — array frees call free(), which would
    corrupt mmap'd memory). Writes go through
@@ -1123,7 +1123,7 @@ class Codegen:
         # --debug: emit #line directives mapping
         # generated C back to .fg files/lines, so
         # gdb (and readelf's line table) step through
-        # Jal Pari source instead of generated C.
+        # Qasida source instead of generated C.
         self.debug = debug
         self.current_file = ""
         self.func_ret = {fn.name: fn.ret for fn in program.funcs}
@@ -2315,7 +2315,7 @@ class Codegen:
             # program's main and exits with its value via the raw
             # exit_group syscall (231, code in rdi).
             self.emit("__attribute__((noreturn)) void _start(void) {")
-            self.emit("    long long code = jalpari_main();")
+            self.emit("    long long code = qasida_main();")
             self.emit('    __asm__ volatile ("syscall" :: "a" (231L), "D" (code) : "rcx", "r11", "memory");')
             self.emit("    __builtin_unreachable();")
             self.emit("}")
@@ -2397,7 +2397,7 @@ class Codegen:
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                     or is_union_type(pt) or is_opaque_type(pt):
                 self.owned_stack[0][pn] = pt
-        sig = ("long long jalpari_main(void)"
+        sig = ("long long qasida_main(void)"
                if fn.name == "main" and self.freestanding
                else "int main(int __forge_argc, char **__forge_argv)"
                if fn.name == "main" else self.c_sig(fn))
@@ -3442,7 +3442,7 @@ class Codegen:
             if isinstance(call, A.Call) and call.name == "assert":
                 cond = self.gen_expr(call.args[0])
                 msg = self.gen_expr(call.args[1])
-                self.emit(f"if (!({cond})) {{ fprintf(stderr, \"jalpari: assertion failed: %s\\n\", {msg}); exit(1); }}")
+                self.emit(f"if (!({cond})) {{ fprintf(stderr, \"qasida: assertion failed: %s\\n\", {msg}); exit(1); }}")
                 return
             if isinstance(call, A.Call) and call.name in ("print", "println"):
                 self.gen_print(call)
@@ -3515,7 +3515,7 @@ class Codegen:
                     self.emit(f"{PUSH_FN[et]}(&{var_code}, {val});")
                 return
             if isinstance(call, A.Call) and call.name == "fail":
-                self.emit(f'fprintf(stderr, "jalpari: %s\\n", {self.gen_expr(call.args[0])});')
+                self.emit(f'fprintf(stderr, "qasida: %s\\n", {self.gen_expr(call.args[0])});')
                 self.emit("exit(1);")
                 return
             if isinstance(call, A.Call) and call.name == "pin":

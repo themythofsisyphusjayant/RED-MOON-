@@ -1,0 +1,42 @@
+// Qasida — tiny test helpers (0.6.0).
+// Import with: import "test.fg";
+// There is no test runner with fixtures here, by
+// design: each check prints only on failure and
+// returns 0/1, so a test file sums failures and
+// fails at the end (see examples/dev_demo.fg).
+// That keeps test output quiet on success, the way
+// the language's own suite behaves.
+
+fn check(name: str, cond: bool) -> int {
+    if cond == false {
+        println("FAIL:", name);
+        return 1;
+    }
+    return 0;
+}
+
+fn check_eq_int(name: str, got: int, want: int) -> int {
+    if got != want {
+        println("FAIL:", name, "got =", got, "want =", want);
+        return 1;
+    }
+    return 0;
+}
+
+fn check_close(name: str, got: float, want: float, tol: float) -> int {
+    let mut d: float = got - want;
+    if d < 0.0 { d = -d; }
+    if d > tol {
+        println("FAIL:", name, "got =", got, "want =", want);
+        return 1;
+    }
+    return 0;
+}
+
+fn check_eq_str(name: str, got: str, want: str) -> int {
+    if got != want {
+        println("FAIL:", name, "got =", got, "want =", want);
+        return 1;
+    }
+    return 0;
+}

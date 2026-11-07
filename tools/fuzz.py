@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Random-program fuzzer for The Jal Pari Language.
+"""Random-program fuzzer for Qasida.
 
 Generates small programs that are VALID BY CONSTRUCTION
 (typed expressions, tracked array lengths, bounded loops,
@@ -580,7 +580,7 @@ def classify(seed, src, timeout, workdir):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Jal Pari fuzzer")
+    ap = argparse.ArgumentParser(description="Qasida fuzzer")
     ap.add_argument("--seeds", type=int, default=50)
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--timeout", type=int, default=20)
@@ -592,7 +592,7 @@ def main(argv=None):
 
     counts = {}
     failures = []  # (seed, outcome, path, detail)
-    with tempfile.TemporaryDirectory(prefix="jalpari_fuzz_") as td:
+    with tempfile.TemporaryDirectory(prefix="qasida_fuzz_") as td:
         for seed in range(args.start, args.start + args.seeds):
             src = Gen(seed).program()
             if args.keep_programs:

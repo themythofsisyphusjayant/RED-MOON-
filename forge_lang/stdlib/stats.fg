@@ -1,0 +1,78 @@
+fn sum_float(xs: [float]) -> float {
+    let mut s: float = 0.0;
+    for v in xs {
+        s = s + v;
+    }
+    return s;
+}
+
+fn min_float(xs: [float]) -> float {
+    if len(xs) == 0 {
+        fail("min_float: empty array");
+    }
+    let mut m: float = xs[0];
+    for v in xs {
+        if v < m {
+            m = v;
+        }
+    }
+    return m;
+}
+
+fn max_float(xs: [float]) -> float {
+    if len(xs) == 0 {
+        fail("max_float: empty array");
+    }
+    let mut m: float = xs[0];
+    for v in xs {
+        if v > m {
+            m = v;
+        }
+    }
+    return m;
+}
+
+fn variance(xs: [float]) -> float {
+    if len(xs) == 0 {
+        fail("variance: empty array");
+    }
+    let m: float = sum_float(xs) / len(xs) as float;
+    let mut s: float = 0.0;
+    for v in xs {
+        let d: float = v - m;
+        s = s + d * d;
+    }
+    return s / len(xs) as float;
+}
+
+fn stddev(xs: [float]) -> float {
+    return sqrt(variance(xs));
+}
+
+fn median(xs: [float]) -> float {
+    if len(xs) == 0 {
+        fail("median: empty array");
+    }
+    let mut sorted: [float] = [];
+    for v in xs {
+        push(sorted, v);
+    }
+    let mut i: int = 0;
+    while i < len(sorted) {
+        let mut j: int = 0;
+        while j + 1 < len(sorted) - i {
+            if sorted[j] > sorted[j + 1] {
+                let t: float = sorted[j];
+                sorted[j] = sorted[j + 1];
+                sorted[j + 1] = t;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    let n: int = len(sorted);
+    if n % 2 == 1 {
+        return sorted[n / 2];
+    }
+    return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+}

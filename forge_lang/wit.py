@@ -4,7 +4,7 @@ WIT is the WebAssembly Component Model's interface language: a
 ``.wit`` file declares a *world* — the functions a component
 exports (and imports) — before the implementation is written.
 This module parses a small, honest subset of WIT and checks a
-Jal Pari program against it at compile time, so a program that
+Qasida program against it at compile time, so a program that
 does not match its declared interface fails with a clear error
 instead of shipping a module whose exports surprise its host.
 
@@ -30,7 +30,7 @@ NOT supported (clear error, not silent acceptance):
     module, not a component (that needs a component runtime
     to verify, which is future work)
 
-Type mapping (Jal Pari -> WIT): int -> s64, float -> f64,
+Type mapping (Qasida -> WIT): int -> s64, float -> f64,
 bool -> bool, str -> string, [T] -> list<T>. Structs, enums,
 Option/Result, and anything else have no mapping and fail the
 check with a message naming the function and the type.
@@ -238,7 +238,7 @@ def parse_wit(text):
 # ---------------------------------------------------------------- checking
 
 def forge_type_to_wit(t, fn_name):
-    """Map a Jal Pari type to its WIT type tuple, or raise ForgeError."""
+    """Map a Qasida type to its WIT type tuple, or raise ForgeError."""
     if t == "int":
         return ("s64",)
     if t == "float":
@@ -261,7 +261,7 @@ def wit_type_to_tuple(wt):
     if wt.name == "list" and len(wt.args) == 1:
         return ("list", wit_type_to_tuple(wt.args[0]))
     raise ForgeError(
-        f"WIT type {wt!r} has no Jal Pari equivalent on the WASM backend",
+        f"WIT type {wt!r} has no Qasida equivalent on the WASM backend",
         0, 0)
 
 

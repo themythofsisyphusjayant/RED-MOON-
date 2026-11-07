@@ -1,0 +1,205 @@
+// Qasida — KV-cache inference for gpt2 (0.5.0).
+// Import with: import "inference_gpt2.fg";
+// (It imports gpt2.fg; import it alone alongside nn.fg —
+// never alongside gpt.fg, which shares the autograd path.)
+//
+// The existing inference.fg cache only knows the old
+// 1-block gpt.fg layout. This one knows gpt2.fg: any blocks,
+// any heads, separate Q/K/V weights, tied head. It is a
+// plain-float forward (no tape): at each step it computes
+// one token's Q/K/V, appends K/V to the cache, and attends
+// over cached positions only. That is why generation is
+// several times faster than re-forwarding the whole
+// context per token (see examples/inference_gpt2_demo.fg).
+//
+// Cache layout (step-major, push-only): after step t, for
+// block b, K lives at k[(t*blocks + b)*d + j]. Position
+// for a step is the caller's choice; the demo passes the
+// step index, clamped to seq-1 once generation runs past
+// the trained sequence length — a documented approximation
+// (learned absolute positions have no embedding past
+// seq-1), not a silent change of model.
+import "gpt2.fg";
+
+struct G2Cache {
+    k: [float];
+    v: [float];
+    len: int;
+}
+
+struct G2Step {
+    logits: [float];
+    cache: G2Cache;
+}
+
+fn g2c_linear(params: [float], x: [float], woff: int, boff: int, in_dim: int, out_dim: int) -> [float] {
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < out_dim {
+        let mut acc: float = params[boff + j];
+        let mut i: int = 0;
+        while i < in_dim {
+            acc = acc + x[i] * params[woff + i * out_dim + j];
+            i = i + 1;
+        }
+        push(out, acc);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn g2c_layernorm(params: [float], x: [float], goff: int, boff: int) -> [float] {
+    let d: int = len(x);
+    let mut mean: float = 0.0;
+    for v in x {
+        mean = mean + v;
+    }
+    mean = mean / d as float;
+    let mut var: float = 0.0;
+    for v in x {
+        let diff: float = v - mean;
+        var = var + diff * diff;
+    }
+    var = var / d as float;
+    let inv: float = 1.0 / sqrt(var + 0.00001);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < d {
+        push(out, (x[i] - mean) * inv * params[goff + i] + params[boff + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn g2c_gelu(x: [float]) -> [float] {
+    let mut out: [float] = [];
+    for v in x {
+        push(out, v * (1.0 / (1.0 + exp(-1.702 * v))));
+    }
+    return out;
+}
+
+fn g2c_add(a: [float], b: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] + b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn g2c_step(params: [float], cache: G2Cache, token: int, position: int, vocab: int, d: int, seq: int, heads: int, hidden: int, blocks: int) -> G2Step {
+    let pos_off: int = vocab * d;
+    let mut x: [float] = [];
+    let mut c: int = 0;
+    while c < d {
+        push(x, params[token * d + c] + params[pos_off + position * d + c]);
+        c = c + 1;
+    }
+    let mut nk: [float] = [];
+    for val in cache.k {
+        push(nk, val);
+    }
+    let mut nv: [float] = [];
+    for val in cache.v {
+        push(nv, val);
+    }
+    let hd: int = d / heads;
+    let scale: float = 1.0 / sqrt(hd as float);
+    let t: int = cache.len;
+    let mut h: [float] = x;
+    let mut b: int = 0;
+    while b < blocks {
+        let base: int = pos_off + seq * d + b * g2_block_size(d, hidden);
+        let ln1g: int = base;
+        let ln1b: int = base + d;
+        let wq: int = base + 2 * d;
+        let bq: int = wq + d * d;
+        let wk: int = bq + d;
+        let bk: int = wk + d * d;
+        let wv: int = bk + d;
+        let bv: int = wv + d * d;
+        let wo: int = bv + d;
+        let bo: int = wo + d * d;
+        let ln2g: int = bo + d;
+        let ln2b: int = ln2g + d;
+        let w1: int = ln2b + d;
+        let b1: int = w1 + d * hidden;
+        let w2: int = b1 + hidden;
+        let b2: int = w2 + hidden * d;
+        let ln1: [float] = g2c_layernorm(params, h, ln1g, ln1b);
+        let q: [float] = g2c_linear(params, ln1, wq, bq, d, d);
+        let kk: [float] = g2c_linear(params, ln1, wk, bk, d, d);
+        let vv: [float] = g2c_linear(params, ln1, wv, bv, d, d);
+        for val in kk {
+            push(nk, val);
+        }
+        for val in vv {
+            push(nv, val);
+        }
+        let mut ctx: [float] = [];
+        let mut hh: int = 0;
+        while hh < heads {
+            let off: int = hh * hd;
+            let mut probs: [float] = [];
+            let mut sum: float = 0.0;
+            let mut first: bool = true;
+            let mut p: int = 0;
+            while p <= t {
+                let mut acc: float = q[off] * nk[(p * blocks + b) * d + off];
+                let mut cc: int = 1;
+                while cc < hd {
+                    acc = acc + q[off + cc] * nk[(p * blocks + b) * d + off + cc];
+                    cc = cc + 1;
+                }
+                let e: float = exp(acc * scale);
+                push(probs, e);
+                if first {
+                    sum = e;
+                    first = false;
+                } else {
+                    sum = sum + e;
+                }
+                p = p + 1;
+            }
+            let mut cc: int = 0;
+            while cc < hd {
+                let mut acc2: float = probs[0] * nv[(0 * blocks + b) * d + off + cc];
+                let mut p2: int = 1;
+                while p2 <= t {
+                    acc2 = acc2 + probs[p2] * nv[(p2 * blocks + b) * d + off + cc];
+                    p2 = p2 + 1;
+                }
+                push(ctx, acc2 / sum);
+                cc = cc + 1;
+            }
+            hh = hh + 1;
+        }
+        let attn: [float] = g2c_linear(params, ctx, wo, bo, d, d);
+        h = g2c_add(h, attn);
+        let ln2: [float] = g2c_layernorm(params, h, ln2g, ln2b);
+        let m1: [float] = g2c_linear(params, ln2, w1, b1, d, hidden);
+        let gel: [float] = g2c_gelu(m1);
+        let m2: [float] = g2c_linear(params, gel, w2, b2, hidden, d);
+        h = g2c_add(h, m2);
+        b = b + 1;
+    }
+    let ln3g: int = pos_off + seq * d + blocks * g2_block_size(d, hidden);
+    let ln3b: int = ln3g + d;
+    let lnf: [float] = g2c_layernorm(params, h, ln3g, ln3b);
+    let mut logits: [float] = [];
+    let mut vtok: int = 0;
+    while vtok < vocab {
+        let mut acc: float = lnf[0] * params[vtok * d];
+        let mut cc: int = 1;
+        while cc < d {
+            acc = acc + lnf[cc] * params[vtok * d + cc];
+            cc = cc + 1;
+        }
+        push(logits, acc);
+        vtok = vtok + 1;
+    }
+    let nc: G2Cache = G2Cache { k: nk, v: nv, len: t + 1 };
+    return G2Step { logits: logits, cache: nc };
+}

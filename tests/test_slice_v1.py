@@ -3,7 +3,7 @@
 allocated header over an existing array's buffer:
 no copy, writes through to the original, bounds
 are the slice's own, and slicing a slice composes.
-Pure Jal Pari — no compiler change.
+Pure Qasida — no compiler change.
 """
 
 import os
@@ -58,7 +58,7 @@ def main():
             if not check(f"{name} fails", ok,
                          (rr.stderr.strip().splitlines() or [""])[-1]):
                 failures.append(name)
-    fmt = os.path.join(ROOT, "stdlib", "slice.fg")
+    fmt = os.path.join(ROOT, "forge_lang", "stdlib", "slice.fg")
     rf = run([sys.executable, os.path.join(ROOT, "forge.py"), "fmt", fmt],
              ROOT)
     if not check("fmt runs", rf.returncode == 0, rf.stderr.strip()):

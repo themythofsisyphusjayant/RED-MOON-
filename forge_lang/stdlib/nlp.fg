@@ -1,0 +1,90 @@
+// Qasida — word tools (roadmap item 31).
+// Import with: import "nlp.fg";
+// Tokenizes on non-letters (ASCII), lowercases, drops a small
+// English stopword list, and stems with a suffix-stripper
+// (ing/ed/ies/es/ly/s with length guards and double-letter
+// collapse after -ing). This is stemming-lite, not a Porter
+// stemmer — "studies" -> "study", "running" -> "run".
+
+import "slugify.fg";
+
+fn nlp_is_word_char(c: str) -> bool {
+    if slug_is_lower_digit(c) {
+        return true;
+    }
+    return slug_lower_char(c) != c;
+}
+
+fn nlp_tokenize(text: str) -> [str] {
+    let mut out: [str] = [];
+    let mut cur: str = "";
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = text[i];
+        if nlp_is_word_char(c) {
+            cur = cur + slug_lower_char(c);
+        } else if len(cur) > 0 {
+            push(out, cur);
+            cur = "";
+        }
+        i = i + 1;
+    }
+    if len(cur) > 0 {
+        push(out, cur);
+    }
+    return out;
+}
+
+fn nlp_is_stopword(w: str) -> bool {
+    return w == "the" || w == "a" || w == "an" || w == "and" || w == "or" || w == "is" || w == "are" || w == "was" || w == "were" || w == "be" || w == "to" || w == "of" || w == "in" || w == "on" || w == "for" || w == "with" || w == "by" || w == "at" || w == "from" || w == "as" || w == "it" || w == "its" || w == "this" || w == "that";
+}
+
+fn nlp_stem(w: str) -> str {
+    let mut s: str = w;
+    if len(s) > 5 {
+        if ends_with(s, "ing") {
+            s = substr(s, 0, len(s) - 3);
+            if len(s) >= 2 {
+                if s[len(s) - 1] == s[len(s) - 2] {
+                    s = substr(s, 0, len(s) - 1);
+                }
+            }
+            return s;
+        }
+    }
+    if len(s) > 4 {
+        if ends_with(s, "ies") {
+            return substr(s, 0, len(s) - 3) + "y";
+        }
+        if ends_with(s, "ly") {
+            return substr(s, 0, len(s) - 2);
+        }
+    }
+    if len(s) > 3 {
+        if ends_with(s, "ed") {
+            return substr(s, 0, len(s) - 2);
+        }
+        if ends_with(s, "es") {
+            return substr(s, 0, len(s) - 2);
+        }
+    }
+    if len(s) > 2 {
+        if ends_with(s, "s") {
+            if !ends_with(s, "ss") {
+                return substr(s, 0, len(s) - 1);
+            }
+        }
+    }
+    return s;
+}
+
+fn nlp_keywords(text: str) -> [str] {
+    let toks: [str] = nlp_tokenize(text);
+    let mut out: [str] = [];
+    for t in toks {
+        if !nlp_is_stopword(t) {
+            push(out, nlp_stem(t));
+        }
+    }
+    return out;
+}

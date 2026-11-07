@@ -1,0 +1,174 @@
+// Qasida — numpy library (roadmap item 1).
+// Import with: import "numpy.fg";
+// Pure Qasida: flat [float] arrays in row-major order, with
+// explicit dimensions. Function-call style throughout, since
+// Qasida has no operator overloading: np_add(a, b), never a + b.
+// Modest sizes only, per the 0.4.0 OOM lesson.
+
+fn np_zeros(n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_ones(n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, 1.0);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_add(a: [float], b: [float]) -> [float] {
+    if len(a) != len(b) {
+        fail("np_add: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] + b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_sub(a: [float], b: [float]) -> [float] {
+    if len(a) != len(b) {
+        fail("np_sub: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] - b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_mul(a: [float], b: [float]) -> [float] {
+    if len(a) != len(b) {
+        fail("np_mul: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] * b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_scale(a: [float], s: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] * s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np_sum(a: [float]) -> float {
+    let mut s: float = 0.0;
+    for v in a {
+        s = s + v;
+    }
+    return s;
+}
+
+fn np_mean(a: [float]) -> float {
+    if len(a) == 0 {
+        fail("np_mean: empty array");
+    }
+    return np_sum(a) / len(a) as float;
+}
+
+fn np_max(a: [float]) -> float {
+    if len(a) == 0 {
+        fail("np_max: empty array");
+    }
+    let mut m: float = a[0];
+    for v in a {
+        if v > m {
+            m = v;
+        }
+    }
+    return m;
+}
+
+fn np_min(a: [float]) -> float {
+    if len(a) == 0 {
+        fail("np_min: empty array");
+    }
+    let mut m: float = a[0];
+    for v in a {
+        if v < m {
+            m = v;
+        }
+    }
+    return m;
+}
+
+fn np_dot(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("np_dot: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// Matrix multiply: a is ar x ac, b is ac x bc, result ar x bc,
+// all row-major flat. ac is shared, so it is one argument.
+fn np_matmul(a: [float], b: [float], ar: int, ac: int, bc: int) -> [float] {
+    if len(a) != ar * ac {
+        fail("np_matmul: bad shape for a");
+    }
+    if len(b) != ac * bc {
+        fail("np_matmul: bad shape for b");
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < ar {
+        let mut c: int = 0;
+        while c < bc {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < ac {
+                s = s + a[r * ac + k] * b[k * bc + c];
+                k = k + 1;
+            }
+            push(out, s);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn np_transpose(a: [float], rows: int, cols: int) -> [float] {
+    if len(a) != rows * cols {
+        fail("np_transpose: bad shape");
+    }
+    let mut out: [float] = [];
+    let mut c: int = 0;
+    while c < cols {
+        let mut r: int = 0;
+        while r < rows {
+            push(out, a[r * cols + c]);
+            r = r + 1;
+        }
+        c = c + 1;
+    }
+    return out;
+}

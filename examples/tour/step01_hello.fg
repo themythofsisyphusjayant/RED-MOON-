@@ -1,4 +1,4 @@
 fn main() -> int {
-    println("Hello, Jal Pari!");
+    println("Hello, Qasida!");
     return 0;
 }

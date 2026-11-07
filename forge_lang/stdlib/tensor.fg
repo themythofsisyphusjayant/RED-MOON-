@@ -1,0 +1,337 @@
+// Qasida — Tensor stdlib (Mojo-level ML, step 1).
+// Import with: import "tensor.fg";
+// A Tensor is a flat row-major [float] plus its shape. There are no
+// nested arrays in Qasida yet, so every multi-dimensional value is
+// stored flat and indexed by stride math — exactly how real ML
+// frameworks store tensors underneath. All ops return NEW tensors;
+// inputs are never mutated, so a tensor can be reused safely.
+// Shapes are [int]; a 2x3 matrix has shape [2, 3] and data in
+// row-major order: row 0, then row 1.
+
+struct Tensor {
+    data: [float];
+    shape: [int];
+}
+
+fn tensor_numel(shape: [int]) -> int {
+    let mut n: int = 1;
+    for d in shape {
+        n = n * d;
+    }
+    return n;
+}
+
+fn tensor_new(shape: [int], fill: float) -> Tensor {
+    let mut data: [float] = [];
+    let mut i: int = 0;
+    let n: int = tensor_numel(shape);
+    while i < n {
+        push(data, fill);
+        i = i + 1;
+    }
+    return Tensor { data: data, shape: shape };
+}
+
+fn tensor_zeros(shape: [int]) -> Tensor {
+    return tensor_new(shape, 0.0);
+}
+
+fn tensor_ones(shape: [int]) -> Tensor {
+    return tensor_new(shape, 1.0);
+}
+
+fn tensor_from(shape: [int], data: [float]) -> Tensor {
+    if len(data) != tensor_numel(shape) {
+        fail("tensor_from: data length must match shape");
+    }
+    return Tensor { data: data, shape: shape };
+}
+
+fn tensor_flat_index(shape: [int], idx: [int]) -> int {
+    if len(idx) != len(shape) {
+        fail("tensor_flat_index: index rank must match shape rank");
+    }
+    let mut flat: int = 0;
+    let mut i: int = 0;
+    while i < len(shape) {
+        if idx[i] < 0 || idx[i] >= shape[i] {
+            fail("tensor_flat_index: index out of bounds");
+        }
+        flat = flat * shape[i] + idx[i];
+        i = i + 1;
+    }
+    return flat;
+}
+
+fn tensor_get(t: Tensor, idx: [int]) -> float {
+    return t.data[tensor_flat_index(t.shape, idx)];
+}
+
+fn tensor_get2(t: Tensor, r: int, c: int) -> float {
+    if len(t.shape) != 2 {
+        fail("tensor_get2: tensor must be 2-D");
+    }
+    return t.data[r * t.shape[1] + c];
+}
+
+fn tensor_set(t: Tensor, idx: [int], v: float) -> Tensor {
+    let mut out: Tensor = t;
+    out.data[tensor_flat_index(t.shape, idx)] = v;
+    return out;
+}
+
+fn tensor_add(a: Tensor, b: Tensor) -> Tensor {
+    if len(a.data) != len(b.data) {
+        fail("tensor_add: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a.data) {
+        push(out, a.data[i] + b.data[i]);
+        i = i + 1;
+    }
+    return Tensor { data: out, shape: a.shape };
+}
+
+fn tensor_sub(a: Tensor, b: Tensor) -> Tensor {
+    if len(a.data) != len(b.data) {
+        fail("tensor_sub: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a.data) {
+        push(out, a.data[i] - b.data[i]);
+        i = i + 1;
+    }
+    return Tensor { data: out, shape: a.shape };
+}
+
+fn tensor_mul(a: Tensor, b: Tensor) -> Tensor {
+    if len(a.data) != len(b.data) {
+        fail("tensor_mul: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a.data) {
+        push(out, a.data[i] * b.data[i]);
+        i = i + 1;
+    }
+    return Tensor { data: out, shape: a.shape };
+}
+
+fn tensor_scale(a: Tensor, s: float) -> Tensor {
+    let mut out: [float] = [];
+    for v in a.data {
+        push(out, v * s);
+    }
+    return Tensor { data: out, shape: a.shape };
+}
+
+fn tensor_matmul(a: Tensor, b: Tensor) -> Tensor {
+    if len(a.shape) != 2 || len(b.shape) != 2 {
+        fail("tensor_matmul: both tensors must be 2-D");
+    }
+    if a.shape[1] != b.shape[0] {
+        fail("tensor_matmul: inner dimensions must match");
+    }
+    let rows: int = a.shape[0];
+    let inner: int = a.shape[1];
+    let cols: int = b.shape[1];
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < rows {
+        let mut j: int = 0;
+        while j < cols {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < inner {
+                s = s + a.data[i * inner + k] * b.data[k * cols + j];
+                k = k + 1;
+            }
+            push(out, s);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return Tensor { data: out, shape: [rows, cols] };
+}
+
+fn tensor_transpose2(a: Tensor) -> Tensor {
+    if len(a.shape) != 2 {
+        fail("tensor_transpose2: tensor must be 2-D");
+    }
+    let rows: int = a.shape[0];
+    let cols: int = a.shape[1];
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < cols {
+        let mut i: int = 0;
+        while i < rows {
+            push(out, a.data[i * cols + j]);
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+    return Tensor { data: out, shape: [cols, rows] };
+}
+
+fn tensor_reshape(t: Tensor, shape: [int]) -> Tensor {
+    if tensor_numel(shape) != len(t.data) {
+        fail("tensor_reshape: new shape must have the same number of elements");
+    }
+    return Tensor { data: t.data, shape: shape };
+}
+
+fn tensor_flatten(t: Tensor) -> Tensor {
+    return Tensor { data: t.data, shape: [len(t.data)] };
+}
+
+fn tensor_sum(t: Tensor) -> float {
+    let mut s: float = 0.0;
+    for v in t.data {
+        s = s + v;
+    }
+    return s;
+}
+
+fn tensor_mean(t: Tensor) -> float {
+    if len(t.data) == 0 {
+        fail("tensor_mean: empty tensor");
+    }
+    return tensor_sum(t) / len(t.data) as float;
+}
+
+fn tensor_relu(t: Tensor) -> Tensor {
+    let mut out: [float] = [];
+    for v in t.data {
+        if v > 0.0 {
+            push(out, v);
+        } else {
+            push(out, 0.0);
+        }
+    }
+    return Tensor { data: out, shape: t.shape };
+}
+
+fn tensor_gelu(t: Tensor) -> Tensor {
+    // Sigmoid approximation to GELU: x * sigmoid(1.702 * x).
+    // Close to the exact GELU and cheap; the exact erf form is
+    // not available because Qasida has no erf builtin yet.
+    let mut out: [float] = [];
+    for v in t.data {
+        push(out, v * (1.0 / (1.0 + exp(-1.702 * v))));
+    }
+    return Tensor { data: out, shape: t.shape };
+}
+
+fn tensor_softmax1(x: [float]) -> [float] {
+    if len(x) == 0 {
+        fail("tensor_softmax1: empty input");
+    }
+    let mut m: float = x[0];
+    for v in x {
+        if v > m {
+            m = v;
+        }
+    }
+    let mut exps: [float] = [];
+    let mut s: float = 0.0;
+    for v in x {
+        let e: float = exp(v - m);
+        push(exps, e);
+        s = s + e;
+    }
+    let mut out: [float] = [];
+    for e in exps {
+        push(out, e / s);
+    }
+    return out;
+}
+
+fn tensor_softmax_rows(t: Tensor) -> Tensor {
+    if len(t.shape) != 2 {
+        fail("tensor_softmax_rows: tensor must be 2-D");
+    }
+    let rows: int = t.shape[0];
+    let cols: int = t.shape[1];
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut row: [float] = [];
+        let mut c: int = 0;
+        while c < cols {
+            push(row, t.data[r * cols + c]);
+            c = c + 1;
+        }
+        let sm: [float] = tensor_softmax1(row);
+        for v in sm {
+            push(out, v);
+        }
+        r = r + 1;
+    }
+    return Tensor { data: out, shape: t.shape };
+}
+
+fn tensor_add_bias_rows(t: Tensor, bias: [float]) -> Tensor {
+    if len(t.shape) != 2 {
+        fail("tensor_add_bias_rows: tensor must be 2-D");
+    }
+    if len(bias) != t.shape[1] {
+        fail("tensor_add_bias_rows: bias length must match columns");
+    }
+    let rows: int = t.shape[0];
+    let cols: int = t.shape[1];
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < rows {
+        let mut c: int = 0;
+        while c < cols {
+            push(out, t.data[r * cols + c] + bias[c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return Tensor { data: out, shape: t.shape };
+}
+
+fn tensor_row(t: Tensor, r: int) -> [float] {
+    if len(t.shape) != 2 {
+        fail("tensor_row: tensor must be 2-D");
+    }
+    let cols: int = t.shape[1];
+    let mut out: [float] = [];
+    let mut c: int = 0;
+    while c < cols {
+        push(out, t.data[r * cols + c]);
+        c = c + 1;
+    }
+    return out;
+}
+
+fn tensor_argmax(x: [float]) -> int {
+    if len(x) == 0 {
+        fail("tensor_argmax: empty input");
+    }
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(x) {
+        if x[i] > x[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn tensor_dot(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("tensor_dot: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}

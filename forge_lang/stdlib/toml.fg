@@ -1,0 +1,133 @@
+// Qasida — TOML subset parser (roadmap item 17).
+// Import with: import "toml.fg";
+// Supports [section] headers (dotted names kept whole), key =
+// value lines with string (double-quoted), int, float, and bool
+// values, and '#' comments. No arrays, tables-in-line, dates,
+// or multi-line strings in v1. Values are stored raw; typed
+// getters parse on demand.
+
+struct Toml {
+    keys: [str];
+    vals: [str];
+    kinds: [str];
+}
+
+fn toml_join_rest(parts: [str], from: int) -> str {
+    let mut out: str = "";
+    let mut i: int = from;
+    while i < len(parts) {
+        if i > from {
+            out = out + "=";
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn toml_unquote(v: str) -> str {
+    if len(v) >= 2 {
+        if starts_with(v, "\"") {
+            if ends_with(v, "\"") {
+                return substr(v, 1, len(v) - 2);
+            }
+        }
+    }
+    return v;
+}
+
+fn toml_kind(v: str) -> str {
+    if v == "true" {
+        return "bool";
+    }
+    if v == "false" {
+        return "bool";
+    }
+    let parts: [str] = split(v, ".");
+    if len(parts) == 2 {
+        if len(parts[0]) > 0 {
+            if len(parts[1]) > 0 {
+                return "float";
+            }
+        }
+    }
+    return "int";
+}
+
+fn toml_parse(text: str) -> Toml {
+    let mut keys: [str] = [];
+    let mut vals: [str] = [];
+    let mut kinds: [str] = [];
+    let mut section: str = "";
+    let lines: [str] = split(text, "\n");
+    for raw in lines {
+        let ln: str = trim(raw);
+        if len(ln) > 0 {
+            if !starts_with(ln, "#") {
+                if starts_with(ln, "[") {
+                    if ends_with(ln, "]") {
+                        section = substr(ln, 1, len(ln) - 2);
+                    }
+                } else {
+                    let parts: [str] = split(ln, "=");
+                    if len(parts) >= 2 {
+                        let key: str = trim(parts[0]);
+                        let mut val: str = trim(toml_join_rest(parts, 1));
+                        if !starts_with(val, "\"") {
+                            let comment: [str] = split(val, "#");
+                            val = trim(comment[0]);
+                        }
+                        let mut fkey: str = key;
+                        if len(section) > 0 {
+                            fkey = section + "." + key;
+                        }
+                        push(keys, fkey);
+                        if starts_with(val, "\"") {
+                            push(vals, toml_unquote(val));
+                            push(kinds, "str");
+                        } else {
+                            push(vals, val);
+                            push(kinds, toml_kind(val));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return Toml { keys: keys, vals: vals, kinds: kinds };
+}
+
+fn toml_get(cfg: Toml, key: str) -> str {
+    let mut i: int = 0;
+    while i < len(cfg.keys) {
+        if cfg.keys[i] == key {
+            return cfg.vals[i];
+        }
+        i = i + 1;
+    }
+    fail("toml_get: key not found");
+    return "";
+}
+
+fn toml_get_int(cfg: Toml, key: str) -> int {
+    return parse_int(toml_get(cfg, key));
+}
+
+fn toml_get_float(cfg: Toml, key: str) -> float {
+    return parse_float(toml_get(cfg, key));
+}
+
+fn toml_get_bool(cfg: Toml, key: str) -> bool {
+    return toml_get(cfg, key) == "true";
+}
+
+fn toml_has(cfg: Toml, key: str) -> bool {
+    let mut i: int = 0;
+    while i < len(cfg.keys) {
+        if cfg.keys[i] == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
