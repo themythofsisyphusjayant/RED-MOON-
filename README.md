@@ -13,7 +13,8 @@
 > Static types, no null, immutable by default, checked arithmetic —
 > with C++-style latency and Mojo/Python-style ML ease, in one binary.
 
-![Jal Pari](https://img.shields.io/badge/Jal_Pari-v1.5.0-pink)
+![Jal Pari](https://img.shields.io/badge/Jal_Pari-v1.5.1-pink)
+[![PyPI](https://img.shields.io/pypi/v/jalpari.svg)](https://pypi.org/project/jalpari/)
 ![Native](https://img.shields.io/badge/compiled-native-blue)
 ![Safe mode](https://img.shields.io/badge/safe--mode-checked-green)
 ![Fast mode](https://img.shields.io/badge/fast--mode--O3-orange)
@@ -28,6 +29,14 @@ it: **no single language has replaced Rust/Go/C, and the ones
 gaining real production use have a narrow beachhead, not a promise
 to be good at everything.** Its beachhead is safe, simple, fast
 tools, CLIs, and small ML programs.
+
+## 🔗 Links
+
+- **PyPI:** [pypi.org/project/jalpari](https://pypi.org/project/jalpari/) — `pip install jalpari` (latest: 1.5.1)
+- **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest GitHub release: [v1.5.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v1.5.0)
+- **Source:** [github.com/themythofsisyphusjayant/RED-MOON-](https://github.com/themythofsisyphusjayant/RED-MOON-)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
+- **Docs:** [docs/HIGH_SCHOOL_GUIDE.md](docs/HIGH_SCHOOL_GUIDE.md) (start here) · [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) · [docs/FREESTANDING.md](docs/FREESTANDING.md) (the from-scratch OS roadmap)
 
 ---
 
@@ -123,17 +132,17 @@ python3 forge.py run examples/matrix.fg
 
 Not a promise of LLMs — a small-model stack that actually trains:
 
-- **Tensors** (`stdlib/tensor.fg`): shape + flat data, matmul,
-  softmax, GELU. **Autograd** (`stdlib/autograd.fg`): a real
+- **Tensors** (`forge_lang/stdlib/tensor.fg`): shape + flat data, matmul,
+  softmax, GELU. **Autograd** (`forge_lang/stdlib/autograd.fg`): a real
   reverse-mode tape — no hand-written backward code.
-- **Transformer blocks** (`stdlib/nn.fg`): Linear, LayerNorm,
+- **Transformer blocks** (`forge_lang/stdlib/nn.fg`): Linear, LayerNorm,
   causal attention, MLP, Adam/AdamW, schedules, clipping,
   checkpoints, int8 quantization, sampling.
 - **Tiny GPT** (`examples/tiny_gpt.fg`): 1 block, 1 head, 776
   params, trained by autograd on one sentence —
   loss **2.274 → 0.360** in ~5 seconds. Generation loops or
   rambles (honest for this size); the training is the proof.
- - **Inference** (`stdlib/inference.fg`): KV-cache steps match a
+ - **Inference** (`forge_lang/stdlib/inference.fg`): KV-cache steps match a
   full forward exactly (diff 0). **GPU**: fused attention /
   LayerNorm / embedding / fp16 kernels in `examples/cuda/`,
   verified on Kaggle Tesla T4 (dot 70, attention 0.330/0.670).
@@ -178,13 +187,24 @@ Jal Pari, what each line means, and where it is used in real life.
 
 Requirements: Python 3 and a C compiler (`cc` / `gcc`).
 
-**Install (1.5.0):**
+**Install — easiest, from PyPI (1.5.1):**
+
+```sh
+pip install jalpari
+jalpari --version       # The Jal Pari Language 1.5.1
+```
+
+[PyPI page](https://pypi.org/project/jalpari/) — the package is
+`jalpari`, version 1.5.1. New releases auto-publish to PyPI from
+version tags (see `.github/workflows/release.yml`).
+
+**Install from source:**
 
 ```sh
 git clone https://github.com/themythofsisyphusjayant/RED-MOON-
 cd RED-MOON-
 sh scripts/install.sh   # checks python3 + cc, installs jalpari to ~/.local/bin
-jalpari --version       # The Jal Pari Language 1.5.0
+jalpari --version
 ```
 
 `jalpari` is the new command name; `python3 forge.py` still works
@@ -200,8 +220,8 @@ jalpari build examples/benchmark.fg -o bench
 python3 forge.py test   # all tests pass
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for what is in 1.2.0 and what
-is honestly not done yet.
+See [CHANGELOG.md](CHANGELOG.md) for what is in each release
+and what is honestly not done yet.
 
 ## 🔴 Forge on big32 — your language, running on your own CPU
 
@@ -349,7 +369,7 @@ Builtins (48): `print` / `println`, `push`, `fail`, `assert`,
 `csr_clear`, `ecall`.
 Run a program with arguments: `python3 forge.py run examples/file_and_args.fg -- out.txt`.
 Run the test suite the Go way: `python3 forge.py test`.
-Standard library (`stdlib/ml.fg`, `import "ml.fg"`): `dot`, `mean`,
+Standard library (`forge_lang/stdlib/ml.fg`, `import "ml.fg"`): `dot`, `mean`,
 `relu`, `sigmoid`, `matmul` (flat row-major matrices).
 
 ## 📁 Layout
@@ -358,7 +378,7 @@ Standard library (`stdlib/ml.fg`, `import "ml.fg"`): `dot`, `mean`,
 forge.py              CLI: check / build / run / emit / fmt / doc / lsp / repl / test,
                       --mode safe|fast, --target native|big32|wasm, --freestanding
 forge_lang/           lexer, parser, checker, inference, C codegen, big32 + WASM codegen, driver
-stdlib/ml.fg          dot, mean, relu, sigmoid, matmul
+forge_lang/stdlib/ml.fg          dot, mean, relu, sigmoid, matmul
 examples/             hello2, matrix, benchmark, benchmark_scaling,
                       ML regression, regression trace, MLP XOR, big32/, os/, cuda/
 editors/vscode/jalpari/   VS Code extension (LSP client, snippets, grammar)
@@ -395,7 +415,7 @@ The full tooling is documented in `docs/ECOSYSTEM.md`:
 - **Stdlib:** `ml.fg`, `strings.fg`, `stats.fg` — plus string builtins `split/join/substr/trim/starts_with/ends_with`
 - **AI/ML libraries (0.6.0):** `tensor_autograd.fg` (21 ops), `rnn.fg` (LSTM/GRU), `cnn.fg` (conv+pool), `ml_classical.fg` (logreg/k-NN/k-means), `preprocess.fg`, `metrics.fg`, `csv.fg` — plus `test.fg`, `log.fg`, `cli.fg`, `collections.fg` for general development. Import dedup means libraries now combine freely (nn + tensor training in one program).
 - **0.7.0 additions:** source-level debugger (`build --debug` emits `#line`), binary I/O + image loading (`image.fg`: PPM P3 + BMP), tape-native im2col + stacked convs, curriculum RNN (len-8 wall cracked), big32 structs + soft-float v1 (+ - *, 60/60 fuzz vs Python float32 on model + Verilog), WASM strings + arrays, and a fuzzer (`tools/fuzz.py`). Big TinyStories run: 153,744 params, held-out ppl 2128.55 → 651.44 — better, still not fluent.
-- **1.0.0 additions (market-ready release):** a stability promise (`docs/STABILITY.md` — semver for real), a live browser playground (`web/playground.html` — the real compiler under Pyodide, programs run as WebAssembly, no install), an HTTP server (`http_listen/accept/read_request/respond/respond_status/close` builtins + `stdlib/http_server.fg` + routing demo, verified live with curl), a regex engine (`stdlib/regex.fg` — literals, `.`, `*` `+` `?`, classes with ranges, `\d \w \s`, `^` `$`; no groups/alternation — those are literal), seven real registry packages (`packages/`: units, money, geometry, interest, roman, bases, dice — remote publish/list/add verified against a local registry), a packaged VS Code extension (`editors/vscode/forge/forge-1.0.0.vsix`), honest benchmarks vs Python/Go/Rust/C (`docs/BENCHMARKS_VS.md`, reproducible script), and the MIT LICENSE in the repo root. Install re-verified on a clean HOME and a clean pip venv.
+- **1.0.0 additions (market-ready release):** a stability promise (`docs/STABILITY.md` — semver for real), a live browser playground (`web/playground.html` — the real compiler under Pyodide, programs run as WebAssembly, no install), an HTTP server (`http_listen/accept/read_request/respond/respond_status/close` builtins + `forge_lang/stdlib/http_server.fg` + routing demo, verified live with curl), a regex engine (`forge_lang/stdlib/regex.fg` — literals, `.`, `*` `+` `?`, classes with ranges, `\d \w \s`, `^` `$`; no groups/alternation — those are literal), seven real registry packages (`packages/`: units, money, geometry, interest, roman, bases, dice — remote publish/list/add verified against a local registry), a packaged VS Code extension (`editors/vscode/forge/forge-1.0.0.vsix`), honest benchmarks vs Python/Go/Rust/C (`docs/BENCHMARKS_VS.md`, reproducible script), and the MIT LICENSE in the repo root. Install re-verified on a clean HOME and a clean pip venv.
 - **1.1.0 additions (peak-level batch, 27 Oct 2026):** `break`,
   string indexing, arrays of structs, nested arrays, the registry
   grown from 7 to 30 packages, check elimination, structured
@@ -454,8 +474,9 @@ timer or SBI emulation (so the trap checkpoint is
 ecall-driven), and full `sbiret` SBI calls are follow-up work.
 Still blocked on the user's
 accounts and token scope, as before: a public registry
-host, CI upload, repo rename, PyPI publish, and VS Code
-Marketplace publish. The playground's end-to-end run in
+host, CI upload, repo rename, and VS Code Marketplace
+publish. PyPI publish is done — [`jalpari` 1.5.1](https://pypi.org/project/jalpari/)
+is live, and releases auto-publish from version tags. The playground's end-to-end run in
 a real browser is not yet verified here (it needs a
 browser to open it); its compiler pipeline and JS are
 verified, and every example program is verified.
@@ -495,7 +516,7 @@ flowchart TD
 
 | Measure | Value |
 |---|---|
-| Language version | 1.5.0 |
+| Language version | 1.5.1 |
 | Tree size | 53,116 lines (.py, .fg, .js, .sh, .toml) |
 | Standard libraries added 29 Oct | 16 (numpy, pandas, complex, fractions, statistics, checksum, base64, semver, units, polynomials, optimization, fuzzy, calendar, template, color, money) |
 | OS kernels added 29 Oct | 10 (lifetime allocator, terminal UART core, shell v2, page allocator, IPC ring, scheduler, FS v3, net loopback, calculator, clock) |
