@@ -1,0 +1,27 @@
+struct Node {
+    id: int;
+    next: int;
+    vals: [int];
+}
+
+fn main() {
+    let mut n: Node = Node { id: 1, next: 0, vals: [10, 20, 30] };
+    pin(n);
+    n.id = 2;
+    n.next = 2;
+    n.vals[1] = 25;
+    println(n.id);
+    println(n.next);
+    println(n.vals[1]);
+    println(len(n.vals));
+    let mut total = 0;
+    for v in n.vals {
+        total = total + v;
+    }
+    println(total);
+    let mut a = [1, 2, 3];
+    pin(a);
+    a[0] = 9;
+    println(a[0]);
+    println(len(a));
+}

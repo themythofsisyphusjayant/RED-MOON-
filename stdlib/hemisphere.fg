@@ -1,0 +1,15 @@
+struct Hemisphere {
+    r: int;
+}
+
+fn hemisphere_new(r: int) -> Hemisphere {
+    return Hemisphere { r: r };
+}
+
+fn hemisphere_volume2(h: Hemisphere) -> int {
+    return 2 * h.r * h.r * h.r;
+}
+
+fn hemisphere_surface9(h: Hemisphere) -> int {
+    return 9 * h.r * h.r;
+}

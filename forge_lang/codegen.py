@@ -96,18 +96,18 @@ static long long *forge_arr_ref_new(void) {
 static void forge_arr_inc(long long *ref) { if (ref) (*ref)++; }
 static void forge_weak_dead(long long *ref);
 static void forge_int_array_free(ForgeIntArray a) {
-    if (a.ref && --(*a.ref) == 0) { forge_weak_dead(a.ref); free(a.data); free(a.ref); forge_arr_frees++; }
+    if (a.ref && --(*a.ref) == 0) { forge_weak_dead(a.ref); if (a.data) memset(a.data, 0, (size_t)a.cap * sizeof(*a.data)); free(a.data); if (a.ref) memset(a.ref, 0, sizeof(long long)); free(a.ref); forge_arr_frees++; }
 }
 static void forge_float_array_free(ForgeFloatArray a) {
-    if (a.ref && --(*a.ref) == 0) { free(a.data); free(a.ref); forge_arr_frees++; }
+    if (a.ref && --(*a.ref) == 0) { if (a.data) memset(a.data, 0, (size_t)a.cap * sizeof(*a.data)); free(a.data); if (a.ref) memset(a.ref, 0, sizeof(long long)); free(a.ref); forge_arr_frees++; }
 }
 static void forge_bool_array_free(ForgeBoolArray a) {
-    if (a.ref && --(*a.ref) == 0) { free(a.data); free(a.ref); forge_arr_frees++; }
+    if (a.ref && --(*a.ref) == 0) { if (a.data) memset(a.data, 0, (size_t)a.cap * sizeof(*a.data)); free(a.data); if (a.ref) memset(a.ref, 0, sizeof(long long)); free(a.ref); forge_arr_frees++; }
 }
 static void forge_str_array_free(ForgeStrArray a) {
     if (a.ref && --(*a.ref) == 0) {
         for (long long i = 0; i < a.len; i++) forge_free_str(a.data[i]);
-        free(a.data); free(a.ref); forge_arr_frees++;
+        if (a.data) memset(a.data, 0, (size_t)a.cap * sizeof(*a.data)); free(a.data); if (a.ref) memset(a.ref, 0, sizeof(long long)); free(a.ref); forge_arr_frees++;
     }
 }
 
@@ -130,6 +130,7 @@ static char *forge_copy_str(const char *s) {
 
 static void forge_free_str(char *p) {
     if (p) {
+        memset(p, 0, strlen(p) + 1);
         free(p);
         forge_str_frees++;
     }
@@ -380,6 +381,7 @@ static ForgeIntArray forge_read_bytes(const char *path) {
     fclose(f);
     for (long i = 0; i < (long)got; i++) out.data[i] = raw[i];
     out.len = (long long)got;
+    if (raw) memset(raw, 0, (size_t)sz);
     free(raw);
     return out;
 }
@@ -878,7 +880,7 @@ static long long forge_http_accept(long long fd) {
 static char *forge_http_read_request(long long client) {
     char *buf = (char *)malloc(8192);
     ssize_t n = recv((forge_sock_t)client, buf, 8191, 0);
-    if (n < 0) { free(buf); forge_fail("http_read_request: recv failed"); }
+    if (n < 0) { memset(buf, 0, 8192); free(buf); forge_fail("http_read_request: recv failed"); }
     buf[n] = '\0';
     return buf;
 }
@@ -1645,7 +1647,7 @@ class Codegen:
         inner_code = self.array_free_code(f"{var_code}.data[{i}]", inner)
         return (f"if ({var_code}.ref && --(*{var_code}.ref) == 0) {{ "
                 f"for (long long {i} = 0; {i} < {var_code}.len; {i}++) {{ {inner_code} }} "
-                f"free({var_code}.data); free({var_code}.ref); forge_arr_frees++; }}")
+                f"if ({var_code}.data) memset({var_code}.data, 0, (size_t){var_code}.cap * sizeof(*{var_code}.data)); free({var_code}.data); if ({var_code}.ref) memset({var_code}.ref, 0, sizeof(long long)); free({var_code}.ref); forge_arr_frees++; }}")
 
     def struct_type_name(self, t):
         if "<" in t:
@@ -1813,6 +1815,11 @@ class Codegen:
                 # A moved value transfers its hold: the receiving
                 # site must not inc it (see the move branch in
                 # gen_expr, which also forgets the source).
+                return True
+            if expr.name == "try_alloc":
+                # A try_alloc Result is a new owned value (the
+                # statement expression builds it fresh); the
+                # receiving site must not copy it.
                 return True
             rt = self.func_ret.get(expr.name)
             if rt and self.is_struct_type(rt):
@@ -2183,7 +2190,7 @@ class Codegen:
             if free_code:
                 self.emit(f"            {free_code}")
             self.emit("        }")
-            self.emit("        free(a.data); free(a.ref); forge_arr_frees++;")
+            self.emit("        if (a.data) memset(a.data, 0, (size_t)a.cap * sizeof(*a.data)); free(a.data); if (a.ref) memset(a.ref, 0, sizeof(long long)); free(a.ref); forge_arr_frees++;")
             self.emit("    }")
             self.emit("}")
             for suffix, check in (("", True), ("_fast", False)):
@@ -2289,7 +2296,7 @@ class Codegen:
             seen_wrappers.add(call.name)
             if call.args:
                 self.emit(f"static void *forge_thread_{call.name}(void *arg) {{")
-                self.emit(f"    long long v = *(long long *)arg; free(arg); {call.name}(v); return NULL;")
+                self.emit(f"    long long v = *(long long *)arg; memset(arg, 0, sizeof(long long)); free(arg); {call.name}(v); return NULL;")
                 self.emit("}")
             else:
                 self.emit(f"static void *forge_thread_{call.name}(void *arg) {{")
@@ -3511,6 +3518,11 @@ class Codegen:
                 self.emit(f'fprintf(stderr, "jalpari: %s\\n", {self.gen_expr(call.args[0])});')
                 self.emit("exit(1);")
                 return
+            if isinstance(call, A.Call) and call.name == "pin":
+                # Pinning is compile-time only (Top-500 #34): the
+                # checker enforces immovability, so there is no
+                # runtime effect and no code to emit.
+                return
             self.emit(f"{self.gen_expr(stmt.expr)};")
             return
         raise ForgeError(f"unsupported statement {type(stmt).__name__}")
@@ -4103,6 +4115,49 @@ class Codegen:
                         f"{self.gen_expr(expr.args[1])})")
             if expr.name == "read_bytes":
                 return f"forge_read_bytes({self.gen_expr(expr.args[0])})"
+            if expr.name == "try_alloc":
+                # Top-500 #36: fallible allocation. A GNU statement
+                # expression (the codebase's established pattern for
+                # multi-statement builtins): evaluate n once, then
+                # calloc for a zero-initialised [int]; NULL (or a bad
+                # size) yields an Err Result instead of forge_fail.
+                # The empty array in the Err path gets a fresh ref
+                # (the forge_arr_ref_new() pattern from weak_upgrade);
+                # the error str is a heap copy (forge_copy_str) so the
+                # Result owns it and its free is safe. v1 limit: the
+                # tiny bookkeeping mallocs (refcount, error copy) can
+                # still forge_fail if the system is truly out of
+                # memory; only the big calloc is fallible.
+                self.assign_counter += 1
+                n = self.assign_counter
+                n_code = self.gen_expr(expr.args[0])
+                rt = c_type("Result<[int], str>")
+                empty = "(ForgeIntArray){NULL, 0, 0, forge_arr_ref_new()}"
+                err = (f"({rt}){{ .ok = false, .value = {empty}, "
+                       f".error = forge_copy_str(\"%s\") }}")
+                return (
+                    f"({{ {rt} __forge_tryalloc{n}; "
+                    f"long long __forge_n{n} = {n_code}; "
+                    f"if (__forge_n{n} < 0) {{ "
+                    f"__forge_tryalloc{n} = {err % 'bad size'}; }} "
+                    f"else if (__forge_n{n} == 0) {{ "
+                    f"__forge_tryalloc{n} = ({rt}){{ .ok = true, .value = {empty}, "
+                    f".error = forge_copy_str(\"\") }}; }} "
+                    f"else {{ "
+                    f"long long *__forge_data{n} = (long long *)calloc("
+                    f"(size_t)__forge_n{n}, sizeof(long long)); "
+                    f"if (!__forge_data{n}) {{ "
+                    f"__forge_tryalloc{n} = {err % 'out of memory'}; }} "
+                    f"else {{ ForgeIntArray __forge_arr{n}; "
+                    f"__forge_arr{n}.len = __forge_n{n}; "
+                    f"__forge_arr{n}.cap = __forge_n{n}; "
+                    f"__forge_arr{n}.data = __forge_data{n}; "
+                    f"__forge_arr{n}.ref = forge_arr_ref_new(); "
+                    f"__forge_tryalloc{n} = ({rt}){{ .ok = true, "
+                    f".value = __forge_arr{n}, "
+                    f".error = forge_copy_str(\"\") }}; }} }} "
+                    f"__forge_tryalloc{n}; }})"
+                )
             if expr.name == "write_bytes":
                 # Ownership (audit fix): forge_write_bytes FREES
                 # its array parameter (batch 25), but builtin

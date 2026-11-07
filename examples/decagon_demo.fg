@@ -1,0 +1,7 @@
+import "decagon.fg";
+
+fn main() {
+    let mut d: Decagon = decagon_new(5);
+    println(decagon_area8(d));
+    println(decagon_perim(d));
+}

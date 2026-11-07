@@ -1,0 +1,15 @@
+struct Decagon {
+    s: int;
+}
+
+fn decagon_new(s: int) -> Decagon {
+    return Decagon { s: s };
+}
+
+fn decagon_area8(d: Decagon) -> int {
+    return 8 * d.s * d.s;
+}
+
+fn decagon_perim(d: Decagon) -> int {
+    return 10 * d.s;
+}

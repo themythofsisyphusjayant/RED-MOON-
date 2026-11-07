@@ -1,0 +1,7 @@
+import "hemisphere.fg";
+
+fn main() {
+    let mut h: Hemisphere = hemisphere_new(5);
+    println(hemisphere_volume2(h));
+    println(hemisphere_surface9(h));
+}

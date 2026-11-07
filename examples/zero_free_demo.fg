@@ -1,0 +1,24 @@
+struct Bag {
+    vals: [int];
+    name: str;
+}
+
+fn main() -> int {
+    let a: [int] = [1, 2, 3];
+    let f: [float] = [1.5, 2.5];
+    let b: [bool] = [true, false, true];
+    let s: [str] = ["one", "two"];
+    let n: [[int]] = [[1, 2], [3, 4]];
+    let bag: Bag = Bag { vals: [10, 20], name: "bag" };
+    let t: (int, str) = (7, "seven");
+    let word: str = "secret";
+    println(a[0] + a[2]);
+    println(len(f));
+    println(len(b));
+    println(s[1]);
+    println(n[1][0]);
+    println(bag.vals[1]);
+    println(t.0);
+    println(word);
+    return 0;
+}

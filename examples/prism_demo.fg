@@ -1,0 +1,7 @@
+import "prism.fg";
+
+fn main() {
+    let mut p: Prism = prism_new(3, 4, 5);
+    println(prism_volume(p));
+    println(prism_surface(p));
+}

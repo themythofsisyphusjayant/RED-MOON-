@@ -8,6 +8,57 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Daily batch 7 Nov 2026 (verified, NOT pushed — push
+  authorization SPENT, further pushes need Jayant's fresh
+  word): 10 OS kernels (relay 1/4, stepper 200/120, oled
+  128/64, gps 2861/7, ble 72/2, sdcard 8192/2048, loadcell
+  512/12, color 255/128, gesture 3/94, fingerprint 97/5 —
+  each a freestanding big32 kernel with a model test:
+  exact UART transcript, halted, final memory word) and
+  10 stdlib geometry modules with demos verified by
+  `forge run` (heptagon 100/35, octagon 125/40, nonagon
+  150/45, decagon 200/50, torus 360/360, hemisphere
+  250/225, prism 60/94, tetrahedron 64/32, octahedron
+  27/27, sector 900/9000; integer-scaled formulas, same
+  convention as pentagon/circle). Full suite PASS (log
+  forge_suite_daily_20261107_31670.log).
+- Zeroing on free (Top-500 #35, v1, default-on):
+  every heap buffer the native runtime frees is zeroed
+  before free() — arrays, strs, read_bytes temp, HTTP
+  recv buffer, spawn thread args. No new syntax; native
+  only in v1.
+- Pinning / immovable values (Top-500 #34, v1):
+  `pin(x);` marks an owned binding immovable for the
+  rest of its scope — any whole-value use (let, call
+  argument, return), move(x), a move of one of its
+  fields, reassignment, or push is a checker error,
+  while in-place field/index writes, scalar field
+  and element reads, len/refcount, and for-iteration
+  still work. Pinning joins path-sensitively over
+  branches, loops, and match arms (pinned on any
+  path counts after the join), like move v2; native
+  codegen emits nothing for the statement. Native
+  only; big32/WASM reject pin programs with a named
+  error. Limits (rejected with named errors): pin
+  needs a variable, not a field; pinning a struct
+  with a drop method; indexing a pinned string.
+
+## 1.5.0 — 6 Nov 2026
+
+- Allocation failure as a value (#36, 7 Nov 2026):
+  new builtin try_alloc(n: int) -> Result<[int], str>,
+  native-only in v1: Ok with a zero-initialised [int]
+  array via calloc, Err("out of memory") when calloc
+  returns NULL (verified with try_alloc(2^60) = 2^63
+  bytes), Err("bad size") for n < 0, Ok empty for
+  n == 0. Works with `?` propagation (an Err reaches
+  the caller as a Result). Requires import "result.fg";
+  big32/WASM reject it with a named error. Limits:
+  [int] only, no fallible implicit allocations, and
+  the tiny bookkeeping mallocs (refcount, error-string
+  copy) can still forge_fail — only the big calloc is
+  fallible.
+
 - Move semantics v2 (fix track, #27 extension):
   moves in branches and loops now work via a
   runtime moved flag per owned variable, with

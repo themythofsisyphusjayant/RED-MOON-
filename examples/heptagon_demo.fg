@@ -1,0 +1,7 @@
+import "heptagon.fg";
+
+fn main() {
+    let mut h: Heptagon = heptagon_new(5);
+    println(heptagon_area4(h));
+    println(heptagon_perim(h));
+}

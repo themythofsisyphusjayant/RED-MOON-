@@ -1,0 +1,16 @@
+struct Sector {
+    r: int;
+    angle: int;
+}
+
+fn sector_new(r: int, angle: int) -> Sector {
+    return Sector { r: r, angle: angle };
+}
+
+fn sector_arc60(s: Sector) -> int {
+    return s.angle * s.r;
+}
+
+fn sector_area120(s: Sector) -> int {
+    return s.angle * s.r * s.r;
+}

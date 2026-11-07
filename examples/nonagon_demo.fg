@@ -1,0 +1,7 @@
+import "nonagon.fg";
+
+fn main() {
+    let mut n: Nonagon = nonagon_new(5);
+    println(nonagon_area6(n));
+    println(nonagon_perim(n));
+}

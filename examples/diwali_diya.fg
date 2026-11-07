@@ -1,0 +1,22 @@
+fn diya() {
+    println("     *     ");
+    println("    ***    ");
+    println("     |     ");
+    println("  _________");
+    println(" | ~~~~~~~ |");
+    println(" |_________|");
+}
+
+fn main() -> int {
+    println("Happy Diwali from Jal Pari!");
+    println("");
+    let mut lit: int = 0;
+    for i in range(5) {
+        diya();
+        println("");
+        lit = lit + 1;
+    }
+    println("diyas lit =", lit);
+    println("Shubh Deepavali!");
+    return 0;
+}

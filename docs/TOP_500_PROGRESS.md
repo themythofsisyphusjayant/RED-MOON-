@@ -510,3 +510,63 @@ docs/TOP_500_FEATURES.md be added to The Jal Pari Language.
   Next: order of the two PhD research slices vs #34
   pinning is Jayant's call (QUEUE.md), and any
   release after 1.4.0 needs his fresh word.
+
+- #34 pinning (6 Nov 2026, pipeline run; Jayant's 6 Nov "Do it"
+  chose pinning over the two PhD research slices, and the 6 Nov
+  push 8eafc693 landing unblocked implementation):
+  tests/test_pin_v1.py ALL PASS (demo 2/2/25/3/65/9/3, 9 run
+  cases, 20 rejection cases, big32/WASM rejections named,
+  fmt idempotent), plus an AddressSanitizer-clean run of the
+  demo. pin(x); is a statement builtin: it marks an owned
+  binding immovable — move, any whole-value use, reassignment,
+  and push are checker errors, while in-place field/index
+  writes, scalar reads, len/refcount, and for-iteration still
+  work. The checker joins pinned sets over branches, loops,
+  and match arms (pinned on any path counts after the join),
+  mirroring move v2; native codegen emits nothing for the
+  statement, and big32/WASM reject pin programs (forge_lang/
+  pins.py, uses_pin gates). V1 limits are in the catalog entry
+  (variable only, no pinning drop structs, no pinned-string
+  indexing, name-keyed join shadowing). Full-suite regression
+  check confirmed clean 6 Nov 2026 (log
+  forge_suite_pin_14885_15681.log: PASS). Counts after #34:
+  HAVE 66, PARTIAL 60, GAP 374, to build 434. NOT pushed:
+  push authorization is SPENT — further pushes need Jayant's
+  fresh word. Next in priority: #35 zeroing on free, then #36
+  allocation failure as a value.
+- #35 zeroing on free DONE 6 Nov 2026 (v1, default-on — Jayant's
+  "Do it" after the default-vs-opt-in question): every heap
+  buffer the native runtime frees is zeroed before free() —
+  arrays of every element type, nested and struct arrays, strs,
+  read_bytes temp, HTTP recv buffer, spawn thread args (native
+  codegen choke points in forge_lang/codegen.py; no new syntax).
+  Verified by tests/test_zero_free_v1.py ALL PASS (demo
+  4/2/3/two/3/20/7/secret, 12 run cases, emitted-C assertions,
+  C probe from the actual emitted preamble: freed buffers read
+  zero, shared buffers not zeroed on dec); demo ASan-clean;
+  full-suite regression check (log
+  forge_suite_zerofree.log: PASS). V1 limits are in the catalog
+  entry (native only, mmap out of scope, no opt-out). Counts
+  after #35: HAVE 67, PARTIAL 60, GAP 373, to build 433. NOT
+  pushed: push authorization is SPENT. Next in priority: #36
+  allocation failure as a value.
+- #36 allocation failure as a value DONE 7 Nov 2026: new builtin
+  try_alloc(n: int) -> Result<[int], str> (native-only v1): Ok with a
+  zero-initialised [int] via calloc, Err("out of memory") when calloc
+  returns NULL (verified with try_alloc(2^60) = 2^63 bytes),
+  Err("bad size") for n < 0, Ok empty for n == 0. Works with `?`
+  propagation. Requires import "result.fg" (the Result struct lives
+  there); the checker registers the Result<[int], str> instantiation
+  so codegen emits it. big32/WASM reject it with a named error;
+  freestanding rejects it. Verified by tests/test_allocfail_v1.py
+  ALL PASS (18 checks: success, bad size, zero size, huge Err,
+  write/read-back, `?` propagation both ways, n evaluated once,
+  5 reject cases, emitted-C calloc assertion, big32/WASM gates,
+  ASan clean); demo examples/allocfail_demo.fg runs clean;
+  full-suite regression check (log
+  forge_suite_allocfail_20261107.log: PASS). V1 limits are in the
+  catalog entry ([int] only, no fallible implicit allocations, tiny
+  bookkeeping mallocs can still forge_fail; ASan cannot test a
+  2^63-byte calloc). Counts after #36: HAVE 68, PARTIAL 60,
+  GAP 372, to build 432. NOT pushed: rides the 1.5.0 push retry
+  (authorized 13:26 IST). Next in priority: #37 pool allocators.

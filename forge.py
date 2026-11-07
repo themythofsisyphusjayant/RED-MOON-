@@ -29,9 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from forge_lang.errors import ForgeError  # noqa: E402
 from forge_lang.compiler import compile_file, build  # noqa: E402
-
-
-VERSION = "1.4.0"
+from forge_lang import __version__ as VERSION  # noqa: E402
+# Single source of truth: forge_lang/__init__.py:__version__.
+# (It read "2.0.0" there before this change — stale; the current
+# release is 1.5.0 per forge.py, CHANGELOG.md, and the tree.)
 
 
 def main(argv=None):

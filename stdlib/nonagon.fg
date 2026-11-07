@@ -1,0 +1,15 @@
+struct Nonagon {
+    s: int;
+}
+
+fn nonagon_new(s: int) -> Nonagon {
+    return Nonagon { s: s };
+}
+
+fn nonagon_area6(n: Nonagon) -> int {
+    return 6 * n.s * n.s;
+}
+
+fn nonagon_perim(n: Nonagon) -> int {
+    return 9 * n.s;
+}

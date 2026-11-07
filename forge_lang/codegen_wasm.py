@@ -551,6 +551,12 @@ class WasmGen:
         from .moves import uses_move
         if uses_move(self.program):
             raise ForgeError("wasm: move is not supported")
+        from .pins import uses_pin
+        if uses_pin(self.program):
+            raise ForgeError("wasm: pin is not supported")
+        from .allocfail import uses_try_alloc
+        if uses_try_alloc(self.program):
+            raise ForgeError("wasm: try_alloc is not supported")
         from .mmaps import uses_mmap
         if uses_mmap(self.program):
             raise ForgeError("wasm: mmap is not supported in v1")

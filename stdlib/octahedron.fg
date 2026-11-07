@@ -1,0 +1,15 @@
+struct Octahedron {
+    a: int;
+}
+
+fn octahedron_new(a: int) -> Octahedron {
+    return Octahedron { a: a };
+}
+
+fn octahedron_volume2(o: Octahedron) -> int {
+    return o.a * o.a * o.a;
+}
+
+fn octahedron_surface3(o: Octahedron) -> int {
+    return 3 * o.a * o.a;
+}

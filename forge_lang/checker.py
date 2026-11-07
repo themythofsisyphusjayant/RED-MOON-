@@ -79,13 +79,14 @@ C_KEYWORDS = {"auto", "case", "char", "const", "continue", "default",
               "register", "restrict", "short", "signed", "sizeof",
               "static", "switch", "typedef", "union", "unsigned",
               "void", "volatile", "_Bool", "_Complex", "_Imaginary"}
-STMT_BUILTINS = {"print", "println", "push", "fail", "assert", "poke32",
+STMT_BUILTINS = {"print", "println", "push", "pin", "fail", "assert", "poke32",
                  "mmap_set", "mmap_close", "mmap_set32",
                  "csr_write", "csr_set", "csr_clear"}
 EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
+                 "try_alloc",
                  "split", "join", "substr", "trim", "starts_with", "ends_with",
                  "http_get", "http_listen", "http_accept", "http_read_request",
                  "http_respond", "http_respond_status", "http_close",
@@ -142,7 +143,11 @@ class Checker:
         self.branch_depth = 0
         self.moved = set()
         self.moved_fields = set()
+        self.pinned = set()
         self._in_field_base = 0
+        self._in_pinned_base = 0
+        self._pinned_write_root = None
+        self._pinned_observe = 0
         self._moved_field_target = None
         self.loop_vars = []
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
@@ -1028,7 +1033,7 @@ class Checker:
         # must not wipe that function's scopes/return type.
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
-                 self.moved_fields, self.loop_vars)
+                 self.moved_fields, self.loop_vars, self.pinned)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1038,6 +1043,7 @@ class Checker:
             self.branch_depth = 0
             self.moved = set()
             self.moved_fields = set()
+            self.pinned = set()
             self.loop_vars = []
             for pn, pt in fn.params:
                 if pn in C_KEYWORDS:
@@ -1093,7 +1099,7 @@ class Checker:
         finally:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
-                self.moved_fields, self.loop_vars = saved
+                self.moved_fields, self.loop_vars, self.pinned = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -1125,11 +1131,14 @@ class Checker:
         parts.append(node.name)
         return ".".join(reversed(parts))
 
-    def _join_moved(self, before_moved, before_fields, results):
+    def _join_moved(self, before_moved, before_fields, before_pinned, results):
         """Path-sensitive join for branches and loops (move v2):
         a variable is moved after the join when it is moved on
         ANY path (a use after a conditional move is unsafe on
         the path that moved it, so the checker rejects it).
+        Pinning joins the same way (pin v1): a binding pinned
+        on ANY path counts as pinned after the join, so a
+        later move or copy is rejected on every path.
         Names declared only inside a branch are filtered out:
         they are out of scope after the join, and must not
         poison a later redeclaration of the same name."""
@@ -1138,14 +1147,51 @@ class Checker:
             visible.update(scope.keys())
         moved = set(before_moved)
         fields = set(before_fields)
-        for mset, fset in results:
+        pinned = set(before_pinned)
+        for mset, fset, pset in results:
             for name in mset:
                 if name in visible:
                     moved.add(name)
             for path in fset:
                 if path.split(".")[0] in visible:
                     fields.add(path)
-        return moved, fields
+            for name in pset:
+                if name in visible:
+                    pinned.add(name)
+        return moved, fields, pinned
+
+    def _access_root(self, expr):
+        """Root variable name of a Var/FieldAccess/Index/
+        TupleIndex access chain, or None for any other base
+        (a call result, a literal)."""
+        node = expr
+        while isinstance(node, (A.FieldAccess, A.Index, A.TupleIndex)):
+            node = node.base
+        return node.name if isinstance(node, A.Var) else None
+
+    def _is_owned_type(self, t):
+        """The move predicate (Top-500 #27): the types whose
+        values carry a hold — arrays, str, structs, tuples.
+        Pin reuses it: reading such a leaf out of a pinned
+        binding would copy the hold."""
+        return (elem_type(t) is not None or t == "str" or is_tuple_type(t)
+                or t in self.structs or t in self.struct_instantiations)
+
+    def _check_observed(self, expr):
+        """check_expr for a read-only observation of a value
+        (len, refcount, for-iteration over a pinned array):
+        a direct access path on a pinned binding is allowed
+        here — observing it moves or copies nothing — while
+        any other use still goes through the pinned check.
+        A call or literal argument is checked normally, so a
+        pinned value hidden inside it is still rejected."""
+        if isinstance(expr, (A.Var, A.FieldAccess, A.Index, A.TupleIndex)):
+            self._pinned_observe += 1
+            try:
+                return self.check_expr(expr)
+            finally:
+                self._pinned_observe -= 1
+        return self.check_expr(expr)
 
     def check_stmt(self, stmt):
         if isinstance(stmt, A.Block):
@@ -1212,6 +1258,9 @@ class Checker:
             # A fresh binding is never moved, even when it shadows
             # an outer variable that was moved (move v2).
             self.moved.discard(stmt.name)
+            # A fresh binding is never pinned either (pin v1):
+            # shadowing a pinned outer variable pins nothing.
+            self.pinned.discard(stmt.name)
             self.moved_fields = {p for p in self.moved_fields
                                  if not p.startswith(stmt.name + ".")}
             if (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
@@ -1226,6 +1275,11 @@ class Checker:
             if not mutable:
                 raise ForgeError(f"cannot assign to immutable variable '{stmt.name}' "
                                  f"(declare it with 'let mut')", stmt.line, stmt.col)
+            if stmt.name in self.pinned:
+                raise ForgeError(f"cannot reassign pinned variable '{stmt.name}' "
+                                 f"(pin forbids replacing the value; change it "
+                                 f"in place through its fields or indexes)",
+                                 stmt.line, stmt.col)
             et = self.check_expr(stmt.expr)
             if self._resolve_empty(stmt.name, et):
                 vt, _m = self.lookup(stmt.name, stmt.line, stmt.col)
@@ -1263,10 +1317,15 @@ class Checker:
             # used as the new value (move v2).
             target_path = self._field_path(stmt.target)
             self._moved_field_target = target_path
+            # An in-place field write is not a use of the pinned
+            # value: the struct stays put, only the field changes
+            # (pin v1).
+            self._pinned_write_root = node.name
             try:
                 ft = self.check_expr(stmt.target)
             finally:
                 self._moved_field_target = None
+                self._pinned_write_root = None
             vt2 = self.check_expr(stmt.expr)
             if (isinstance(stmt.expr, A.Var)
                     and self._resolve_empty(stmt.expr.name, ft)):
@@ -1288,12 +1347,22 @@ class Checker:
             elif isinstance(base, A.FieldAccess):
                 # e.g. m.vals[i] = v — array contents, not a rebinding,
                 # so mutability of the struct variable is not required.
-                vt = self.check_expr(base)
+                # An in-place index write into a pinned struct's
+                # array field is not a use of the pinned value.
+                self._pinned_write_root = self._access_root(base)
+                try:
+                    vt = self.check_expr(base)
+                finally:
+                    self._pinned_write_root = None
                 et = elem_type(vt)
             elif isinstance(base, A.Index):
                 # Chained index assignment (m[i][j] = v): the inner
                 # index yields the array being assigned into.
-                vt = self.check_expr(base)
+                self._pinned_write_root = self._access_root(base)
+                try:
+                    vt = self.check_expr(base)
+                finally:
+                    self._pinned_write_root = None
                 et = elem_type(vt)
             else:
                 raise ForgeError("index assignment target must be a variable or a field",
@@ -1324,6 +1393,7 @@ class Checker:
         if isinstance(stmt, A.Match):
             et = self.check_expr(stmt.expr)
             match_before_moved, match_before_fields = set(self.moved), set(self.moved_fields)
+            match_before_pinned = set(self.pinned)
             match_results = []
             if is_union_type(et):
                 # Narrowing a union: arms are member types, each
@@ -1342,13 +1412,13 @@ class Checker:
                         if binding is not None:
                             raise ForgeError("wildcard arm cannot bind a value",
                                              stmt.line, stmt.col)
-                        self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
+                        self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                         self.branch_depth += 1
                         try:
                             self.check_block(body)
                         finally:
                             self.branch_depth -= 1
-                        match_results.append((set(self.moved), set(self.moved_fields)))
+                        match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
                         continue
                     if pat not in member_set:
                         raise ForgeError(f"'{pat}' is not a member of union '{et}'",
@@ -1361,7 +1431,7 @@ class Checker:
                         raise ForgeError(f"member '{pat}' has a value; "
                                          f"write {pat}(name) => ...",
                                          stmt.line, stmt.col)
-                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
+                    self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                     self.scopes.append({binding: (pat, False)})
                     try:
                         self.branch_depth += 1
@@ -1371,13 +1441,13 @@ class Checker:
                             self.branch_depth -= 1
                     finally:
                         self.scopes.pop()
-                    match_results.append((set(self.moved), set(self.moved_fields)))
+                    match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
                 if not has_wildcard and seen != member_set:
                     missing = sorted(member_set - seen)
                     raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
                                      stmt.line, stmt.col)
-                self.moved, self.moved_fields = self._join_moved(
-                    match_before_moved, match_before_fields, match_results)
+                self.moved, self.moved_fields, self.pinned = self._join_moved(
+                    match_before_moved, match_before_fields, match_before_pinned, match_results)
                 return
             info = self.enum_info_for(et)
             if info is None:
@@ -1395,13 +1465,13 @@ class Checker:
                                          stmt.line, stmt.col)
                     if binding is not None:
                         raise ForgeError("wildcard arm cannot bind a value", stmt.line, stmt.col)
-                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
+                    self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                     self.branch_depth += 1
                     try:
                         self.check_block(body)
                     finally:
                         self.branch_depth -= 1
-                    match_results.append((set(self.moved), set(self.moved_fields)))
+                    match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
                     continue
                 if pat not in variants:
                     raise ForgeError(f"'{pat}' is not a variant of enum '{et}'"
@@ -1419,7 +1489,7 @@ class Checker:
                                      stmt.line, stmt.col)
                 if binding is not None:
                     # Check the arm body with the binding in scope.
-                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
+                    self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                     self.scopes.append({binding: (payload_type, False)})
                     try:
                         self.branch_depth += 1
@@ -1430,19 +1500,19 @@ class Checker:
                     finally:
                         self.scopes.pop()
                 else:
-                    self.moved, self.moved_fields = set(match_before_moved), set(match_before_fields)
+                    self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                     self.branch_depth += 1
                     try:
                         self.check_block(body)
                     finally:
                         self.branch_depth -= 1
-                match_results.append((set(self.moved), set(self.moved_fields)))
+                match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
             if not has_wildcard and seen != variants:
                 missing = sorted(variants - seen)
                 raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
                                  stmt.line, stmt.col)
-            self.moved, self.moved_fields = self._join_moved(
-                match_before_moved, match_before_fields, match_results)
+            self.moved, self.moved_fields, self.pinned = self._join_moved(
+                match_before_moved, match_before_fields, match_before_pinned, match_results)
             return
         if isinstance(stmt, A.Spawn):
             if self.freestanding:
@@ -1478,30 +1548,37 @@ class Checker:
             if self.check_expr(stmt.cond) != "bool":
                 raise ForgeError("if condition must be bool", stmt.line, stmt.col)
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
+            before_pinned = set(self.pinned)
             self.branch_depth += 1
             try:
                 self.check_block(stmt.then)
                 then_moved, then_fields = set(self.moved), set(self.moved_fields)
-                self.moved, self.moved_fields = before_moved, before_fields
+                then_pinned = set(self.pinned)
+                self.moved, self.moved_fields, self.pinned = before_moved, before_fields, before_pinned
                 if stmt.els is not None:
                     self.check_block(stmt.els)
                     else_moved, else_fields = set(self.moved), set(self.moved_fields)
+                    else_pinned = set(self.pinned)
                 else:
                     else_moved, else_fields = before_moved, before_fields
+                    else_pinned = before_pinned
             finally:
                 self.branch_depth -= 1
-            self.moved, self.moved_fields = self._join_moved(
-                before_moved, before_fields,
-                [(then_moved, then_fields), (else_moved, else_fields)])
+            self.moved, self.moved_fields, self.pinned = self._join_moved(
+                before_moved, before_fields, before_pinned,
+                [(then_moved, then_fields, then_pinned),
+                 (else_moved, else_fields, else_pinned)])
             return
         if isinstance(stmt, A.While):
             if self.check_expr(stmt.cond) != "bool":
                 raise ForgeError("while condition must be bool", stmt.line, stmt.col)
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
+            before_pinned = set(self.pinned)
             self.loop_depth += 1
             try:
                 self.check_block(stmt.body)
                 body_moved, body_fields = set(self.moved), set(self.moved_fields)
+                body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
             # The body may run zero times, so after the loop a
@@ -1510,11 +1587,17 @@ class Checker:
             # as moved: a later use is unsafe on the path that
             # moved it). A second execution of a move in the
             # body is caught at runtime by the moved flag.
-            self.moved, self.moved_fields = self._join_moved(
-                before_moved, before_fields, [(body_moved, body_fields)])
+            # Pinning joins the same way: pinned in the body
+            # counts as pinned after the loop.
+            self.moved, self.moved_fields, self.pinned = self._join_moved(
+                before_moved, before_fields, before_pinned,
+                [(body_moved, body_fields, body_pinned)])
             return
         if isinstance(stmt, A.For):
-            at = self.check_expr(stmt.expr)
+            # Iterating a pinned array reads its elements without
+            # moving the array itself (pin v1: a read-only
+            # observation, like len).
+            at = self._check_observed(stmt.expr)
             if at == "range":
                 et = "int"
             else:
@@ -1522,6 +1605,7 @@ class Checker:
             if et is None:
                 raise ForgeError(f"for loop needs an array or range, got {at}", stmt.line, stmt.col)
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
+            before_pinned = set(self.pinned)
             self.scopes.append({stmt.name: (et, False)})
             self.loop_depth += 1
             self.loop_vars.append(stmt.name)
@@ -1529,12 +1613,14 @@ class Checker:
                 for s in stmt.body.stmts:
                     self.check_stmt(s)
                 body_moved, body_fields = set(self.moved), set(self.moved_fields)
+                body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
                 self.loop_vars.pop()
             self.scopes.pop()
-            self.moved, self.moved_fields = self._join_moved(
-                before_moved, before_fields, [(body_moved, body_fields)])
+            self.moved, self.moved_fields, self.pinned = self._join_moved(
+                before_moved, before_fields, before_pinned,
+                [(body_moved, body_fields, body_pinned)])
             return
         if isinstance(stmt, A.Break):
             if self.loop_depth == 0:
@@ -1659,6 +1745,18 @@ class Checker:
         if call.name == "push":
             if len(call.args) != 2 or not isinstance(call.args[0], (A.Var, A.FieldAccess)):
                 raise ForgeError("push() takes a variable or field and a value", call.line, call.col)
+            if isinstance(call.args[0], A.Var) and call.args[0].name in self.pinned:
+                raise ForgeError(f"cannot push to pinned value '{call.args[0].name}' "
+                                 f"(push can reallocate the buffer; grow it "
+                                 f"before pinning, then write in place)",
+                                 call.line, call.col)
+            if isinstance(call.args[0], A.FieldAccess):
+                _proot = self._access_root(call.args[0])
+                if _proot in self.pinned:
+                    raise ForgeError(f"cannot push to a field of pinned value '{_proot}' "
+                                     f"(push can reallocate the buffer; grow it "
+                                     f"before pinning, then write in place)",
+                                     call.line, call.col)
             if isinstance(call.args[0], A.Var):
                 vt, _m = self.lookup(call.args[0].name, call.line, call.col)
             else:
@@ -1681,6 +1779,38 @@ class Checker:
                 et = vt2
             if vt2 != et:
                 raise ForgeError(f"push() value must be {et}, got {vt2}", call.line, call.col)
+            return
+        if call.name == "pin":
+            # Pinning (Top-500 #34): `pin(x);` marks an owned
+            # binding immovable for the rest of its scope — no
+            # move or copy after it, only in-place field/index
+            # writes and scalar reads. Compile-time only: the
+            # native codegen emits nothing for the statement.
+            if len(call.args) != 1:
+                raise ForgeError("pin() takes exactly one argument", call.line, call.col)
+            arg = call.args[0]
+            if not isinstance(arg, A.Var):
+                raise ForgeError("pin needs a variable in v1; pin the whole binding, "
+                                 "not a field", call.line, call.col)
+            if arg.name in self.loop_vars:
+                raise ForgeError("pin of a for-loop variable is not supported in v1; "
+                                 "copy it into a let first, then pin that",
+                                 call.line, call.col)
+            if arg.name in self.moved:
+                raise ForgeError(f"cannot pin moved value '{arg.name}'",
+                                 call.line, call.col)
+            if arg.name in self.pinned:
+                raise ForgeError(f"'{arg.name}' is already pinned",
+                                 call.line, call.col)
+            t, _m = self.lookup(arg.name, call.line, call.col)
+            if not self._is_owned_type(t):
+                raise ForgeError(f"pin needs an owned value (array, str, struct, tuple), "
+                                 f"got {t}", call.line, call.col)
+            if t in self.method_types and "drop" in self.method_types[t]:
+                raise ForgeError(f"cannot pin a value of struct '{t}' with a drop "
+                                 f"method in v1 (the scope-end drop hook copies "
+                                 f"the value)", call.line, call.col)
+            self.pinned.add(arg.name)
             return
         if call.name == "poke32":
             if len(call.args) != 2:
@@ -1717,6 +1847,19 @@ class Checker:
         if isinstance(expr, A.Var):
             if expr.name in self.moved:
                 raise ForgeError(f"use of moved value '{expr.name}'", expr.line, expr.col)
+            if (expr.name in self.pinned and self._in_pinned_base == 0
+                    and self._pinned_write_root != expr.name
+                    and self._pinned_observe == 0):
+                # A whole-value use of a pinned binding would move
+                # or copy it. Uses inside a field/index access are
+                # decided by the outermost access (a scalar leaf
+                # is a plain read; an owned leaf is a copy), and
+                # in-place writes and read-only observations
+                # (len, refcount, for-iteration) are exempt.
+                raise ForgeError(f"use of pinned value '{expr.name}' "
+                                 f"(pin forbids moving or copying it; "
+                                 f"change it in place through its fields "
+                                 f"or indexes)", expr.line, expr.col)
             if self._in_field_base == 0:
                 # A whole-value use after a field move is unsafe
                 # (a copy would re-own the moved field); field
@@ -1754,7 +1897,12 @@ class Checker:
             types = [self.check_expr(e) for e in expr.elems]
             return f"({', '.join(types)})"
         if isinstance(expr, A.TupleIndex):
-            bt = self.check_expr(expr.base)
+            outermost = self._in_pinned_base == 0
+            self._in_pinned_base += 1
+            try:
+                bt = self.check_expr(expr.base)
+            finally:
+                self._in_pinned_base -= 1
             if not is_tuple_type(bt):
                 raise ForgeError(f"tuple index .{expr.index} needs a tuple value, "
                                  f"got {bt}", expr.line, expr.col)
@@ -1763,6 +1911,15 @@ class Checker:
                 raise ForgeError(f"tuple index .{expr.index} out of range for "
                                  f"{bt} ({len(elems)} elements)",
                                  expr.line, expr.col)
+            root = self._access_root(expr)
+            if (outermost and self._pinned_observe == 0
+                    and self._pinned_write_root != root
+                    and root in self.pinned
+                    and self._is_owned_type(elems[expr.index])):
+                raise ForgeError(f"use of pinned value '{root}' "
+                                 f"(pin forbids moving or copying it; "
+                                 f"change it in place through its fields "
+                                 f"or indexes)", expr.line, expr.col)
             return elems[expr.index]
         if isinstance(expr, A.RangeLit):
             st = self.check_expr(expr.start)
@@ -1841,11 +1998,14 @@ class Checker:
             if (path is not None and path in self.moved_fields
                     and path != self._moved_field_target):
                 raise ForgeError(f"use of moved value '{path}'", expr.line, expr.col)
+            outermost = self._in_pinned_base == 0
             self._in_field_base += 1
+            self._in_pinned_base += 1
             try:
                 bt = self.check_expr(expr.base)
             finally:
                 self._in_field_base -= 1
+                self._in_pinned_base -= 1
             fields = self.struct_fields_for(bt)
             if fields is None:
                 raise ForgeError(f"cannot access a field on a non-struct value of type {bt}",
@@ -1853,12 +2013,39 @@ class Checker:
             if expr.field not in fields:
                 raise ForgeError(f"struct '{bt}' has no field '{expr.field}'",
                                  expr.line, expr.col)
+            root = self._access_root(expr)
+            if (outermost and self._pinned_observe == 0
+                    and self._pinned_write_root != root
+                    and root in self.pinned
+                    and self._is_owned_type(fields[expr.field])):
+                # Reading an owned field out of a pinned struct
+                # would copy the hold; a scalar field is a plain
+                # read and stays allowed.
+                raise ForgeError(f"use of pinned value '{root}' "
+                                 f"(pin forbids moving or copying it; "
+                                 f"change it in place through its fields "
+                                 f"or indexes)", expr.line, expr.col)
             return fields[expr.field]
         if isinstance(expr, A.Index):
-            bt = self.check_expr(expr.base)
+            outermost = self._in_pinned_base == 0
+            self._in_pinned_base += 1
+            try:
+                bt = self.check_expr(expr.base)
+            finally:
+                self._in_pinned_base -= 1
             if bt == "str":
                 if self.check_expr(expr.index) != "int":
                     raise ForgeError("string index must be int", expr.line, expr.col)
+                root = self._access_root(expr)
+                if (outermost and self._pinned_observe == 0
+                        and self._pinned_write_root != root
+                        and root in self.pinned):
+                    # Indexing a pinned string materializes a new
+                    # str (one char); read it before pinning.
+                    raise ForgeError(f"use of pinned value '{root}' "
+                                     f"(pin forbids moving or copying it; "
+                                     f"change it in place through its fields "
+                                     f"or indexes)", expr.line, expr.col)
                 return "str"
             et = elem_type(bt)
             if et is None:
@@ -1866,6 +2053,18 @@ class Checker:
                                  expr.line, expr.col)
             if self.check_expr(expr.index) != "int":
                 raise ForgeError("array index must be int", expr.line, expr.col)
+            root = self._access_root(expr)
+            if (outermost and self._pinned_observe == 0
+                    and self._pinned_write_root != root
+                    and root in self.pinned
+                    and self._is_owned_type(et)):
+                # Reading an owned element out of a pinned array
+                # would copy the hold; a scalar element is a
+                # plain read and stays allowed.
+                raise ForgeError(f"use of pinned value '{root}' "
+                                 f"(pin forbids moving or copying it; "
+                                 f"change it in place through its fields "
+                                 f"or indexes)", expr.line, expr.col)
             return et
         if isinstance(expr, A.Cast):
             t = self.check_expr(expr.expr)
@@ -1953,7 +2152,7 @@ class Checker:
                              call.line, call.col)
         if self.freestanding and call.name in (
                 "read_file", "write_file", "read_bytes", "write_bytes",
-                "file_exists", "read_line",
+                "file_exists", "read_line", "try_alloc",
                 "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
@@ -1994,14 +2193,14 @@ class Checker:
         if call.name == "len":
             if len(call.args) != 1:
                 raise ForgeError("len() takes exactly one argument", call.line, call.col)
-            t = self.check_expr(call.args[0])
+            t = self._check_observed(call.args[0])
             if t != "str" and elem_type(t) is None:
                 raise ForgeError(f"len() needs a str or array, got {t}", call.line, call.col)
             return "int"
         if call.name == "refcount":
             if len(call.args) != 1:
                 raise ForgeError("refcount() takes exactly one argument", call.line, call.col)
-            t = self.check_expr(call.args[0])
+            t = self._check_observed(call.args[0])
             if elem_type(t) is None:
                 raise ForgeError(f"refcount() needs an array, got {t}", call.line, call.col)
             return "int"
@@ -2029,6 +2228,10 @@ class Checker:
                 raise ForgeError("move of a for-loop variable is not supported in v2; "
                                  "copy it into a let first, then move that",
                                  call.line, call.col)
+            if isinstance(arg, A.Var) and arg.name in self.pinned:
+                raise ForgeError(f"cannot move pinned value '{arg.name}' "
+                                 f"(pin forbids moving it)",
+                                 call.line, call.col)
             if isinstance(arg, A.FieldAccess):
                 # Field moves are straight-line only in v2: a field
                 # move in a branch or loop would need a per-field
@@ -2041,6 +2244,10 @@ class Checker:
                 path = self._field_path(arg)
                 if path is None:
                     raise ForgeError("move needs a variable or field", call.line, call.col)
+                if path.split(".")[0] in self.pinned:
+                    raise ForgeError(f"cannot move a field of pinned value "
+                                     f"'{path.split('.')[0]}' (pin forbids "
+                                     f"moving it)", call.line, call.col)
                 t = self.check_expr(arg)
                 if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
                         or t in self.structs or t in self.struct_instantiations):
@@ -2202,6 +2409,29 @@ class Checker:
                 raise ForgeError("read_bytes() takes exactly one str argument",
                                  call.line, call.col)
             return "[int]"
+        if call.name == "try_alloc":
+            # Top-500 #36: fallible allocation. Returns Result<[int], str>:
+            # Ok with a zero-initialised array, or Err("out of memory") /
+            # Err("bad size") instead of the fatal forge_fail. The Result
+            # struct comes from stdlib/result.fg, so the program must
+            # import it; register the concrete instantiation here so
+            # check()'s epilogue appends it to program.structs and
+            # codegen emits the C struct body.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "int":
+                raise ForgeError("try_alloc() takes exactly one int argument",
+                                 call.line, call.col)
+            if "Result" not in self.structs:
+                raise ForgeError("try_alloc() needs import \"result.fg\" "
+                                 "(it returns Result<[int], str>)",
+                                 call.line, call.col)
+            fields = self.struct_fields_for("Result<[int], str>")
+            if fields is None:
+                raise ForgeError("try_alloc() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations["Result<[int], str>"] = fields
+            call.concrete_type = "Result<[int], str>"
+            return "Result<[int], str>"
         if call.name == "write_bytes":
             if len(call.args) != 2:
                 raise ForgeError("write_bytes() takes exactly two arguments",

@@ -1,0 +1,7 @@
+import "sector.fg";
+
+fn main() {
+    let mut s: Sector = sector_new(10, 90);
+    println(sector_arc60(s));
+    println(sector_area120(s));
+}

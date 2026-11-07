@@ -1,0 +1,7 @@
+import "octagon.fg";
+
+fn main() {
+    let mut o: Octagon = octagon_new(5);
+    println(octagon_area5(o));
+    println(octagon_perim(o));
+}

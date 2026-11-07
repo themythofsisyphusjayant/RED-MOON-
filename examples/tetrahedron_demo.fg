@@ -1,0 +1,7 @@
+import "tetrahedron.fg";
+
+fn main() {
+    let mut t: Tetrahedron = tetrahedron_new(4);
+    println(tetrahedron_volume8(t));
+    println(tetrahedron_surface2(t));
+}

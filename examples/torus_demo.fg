@@ -1,0 +1,7 @@
+import "torus.fg";
+
+fn main() {
+    let mut t: Torus = torus_new(5, 2);
+    println(torus_volume18(t));
+    println(torus_surface36(t));
+}

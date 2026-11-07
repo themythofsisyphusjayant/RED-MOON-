@@ -1,0 +1,7 @@
+import "octahedron.fg";
+
+fn main() {
+    let mut o: Octahedron = octahedron_new(3);
+    println(octahedron_volume2(o));
+    println(octahedron_surface3(o));
+}

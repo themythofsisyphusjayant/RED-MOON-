@@ -1,0 +1,92 @@
+import "gpt2.fg";
+import "nn.fg";
+
+fn build_tape(params: [float]) -> Ag {
+    let mut s: Ag = ag_input(tape_new(), params[0]);
+    let mut i: int = 1;
+    while i < len(params) {
+        s = ag_input(s.tape, params[i]);
+        i = i + 1;
+    }
+    return s;
+}
+
+fn load_vocab() -> [str] {
+    let text: str = read_file("data/tinystories_vocab.txt");
+    let lines: [str] = split(text, "\n");
+    let mut out: [str] = [];
+    for line in lines {
+        if len(line) > 0 {
+            push(out, line);
+        }
+    }
+    return out;
+}
+
+fn load_ids() -> [int] {
+    let text: str = read_file("data/tinystories_ids.txt");
+    let parts: [str] = split(text, " ");
+    let mut out: [int] = [];
+    for piece in parts {
+        if len(piece) > 0 {
+            push(out, parse_int(piece));
+        }
+    }
+    return out;
+}
+
+fn window_nonunk(params: [float], ids: [int], start: int, vocab_len: int, unk: int) -> [float] {
+    let mut x: [int] = [];
+    let mut y: [int] = [];
+    let mut i: int = 0;
+    while i < 8 {
+        push(x, ids[start + i]);
+        push(y, ids[start + i + 1]);
+        i = i + 1;
+    }
+    let tape: Ag = build_tape(params);
+    let logits: NodeVec = g2_logits(tape, x, 8, 16, 2, 32, vocab_len, 2);
+    let mut sum: float = 0.0;
+    let mut count: float = 0.0;
+    let mut p: int = 0;
+    while p < 8 {
+        if y[p] != unk {
+            let base: int = p * vocab_len;
+            let mut s: float = 0.0;
+            let mut v: int = 0;
+            while v < vocab_len {
+                s = s + exp(logits.ag.tape.vals[base + v]);
+                v = v + 1;
+            }
+            let prob: float = exp(logits.ag.tape.vals[base + y[p]]) / s;
+            sum = sum + (0.0 - log(prob + 1e-09));
+            count = count + 1.0;
+        }
+        p = p + 1;
+    }
+    let mut out: [float] = [];
+    push(out, sum);
+    push(out, count);
+    return out;
+}
+
+fn main() -> int {
+    let vocab: [str] = load_vocab();
+    let ids: [int] = load_ids();
+    let vlen: int = len(vocab);
+    let unk: int = vlen - 1;
+    let params: [float] = checkpoint_load("/tmp/tinystories_ckpt.txt");
+    println("ckpt len =", len(params), "vocab =", vlen);
+    let mut total: float = 0.0;
+    let mut count: float = 0.0;
+    let mut w: int = 0;
+    while w < 20 {
+        let r: [float] = window_nonunk(params, ids, 20000 + w, vlen, unk);
+        total = total + r[0];
+        count = count + r[1];
+        w = w + 1;
+    }
+    let loss: float = total / count;
+    println("nonunk test loss =", loss, "ppl =", exp(loss), "scored =", count);
+    return 0;
+}

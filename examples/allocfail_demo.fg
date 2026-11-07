@@ -1,0 +1,30 @@
+import "result.fg";
+
+fn alloc_or_fail(n: int) -> Result<[int], str> {
+    let v = try_alloc(n)?;
+    return Result { ok: true, value: v, error: "" };
+}
+
+fn main() -> int {
+    let r = try_alloc(5);
+    println(r.ok);
+    println(len(r.value));
+    println(r.value[0]);
+    println(r.value[4]);
+    let bad = try_alloc(-1);
+    println(bad.ok);
+    println(bad.error);
+    let z = try_alloc(0);
+    println(z.ok);
+    println(len(z.value));
+    let big = try_alloc(1152921504606846976);
+    println(big.ok);
+    println(big.error);
+    let p = alloc_or_fail(1152921504606846976);
+    println(p.ok);
+    println(p.error);
+    let q = alloc_or_fail(3);
+    println(q.ok);
+    println(len(q.value));
+    return 0;
+}

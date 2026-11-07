@@ -1,32 +1,3 @@
-// TinyStories word-level GPT (0.4.0): 2 blocks, 2 heads,
-// d=16, hidden=32, seq=8 WORDS, vocab loaded from
-// data/tinystories_vocab.txt (500 words + <unk> from the
-// first 200 TinyStories train stories; see
-// data/tinystories_README.md and tools/prepare_tinystories.py).
-// Training: Adam lr 0.02, clip 1.0, 500 strided windows
-// (stride 4, covering the first ~2000 words) x 3 epochs,
-// in ONE process since 0.5.0. Before 0.5.0 this had to run
-// as three one-epoch processes: block-scoped variables were
-// never freed, so each step's ~221k-node tape leaked and
-// the VM's OOM killer ended the run (twice). The 0.5.0
-// compiler fix frees a block's variables when the block
-// ends, so one process now trains all 3 epochs. Resume
-// still works for continuing from a checkpoint:
-//   forge run examples/gpt_tinystories.fg resume
-//   forge run examples/gpt_tinystories.fg resume final
-// Checkpoint: /tmp/tinystories_ckpt.txt (6-decimal floats,
-// so a resumed run loses ~1e-6 per parameter — negligible
-// at this scale, and the printed ckpt diff shows it).
-// Evaluation: held-out windows from word offset 20000
-// (later stories the model never trained on), loss and
-// perplexity before and after. Checkpoint: saved to /tmp
-// (not the repo) and loaded back, difference printed.
-// Generation: 30 words, greedy and temperature-sampled,
-// from the prompt "once upon a time there was a little".
-// This is a word model, not a character model: its outputs
-// are real words (or <unk>), which is why it can read as
-// more fluent than the character models before it — and
-// why its failures read as word salad, not letter salad.
 import "gpt2.fg";
 import "nn.fg";
 import "tokenizer.fg";
@@ -173,9 +144,20 @@ fn main() -> int {
         }
     }
     let mut init: [float] = [];
+    let mut start_epoch: int = 0;
+    let mut start_window: int = 0;
     if resume {
-        init = checkpoint_load("/tmp/tinystories_ckpt.txt");
+        init = checkpoint_load("/home/hatch/workspace/gpt2eval/tinystories_ckpt.txt");
         println("resumed from checkpoint, len =", len(init));
+        let state_text: str = read_file("/home/hatch/workspace/gpt2eval/tinystories_epoch.txt");
+        if len(state_text) > 0 {
+            let parts: [str] = split(state_text, " ");
+            if len(parts) >= 2 {
+                start_epoch = parse_int(parts[0]);
+                start_window = parse_int(parts[1]);
+            }
+        }
+        println("resuming at epoch", start_epoch, "window", start_window);
     } else {
         init = g2_init_params(vlen, 16, 8, 32, 2, 42);
         let test_before: float = eval_loss(init, ids, 20000, 20, vlen);
@@ -184,12 +166,13 @@ fn main() -> int {
     let mut st: OptimState = optim_new(init);
     let mut epochs: int = 3;
     if resume {
-        epochs = 1;
+        epochs = start_epoch + 1;
     }
-    let mut epoch: int = 0;
+    let mut epoch: int = start_epoch;
     while epoch < epochs {
         let mut total: float = 0.0;
-        let mut w: int = 0;
+        let mut w: int = start_window;
+        let count: int = 500 - start_window;
         while w < 500 {
             let start: int = w * 4;
             let mut x: [int] = [];
@@ -212,10 +195,18 @@ fn main() -> int {
                 i = i + 1;
             }
             let clipped: [float] = grad_clip(grads, 1.0);
-            st = adam_step(st, clipped, 0.02, 0.9, 0.999, 0.00000001);
+            st = adam_step(st, clipped, 0.02, 0.9, 0.999, 1e-08);
+            if (w + 1) % 5 == 0 {
+                let ck2: bool = checkpoint_save("/home/hatch/workspace/gpt2eval/tinystories_ckpt.txt", st.params);
+                let st2: bool = write_file("/home/hatch/workspace/gpt2eval/tinystories_epoch.txt", int_to_str(epoch) + " " + int_to_str(w + 1));
+            }
             w = w + 1;
         }
-        println("epoch", epoch, "avg loss =", total / 500.0);
+        println("epoch", epoch, "avg loss =", total / count as float);
+        let ck: bool = checkpoint_save("/home/hatch/workspace/gpt2eval/tinystories_ckpt.txt", st.params);
+        let ep: bool = write_file("/home/hatch/workspace/gpt2eval/tinystories_epoch.txt", int_to_str(epoch + 1) + " 0");
+        println("epoch ckpt saved =", ck, "epoch file =", ep);
+        start_window = 0;
         epoch = epoch + 1;
     }
     let ok: bool = checkpoint_save("/tmp/tinystories_ckpt.txt", st.params);

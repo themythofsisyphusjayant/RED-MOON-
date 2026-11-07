@@ -211,6 +211,12 @@ class RVGen:
         from .moves import uses_move
         if uses_move(self.program):
             raise ForgeError("big32: move is not supported")
+        from .pins import uses_pin
+        if uses_pin(self.program):
+            raise ForgeError("big32: pin is not supported")
+        from .allocfail import uses_try_alloc
+        if uses_try_alloc(self.program):
+            raise ForgeError("big32: try_alloc is not supported")
         from .mmaps import uses_mmap
         if uses_mmap(self.program):
             raise ForgeError("big32: mmap is not supported in v1")
