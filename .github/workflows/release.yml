@@ -1,0 +1,36 @@
+name: Release
+# Tag a release (v*) and this builds the wheel + sdist, publishes
+# them to PyPI, and creates the GitHub Release for the tag.
+# Needs the PYPI_API_TOKEN secret set in the repo settings
+# (a PyPI API token with Upload packages scope).
+# NOTE: this file cannot reach GitHub through the Contents-API
+# push path (the API refuses workflow files without the workflow
+# scope), so it lands on GitHub with a git push, not with
+# push_forge.py.
+on:
+  push:
+    tags:
+      - "v*"
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: |
+          python3 -m pip install --upgrade build twine
+          python3 -m build
+          python3 -m twine check dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
