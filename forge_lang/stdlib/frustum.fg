@@ -1,0 +1,17 @@
+struct Frustum {
+    r1: int;
+    r2: int;
+    h: int;
+}
+
+fn frustum_new(r1: int, r2: int, h: int) -> Frustum {
+    return Frustum { r1: r1, r2: r2, h: h };
+}
+
+fn frustum_volume2(f: Frustum) -> int {
+    return f.h * (f.r1 * f.r1 + f.r1 * f.r2 + f.r2 * f.r2);
+}
+
+fn frustum_slant2(f: Frustum) -> int {
+    return f.h * f.h + (f.r1 - f.r2) * (f.r1 - f.r2);
+}

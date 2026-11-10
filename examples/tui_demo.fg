@@ -1,0 +1,10 @@
+import "tui.fg";
+
+fn main() {
+    println(tui_box_top(6));
+    println(tui_box_row("hi", 6));
+    println(tui_box_top(6));
+    println(tui_bar(50, 10));
+    println(tui_bar(0, 4));
+    println(tui_bar(100, 4));
+}

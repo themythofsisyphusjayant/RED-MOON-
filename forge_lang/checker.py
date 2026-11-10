@@ -150,6 +150,12 @@ class Checker:
         self._pinned_observe = 0
         self._moved_field_target = None
         self.loop_vars = []
+        # For-iterable stack (Top-500 #40): (root name, field path or
+        # None) for each enclosing for loop's iterable, so a move of
+        # the iterable inside the body is rejected — the loop reads
+        # the buffer again on the next iteration, after the moved-to
+        # binding's scope-end free.
+        self._for_iterables = []
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
         self.struct_instantiations = {}  # concrete type -> {field: type}
         self._instantiating = set()
@@ -1033,7 +1039,8 @@ class Checker:
         # must not wipe that function's scopes/return type.
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
-                 self.moved_fields, self.loop_vars, self.pinned)
+                 self.moved_fields, self.loop_vars, self.pinned,
+                 self._for_iterables)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1045,6 +1052,7 @@ class Checker:
             self.moved_fields = set()
             self.pinned = set()
             self.loop_vars = []
+            self._for_iterables = []
             for pn, pt in fn.params:
                 if pn in C_KEYWORDS:
                     raise ForgeError(f"'{pn}' is a C keyword and cannot be used as a "
@@ -1099,7 +1107,8 @@ class Checker:
         finally:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
-                self.moved_fields, self.loop_vars, self.pinned = saved
+                self.moved_fields, self.loop_vars, self.pinned, \
+                self._for_iterables = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -1168,6 +1177,43 @@ class Checker:
         while isinstance(node, (A.FieldAccess, A.Index, A.TupleIndex)):
             node = node.base
         return node.name if isinstance(node, A.Var) else None
+
+    def _scope_id_for(self, name):
+        """id() of the scope dict that binds `name`, or None —
+        the same name in an inner scope is a different binding."""
+        if name is None:
+            return None
+        for scope in reversed(self.scopes):
+            if name in scope:
+                return id(scope)
+        return None
+
+    def _for_iterable_conflict(self, arg):
+        """True when moving `arg` would break an enclosing for
+        loop that is iterating over it (Top-500 #40): the loop
+        reads the iterable's buffer again on the next iteration,
+        after the moved-to binding's scope-end free. The move
+        target overlaps the iterable when it is the same path,
+        or one contains the other (moving a struct moves its
+        fields with it)."""
+        if isinstance(arg, A.Var):
+            root, path = arg.name, arg.name
+        elif isinstance(arg, A.FieldAccess):
+            path = self._field_path(arg)
+            root = path.split(".")[0] if path else None
+        else:
+            return False
+        if root is None or path is None:
+            return False
+        scope_id = self._scope_id_for(root)
+        for iscope, name, ipath in self._for_iterables:
+            if name != root or iscope != scope_id:
+                continue
+            if ipath is None or ipath == path \
+                    or ipath.startswith(path + ".") \
+                    or path.startswith(ipath + "."):
+                return True
+        return False
 
     def _is_owned_type(self, t):
         """The move predicate (Top-500 #27): the types whose
@@ -1337,11 +1383,23 @@ class Checker:
                                  f"{cast_hint(vt2, ft)}",
                                  stmt.line, stmt.col)
             if target_path is not None:
-                self.moved_fields.discard(target_path)
+                # Assigning a whole intermediate struct revives
+                # its fields too (Top-500 #40): replacing o.inner
+                # replaces o.inner.vals, so a moved field under
+                # the target is live again, not just the target.
+                self.moved_fields = {p for p in self.moved_fields
+                                     if p != target_path
+                                     and not p.startswith(target_path + ".")}
             return
         if isinstance(stmt, A.IndexAssign):
             base = stmt.base.base
             if isinstance(base, A.Var):
+                # Writing through a moved array's stale pointer
+                # is a use-after-move (Top-500 #40): the buffer
+                # now belongs to the moved-to binding.
+                if base.name in self.moved:
+                    raise ForgeError(f"use of moved value '{base.name}'",
+                                     stmt.line, stmt.col)
                 vt, _mutable = self.lookup(base.name, stmt.line, stmt.col)
                 et = elem_type(vt)
             elif isinstance(base, A.FieldAccess):
@@ -1581,6 +1639,19 @@ class Checker:
                 body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
+            # Loop-back edge (Top-500 #40): the condition is
+            # evaluated again after the body runs, so a value
+            # the body moved is dead on the second evaluation —
+            # re-check the condition against the post-body moved
+            # set. Reassignment in the body revives the value,
+            # so body_moved (post-body state) is exactly the set
+            # that is dead at the next evaluation.
+            saved_moved, saved_fields = self.moved, self.moved_fields
+            self.moved, self.moved_fields = set(body_moved), set(body_fields)
+            try:
+                self.check_expr(stmt.cond)
+            finally:
+                self.moved, self.moved_fields = saved_moved, saved_fields
             # The body may run zero times, so after the loop a
             # variable is moved only if it was already moved
             # before, or moved in the body (maybe-moved counts
@@ -1609,6 +1680,20 @@ class Checker:
             self.scopes.append({stmt.name: (et, False)})
             self.loop_depth += 1
             self.loop_vars.append(stmt.name)
+            # The iterable's buffer is read again on every
+            # iteration (Top-500 #40): record it so a move of
+            # it inside the body is rejected in check_call —
+            # the moved-to binding's scope-end free would leave
+            # the next iteration reading freed memory, even if
+            # the body reassigns the variable afterwards (the
+            # loop still holds the old buffer). The scope id
+            # keeps a shadowing inner binding of the same name
+            # from tripping the rule.
+            iter_root = self._access_root(stmt.expr)
+            iter_path = self._field_path(stmt.expr)
+            iter_scope = self._scope_id_for(iter_root) if iter_root is not None else None
+            if iter_root is not None:
+                self._for_iterables.append((iter_scope, iter_root, iter_path))
             try:
                 for s in stmt.body.stmts:
                     self.check_stmt(s)
@@ -1617,6 +1702,8 @@ class Checker:
             finally:
                 self.loop_depth -= 1
                 self.loop_vars.pop()
+                if iter_root is not None:
+                    self._for_iterables.pop()
             self.scopes.pop()
             self.moved, self.moved_fields, self.pinned = self._join_moved(
                 before_moved, before_fields, before_pinned,
@@ -1743,6 +1830,11 @@ class Checker:
                 raise ForgeError("mmap_close() takes a mapping id (int)", call.line, call.col)
             return
         if call.name == "push":
+            if self.freestanding:
+                raise ForgeError("push() reallocates the heap buffer "
+                                 "(not in freestanding v1; freestanding "
+                                 "code has no heap allocator)",
+                                 call.line, call.col)
             if len(call.args) != 2 or not isinstance(call.args[0], (A.Var, A.FieldAccess)):
                 raise ForgeError("push() takes a variable or field and a value", call.line, call.col)
             if isinstance(call.args[0], A.Var) and call.args[0].name in self.pinned:
@@ -1758,6 +1850,12 @@ class Checker:
                                      f"before pinning, then write in place)",
                                      call.line, call.col)
             if isinstance(call.args[0], A.Var):
+                # Pushing reallocates the buffer: through a moved
+                # array's stale pointer that frees the moved-to
+                # binding's buffer (Top-500 #40).
+                if call.args[0].name in self.moved:
+                    raise ForgeError(f"use of moved value '{call.args[0].name}'",
+                                     call.line, call.col)
                 vt, _m = self.lookup(call.args[0].name, call.line, call.col)
             else:
                 vt = self.check_expr(call.args[0])
@@ -1835,7 +1933,100 @@ class Checker:
             return
         raise ForgeError(f"unknown builtin '{call.name}'", call.line, call.col)
 
+    def _heap_backed(self, t, _seen=None):
+        """True when a value of type t needs the heap (Top-500 #39).
+
+        str and every array (dynamic, sized, readonly view) are
+        heap-backed — sized literals malloc in codegen — as is any
+        struct, enum, tuple, union or newtype that carries one,
+        transitively. A bare "?" hole or a type parameter is not
+        known to be heap-backed, so it passes here; the concrete
+        value is caught when it is built.
+        """
+        if not t or t in ("?", "void", "range"):
+            return False
+        if _seen is None:
+            _seen = set()
+        if t in _seen:
+            return False
+        _seen = _seen | {t}
+        if t == "str":
+            return True
+        if is_readonly(t):
+            return self._heap_backed(readonly_inner(t), _seen)
+        if is_sized_array(t):
+            return True
+        if t.startswith("[") and t.endswith("]"):
+            return True
+        if is_union_type(t):
+            return any(self._heap_backed(m, _seen)
+                       for m in union_members(t))
+        if is_tuple_type(t):
+            return any(self._heap_backed(e, _seen)
+                       for e in tuple_elems(t))
+        if t in self.newtype_targets:
+            return self._heap_backed(self.newtype_targets[t], _seen)
+        fields = self.struct_fields_for(t)
+        if fields is not None:
+            return any(self._heap_backed(ft, _seen)
+                       for ft in fields.values())
+        g = parse_generic(t)
+        if g is not None:
+            base, args = g
+            if base in self.enums:
+                params = self.enum_params.get(base, [])
+                if len(args) == len(params):
+                    payloads = self.enum_payloads.get(base, {})
+                    bindings = dict(zip(params, args))
+                    return any(
+                        pt is not None
+                        and self._heap_backed(
+                            substitute_type(pt, bindings), _seen)
+                        for pt in payloads.values())
+            return False
+        if t in self.enums:
+            return any(pt is not None
+                       and self._heap_backed(pt, _seen)
+                       for pt in self.enum_payloads.get(t, {}).values())
+        return False
+
+    def _heap_error(self, expr, t):
+        """Named freestanding error for a heap-backed expression."""
+        hint = ("(not in freestanding v1; freestanding code has no "
+                "heap allocator)")
+        if isinstance(expr, A.StrLit):
+            return f"string literal allocates on the heap {hint}"
+        if isinstance(expr, A.ArrayLit):
+            return f"array literal allocates on the heap {hint}"
+        if isinstance(expr, A.BinOp) and expr.op == "+" and t == "str":
+            return f"string concatenation allocates on the heap {hint}"
+        if isinstance(expr, A.Call):
+            return (f"call to '{expr.name}' returns heap-backed type "
+                    f"'{t}' {hint}")
+        if isinstance(expr, A.Var):
+            return (f"variable '{expr.name}' has heap-backed type "
+                    f"'{t}' {hint}")
+        if isinstance(expr, A.StructLit):
+            return (f"struct value '{expr.name}' carries heap-backed "
+                    f"fields (type '{t}') {hint}")
+        return (f"expression of heap-backed type '{t}' allocates on "
+                f"the heap {hint}")
+
     def check_expr(self, expr):
+        """Check an expression and return its type.
+
+        In freestanding mode (Top-500 #39) any expression whose type
+        is heap-backed is rejected here with a named error — the rule
+        is enforced at compile time, at the first heap value,
+        instead of dying later in codegen or at the C compiler.
+        """
+        t = self._check_expr_inner(expr)
+        if self.freestanding and self._heap_backed(t):
+            raise ForgeError(self._heap_error(expr, t),
+                             expr.line, expr.col)
+        return t
+
+    def _check_expr_inner(self, expr):
         if isinstance(expr, A.IntLit):
             return "int"
         if isinstance(expr, A.FloatLit):
@@ -1998,6 +2189,20 @@ class Checker:
             if (path is not None and path in self.moved_fields
                     and path != self._moved_field_target):
                 raise ForgeError(f"use of moved value '{path}'", expr.line, expr.col)
+            if (path is not None and self._in_field_base == 0
+                    and path != self._moved_field_target):
+                # A whole-value use of a struct one of whose
+                # fields moved away (Top-500 #40): copying the
+                # struct would re-own the moved field, so the
+                # intermediate path is dead too. Only the
+                # outermost access is a whole-value use — a
+                # deeper access is a sibling-field read, decided
+                # by its own exact check above.
+                moved_field = sorted(p for p in self.moved_fields
+                                     if p.startswith(path + "."))
+                if moved_field:
+                    raise ForgeError(f"use of value '{path}' with moved field "
+                                     f"'{moved_field[0]}'", expr.line, expr.col)
             outermost = self._in_pinned_base == 0
             self._in_field_base += 1
             self._in_pinned_base += 1
@@ -2249,6 +2454,10 @@ class Checker:
                                      f"'{path.split('.')[0]}' (pin forbids "
                                      f"moving it)", call.line, call.col)
                 t = self.check_expr(arg)
+                if self._for_iterable_conflict(arg):
+                    raise ForgeError(f"cannot move '{path}' (it is the iterable of an "
+                                     f"enclosing for loop; moving it frees the buffer "
+                                     f"the loop is reading)", call.line, call.col)
                 if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
                         or t in self.structs or t in self.struct_instantiations):
                     raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
@@ -2257,6 +2466,10 @@ class Checker:
                 call.in_conditional = False
                 return t
             t = self.check_expr(arg)
+            if self._for_iterable_conflict(arg):
+                raise ForgeError(f"cannot move '{arg.name}' (it is the iterable of an "
+                                 f"enclosing for loop; moving it frees the buffer "
+                                 f"the loop is reading)", call.line, call.col)
             if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
                     or t in self.structs or t in self.struct_instantiations):
                 raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "

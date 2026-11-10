@@ -1,0 +1,7 @@
+import "semicircle.fg";
+
+fn main() {
+    let mut s: Semicircle = semicircle_new(4);
+    println(semicircle_area2(s));
+    println(semicircle_perim2(s));
+}

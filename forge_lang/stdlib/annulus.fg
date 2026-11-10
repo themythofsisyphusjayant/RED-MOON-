@@ -1,0 +1,16 @@
+struct Annulus {
+    r_out: int;
+    r_in: int;
+}
+
+fn annulus_new(r_out: int, r_in: int) -> Annulus {
+    return Annulus { r_out: r_out, r_in: r_in };
+}
+
+fn annulus_area2(a: Annulus) -> int {
+    return 3 * (a.r_out * a.r_out - a.r_in * a.r_in);
+}
+
+fn annulus_perim2(a: Annulus) -> int {
+    return 6 * (a.r_out + a.r_in);
+}

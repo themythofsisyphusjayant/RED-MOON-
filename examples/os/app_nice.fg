@@ -1,0 +1,20 @@
+fn nice_clamp(v: int) -> int {
+    if v < -20 {
+        return -20;
+    }
+    if v > 19 {
+        return 19;
+    }
+    return v;
+}
+
+fn renice(pid: int, v: int) -> int {
+    return nice_clamp(v);
+}
+
+fn main() {
+    println(nice_clamp(-30));
+    println(nice_clamp(25));
+    println(nice_clamp(5));
+    println(renice(2, 10));
+}

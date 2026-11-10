@@ -1,0 +1,14 @@
+import "fsutils.fg";
+
+fn main() {
+    let src: str = "/tmp/forge_fsutils_demo_src.txt";
+    let dst: str = "/tmp/forge_fsutils_demo_copy.txt";
+    println(write_file(src, "hello"));
+    println(fs_copy(src, dst));
+    println(fs_size(dst));
+    println(fs_append(dst, " world"));
+    println(read_file(dst));
+    println(fs_size("/tmp/forge_fsutils_missing.txt"));
+    println(fs_copy("/tmp/forge_fsutils_missing.txt", dst));
+    println(fs_exists(dst));
+}

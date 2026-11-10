@@ -1,0 +1,112 @@
+struct Pool {
+    slots: [int];
+    free_stack: [int];
+    free_top: int;
+    used: [int];
+    cap: int;
+}
+
+fn pool_new(cap: int) -> Pool {
+    let mut c = cap;
+    if c < 0 {
+        c = 0;
+    }
+    let mut slots: [int] = [];
+    let mut stack: [int] = [];
+    let mut used: [int] = [];
+    let mut i = 0;
+    while i < c {
+        push(slots, 0);
+        push(stack, c - 1 - i);
+        push(used, 0);
+        i = i + 1;
+    }
+    let p: Pool = Pool { slots: slots, free_stack: stack, free_top: c, used: used, cap: c };
+    return p;
+}
+
+fn pool_alloc(p: Pool) -> (int, Pool) {
+    let mut m = p;
+    if m.free_top <= 0 {
+        return (-1, m);
+    }
+    m.free_top = m.free_top - 1;
+    let slot: int = m.free_stack[m.free_top];
+    m.used[slot] = 1;
+    return (slot, m);
+}
+
+fn pool_free(p: Pool, slot: int) -> (bool, Pool) {
+    let mut m = p;
+    if slot < 0 {
+        return (false, m);
+    }
+    if slot >= m.cap {
+        return (false, m);
+    }
+    if m.used[slot] != 1 {
+        return (false, m);
+    }
+    m.used[slot] = 0;
+    m.slots[slot] = 0;
+    m.free_stack[m.free_top] = slot;
+    m.free_top = m.free_top + 1;
+    return (true, m);
+}
+
+fn pool_get(p: Pool, slot: int) -> (bool, int) {
+    if slot < 0 {
+        return (false, 0);
+    }
+    if slot >= p.cap {
+        return (false, 0);
+    }
+    if p.used[slot] != 1 {
+        return (false, 0);
+    }
+    return (true, p.slots[slot]);
+}
+
+fn pool_set(p: Pool, slot: int, val: int) -> (bool, Pool) {
+    let mut m = p;
+    if slot < 0 {
+        return (false, m);
+    }
+    if slot >= m.cap {
+        return (false, m);
+    }
+    if m.used[slot] != 1 {
+        return (false, m);
+    }
+    m.slots[slot] = val;
+    return (true, m);
+}
+
+fn pool_used(p: Pool) -> int {
+    return p.cap - p.free_top;
+}
+
+fn pool_cap(p: Pool) -> int {
+    return p.cap;
+}
+
+fn pool_free_count(p: Pool) -> int {
+    return p.free_top;
+}
+
+fn pool_full(p: Pool) -> bool {
+    return p.free_top == 0;
+}
+
+fn pool_reset(p: Pool) -> Pool {
+    let mut m = p;
+    let mut i = 0;
+    while i < m.cap {
+        m.slots[i] = 0;
+        m.used[i] = 0;
+        m.free_stack[i] = m.cap - 1 - i;
+        i = i + 1;
+    }
+    m.free_top = m.cap;
+    return m;
+}

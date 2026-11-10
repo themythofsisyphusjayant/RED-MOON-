@@ -1,0 +1,83 @@
+fn os_platform() -> str {
+    return "linux";
+}
+
+fn os_path_sep() -> str {
+    return "/";
+}
+
+fn os_line_sep() -> str {
+    return "\n";
+}
+
+fn os_arg_count() -> int {
+    return len(args());
+}
+
+fn os_has_flag(name: str) -> bool {
+    let a: [str] = args();
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag {
+            return true;
+        }
+        if starts_with(a[i], flag + "=") {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn os_flag_value(name: str, fallback: str) -> str {
+    let a: [str] = args();
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag {
+            if i + 1 < len(a) {
+                return a[i + 1];
+            }
+            return fallback;
+        }
+        if starts_with(a[i], flag + "=") {
+            return substr(a[i], len(flag) + 1, len(a[i]) - len(flag) - 1);
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn os_has_flag_in(a: [str], name: str) -> bool {
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag {
+            return true;
+        }
+        if starts_with(a[i], flag + "=") {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn os_flag_value_in(a: [str], name: str, fallback: str) -> str {
+    let flag: str = "--" + name;
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] == flag {
+            if i + 1 < len(a) {
+                return a[i + 1];
+            }
+            return fallback;
+        }
+        if starts_with(a[i], flag + "=") {
+            return substr(a[i], len(flag) + 1, len(a[i]) - len(flag) - 1);
+        }
+        i = i + 1;
+    }
+    return fallback;
+}

@@ -1,0 +1,45 @@
+fn sig_num(name: str) -> int {
+    if name == "TERM" {
+        return 15;
+    }
+    if name == "KILL" {
+        return 9;
+    }
+    if name == "INT" {
+        return 2;
+    }
+    return -1;
+}
+
+fn sig_name(n: int) -> str {
+    if n == 15 {
+        return "TERM";
+    }
+    if n == 9 {
+        return "KILL";
+    }
+    if n == 2 {
+        return "INT";
+    }
+    return "?";
+}
+
+fn sig_result(n: int) -> str {
+    if n == 15 {
+        return "terminated";
+    }
+    if n == 9 {
+        return "killed";
+    }
+    return "unknown";
+}
+
+fn main() {
+    println(sig_num("TERM"));
+    println(sig_num("KILL"));
+    println(sig_name(15));
+    println(sig_name(9));
+    println(sig_result(15));
+    println(sig_result(9));
+    println(sig_result(99));
+}

@@ -57,10 +57,128 @@ freestanding-flavoured).
 34. Pinning / immovable values (Rust) — [HAVE] Landed 6 Nov 2026 (pipeline, v1): pin(x); marks an owned binding immovable for the rest of its scope — any whole-value use (let, call argument, return, println, condition), move(x), move of one of its fields, reassignment, or push is a checker error; in-place field/index writes, scalar field and element reads (including through owned fields, e.g. b.vals[0]), len/refcount, and for-iteration still work (they move or copy nothing). Pinning joins path-sensitively over branches, loops, and match arms (pinned on any path counts after the join), like move v2; a fresh let shadowing a pinned binding is unpinned. Pinning is compile-time only: native codegen emits nothing for the statement. Native-only; big32 and WASM reject pin programs. V1 limits: pin needs a variable (not a field); pinning a struct with a drop method is rejected (the scope-end drop hook copies the value); indexing a pinned string is rejected (it materializes a new str); pinning a same-named inner binding inside a branch also pins the outer after the join (name-keyed joins, as in move v2).
 35. Zeroing on free (Zig) — [HAVE] Landed 6 Nov 2026 (v1, default-on): every heap buffer the native runtime frees is zeroed (memset to 0) before free() — arrays of every element type (int/float/bool/str, nested, struct arrays), strs, the read_bytes temp buffer, the HTTP recv buffer, and spawn thread args. No new syntax and no opt-out in v1: the catalog calls this a security default, and it matches the language's safe-by-default stance. Cost: one memset per free. Verified by tests/test_zero_free_v1.py ALL PASS (demo, 12 run cases, emitted-C memset-before-free assertions at every site, and a C probe built from the actual emitted preamble reading all zeros after a sole-holder free — and NOT zeroing a shared buffer on a refcount dec); demo ASan-clean; full suite PASS. V1 limits: native only — big32/WASM free paths untouched (no syntax to gate, so programs there simply do not get zeroing yet); mmap is munmap, not free; no opt-out (later slice). Probe note: glibc free() writes freelist metadata into the first 16 bytes of a freed chunk, so the probe only observes bytes past 16.
 36. Allocation failure as a value (Rust) — [HAVE] Out-of-memory becomes a Result, not a crash. DONE 7 Nov 2026: new builtin try_alloc(n: int) -> Result<[int], str> (native-only v1): Ok with a zero-initialised [int] via calloc, Err("out of memory") when calloc returns NULL (verified with try_alloc(2^60)), Err("bad size") for n < 0, Ok empty for n == 0. Works with `?` propagation. Requires import "result.fg" (the Result struct lives there); checker registers the Result<[int], str> instantiation so codegen emits it. big32/WASM reject it with a named error; freestanding rejects it. v1 limits: [int] only (no other element types, no fallible implicit allocations); the tiny bookkeeping mallocs (refcount, error-string copy) can still forge_fail if the system is truly out of memory — only the big calloc is fallible. ASan cannot test a 2^63-byte calloc (its own maximum-size abort), so the huge path is verified by the non-ASan run.
-37. Pool allocators (C) — [GAP] Fixed-size object pools for drivers.
-38. Stack-usage diagnostics (Rust) — [GAP] Report max frame size per function; kernels care, frames are 2048 bytes today.
-39. No implicit heap allocation in freestanding mode (Zig) — [PARTIAL] The freestanding flag exists; enforce the rule at compile time.
-40. Use-after-move checking (Rust) — [GAP] Checker-level only, no borrow checker needed.
+37. Pool allocators (C) — [HAVE] Fixed-size object pools for drivers.
+Landed 7 Nov 2026 (pipeline, v1): forge_lang/stdlib/pool.fg, pure
+Qasida, no compiler change. One pool serves one fixed object size
+(an int slot in v1): the capacity is fixed at creation and the pool
+never grows, so alloc is O(1) and out-of-memory is a value (-1),
+never a crash. The free list is a separate stack (free_stack), NOT
+intrusive — a freed slot's value is never clobbered by a
+next-pointer, unlike #22's freelist. An occupancy bitmap (used)
+makes double-free and use-after-free detectable: pool_free /
+pool_set / pool_get on a free or out-of-range slot return false
+and leave the pool unchanged. Freed slots are zeroed, so a reused
+slot never leaks the old object's value. API: pool_new(cap) ->
+Pool, pool_alloc(p) -> (int, Pool) (slot or -1 when full),
+pool_free(p, slot) -> (bool, Pool), pool_get(p, slot) ->
+(bool, int), pool_set(p, slot, val) -> (bool, Pool),
+pool_used / pool_cap / pool_free_count / pool_full, pool_reset
+(all slots free, values zeroed). Verified by
+tests/test_pool_v1.py ALL PASS (18 checks: demo, alloc order,
+full -1, double-free, LIFO reuse, reset, cap 0/negative, cap 1,
+bad slots, neighbours, set-on-free; fmt idempotent; ASan clean).
+Native-only in v1: big32 and WASM reject pool programs with the
+named "tuples are not supported" error. V1 limits: [int] slots
+only (no other object types, no multi-slot objects); no
+pool-to-pool sharing; the pool is a value — copies share the
+backing arrays, so always rebind the returned Pool (the
+arena/allocator pattern).
+38. Stack-usage diagnostics (Rust) — [HAVE] `qasida stack <file.fg>`
+reports the max stack frame size per Qasida function, measured
+from the real C compiler (`cc -fstack-usage` at -O0, so no
+function is inlined away), with a warning when a frame exceeds
+the 2048-byte kernel frame budget (default limit, `--limit N`
+overrides it). Generic instantiations report under their base
+name with the mangled C symbol shown (identity_int), methods as
+Struct::method (Point__sum), freestanding main as main
+(qasida_main), and functions the C compiler never emits (an
+uninstantiated generic, an extern) as "not emitted". Runtime
+helpers (forge_*) are summarized, not listed. Qasida arrays and
+strings are heap-backed, so frames stay small by default: a
+300-int local adds ~24 bytes to the frame, while 300 int locals
+make a 2432-byte frame and trip the warning.
+Landed 8 Nov 2026 (pipeline, v1): forge_lang/stackusage.py +
+cli.py `stack` subcommand + examples/stackusage_demo.fg.
+Verified by tests/test_stackusage_v1.py ALL PASS (14 checks:
+demo 90, small frames with no warning, frame table parses with
+max naming the largest, big frame warns over 2048 with max
+many_locals, big-frame program runs 44852, --limit 0 warns on
+every frame, --limit 100000 silences it, generic label,
+method label, freestanding label, not-emitted label, missing
+file errors, checker error fails, fmt idempotent; ASan clean).
+Native only in v1: stack frames are a C-backend concept, so
+there is no --target flag; big32/WASM have no C to measure.
+V1 limits: frames measured at -O0 (an upper bound — optimized
+builds may inline and shrink frames); per-function frames only,
+not call-chain worst-case depth; the report warns, it never
+fails the build.
+39. No implicit heap allocation in freestanding mode (Zig) — [HAVE] The
+rule is enforced at compile time, in the checker, with a named
+error for the first heap value: any expression whose type is
+heap-backed — str, any array (dynamic, sized, readonly view), a
+struct, enum, or tuple carrying one, transitively — is rejected
+("string literal allocates on the heap", "variable 's' has
+heap-backed type 'str'", ...), and push() is rejected outright
+(it reallocates the heap buffer). The same checker runs for
+big32 (compile_file_rv), so the rule holds there too. Plain
+structs are stack values: a program using only int fields builds
+and runs freestanding, and its emitted C contains no malloc,
+free, or memset — the per-struct heap-array helpers
+(forge_<T>_array_free/get/set/push) are not emitted in
+freestanding mode. The old codegen gen_expr guard stays as a
+backstop.
+Landed 9 Nov 2026 (pipeline, v1): forge_lang/checker.py
+(_heap_backed + check_expr wrapper + push rejection) +
+forge_lang/codegen.py (skip per-struct array helpers when
+freestanding) + examples/noheap_demo.fg.
+Verified by tests/test_noheap_freestanding_v1.py ALL PASS (40
+checks: 12 named rejections, 7 freestanding programs build and
+run incl. the demo exiting 42, emit has no malloc/free/memset/
+array_free, big32 builds to .hex and rejects a string literal,
+hosted controls, fmt idempotent; ASan clean). Full suite PASS
+(log forge_suite_noheap_10321-6909.log).
+V1 limits: declarations that merely name a heap type (an unused
+str parameter, a struct field or enum payload of type str, never
+given a value) still declare — they generate no heap code, and
+any value of such a type is rejected at first use. Sized arrays
+stay rejected (their literals malloc in codegen). fail() and
+assert() with a string message stay rejected, as before (the
+message is a string literal).
+40. Use-after-move checking (Rust) — [HAVE] Landed 10 Nov 2026
+(pipeline, v1): checker-level only, no borrow checker. Move
+semantics (#27 v2) already rejected the direct uses, but five
+holes stayed open, each confirmed as a real heap-use-after-free
+under AddressSanitizer before the fix: push(a, v) and a[i] = v
+through a moved array (those paths only looked the target up,
+never checked it); a whole-value use of an intermediate struct
+path after a nested field move (let x = o.inner after
+move(o.inner.vals)); a while condition that reads a value the
+body moves (re-evaluated after the body frees the moved-to
+binding); and moving a for loop's iterable inside its body (the
+next iteration reads the freed buffer, even if the body
+reassigns the variable afterwards — the loop still holds the old
+buffer). The fix is checker-only (forge_lang/checker.py):
+moved checks on the push/index-assign variable targets, a
+descendant-moved-field check on outermost field accesses,
+a re-check of the while condition against the post-body moved
+set (reassignment in the body revives, so the post-body set is
+exactly what is dead at the next evaluation), and a
+for-iterable stack consulted by move() (scope-aware, so moving
+a shadowing inner binding of the same name stays allowed).
+One real bug found by the new tests and fixed in the same run:
+assigning a whole intermediate struct (o.inner = ...) did not
+revive a moved field under it (FieldAssign discarded only the
+exact target path); it now discards descendant paths too.
+Verified by tests/test_useaftermove_v1.py ALL PASS (demo, 11
+run cases, 14 rejection cases, big32/WASM named rejections,
+fmt idempotent; ASan clean). Full suite PASS (sole failure the
+known scope_demo println-interleaving flake, 4/4 clean on
+direct rerun; log forge_suite_useaftermove_10671.log).
+V1 limits: field moves in branches/loops are still rejected
+by the v2 rule before the iterable check runs, so a field move
+of a for iterable reports that earlier message; match-arm
+moves of a binding are still the one branch move whose source
+is not ownership-tracked (see #27).
 
 ## 3. Errors (41-60)
 41. Error values as the default path (Go/Rust) — [HAVE] Result already is; never add exceptions as the main path.

@@ -1,0 +1,7 @@
+import "kite.fg";
+
+fn main() {
+    let mut k: Kite = kite_new(6, 8, 5);
+    println(kite_area2(k));
+    println(kite_perim2(k));
+}

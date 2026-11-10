@@ -1,0 +1,40 @@
+import "base64.fg";
+import "hmac.fg";
+
+fn b64url_encode(data: [int]) -> str {
+    let std: str = b64_encode(data);
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(std) {
+        let c: str = std[i];
+        if c == "+" {
+            out = out + "-";
+        } else if c == "/" {
+            out = out + "_";
+        } else if c == "=" {
+            out = out + "";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn jwt_sign(header_json: str, payload_json: str, key: str) -> str {
+    let h: str = b64url_encode(str_bytes(header_json));
+    let p: str = b64url_encode(str_bytes(payload_json));
+    let msg: str = h + "." + p;
+    let sig: str = b64url_encode(hmac_sha256(str_bytes(key), str_bytes(msg)));
+    return msg + "." + sig;
+}
+
+fn jwt_verify(token: str, key: str) -> bool {
+    let parts: [str] = split(token, ".");
+    if len(parts) != 3 {
+        return false;
+    }
+    let msg: str = parts[0] + "." + parts[1];
+    let expect: str = b64url_encode(hmac_sha256(str_bytes(key), str_bytes(msg)));
+    return expect == parts[2];
+}

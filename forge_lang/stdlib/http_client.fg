@@ -1,0 +1,64 @@
+fn http_query_2(k1: str, v1: str, k2: str, v2: str) -> str {
+    return k1 + "=" + v1 + "&" + k2 + "=" + v2;
+}
+
+fn http_url(base: str, path: str, query: str) -> str {
+    if len(query) == 0 {
+        return base + path;
+    }
+    return base + path + "?" + query;
+}
+
+fn http_status_code(status_line: str) -> int {
+    let parts: [str] = split(status_line, " ");
+    if len(parts) < 2 {
+        return -1;
+    }
+    return parse_int(parts[1]);
+}
+
+fn http_status_ok(code: int) -> bool {
+    return code >= 200 && code < 300;
+}
+
+fn http_status_text(code: int) -> str {
+    if code == 200 {
+        return "OK";
+    }
+    if code == 201 {
+        return "Created";
+    }
+    if code == 204 {
+        return "No Content";
+    }
+    if code == 400 {
+        return "Bad Request";
+    }
+    if code == 401 {
+        return "Unauthorized";
+    }
+    if code == 404 {
+        return "Not Found";
+    }
+    if code == 500 {
+        return "Internal Server Error";
+    }
+    return "Unknown";
+}
+
+fn http_header(response: str, name: str) -> str {
+    let lines: [str] = split(response, "\n");
+    let prefix: str = name + ": ";
+    let mut i: int = 0;
+    while i < len(lines) {
+        if starts_with(lines[i], prefix) {
+            return substr(lines[i], len(prefix), len(lines[i]) - len(prefix));
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn http_build_get(host: str, path: str) -> str {
+    return "GET " + path + " HTTP/1.1\nHost: " + host + "\n\n";
+}

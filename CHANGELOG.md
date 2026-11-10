@@ -28,6 +28,63 @@ without a major version bump (see docs/STABILITY.md).
   before free() — arrays, strs, read_bytes temp, HTTP
   recv buffer, spawn thread args. No new syntax; native
   only in v1.
+- Pool allocators (Top-500 #37, v1): fixed-size object
+  pools for drivers, pure Qasida
+  (forge_lang/stdlib/pool.fg, no compiler change).
+  One pool serves one fixed object size (an int slot
+  in v1), never grows, alloc is O(1) through a separate
+  free stack, and out-of-memory is a value (-1). A
+  freed slot's value is never clobbered by a
+  next-pointer (unlike #22's intrusive freelist), and
+  an occupancy bitmap makes double-free and
+  use-after-free detectable: pool_free / pool_set /
+  pool_get on a free or out-of-range slot return false
+  and leave the pool unchanged. Freed slots are zeroed,
+  so reuse never leaks the old value. Verified by
+  tests/test_pool_v1.py ALL PASS (18 checks: demo,
+  alloc order, full -1, double-free, LIFO reuse,
+  reset, cap 0/negative, cap 1, bad slots, neighbours,
+  set-on-free; fmt idempotent; big32/WASM reject with
+  a named error; ASan clean). Native only in v1:
+  big32/WASM reject tuple programs.
+- Stack-usage diagnostics (Top-500 #38, v1): new `qasida stack
+  <file.fg>` subcommand reports the max stack frame size per
+  Qasida function from real `cc -fstack-usage` data at -O0, with
+  a warning when a frame exceeds the 2048-byte kernel frame
+  budget (default limit, `--limit N` overrides it). Generic
+  instantiations, methods, freestanding main, and never-emitted
+  functions are labelled honestly; runtime helpers are
+  summarized. Verified by tests/test_stackusage_v1.py ALL PASS
+  (14 checks; ASan clean). Native only in v1: per-function
+  frames at -O0, warn-only, no call-chain depth yet.
+- No implicit heap allocation in freestanding mode (Top-500 #39,
+  v1): the rule is enforced at compile time, in the checker,
+  with a named error for the first heap value — any expression
+  whose type is heap-backed (str, any array incl. sized, a
+  struct/enum/tuple carrying one) is rejected, and push() is
+  rejected outright. Plain structs are stack values: a program
+  using only int fields builds and runs freestanding, and its
+  emitted C contains no malloc, free, or memset. Verified by
+  tests/test_noheap_freestanding_v1.py ALL PASS (40 checks;
+  ASan clean). Full suite PASS (log
+  forge_suite_noheap_10321-6909.log). V1 limits: dead
+  declarations naming heap types still declare; sized arrays
+  stay rejected.
+- Use-after-move checking (Top-500 #40, v1): checker-only
+  closing of five holes in the move checking (#27 v2 already
+  rejected the direct uses) — push() and index-assign through
+  a moved array, whole-value use of an intermediate struct
+  path after a nested field move, a while condition the body
+  moves, and moving a for loop's iterable in its body. Each
+  hole was confirmed as a real heap-use-after-free under
+  AddressSanitizer before the fix. Also fixed: assigning a
+  whole intermediate struct now revives a moved field under
+  it. Verified by tests/test_useaftermove_v1.py ALL PASS
+  (demo, 11 run cases, 14 rejection cases; ASan clean).
+  Full suite PASS (sole failure the known scope_demo
+  println-interleaving flake, 4/4 clean on direct rerun; log
+  forge_suite_useaftermove_10671.log). V1 limits: field moves
+  in loops still report the v2 message first.
 - Pinning / immovable values (Top-500 #34, v1):
   `pin(x);` marks an owned binding immovable for the
   rest of its scope — any whole-value use (let, call

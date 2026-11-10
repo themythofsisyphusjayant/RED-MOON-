@@ -1,0 +1,32 @@
+import "pandas.fg";
+
+fn schema_has_col(f: Frame, name: str) -> bool {
+    return df_col_index(f, name) >= 0;
+}
+
+fn schema_col_in_range(f: Frame, name: str, lo: float, hi: float) -> bool {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        return false;
+    }
+    let mut r: int = 0;
+    while r < f.nrows {
+        let v: float = df_get(f, r, ci);
+        if v < lo || v > hi {
+            return false;
+        }
+        r = r + 1;
+    }
+    return true;
+}
+
+fn schema_row_count(f: Frame) -> int {
+    return df_row_count(f);
+}
+
+fn schema_col_mean_ok(f: Frame, name: str, expect: float) -> bool {
+    if df_col_index(f, name) < 0 {
+        return false;
+    }
+    return df_mean_col(f, name) == expect;
+}

@@ -1,0 +1,11 @@
+import "scipy.fg";
+
+fn main() {
+    println(scipy_det2(2.0, 1.0, 1.0, 3.0));
+    println(scipy_det3(1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0));
+    let sol: [float] = scipy_solve2(2.0, 1.0, 1.0, 3.0, 5.0, 10.0);
+    println(sol[0]);
+    println(sol[1]);
+    println(scipy_simpson_sq(0.0, 3.0, 6));
+    println(scipy_norm3(3.0, 4.0, 0.0));
+}

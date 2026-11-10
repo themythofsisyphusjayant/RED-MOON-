@@ -1,0 +1,16 @@
+import "taskqueue.fg";
+
+fn main() {
+    let path: str = "/tmp/forge_taskqueue_demo.txt";
+    println(write_file(path, ""));
+    println(tq_enqueue(path, "build"));
+    println(tq_enqueue(path, "test"));
+    println(tq_enqueue(path, "push"));
+    println(tq_len(path));
+    println(tq_peek(path));
+    println(tq_dequeue(path));
+    println(tq_len(path));
+    println(tq_peek(path));
+    println(tq_dequeue(path));
+    println(tq_len(path));
+}

@@ -1,0 +1,81 @@
+import "hashlib.fg";
+
+fn str_bytes(s: str) -> [int] {
+    let alpha: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        let mut j: int = 0;
+        let mut v: int = -1;
+        while j < len(alpha) {
+            if alpha[j] == c {
+                v = j + 32;
+            }
+            j = j + 1;
+        }
+        if v < 0 {
+            v = 63;
+        }
+        push(out, v);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn hmac_sha256(key: [int], data: [int]) -> [int] {
+    let mut k: [int] = key;
+    if len(k) > 64 {
+        k = sha256_bytes(k);
+    }
+    let mut ipad: [int] = [];
+    let mut opad: [int] = [];
+    let mut i: int = 0;
+    while i < 64 {
+        let mut b: int = 0;
+        if i < len(k) {
+            b = k[i];
+        }
+        push(ipad, b ^ 54);
+        push(opad, b ^ 92);
+        i = i + 1;
+    }
+    let mut inner: [int] = [];
+    i = 0;
+    while i < len(ipad) {
+        push(inner, ipad[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(data) {
+        push(inner, data[i]);
+        i = i + 1;
+    }
+    let inner_hash: [int] = sha256_bytes(inner);
+    let mut outer: [int] = [];
+    i = 0;
+    while i < len(opad) {
+        push(outer, opad[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(inner_hash) {
+        push(outer, inner_hash[i]);
+        i = i + 1;
+    }
+    return sha256_bytes(outer);
+}
+
+fn hmac_bytes_hex(digest: [int]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(digest) {
+        out = out + sha_hex_digit(digest[i] >> 4) + sha_hex_digit(digest[i] & 15);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn hmac_sha256_hex(key: [int], data: [int]) -> str {
+    return hmac_bytes_hex(hmac_sha256(key, data));
+}

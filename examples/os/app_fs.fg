@@ -1,0 +1,38 @@
+fn fs_list(names: [str], alive: [bool]) {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(names) {
+        if alive[i] {
+            if len(out) > 0 {
+                out = out + " ";
+            }
+            out = out + names[i];
+        }
+        i = i + 1;
+    }
+    println(out);
+}
+
+fn fs_read(names: [str], contents: [str], alive: [bool], want: str) -> str {
+    let mut i: int = 0;
+    while i < len(names) {
+        if alive[i] && names[i] == want {
+            return contents[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn main() {
+    let mut names: [str] = ["a.txt", "b.txt"];
+    let mut contents: [str] = ["hello", "world"];
+    let mut alive: [bool] = [true, true];
+    push(names, "c.txt");
+    push(contents, "!");
+    push(alive, true);
+    fs_list(names, alive);
+    println(fs_read(names, contents, alive, "b.txt"));
+    alive[0] = false;
+    fs_list(names, alive);
+}

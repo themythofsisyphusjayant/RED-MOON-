@@ -1,0 +1,7 @@
+import "wedge.fg";
+
+fn main() {
+    let mut w: Wedge = wedge_new(3, 4, 5);
+    println(wedge_volume2(w));
+    println(wedge_surface2(w));
+}

@@ -1,0 +1,17 @@
+import "http_client.fg";
+
+fn main() {
+    let q: str = http_query_2("q", "qasida", "page", "2");
+    println(q);
+    println(http_url("https://example.com", "/search", q));
+    println(http_status_code("HTTP/1.1 404 Not Found"));
+    println(http_status_text(404));
+    println(http_status_ok(200));
+    println(http_status_ok(404));
+    let resp: str = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 42\n";
+    println(http_header(resp, "Content-Type"));
+    println(http_header(resp, "Content-Length"));
+    let req: str = http_build_get("example.com", "/search?q=qasida");
+    println(len(req));
+    println(starts_with(req, "GET /search"));
+}

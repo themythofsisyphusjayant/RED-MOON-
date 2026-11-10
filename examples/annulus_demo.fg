@@ -1,0 +1,7 @@
+import "annulus.fg";
+
+fn main() {
+    let mut a: Annulus = annulus_new(5, 3);
+    println(annulus_area2(a));
+    println(annulus_perim2(a));
+}

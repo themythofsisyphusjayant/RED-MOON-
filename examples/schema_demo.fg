@@ -1,0 +1,11 @@
+import "schema.fg";
+
+fn main() {
+    let f: Frame = Frame { names: ["age", "score"], data: [20.0, 80.0, 30.0, 90.0, 40.0, 70.0], nrows: 3, ncols: 2 };
+    println(schema_has_col(f, "age"));
+    println(schema_has_col(f, "city"));
+    println(schema_col_in_range(f, "score", 0.0, 100.0));
+    println(schema_col_in_range(f, "age", 0.0, 25.0));
+    println(schema_row_count(f));
+    println(schema_col_mean_ok(f, "age", 30.0));
+}

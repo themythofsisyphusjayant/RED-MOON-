@@ -1,0 +1,19 @@
+fn main() {
+    let size: int = 1024;
+    let mut bump: int = 0;
+    let a0: int = bump;
+    bump = bump + 16;
+    let a1: int = bump;
+    bump = bump + 32;
+    let a2: int = bump;
+    bump = bump + 8;
+    println(a0);
+    println(a1);
+    println(a2);
+    println(size - bump);
+    if bump + 2000 > size {
+        println(-1);
+    } else {
+        println(bump);
+    }
+}

@@ -1,0 +1,16 @@
+struct Star {
+    r_out: int;
+    r_in: int;
+}
+
+fn star_new(r_out: int, r_in: int) -> Star {
+    return Star { r_out: r_out, r_in: r_in };
+}
+
+fn star_area2(s: Star) -> int {
+    return 5 * s.r_out * s.r_in;
+}
+
+fn star_perim2(s: Star) -> int {
+    return 10 * (s.r_out - s.r_in);
+}

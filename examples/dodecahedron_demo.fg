@@ -1,0 +1,7 @@
+import "dodecahedron.fg";
+
+fn main() {
+    let mut d: Dodecahedron = dodecahedron_new(2);
+    println(dodecahedron_area2(d));
+    println(dodecahedron_volume2(d));
+}

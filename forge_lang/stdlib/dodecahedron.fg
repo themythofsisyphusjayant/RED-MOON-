@@ -1,0 +1,15 @@
+struct Dodecahedron {
+    a: int;
+}
+
+fn dodecahedron_new(a: int) -> Dodecahedron {
+    return Dodecahedron { a: a };
+}
+
+fn dodecahedron_area2(d: Dodecahedron) -> int {
+    return 21 * d.a * d.a;
+}
+
+fn dodecahedron_volume2(d: Dodecahedron) -> int {
+    return 8 * d.a * d.a * d.a;
+}

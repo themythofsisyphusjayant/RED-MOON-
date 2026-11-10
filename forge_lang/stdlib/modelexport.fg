@@ -1,0 +1,86 @@
+fn mx_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = -x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn mx_save(name: str, layers: int, w: [int]) -> str {
+    let mut text: str = "MYTHOSCKPT 1\nname=" + name + "\nlayers=" + mx_int_str(layers) + "\nw=";
+    let mut i: int = 0;
+    while i < len(w) {
+        if i > 0 {
+            text = text + ",";
+        }
+        text = text + mx_int_str(w[i]);
+        i = i + 1;
+    }
+    return text;
+}
+
+fn mx_line_value(text: str, key: str) -> str {
+    let lines: [str] = split(text, "\n");
+    let prefix: str = key + "=";
+    let mut i: int = 0;
+    while i < len(lines) {
+        if starts_with(lines[i], prefix) {
+            return substr(lines[i], len(prefix), len(lines[i]) - len(prefix));
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn mx_version(text: str) -> int {
+    let lines: [str] = split(text, "\n");
+    if len(lines) == 0 {
+        return -1;
+    }
+    let parts: [str] = split(lines[0], " ");
+    if len(parts) < 2 {
+        return -1;
+    }
+    return parse_int(parts[1]);
+}
+
+fn mx_name(text: str) -> str {
+    return mx_line_value(text, "name");
+}
+
+fn mx_layers(text: str) -> int {
+    let v: str = mx_line_value(text, "layers");
+    if len(v) == 0 {
+        return -1;
+    }
+    return parse_int(v);
+}
+
+fn mx_weights(text: str) -> [int] {
+    let v: str = mx_line_value(text, "w");
+    let mut out: [int] = [];
+    if len(v) == 0 {
+        return out;
+    }
+    let parts: [str] = split(v, ",");
+    let mut i: int = 0;
+    while i < len(parts) {
+        push(out, parse_int(parts[i]));
+        i = i + 1;
+    }
+    return out;
+}

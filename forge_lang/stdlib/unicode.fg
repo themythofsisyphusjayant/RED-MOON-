@@ -1,0 +1,309 @@
+fn uni_is_digit(c: str) -> bool {
+    return c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+}
+
+fn uni_is_upper(c: str) -> bool {
+    return c == "A" || c == "B" || c == "C" || c == "D" || c == "E" || c == "F" || c == "G" || c == "H" || c == "I" || c == "J" || c == "K" || c == "L" || c == "M" || c == "N" || c == "O" || c == "P" || c == "Q" || c == "R" || c == "S" || c == "T" || c == "U" || c == "V" || c == "W" || c == "X" || c == "Y" || c == "Z";
+}
+
+fn uni_is_lower(c: str) -> bool {
+    return c == "a" || c == "b" || c == "c" || c == "d" || c == "e" || c == "f" || c == "g" || c == "h" || c == "i" || c == "j" || c == "k" || c == "l" || c == "m" || c == "n" || c == "o" || c == "p" || c == "q" || c == "r" || c == "s" || c == "t" || c == "u" || c == "v" || c == "w" || c == "x" || c == "y" || c == "z";
+}
+
+fn uni_is_alpha(c: str) -> bool {
+    return uni_is_upper(c) || uni_is_lower(c);
+}
+
+fn uni_is_space(c: str) -> bool {
+    return c == " " || c == "\n" || c == "\t";
+}
+
+fn uni_to_lower(c: str) -> str {
+    if c == "A" {
+        return "a";
+    }
+    if c == "B" {
+        return "b";
+    }
+    if c == "C" {
+        return "c";
+    }
+    if c == "D" {
+        return "d";
+    }
+    if c == "E" {
+        return "e";
+    }
+    if c == "F" {
+        return "f";
+    }
+    if c == "G" {
+        return "g";
+    }
+    if c == "H" {
+        return "h";
+    }
+    if c == "I" {
+        return "i";
+    }
+    if c == "J" {
+        return "j";
+    }
+    if c == "K" {
+        return "k";
+    }
+    if c == "L" {
+        return "l";
+    }
+    if c == "M" {
+        return "m";
+    }
+    if c == "N" {
+        return "n";
+    }
+    if c == "O" {
+        return "o";
+    }
+    if c == "P" {
+        return "p";
+    }
+    if c == "Q" {
+        return "q";
+    }
+    if c == "R" {
+        return "r";
+    }
+    if c == "S" {
+        return "s";
+    }
+    if c == "T" {
+        return "t";
+    }
+    if c == "U" {
+        return "u";
+    }
+    if c == "V" {
+        return "v";
+    }
+    if c == "W" {
+        return "w";
+    }
+    if c == "X" {
+        return "x";
+    }
+    if c == "Y" {
+        return "y";
+    }
+    if c == "Z" {
+        return "z";
+    }
+    return c;
+}
+
+fn uni_to_upper(c: str) -> str {
+    if c == "a" {
+        return "A";
+    }
+    if c == "b" {
+        return "B";
+    }
+    if c == "c" {
+        return "C";
+    }
+    if c == "d" {
+        return "D";
+    }
+    if c == "e" {
+        return "E";
+    }
+    if c == "f" {
+        return "F";
+    }
+    if c == "g" {
+        return "G";
+    }
+    if c == "h" {
+        return "H";
+    }
+    if c == "i" {
+        return "I";
+    }
+    if c == "j" {
+        return "J";
+    }
+    if c == "k" {
+        return "K";
+    }
+    if c == "l" {
+        return "L";
+    }
+    if c == "m" {
+        return "M";
+    }
+    if c == "n" {
+        return "N";
+    }
+    if c == "o" {
+        return "O";
+    }
+    if c == "p" {
+        return "P";
+    }
+    if c == "q" {
+        return "Q";
+    }
+    if c == "r" {
+        return "R";
+    }
+    if c == "s" {
+        return "S";
+    }
+    if c == "t" {
+        return "T";
+    }
+    if c == "u" {
+        return "U";
+    }
+    if c == "v" {
+        return "V";
+    }
+    if c == "w" {
+        return "W";
+    }
+    if c == "x" {
+        return "X";
+    }
+    if c == "y" {
+        return "Y";
+    }
+    if c == "z" {
+        return "Z";
+    }
+    return c;
+}
+
+fn uni_digit_value(c: str) -> int {
+    if c == "0" {
+        return 0;
+    }
+    if c == "1" {
+        return 1;
+    }
+    if c == "2" {
+        return 2;
+    }
+    if c == "3" {
+        return 3;
+    }
+    if c == "4" {
+        return 4;
+    }
+    if c == "5" {
+        return 5;
+    }
+    if c == "6" {
+        return 6;
+    }
+    if c == "7" {
+        return 7;
+    }
+    if c == "8" {
+        return 8;
+    }
+    if c == "9" {
+        return 9;
+    }
+    return -1;
+}
+
+fn uni_lower(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        out = out + uni_to_lower(s[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn uni_upper(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        out = out + uni_to_upper(s[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn uni_count_alpha(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if uni_is_alpha(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn uni_count_digit(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if uni_is_digit(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn uni_count_space(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if uni_is_space(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn uni_count_other(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if !uni_is_alpha(s[i]) && !uni_is_digit(s[i]) && !uni_is_space(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn uni_count_upper(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if uni_is_upper(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn uni_count_lower(s: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if uni_is_lower(s[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

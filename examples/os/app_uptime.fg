@@ -1,0 +1,14 @@
+fn main() {
+    let total: int = 90061;
+    let days: int = total / 86400;
+    let rem1: int = total % 86400;
+    let hours: int = rem1 / 3600;
+    let rem2: int = rem1 % 3600;
+    let mins: int = rem2 / 60;
+    let secs: int = rem2 % 60;
+    println(days);
+    println(hours);
+    println(mins);
+    println(secs);
+    println(total);
+}

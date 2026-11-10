@@ -1,0 +1,17 @@
+struct Ellipsoid {
+    a: int;
+    b: int;
+    c: int;
+}
+
+fn ellipsoid_new(a: int, b: int, c: int) -> Ellipsoid {
+    return Ellipsoid { a: a, b: b, c: c };
+}
+
+fn ellipsoid_volume2(e: Ellipsoid) -> int {
+    return 4 * e.a * e.b * e.c;
+}
+
+fn ellipsoid_surface2(e: Ellipsoid) -> int {
+    return 4 * (e.a * e.b + e.b * e.c + e.c * e.a);
+}

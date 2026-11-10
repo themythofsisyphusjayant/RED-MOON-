@@ -1,0 +1,22 @@
+import "strings.fg";
+
+fn tui_pad_right(s: str, w: int) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = out + " ";
+    }
+    return out;
+}
+
+fn tui_bar(pct: int, width: int) -> str {
+    let filled: int = pct * width / 100;
+    return "[" + repeat_str("#", filled) + repeat_str("-", width - filled) + "]";
+}
+
+fn tui_box_top(w: int) -> str {
+    return "+" + repeat_str("-", w - 2) + "+";
+}
+
+fn tui_box_row(s: str, w: int) -> str {
+    return "|" + tui_pad_right(s, w - 2) + "|";
+}

@@ -13,6 +13,7 @@ Usage:
     qasida build <file.fg> [-o out] [--mode safe|fast] [--keep-c out.c]
     qasida run   <file.fg> [--mode safe|fast] [-- program args...]
     qasida emit  <file.fg> [--mode safe|fast]
+    qasida stack <file.fg> [--mode safe|fast] [--limit N]
     qasida test
     qasida fmt <file.fg> [--check]
     qasida lsp
@@ -99,6 +100,14 @@ def main(argv=None):
     p.add_argument("-o", "--output", default=None)
     p.add_argument("--wit", default=None,
                    help="WIT world file to check against")
+    p = sub.add_parser("stack")
+    p.add_argument("file")
+    p.add_argument("--mode", choices=["safe", "fast"], default="safe")
+    p.add_argument("--limit", type=int, default=2048,
+                   help="warn when a frame exceeds this many bytes "
+                        "(default 2048, the kernel frame budget)")
+    p.add_argument("--freestanding", action="store_true",
+                   help="measure the freestanding build (no libc/OS)")
 
     args = parser.parse_args(argv)
     try:
@@ -139,6 +148,13 @@ def main(argv=None):
         if args.cmd == "emit":
             c_source, _ = compile_file(args.file, mode=args.mode, freestanding=args.freestanding)
             print(c_source)
+            return 0
+        if args.cmd == "stack":
+            from forge_lang.stackusage import measure, format_report
+            report = measure(args.file, mode=args.mode,
+                             limit=args.limit,
+                             freestanding=args.freestanding)
+            print(format_report(report), end="")
             return 0
         if args.cmd == "emit-big32":
             from forge_lang.compiler import compile_file_rv

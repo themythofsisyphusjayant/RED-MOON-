@@ -1,0 +1,7 @@
+import "icosahedron.fg";
+
+fn main() {
+    let mut i: Icosahedron = icosahedron_new(3);
+    println(icosahedron_area2(i));
+    println(icosahedron_volume2(i));
+}

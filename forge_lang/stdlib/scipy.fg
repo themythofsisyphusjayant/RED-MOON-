@@ -1,0 +1,44 @@
+fn scipy_det2(a: float, b: float, c: float, d: float) -> float {
+    return a * d - b * c;
+}
+
+fn scipy_det3(a: float, b: float, c: float, d: float, e: float, f: float, g: float, h: float, i: float) -> float {
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+
+fn scipy_solve2(a: float, b: float, c: float, d: float, e: float, f: float) -> [float] {
+    let det: float = scipy_det2(a, b, c, d);
+    if det == 0.0 {
+        fail("scipy_solve2: singular matrix");
+    }
+    let mut out: [float] = [];
+    push(out, (e * d - b * f) / det);
+    push(out, (a * f - e * c) / det);
+    return out;
+}
+
+fn scipy_simpson_sq(lo: float, hi: float, n: int) -> float {
+    if n <= 0 || n % 2 != 0 {
+        fail("scipy_simpson_sq: n must be positive and even");
+    }
+    let h: float = (hi - lo) / n as float;
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i <= n {
+        let x: float = lo + i as float * h;
+        let fx: float = x * x;
+        if i == 0 || i == n {
+            s = s + fx;
+        } else if i % 2 == 1 {
+            s = s + 4.0 * fx;
+        } else {
+            s = s + 2.0 * fx;
+        }
+        i = i + 1;
+    }
+    return s * h / 3.0;
+}
+
+fn scipy_norm3(x: float, y: float, z: float) -> float {
+    return sqrt(x * x + y * y + z * z);
+}

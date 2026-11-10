@@ -1,0 +1,16 @@
+struct Capsule {
+    r: int;
+    l: int;
+}
+
+fn capsule_new(r: int, l: int) -> Capsule {
+    return Capsule { r: r, l: l };
+}
+
+fn capsule_volume2(c: Capsule) -> int {
+    return 3 * c.r * c.r * c.l + 4 * c.r * c.r * c.r;
+}
+
+fn capsule_surface2(c: Capsule) -> int {
+    return 6 * c.r * c.l + 12 * c.r * c.r;
+}

@@ -1,0 +1,13 @@
+import "rest.fg";
+
+fn main() {
+    println(rest_url("https://api.example.com", "/v1/langs", "q=qasida"));
+    println(rest_ok(201));
+    println(rest_ok(404));
+    let body: str = "{\"name\":\"qasida\",\"version\":\"2.0.0\"}";
+    println(rest_field(body, "version"));
+    println(rest_field(body, "name"));
+    println(rest_field(body, "missing"));
+    println(rest_error_text(404));
+    println(rest_error_text(200));
+}

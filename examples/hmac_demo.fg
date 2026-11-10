@@ -1,0 +1,8 @@
+import "hmac.fg";
+
+fn main() {
+    let key1: [int] = [11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11];
+    println(hmac_sha256_hex(key1, str_bytes("Hi There")));
+    println(hmac_sha256_hex(str_bytes("Jefe"), str_bytes("what do ya want for nothing?")));
+    println(len(hmac_sha256(key1, str_bytes("Hi There"))));
+}

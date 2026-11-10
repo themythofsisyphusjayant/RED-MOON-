@@ -1,0 +1,11 @@
+import "webhook.fg";
+
+fn main() {
+    let payload: [int] = [123, 34, 101, 118, 101, 110, 116, 34, 58, 34, 112, 117, 115, 104, 34, 125];
+    let secret: [int] = [115, 51, 99, 114, 51, 116];
+    println(webhook_sign(payload, secret));
+    println(webhook_verify(payload, secret, 1141728175));
+    println(webhook_verify(payload, secret, 1141728174));
+    let wrong: [int] = [115, 51, 99, 114, 51, 117];
+    println(webhook_verify(payload, wrong, 1141728175));
+}

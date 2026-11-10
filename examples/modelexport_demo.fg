@@ -1,0 +1,15 @@
+import "modelexport.fg";
+
+fn main() {
+    let w: [int] = [125, -250, 375, 1000];
+    let text: str = mx_save("mlp", 2, w);
+    println(text);
+    println(mx_version(text));
+    println(mx_name(text));
+    println(mx_layers(text));
+    let back: [int] = mx_weights(text);
+    println(back[0]);
+    println(back[1]);
+    println(back[2]);
+    println(back[3]);
+}

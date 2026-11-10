@@ -1,0 +1,374 @@
+// Full hosted lexer for Qasida, written IN Qasida.
+// Slice 1 of the self-hosting plan (docs/SELFHOST_PLAN.md).
+// Token set matches forge_lang/lexer.py exactly: keywords (27),
+// two-char + one-char operators, INT (decimal/hex/binary/octal,
+// underscores), FLOAT, STR (escapes), // and /* */ comments,
+// EOF, line/col tracking, lexer errors via fail_compile().
+// Output: kinds + texts + lines + cols, one entry per token.
+// Kind codes: 0 INT, 1 FLOAT, 2 STR, 3 IDENT, 4 KEYWORD, 5 OP, 6 EOF.
+
+struct LexOut {
+    kinds: [int];
+    texts: [str];
+    lines: [int];
+    cols: [int];
+}
+
+fn is_digit(ch: str) -> bool {
+    let parts: [str] = split("0123456789", ch);
+    return len(parts) > 1;
+}
+
+fn is_alpha(ch: str) -> bool {
+    let parts: [str] = split("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_", ch);
+    return len(parts) > 1;
+}
+
+fn is_alnum(ch: str) -> bool {
+    return is_digit(ch) || is_alpha(ch);
+}
+
+fn is_space(ch: str) -> bool {
+    return ch == " " || ch == "\n" || ch == "\t" || ch == "\r";
+}
+
+fn is_hex(ch: str) -> bool {
+    let parts: [str] = split("0123456789abcdefABCDEF", ch);
+    return len(parts) > 1;
+}
+
+fn is_bin(ch: str) -> bool {
+    return ch == "0" || ch == "1";
+}
+
+fn is_oct(ch: str) -> bool {
+    let parts: [str] = split("01234567", ch);
+    return len(parts) > 1;
+}
+
+fn has_prefix(src: str, i: int, pat: str) -> bool {
+    if i + len(pat) > len(src) {
+        return false;
+    }
+    return substr(src, i, len(pat)) == pat;
+}
+
+fn is_keyword(text: str) -> bool {
+    return text == "fn" || text == "let" || text == "mut" || text == "if" || text == "else" || text == "while" || text == "for" || text == "in" || text == "return" || text == "true" || text == "false" || text == "import" || text == "as" || text == "struct" || text == "enum" || text == "match" || text == "spawn" || text == "extern" || text == "break" || text == "continue" || text == "trait" || text == "impl" || text == "type" || text == "newtype" || text == "opaque" || text == "readonly" || text == "defer";
+}
+
+fn is_two_op(text: str) -> bool {
+    return text == "==" || text == "!=" || text == "<=" || text == ">=" || text == "&&" || text == "||" || text == "->" || text == "=>" || text == "<<" || text == ">>" || text == "..";
+}
+
+fn is_one_op(ch: str) -> bool {
+    let parts: [str] = split("+-*/%<>=!;,:(){}[].?&|^~", ch);
+    return len(parts) > 1;
+}
+
+fn has_bad_underscore(text: str) -> bool {
+    if len(text) == 0 {
+        return true;
+    }
+    if substr(text, 0, 1) == "_" || substr(text, len(text) - 1, 1) == "_" {
+        return true;
+    }
+    let mut i: int = 0;
+    while i + 1 < len(text) {
+        if substr(text, i, 1) == "_" && substr(text, i + 1, 1) == "_" {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn kind_name(k: int) -> str {
+    if k == 0 {
+        return "INT";
+    }
+    if k == 1 {
+        return "FLOAT";
+    }
+    if k == 2 {
+        return "STR";
+    }
+    if k == 3 {
+        return "IDENT";
+    }
+    if k == 4 {
+        return "KEYWORD";
+    }
+    if k == 5 {
+        return "OP";
+    }
+    return "EOF";
+}
+
+fn lex(src: str) -> LexOut {
+    let mut kinds: [int] = [];
+    let mut texts: [str] = [];
+    let mut lines: [int] = [];
+    let mut cols: [int] = [];
+    let mut i: int = 0;
+    let mut line: int = 1;
+    let mut col: int = 1;
+    let mut prev_kind: int = 6;
+    let mut prev_text: str = "";
+    while i < len(src) {
+        let ch: str = substr(src, i, 1);
+        let sl: int = line;
+        let sc: int = col;
+        if is_space(ch) {
+            if ch == "\n" {
+                line = line + 1;
+                col = 1;
+            } else {
+                col = col + 1;
+            }
+            i = i + 1;
+            continue;
+        }
+        if has_prefix(src, i, "//") {
+            while i < len(src) && substr(src, i, 1) != "\n" {
+                i = i + 1;
+                col = col + 1;
+            }
+            continue;
+        }
+        if has_prefix(src, i, "/*") {
+            i = i + 2;
+            col = col + 2;
+            let mut closed: bool = false;
+            while i < len(src) {
+                if has_prefix(src, i, "*/") {
+                    i = i + 2;
+                    col = col + 2;
+                    closed = true;
+                    break;
+                }
+                if substr(src, i, 1) == "\n" {
+                    line = line + 1;
+                    col = 1;
+                } else {
+                    col = col + 1;
+                }
+                i = i + 1;
+            }
+            if !closed {
+                fail_compile("unterminated block comment");
+            }
+            continue;
+        }
+        if is_digit(ch) {
+            let mut is_float: bool = false;
+            let mut tok: str = "";
+            if has_prefix(src, i, "0x") || has_prefix(src, i, "0X") || has_prefix(src, i, "0b") || has_prefix(src, i, "0B") || has_prefix(src, i, "0o") || has_prefix(src, i, "0O") {
+                let pre: str = substr(src, i, 2);
+                tok = pre;
+                i = i + 2;
+                col = col + 2;
+                let mut digits: str = "";
+                while i < len(src) {
+                    let c: str = substr(src, i, 1);
+                    let mut ok: bool = false;
+                    if pre == "0x" || pre == "0X" {
+                        ok = is_hex(c) || c == "_";
+                    } else if pre == "0b" || pre == "0B" {
+                        ok = is_bin(c) || c == "_";
+                    } else {
+                        ok = is_oct(c) || c == "_";
+                    }
+                    if !ok {
+                        break;
+                    }
+                    digits = digits + c;
+                    tok = tok + c;
+                    i = i + 1;
+                    col = col + 1;
+                }
+                if len(digits) == 0 || has_bad_underscore(digits) {
+                    fail_compile("bad prefixed integer literal");
+                }
+                push(kinds, 0);
+                push(texts, tok);
+                push(lines, sl);
+                push(cols, sc);
+                prev_kind = 0;
+                prev_text = tok;
+                continue;
+            }
+            while i < len(src) {
+                let c: str = substr(src, i, 1);
+                if !is_digit(c) && c != "_" {
+                    break;
+                }
+                tok = tok + c;
+                i = i + 1;
+                col = col + 1;
+            }
+            if has_bad_underscore(tok) {
+                fail_compile("integer literal has a leading, trailing, or doubled underscore");
+            }
+            let after_dot: bool = prev_kind == 5 && prev_text == ".";
+            if !after_dot && i < len(src) && substr(src, i, 1) == "." && i + 1 < len(src) && is_digit(substr(src, i + 1, 1)) {
+                is_float = true;
+                tok = tok + ".";
+                i = i + 1;
+                col = col + 1;
+                while i < len(src) && is_digit(substr(src, i, 1)) {
+                    tok = tok + substr(src, i, 1);
+                    i = i + 1;
+                    col = col + 1;
+                }
+            }
+            if i < len(src) && (substr(src, i, 1) == "e" || substr(src, i, 1) == "E") {
+                let mut k: int = i + 1;
+                if k < len(src) && (substr(src, k, 1) == "+" || substr(src, k, 1) == "-") {
+                    k = k + 1;
+                }
+                if k < len(src) && is_digit(substr(src, k, 1)) {
+                    is_float = true;
+                    while i < k {
+                        tok = tok + substr(src, i, 1);
+                        i = i + 1;
+                        col = col + 1;
+                    }
+                    while i < len(src) && is_digit(substr(src, i, 1)) {
+                        tok = tok + substr(src, i, 1);
+                        i = i + 1;
+                        col = col + 1;
+                    }
+                }
+            }
+            if is_float {
+                push(kinds, 1);
+            } else {
+                push(kinds, 0);
+            }
+            push(texts, tok);
+            push(lines, sl);
+            push(cols, sc);
+            if is_float {
+                prev_kind = 1;
+            } else {
+                prev_kind = 0;
+            }
+            prev_text = tok;
+            continue;
+        }
+        if is_alpha(ch) {
+            let mut tok: str = "";
+            while i < len(src) && is_alnum(substr(src, i, 1)) {
+                tok = tok + substr(src, i, 1);
+                i = i + 1;
+                col = col + 1;
+            }
+            if is_keyword(tok) {
+                push(kinds, 4);
+                prev_kind = 4;
+            } else {
+                push(kinds, 3);
+                prev_kind = 3;
+            }
+            push(texts, tok);
+            push(lines, sl);
+            push(cols, sc);
+            prev_text = tok;
+            continue;
+        }
+        if ch == "\"" {
+            i = i + 1;
+            col = col + 1;
+            let mut out: str = "";
+            let mut closed: bool = false;
+            while i < len(src) {
+                let c: str = substr(src, i, 1);
+                if c == "\"" {
+                    i = i + 1;
+                    col = col + 1;
+                    closed = true;
+                    break;
+                }
+                if c == "\n" {
+                    break;
+                }
+                if c == "\\" {
+                    i = i + 1;
+                    col = col + 1;
+                    if i >= len(src) {
+                        break;
+                    }
+                    let e: str = substr(src, i, 1);
+                    if e == "n" {
+                        out = out + "\n";
+                    } else if e == "t" {
+                        out = out + "\t";
+                    } else if e == "r" {
+                        out = out + "\r";
+                    } else if e == "\\" {
+                        out = out + "\\";
+                    } else if e == "\"" {
+                        out = out + "\"";
+                    } else if e == "0" {
+                        // Qasida strings are C strings and cannot hold
+                        // an embedded null, so \0 has no faithful
+                        // hosted value. Fail loudly instead of
+                        // silently truncating the token.
+                        fail_compile("escape \\0 not supported in hosted lexer");
+                    } else {
+                        fail_compile("unknown escape");
+                    }
+                    i = i + 1;
+                    col = col + 1;
+                    continue;
+                }
+                out = out + c;
+                i = i + 1;
+                col = col + 1;
+            }
+            if !closed {
+                fail_compile("unterminated string literal");
+            }
+            push(kinds, 2);
+            push(texts, out);
+            push(lines, sl);
+            push(cols, sc);
+            prev_kind = 2;
+            prev_text = out;
+            continue;
+        }
+        if i + 1 < len(src) && is_two_op(substr(src, i, 2)) {
+            let tok: str = substr(src, i, 2);
+            push(kinds, 5);
+            push(texts, tok);
+            push(lines, sl);
+            push(cols, sc);
+            prev_kind = 5;
+            prev_text = tok;
+            i = i + 2;
+            col = col + 2;
+            continue;
+        }
+        if is_one_op(ch) {
+            push(kinds, 5);
+            push(texts, ch);
+            push(lines, sl);
+            push(cols, sc);
+            prev_kind = 5;
+            prev_text = ch;
+            i = i + 1;
+            col = col + 1;
+            continue;
+        }
+        fail_compile("unexpected character");
+    }
+    push(kinds, 6);
+    push(texts, "");
+    push(lines, line);
+    push(cols, col);
+    return LexOut { kinds: kinds, texts: texts, lines: lines, cols: cols };
+}
+
+// (No main() here: this file is a library. Run the demo via
+// examples/selfhost_lex_check.fg -- <path>.)

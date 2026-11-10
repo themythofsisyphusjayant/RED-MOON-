@@ -1,0 +1,7 @@
+import "capsule.fg";
+
+fn main() {
+    let mut c: Capsule = capsule_new(2, 5);
+    println(capsule_volume2(c));
+    println(capsule_surface2(c));
+}

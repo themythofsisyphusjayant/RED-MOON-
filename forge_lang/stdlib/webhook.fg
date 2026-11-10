@@ -1,0 +1,16 @@
+import "checksum.fg";
+
+fn webhook_sign(payload: [int], secret: [int]) -> int {
+    let mut joined: [int] = [];
+    for b in payload {
+        push(joined, b);
+    }
+    for b in secret {
+        push(joined, b);
+    }
+    return fnv1a_bytes(joined);
+}
+
+fn webhook_verify(payload: [int], secret: [int], sig: int) -> bool {
+    return webhook_sign(payload, secret) == sig;
+}

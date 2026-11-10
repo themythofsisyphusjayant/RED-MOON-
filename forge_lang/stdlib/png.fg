@@ -1,0 +1,56 @@
+import "checksum.fg";
+
+fn png_u32be(v: int) -> [int] {
+    let mut out: [int] = [];
+    push(out, v >> 24 & 255);
+    push(out, v >> 16 & 255);
+    push(out, v >> 8 & 255);
+    push(out, v & 255);
+    return out;
+}
+
+fn png_append(dst: [int], src: [int]) -> [int] {
+    let mut out: [int] = [];
+    for b in dst {
+        push(out, b);
+    }
+    for b in src {
+        push(out, b);
+    }
+    return out;
+}
+
+fn png_chunk(typ: [int], data: [int]) -> [int] {
+    let mut crc_in: [int] = [];
+    for b in typ {
+        push(crc_in, b);
+    }
+    for b in data {
+        push(crc_in, b);
+    }
+    let crc: int = crc32_bytes(crc_in);
+    let mut out: [int] = png_u32be(len(data));
+    out = png_append(out, typ);
+    out = png_append(out, data);
+    out = png_append(out, png_u32be(crc));
+    return out;
+}
+
+fn png_encode_1x1(r: int, g: int, b: int) -> [int] {
+    let sig: [int] = [137, 80, 78, 71, 13, 10, 26, 10];
+    let ihdr_data: [int] = [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0];
+    let ihdr_type: [int] = [73, 72, 68, 82];
+    let raw: [int] = [0, r, g, b];
+    let adler: int = adler32_bytes(raw);
+    let mut stream: [int] = [120, 1, 1, 4, 0, 251, 255];
+    stream = png_append(stream, raw);
+    stream = png_append(stream, png_u32be(adler));
+    let idat_type: [int] = [73, 68, 65, 84];
+    let iend_type: [int] = [73, 69, 78, 68];
+    let empty: [int] = [];
+    let mut png: [int] = sig;
+    png = png_append(png, png_chunk(ihdr_type, ihdr_data));
+    png = png_append(png, png_chunk(idat_type, stream));
+    png = png_append(png, png_chunk(iend_type, empty));
+    return png;
+}

@@ -1,0 +1,39 @@
+fn aug_swap_ends(text: str) -> str {
+    let words: [str] = split(text, " ");
+    if len(words) < 2 {
+        return text;
+    }
+    let first: str = words[0];
+    words[0] = words[len(words) - 1];
+    words[len(words) - 1] = first;
+    return join(words, " ");
+}
+
+fn aug_drop_at(text: str, idx: int) -> str {
+    let words: [str] = split(text, " ");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(words) {
+        if i != idx {
+            push(out, words[i]);
+        }
+        i = i + 1;
+    }
+    return join(out, " ");
+}
+
+fn aug_swap_pairs(text: str) -> str {
+    let words: [str] = split(text, " ");
+    let mut i: int = 0;
+    while i + 1 < len(words) {
+        let t: str = words[i];
+        words[i] = words[i + 1];
+        words[i + 1] = t;
+        i = i + 2;
+    }
+    return join(words, " ");
+}
+
+fn aug_word_count(text: str) -> int {
+    return len(split(text, " "));
+}

@@ -2181,7 +2181,13 @@ class Codegen:
         # Element get returns an independently owned copy; set frees
         # the old element before storing; push appends as-is (the
         # caller owns the value first, mirroring str push).
-        for name in self.structs:
+        # Freestanding (Top-500 #39): arrays of structs cannot exist
+        # (every array value is rejected at check time), so these
+        # heap-array helpers are dead code — and they break the
+        # build, because they use memset/free/size_t, none of which
+        # exists under the freestanding header. Skip them; a plain
+        # struct value is a stack value and needs none of this.
+        for name in (self.structs if not self.freestanding else ()):
             arr_t = f"ForgeArray_{name}"
             self.emit(f"static void forge_{name}_array_free({arr_t} a) {{")
             self.emit("    if (a.ref && --(*a.ref) == 0) {")

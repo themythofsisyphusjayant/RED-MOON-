@@ -1,0 +1,7 @@
+import "star.fg";
+
+fn main() {
+    let mut s: Star = star_new(5, 2);
+    println(star_area2(s));
+    println(star_perim2(s));
+}

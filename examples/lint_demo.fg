@@ -1,0 +1,9 @@
+import "lint.fg";
+
+fn main() {
+    let text: str = "fn main() {\n    let x: int = 1; \n    // TODO fix this\n\n    let y: int = 2;\n}";
+    println(lint_long_lines(text, 19));
+    println(lint_trailing_space(text));
+    println(lint_todo_lines(text));
+    println(lint_empty_lines(text));
+}

@@ -1,0 +1,11 @@
+fn main() {
+    let names: [str] = ["lo", "eth0"];
+    let ips: [str] = ["127.0.0.1", "10.0.0.2"];
+    let mut i: int = 0;
+    while i < len(names) {
+        println(names[i] + " up " + ips[i]);
+        i = i + 1;
+    }
+    println("ping 127.0.0.1: 0ms");
+    println("ping 10.0.0.2: 1ms");
+}

@@ -1,0 +1,76 @@
+struct Mat {
+    data: [float];
+    rows: int;
+    cols: int;
+}
+
+fn mat_new(data: [float], rows: int, cols: int) -> Mat {
+    return Mat { data: data, rows: rows, cols: cols };
+}
+
+fn mat_get(m: Mat, r: int, c: int) -> float {
+    return m.data[r * m.cols + c];
+}
+
+fn mat_add(a: Mat, b: Mat) -> Mat {
+    if a.rows != b.rows || a.cols != b.cols {
+        fail("mat_add: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a.data) {
+        push(out, a.data[i] + b.data[i]);
+        i = i + 1;
+    }
+    return Mat { data: out, rows: a.rows, cols: a.cols };
+}
+
+fn mat_mul(a: Mat, b: Mat) -> Mat {
+    if a.cols != b.rows {
+        fail("mat_mul: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < a.rows {
+        let mut c: int = 0;
+        while c < b.cols {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < a.cols {
+                s = s + mat_get(a, r, k) * mat_get(b, k, c);
+                k = k + 1;
+            }
+            push(out, s);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return Mat { data: out, rows: a.rows, cols: b.cols };
+}
+
+fn mat_transpose(m: Mat) -> Mat {
+    let mut out: [float] = [];
+    let mut c: int = 0;
+    while c < m.cols {
+        let mut r: int = 0;
+        while r < m.rows {
+            push(out, mat_get(m, r, c));
+            r = r + 1;
+        }
+        c = c + 1;
+    }
+    return Mat { data: out, rows: m.cols, cols: m.rows };
+}
+
+fn mat_trace(m: Mat) -> float {
+    if m.rows != m.cols {
+        fail("mat_trace: not square");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < m.rows {
+        s = s + mat_get(m, i, i);
+        i = i + 1;
+    }
+    return s;
+}

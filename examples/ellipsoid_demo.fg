@@ -1,0 +1,7 @@
+import "ellipsoid.fg";
+
+fn main() {
+    let mut e: Ellipsoid = ellipsoid_new(2, 3, 4);
+    println(ellipsoid_volume2(e));
+    println(ellipsoid_surface2(e));
+}

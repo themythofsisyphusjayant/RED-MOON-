@@ -1,0 +1,20 @@
+// Driver for the hosted parser (examples/selfhost_parse.fg).
+// Reads a .fg file path from argv, lexes + parses it, prints the
+// canonical S-expression dump of the AST.
+// Usage: qasida run examples/selfhost_parse_test.fg -- <path>
+
+import "selfhost_parse.fg";
+
+fn main() -> int {
+    let argv: [str] = args();
+    if len(argv) < 1 {
+        println("usage: selfhost_parse_test.fg -- <path>");
+        return 1;
+    }
+    let src: str = read_file(argv[0]);
+    let lx: LexOut = lex(src);
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0 };
+    let prog: POut = parse_program(hp);
+    println(dump(prog.n));
+    return 0;
+}

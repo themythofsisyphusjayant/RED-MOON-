@@ -1,0 +1,15 @@
+import "unicode.fg";
+
+fn main() {
+    let s: str = "Hello 123!";
+    println(uni_count_alpha(s));
+    println(uni_count_digit(s));
+    println(uni_count_space(s));
+    println(uni_count_other(s));
+    println(uni_count_upper(s));
+    println(uni_count_lower(s));
+    println(uni_lower("Hello"));
+    println(uni_upper("abc"));
+    println(uni_digit_value("7"));
+    println(uni_digit_value("x"));
+}

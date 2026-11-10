@@ -1,0 +1,12 @@
+fn main() {
+    let ticks: int = 100;
+    let ms: int = ticks * 10;
+    let secs: int = ms / 1000;
+    println(ticks);
+    println(ms);
+    println(secs);
+    let up: int = 3661;
+    println(up / 3600);
+    println(up % 3600 / 60);
+    println(up % 60);
+}

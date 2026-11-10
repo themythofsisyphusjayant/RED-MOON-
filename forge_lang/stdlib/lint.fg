@@ -1,0 +1,45 @@
+import "strings.fg";
+
+fn lint_long_lines(text: str, limit: int) -> int {
+    let lines: [str] = lines_of(text);
+    let mut n: int = 0;
+    for line in lines {
+        if len(line) > limit {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+fn lint_trailing_space(text: str) -> int {
+    let lines: [str] = lines_of(text);
+    let mut n: int = 0;
+    for line in lines {
+        if ends_with(line, " ") {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+fn lint_todo_lines(text: str) -> int {
+    let lines: [str] = lines_of(text);
+    let mut n: int = 0;
+    for line in lines {
+        if len(split(line, "TODO")) > 1 {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+fn lint_empty_lines(text: str) -> int {
+    let lines: [str] = lines_of(text);
+    let mut n: int = 0;
+    for line in lines {
+        if is_blank(line) {
+            n = n + 1;
+        }
+    }
+    return n;
+}

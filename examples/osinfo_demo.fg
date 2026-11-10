@@ -1,0 +1,12 @@
+import "osinfo.fg";
+
+fn main() {
+    println(os_platform());
+    println(os_path_sep());
+    println(os_arg_count());
+    println(os_has_flag("verbose"));
+    println(os_flag_value("x", "none"));
+    let fixed: [str] = ["--lr", "0.05", "train"];
+    println(os_has_flag_in(fixed, "lr"));
+    println(os_flag_value_in(fixed, "lr", "0"));
+}

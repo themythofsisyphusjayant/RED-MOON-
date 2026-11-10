@@ -1,0 +1,112 @@
+// Driver for the hosted codegen (examples/selfhost_codegen.fg).
+// Reads a .fg file path from argv, lexes + parses it with the
+// hosted lexer/parser, runs the hosted checker, then the hosted
+// infer pass and the hosted codegen, and prints the emitted C.
+// Prints the C plus one trailing "\n" (println), matching
+// `forge.py emit` (Python print) byte-for-byte.
+// On a type error the checker calls fail(), which prints the
+// error to stderr and exits 1 — the verifier reads that.
+// Usage: qasida run examples/selfhost_codegen_test.fg -- <path> [--freestanding]
+//
+// 4g: an optional "--freestanding" second argument threads the
+// freestanding flag through check_program and codegen_program,
+// mirroring `forge.py emit --freestanding`.
+//
+// 4c: import resolution. Python's compiler.load_program merges
+// each imported file's top-level items into the program before
+// checking (stdlib lookup: alongside the file, then
+// forge_lang/stdlib/). The hosted parser only records import
+// nodes, so the driver merges them here, in program order,
+// deduplicating by import spelling. Imported generic templates
+// are skipped by run_infer exactly like local ones, so their
+// line:col positions cannot collide with the main file's type
+// table. Files without imports behave exactly as before.
+
+import "selfhost_check.fg";
+import "selfhost_infer.fg";
+import "selfhost_codegen.fg";
+
+// Last path component of a "/""-separated path.
+fn import_basename(path: str) -> str {
+    let parts: [str] = split(path, "/");
+    return parts[len(parts) - 1];
+}
+
+// Source text of an import, or "" when it cannot be found.
+// Candidates mirror compiler.load_program: the spelling as-is,
+// then forge_lang/stdlib/<basename>, then stdlib/<basename>.
+fn import_source(path: str) -> str {
+    if file_exists(path) {
+        return read_file(path);
+    }
+    let base: str = import_basename(path);
+    let cand: str = "forge_lang/stdlib/" + base;
+    if file_exists(cand) {
+        return read_file(cand);
+    }
+    let cand2: str = "stdlib/" + base;
+    if file_exists(cand2) {
+        return read_file(cand2);
+    }
+    return "";
+}
+
+fn main() -> int {
+    let argv: [str] = args();
+    if len(argv) < 1 {
+        println("usage: selfhost_codegen_test.fg -- <path> [--freestanding]");
+        return 1;
+    }
+    let mut freestanding: bool = false;
+    if len(argv) > 1 && argv[1] == "--freestanding" {
+        freestanding = true;
+    }
+    let src: str = read_file(argv[0]);
+    let lx: LexOut = lex(src);
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0 };
+    let prog: POut = parse_program(hp);
+    let mut kids: [Node] = prog.n.kids;
+    let mut seen: [str] = [];
+    let mut i: int = 0;
+    while i < len(kids) {
+        let n: Node = kids[i];
+        if n.kind == 1 {
+            let path: str = n.sval;
+            let mut done: bool = false;
+            let mut j: int = 0;
+            while j < len(seen) {
+                if seen[j] == path {
+                    done = true;
+                }
+                j = j + 1;
+            }
+            if !done {
+                push(seen, path);
+                let isrc: str = import_source(path);
+                if isrc == "" {
+                    fail("import not found: " + path + " (looked in . and stdlib)");
+                }
+                let lx2: LexOut = lex(isrc);
+                let hp2: HParser = HParser { kinds: lx2.kinds, texts: lx2.texts, lines: lx2.lines, cols: lx2.cols, pos: 0 };
+                let sub: POut = parse_program(hp2);
+                let mut k: int = 0;
+                while k < len(sub.n.kids) {
+                    push(kids, sub.n.kids[k]);
+                    k = k + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    let mut merged: Node = prog.n;
+    merged.kids = kids;
+    let ok: bool = check_program(merged, freestanding);
+    if !ok {
+        println("CHECK FAIL");
+        return 1;
+    }
+    let inf: HInfer = run_infer(merged);
+    let c: str = codegen_program(merged, inf, freestanding);
+    println(c);
+    return 0;
+}

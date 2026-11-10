@@ -1,0 +1,10 @@
+import "jwt.fg";
+
+fn main() {
+    let token: str = jwt_sign("{\"alg\":\"HS256\",\"typ\":\"JWT\"}", "{\"sub\":\"123\",\"name\":\"Jayant\"}", "secret");
+    println(token);
+    println(jwt_verify(token, "secret"));
+    println(jwt_verify(token, "wrong"));
+    let bad: str = token + "x";
+    println(jwt_verify(bad, "secret"));
+}

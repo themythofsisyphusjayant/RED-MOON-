@@ -1,0 +1,32 @@
+fn rss_field(item: str, tag: str) -> str {
+    let open: str = "<" + tag + ">";
+    let parts: [str] = split(item, open);
+    if len(parts) < 2 {
+        return "";
+    }
+    let close: str = "</" + tag + ">";
+    let tail: [str] = split(parts[1], close);
+    return tail[0];
+}
+
+fn rss_titles(feed: str) -> [str] {
+    let items: [str] = split(feed, "<item>");
+    let mut out: [str] = [];
+    let mut i: int = 1;
+    while i < len(items) {
+        push(out, rss_field(items[i], "title"));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn rss_links(feed: str) -> [str] {
+    let items: [str] = split(feed, "<item>");
+    let mut out: [str] = [];
+    let mut i: int = 1;
+    while i < len(items) {
+        push(out, rss_field(items[i], "link"));
+        i = i + 1;
+    }
+    return out;
+}

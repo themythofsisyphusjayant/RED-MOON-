@@ -1,0 +1,13 @@
+import "archive.fg";
+
+fn main() {
+    let name: [int] = [104, 101, 108, 108, 111, 46, 116, 120, 116];
+    let h: [int] = tar_header(name, 5);
+    println(tar_checksum(h));
+    println(tar_checksum_field(h));
+    println(h[0]);
+    println(h[124]);
+    println(h[130]);
+    println(h[156]);
+    println(h[257]);
+}

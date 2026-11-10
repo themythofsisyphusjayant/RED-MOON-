@@ -1,0 +1,23 @@
+import "png.fg";
+
+fn main() {
+    let png: [int] = png_encode_1x1(255, 0, 0);
+    println(len(png));
+    println(png[0]);
+    println(png[1]);
+    println(png[8]);
+    println(png[11]);
+    println(png[29]);
+    println(png[30]);
+    println(png[31]);
+    println(png[32]);
+    println(png[36]);
+    println(png[56]);
+    println(png[57]);
+    println(png[58]);
+    println(png[59]);
+    println(png[68]);
+    println(png[69]);
+    println(png[70]);
+    println(png[71]);
+}

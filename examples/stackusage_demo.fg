@@ -1,0 +1,17 @@
+fn add_pair(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn identity<T>(v: T) -> T {
+    return v;
+}
+
+fn main() {
+    let mut total: int = 0;
+    let mut i: int = 0;
+    while i < 10 {
+        total = total + add_pair(i, identity(i));
+        i = i + 1;
+    }
+    println(total);
+}

@@ -1,0 +1,17 @@
+struct Kite {
+    d1: int;
+    d2: int;
+    s: int;
+}
+
+fn kite_new(d1: int, d2: int, s: int) -> Kite {
+    return Kite { d1: d1, d2: d2, s: s };
+}
+
+fn kite_area2(k: Kite) -> int {
+    return k.d1 * k.d2;
+}
+
+fn kite_perim2(k: Kite) -> int {
+    return 4 * k.s;
+}

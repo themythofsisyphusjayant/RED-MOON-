@@ -1,0 +1,17 @@
+struct Wedge {
+    b: int;
+    h: int;
+    l: int;
+}
+
+fn wedge_new(b: int, h: int, l: int) -> Wedge {
+    return Wedge { b: b, h: h, l: l };
+}
+
+fn wedge_volume2(w: Wedge) -> int {
+    return w.b * w.h * w.l;
+}
+
+fn wedge_surface2(w: Wedge) -> int {
+    return 2 * w.b * w.h + 2 * w.h * w.l + w.b * w.l;
+}

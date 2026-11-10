@@ -1,0 +1,1908 @@
+// Full hosted parser for Qasida, written IN Qasida.
+// Slice 2a of the self-hosting plan (docs/SELFHOST_PLAN.md).
+// Recursive-descent over the hosted lexer's tokens, mirroring
+// forge_lang/parser.py: precedence || -> && -> | -> ^ -> & ->
+// == != -> < <= > >= -> << >> -> + - -> * / % -> unary ->
+// postfix -> primary, ranges `..` loosest.
+// AST: a single recursive Node struct (kind tag + name/ival/fval/
+// sval/bval + kids + line/col), one kind per Python AST node.
+// Slice 2a covers the core: expressions, let/if/while/for/
+// return/break/continue/assign/expr-stmt, fn/struct/import/
+// extern, and types. Slice 2b adds enum/match/spawn/scope/
+// defer/trait/impl/type/newtype/readonly/opaque.
+// Kind tags: 0 Program, 1 Import, 2 FuncDef, 3 StructDef,
+// 4 EnumDef, 5 TraitDef, 6 ImplDef, 7 AliasDef, 8 NewtypeDef,
+// 9 Block, 10 Let, 11 Assign, 12 IndexAssign, 13 FieldAssign,
+// 14 If, 15 While, 16 For, 17 Return, 18 Break, 19 Continue,
+// 20 Match, 21 Spawn, 22 Scope, 23 Defer, 24 ExprStmt,
+// 25 IntLit, 26 FloatLit, 27 StrLit, 28 BoolLit, 29 ArrayLit,
+// 30 TupleLit, 31 StructLit, 32 FieldAccess, 33 MethodCall,
+// 34 Var, 35 Call, 36 Index, 37 TupleIndex, 38 RangeLit,
+// 39 Cast, 40 BinOp, 41 UnaryOp, 42 Try, 43 Param, 44 Field,
+// 45 Arm.
+
+import "selfhost_lex.fg";
+
+struct Node {
+    kind: int;
+    name: str;
+    ival: int;
+    fval: float;
+    sval: str;
+    bval: bool;
+    kids: [Node];
+    line: int;
+    col: int;
+}
+
+struct HParser {
+    kinds: [int];
+    texts: [str];
+    lines: [int];
+    cols: [int];
+    pos: int;
+}
+
+struct POut {
+    p: HParser;
+    n: Node;
+}
+
+struct TOut {
+    p: HParser;
+    text: str;
+    line: int;
+    col: int;
+}
+
+fn new_node(kind: int, line: int, col: int) -> Node {
+    return Node { kind: kind, name: "", ival: 0, fval: 0.0, sval: "", bval: false, kids: [], line: line, col: col };
+}
+
+fn node_kind_name(k: int) -> str {
+    if k == 0 { return "Program"; }
+    if k == 1 { return "Import"; }
+    if k == 2 { return "FuncDef"; }
+    if k == 3 { return "StructDef"; }
+    if k == 4 { return "EnumDef"; }
+    if k == 5 { return "TraitDef"; }
+    if k == 6 { return "ImplDef"; }
+    if k == 7 { return "AliasDef"; }
+    if k == 8 { return "NewtypeDef"; }
+    if k == 9 { return "Block"; }
+    if k == 10 { return "Let"; }
+    if k == 11 { return "Assign"; }
+    if k == 12 { return "IndexAssign"; }
+    if k == 13 { return "FieldAssign"; }
+    if k == 14 { return "If"; }
+    if k == 15 { return "While"; }
+    if k == 16 { return "For"; }
+    if k == 17 { return "Return"; }
+    if k == 18 { return "Break"; }
+    if k == 19 { return "Continue"; }
+    if k == 20 { return "Match"; }
+    if k == 21 { return "Spawn"; }
+    if k == 22 { return "Scope"; }
+    if k == 23 { return "Defer"; }
+    if k == 24 { return "ExprStmt"; }
+    if k == 25 { return "IntLit"; }
+    if k == 26 { return "FloatLit"; }
+    if k == 27 { return "StrLit"; }
+    if k == 28 { return "BoolLit"; }
+    if k == 29 { return "ArrayLit"; }
+    if k == 30 { return "TupleLit"; }
+    if k == 31 { return "StructLit"; }
+    if k == 32 { return "FieldAccess"; }
+    if k == 33 { return "MethodCall"; }
+    if k == 34 { return "Var"; }
+    if k == 35 { return "Call"; }
+    if k == 36 { return "Index"; }
+    if k == 37 { return "TupleIndex"; }
+    if k == 38 { return "RangeLit"; }
+    if k == 39 { return "Cast"; }
+    if k == 40 { return "BinOp"; }
+    if k == 41 { return "UnaryOp"; }
+    if k == 42 { return "Try"; }
+    if k == 43 { return "Param"; }
+    if k == 44 { return "Field"; }
+    if k == 45 { return "Arm"; }
+    return "?";
+}
+
+fn peek(p: HParser) -> str {
+    return p.texts[p.pos];
+}
+
+fn peek_kind(p: HParser) -> int {
+    return p.kinds[p.pos];
+}
+
+fn peek_line(p: HParser) -> int {
+    return p.lines[p.pos];
+}
+
+fn peek_col(p: HParser) -> int {
+    return p.cols[p.pos];
+}
+
+fn peek_at(p: HParser, k: int) -> str {
+    let mut idx: int = p.pos + k;
+    if idx >= len(p.texts) {
+        idx = len(p.texts) - 1;
+    }
+    return p.texts[idx];
+}
+
+fn peek_kind_at(p: HParser, k: int) -> int {
+    let mut idx: int = p.pos + k;
+    if idx >= len(p.kinds) {
+        idx = len(p.kinds) - 1;
+    }
+    return p.kinds[idx];
+}
+
+fn advance(p0: HParser) -> HParser {
+    let mut p: HParser = p0;
+    if p.kinds[p.pos] != 6 {
+        p.pos = p.pos + 1;
+    }
+    return p;
+}
+
+fn at_op(p: HParser, v: str) -> bool {
+    return p.kinds[p.pos] == 5 && p.texts[p.pos] == v;
+}
+
+fn at_kw(p: HParser, v: str) -> bool {
+    return p.kinds[p.pos] == 4 && p.texts[p.pos] == v;
+}
+
+fn at_eof(p: HParser) -> bool {
+    return p.kinds[p.pos] == 6;
+}
+
+fn expect_op(p0: HParser, v: str) -> TOut {
+    if !at_op(p0, v) {
+        fail_compile("expected '" + v + "', got '" + peek(p0) + "'");
+    }
+    let t: TOut = TOut { p: advance(p0), text: v, line: peek_line(p0), col: peek_col(p0) };
+    return t;
+}
+
+fn expect_kw(p0: HParser, v: str) -> TOut {
+    if !at_kw(p0, v) {
+        fail_compile("expected '" + v + "', got '" + peek(p0) + "'");
+    }
+    let t: TOut = TOut { p: advance(p0), text: v, line: peek_line(p0), col: peek_col(p0) };
+    return t;
+}
+
+fn expect_ident(p0: HParser) -> TOut {
+    if p0.kinds[p0.pos] != 3 {
+        fail_compile("expected a name, got '" + peek(p0) + "'");
+    }
+    let t: TOut = TOut { p: advance(p0), text: peek(p0), line: peek_line(p0), col: peek_col(p0) };
+    return t;
+}
+
+fn looks_like_struct_lit(p: HParser) -> bool {
+    if !at_op(p, "{") {
+        return false;
+    }
+    if peek_kind_at(p, 1) == 5 && peek_at(p, 1) == "}" {
+        return true;
+    }
+    return peek_kind_at(p, 1) == 3 && peek_kind_at(p, 2) == 5 && peek_at(p, 2) == ":";
+}
+
+fn parse_type_params(p0: HParser) -> TOut {
+    if !at_op(p0, "<") {
+        return TOut { p: p0, text: "", line: 0, col: 0 };
+    }
+    let mut p: HParser = p0;
+    let mut t: TOut = expect_op(p, "<");
+    p = t.p;
+    let mut names: str = "";
+    while true {
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        if names == "" {
+            names = nm.text;
+        } else {
+            names = names + "," + nm.text;
+        }
+        if at_op(p, ",") {
+            let c: TOut = expect_op(p, ",");
+            p = c.p;
+            continue;
+        }
+        break;
+    }
+    let g: TOut = expect_op(p, ">");
+    return TOut { p: g.p, text: names, line: 0, col: 0 };
+}
+
+fn parse_type(p0: HParser, allow_union: bool) -> TOut {
+    let mut p: HParser = p0;
+    let mut base: str = "";
+    if at_op(p, "[") {
+        let o: TOut = expect_op(p, "[");
+        p = o.p;
+        let inner: TOut = parse_type(p, true);
+        p = inner.p;
+        if at_op(p, ";") {
+            let s: TOut = expect_op(p, ";");
+            p = s.p;
+            if peek_kind(p) != 0 {
+                fail_compile("sized array size must be an integer literal");
+            }
+            let sz: str = peek(p);
+            p = advance(p);
+            let c: TOut = expect_op(p, "]");
+            p = c.p;
+            base = "[" + inner.text + "; " + sz + "]";
+        } else {
+            let c: TOut = expect_op(p, "]");
+            p = c.p;
+            base = "[" + inner.text + "]";
+        }
+    } else if at_op(p, "(") {
+        let o: TOut = expect_op(p, "(");
+        p = o.p;
+        let mut elems: str = "";
+        let mut count: int = 0;
+        if !at_op(p, ")") {
+            while true {
+                let e: TOut = parse_type(p, true);
+                p = e.p;
+                if elems == "" {
+                    elems = e.text;
+                } else {
+                    elems = elems + ", " + e.text;
+                }
+                count = count + 1;
+                if at_op(p, ",") {
+                    let c: TOut = expect_op(p, ",");
+                    p = c.p;
+                    continue;
+                }
+                break;
+            }
+        }
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        if count < 2 {
+            fail_compile("tuple types need at least two elements");
+        }
+        base = "(" + elems + ")";
+    } else if at_kw(p, "opaque") {
+        let o: TOut = expect_kw(p, "opaque");
+        p = o.p;
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        base = "opaque " + nm.text;
+    } else if at_kw(p, "readonly") {
+        let o: TOut = expect_kw(p, "readonly");
+        p = o.p;
+        if at_kw(p, "readonly") {
+            fail_compile("readonly cannot be nested");
+        }
+        let inner: TOut = parse_type(p, true);
+        p = inner.p;
+        if len(inner.text) < 2 || substr(inner.text, 0, 1) != "[" || substr(inner.text, len(inner.text) - 1, 1) != "]" {
+            fail_compile("readonly only applies to array types");
+        }
+        base = "readonly " + inner.text;
+    } else {
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        let mut name: str = nm.text;
+        if name == "i64" {
+            name = "int";
+        }
+        if at_op(p, "<") {
+            let o: TOut = expect_op(p, "<");
+            p = o.p;
+            let mut args: str = "";
+            while true {
+                let a: TOut = parse_type(p, true);
+                p = a.p;
+                if args == "" {
+                    args = a.text;
+                } else {
+                    args = args + ", " + a.text;
+                }
+                if at_op(p, ",") {
+                    let c: TOut = expect_op(p, ",");
+                    p = c.p;
+                    continue;
+                }
+                break;
+            }
+            let c: TOut = expect_op(p, ">");
+            p = c.p;
+            base = name + "<" + args + ">";
+        } else {
+            base = name;
+        }
+    }
+    let mut parts: str = base;
+    while allow_union && at_op(p, "|") {
+        let o: TOut = expect_op(p, "|");
+        p = o.p;
+        let nxt: TOut = parse_type(p, false);
+        p = nxt.p;
+        parts = parts + " | " + nxt.text;
+    }
+    return TOut { p: p, text: parts, line: 0, col: 0 };
+}
+
+fn parse_expr(p0: HParser) -> POut {
+    let left: POut = parse_or(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    if at_op(p, "..") {
+        let op: TOut = expect_op(p, "..");
+        p = op.p;
+        let right: POut = parse_or(p);
+        p = right.p;
+        let mut r: Node = new_node(38, op.line, op.col);
+        r.kids = [n, right.n];
+        n = r;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_or(p0: HParser) -> POut {
+    let mut left: POut = parse_and(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "||") {
+        let op: TOut = expect_op(p, "||");
+        p = op.p;
+        let right: POut = parse_and(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = "||";
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_and(p0: HParser) -> POut {
+    let mut left: POut = parse_bitor(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "&&") {
+        let op: TOut = expect_op(p, "&&");
+        p = op.p;
+        let right: POut = parse_bitor(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = "&&";
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_bitor(p0: HParser) -> POut {
+    let mut left: POut = parse_bitxor(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "|") {
+        let op: TOut = expect_op(p, "|");
+        p = op.p;
+        let right: POut = parse_bitxor(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = "|";
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_bitxor(p0: HParser) -> POut {
+    let mut left: POut = parse_bitand(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "^") {
+        let op: TOut = expect_op(p, "^");
+        p = op.p;
+        let right: POut = parse_bitand(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = "^";
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_bitand(p0: HParser) -> POut {
+    let mut left: POut = parse_equality(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "&") {
+        let op: TOut = expect_op(p, "&");
+        p = op.p;
+        let right: POut = parse_equality(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = "&";
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_equality(p0: HParser) -> POut {
+    let mut left: POut = parse_comparison(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "==") || at_op(p, "!=") {
+        let opv: str = peek(p);
+        let op: TOut = expect_op(p, opv);
+        p = op.p;
+        let right: POut = parse_comparison(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = opv;
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_comparison(p0: HParser) -> POut {
+    let mut left: POut = parse_shift(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "<") || at_op(p, "<=") || at_op(p, ">") || at_op(p, ">=") {
+        let opv: str = peek(p);
+        let op: TOut = expect_op(p, opv);
+        p = op.p;
+        let right: POut = parse_shift(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = opv;
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_shift(p0: HParser) -> POut {
+    let mut left: POut = parse_additive(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "<<") || at_op(p, ">>") {
+        let opv: str = peek(p);
+        let op: TOut = expect_op(p, opv);
+        p = op.p;
+        let right: POut = parse_additive(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = opv;
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_additive(p0: HParser) -> POut {
+    let mut left: POut = parse_multiplicative(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "+") || at_op(p, "-") {
+        let opv: str = peek(p);
+        let op: TOut = expect_op(p, opv);
+        p = op.p;
+        let right: POut = parse_multiplicative(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = opv;
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_multiplicative(p0: HParser) -> POut {
+    let mut left: POut = parse_unary(p0);
+    let mut p: HParser = left.p;
+    let mut n: Node = left.n;
+    while at_op(p, "*") || at_op(p, "/") || at_op(p, "%") {
+        let opv: str = peek(p);
+        let op: TOut = expect_op(p, opv);
+        p = op.p;
+        let right: POut = parse_unary(p);
+        p = right.p;
+        let mut b: Node = new_node(40, op.line, op.col);
+        b.name = opv;
+        b.kids = [n, right.n];
+        n = b;
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_unary(p0: HParser) -> POut {
+    if at_op(p0, "-") || at_op(p0, "!") || at_op(p0, "~") {
+        let opv: str = peek(p0);
+        let op: TOut = expect_op(p0, opv);
+        let inner: POut = parse_unary(op.p);
+        let mut u: Node = new_node(41, op.line, op.col);
+        u.name = opv;
+        u.kids = [inner.n];
+        return POut { p: inner.p, n: u };
+    }
+    return parse_postfix(p0);
+}
+
+fn parse_postfix(p0: HParser) -> POut {
+    let mut expr: POut = parse_primary(p0);
+    let mut p: HParser = expr.p;
+    let mut n: Node = expr.n;
+    while true {
+        if at_op(p, "(") && n.kind == 32 {
+            let tok: TOut = expect_op(p, "(");
+            p = tok.p;
+            let mut args: [Node] = [];
+            if !at_op(p, ")") {
+                while true {
+                    let a: POut = parse_expr(p);
+                    p = a.p;
+                    push(args, a.n);
+                    if at_op(p, ",") {
+                        let c: TOut = expect_op(p, ",");
+                        p = c.p;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            let c: TOut = expect_op(p, ")");
+            p = c.p;
+            let mut m: Node = new_node(33, tok.line, tok.col);
+            m.name = n.name;
+            m.kids = [n.kids[0]];
+            let mut i: int = 0;
+            while i < len(args) {
+                push(m.kids, args[i]);
+                i = i + 1;
+            }
+            n = m;
+            continue;
+        }
+        if at_op(p, "?") {
+            let tok: TOut = expect_op(p, "?");
+            p = tok.p;
+            let mut t: Node = new_node(42, tok.line, tok.col);
+            t.kids = [n];
+            n = t;
+            continue;
+        }
+        if at_op(p, "[") {
+            let tok: TOut = expect_op(p, "[");
+            p = tok.p;
+            let idx: POut = parse_expr(p);
+            p = idx.p;
+            let c: TOut = expect_op(p, "]");
+            p = c.p;
+            let mut ix: Node = new_node(36, tok.line, tok.col);
+            ix.kids = [n, idx.n];
+            n = ix;
+            continue;
+        }
+        if at_op(p, ".") {
+            let tok: TOut = expect_op(p, ".");
+            p = tok.p;
+            if peek_kind(p) == 0 {
+                let idx_text: str = peek(p);
+                let idx_line: int = peek_line(p);
+                let idx_col: int = peek_col(p);
+                p = advance(p);
+                let mut ti: Node = new_node(37, tok.line, tok.col);
+                ti.ival = parse_int(idx_text);
+                ti.kids = [n];
+                n = ti;
+                continue;
+            }
+            let f: TOut = expect_ident(p);
+            p = f.p;
+            let mut fa: Node = new_node(32, tok.line, tok.col);
+            fa.name = f.text;
+            fa.kids = [n];
+            n = fa;
+            continue;
+        }
+        if at_kw(p, "as") {
+            let tok: TOut = expect_kw(p, "as");
+            p = tok.p;
+            let tgt: TOut = parse_type(p, false);
+            p = tgt.p;
+            let mut c: Node = new_node(39, tok.line, tok.col);
+            c.sval = tgt.text;
+            c.kids = [n];
+            n = c;
+            continue;
+        }
+        break;
+    }
+    return POut { p: p, n: n };
+}
+
+fn digit_val(ch: str) -> int {
+    if ch == "0" { return 0; }
+    if ch == "1" { return 1; }
+    if ch == "2" { return 2; }
+    if ch == "3" { return 3; }
+    if ch == "4" { return 4; }
+    if ch == "5" { return 5; }
+    if ch == "6" { return 6; }
+    if ch == "7" { return 7; }
+    if ch == "8" { return 8; }
+    if ch == "9" { return 9; }
+    if ch == "a" || ch == "A" { return 10; }
+    if ch == "b" || ch == "B" { return 11; }
+    if ch == "c" || ch == "C" { return 12; }
+    if ch == "d" || ch == "D" { return 13; }
+    if ch == "e" || ch == "E" { return 14; }
+    return 15;
+}
+
+fn parse_int_lit(text: str) -> int {
+    // Convert an INT token text to its value, handling 0x/0b/0o
+    // prefixes and _ separators (the parse_int builtin is base-10
+    // only and fails on these).
+    let mut v: int = 0;
+    let mut base: int = 10;
+    let mut i: int = 0;
+    if len(text) >= 2 && substr(text, 0, 1) == "0" {
+        let p: str = substr(text, 1, 1);
+        if p == "x" || p == "X" {
+            base = 16;
+            i = 2;
+        } else if p == "b" || p == "B" {
+            base = 2;
+            i = 2;
+        } else if p == "o" || p == "O" {
+            base = 8;
+            i = 2;
+        }
+    }
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c == "_" {
+            i = i + 1;
+            continue;
+        }
+        v = v * base + digit_val(c);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn parse_primary(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    if peek_kind(p) == 0 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(25, ln, cl);
+        n.ival = parse_int_lit(t);
+        n.sval = t;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 1 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(26, ln, cl);
+        n.fval = parse_float(t);
+        n.sval = t;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 2 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(27, ln, cl);
+        n.sval = t;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 4 && (peek(p) == "true" || peek(p) == "false") {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(28, ln, cl);
+        n.bval = t == "true";
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 3 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        if at_op(p, "(") {
+            let o: TOut = expect_op(p, "(");
+            p = o.p;
+            let mut args: [Node] = [];
+            if !at_op(p, ")") {
+                while true {
+                    let a: POut = parse_expr(p);
+                    p = a.p;
+                    push(args, a.n);
+                    if at_op(p, ",") {
+                        let c: TOut = expect_op(p, ",");
+                        p = c.p;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            let c: TOut = expect_op(p, ")");
+            p = c.p;
+            let mut n: Node = new_node(35, ln, cl);
+            n.name = t;
+            n.kids = args;
+            return POut { p: p, n: n };
+        }
+        if looks_like_struct_lit(p) {
+            let o: TOut = expect_op(p, "{");
+            p = o.p;
+            let mut fields: [Node] = [];
+            if !at_op(p, "}") {
+                while true {
+                    let fnm: TOut = expect_ident(p);
+                    p = fnm.p;
+                    let c: TOut = expect_op(p, ":");
+                    p = c.p;
+                    let fe: POut = parse_expr(p);
+                    p = fe.p;
+                    let mut f: Node = new_node(44, fnm.line, fnm.col);
+                    f.name = fnm.text;
+                    f.kids = [fe.n];
+                    push(fields, f);
+                    if at_op(p, ",") {
+                        let cc: TOut = expect_op(p, ",");
+                        p = cc.p;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            let c: TOut = expect_op(p, "}");
+            p = c.p;
+            let mut n: Node = new_node(31, ln, cl);
+            n.name = t;
+            n.kids = fields;
+            return POut { p: p, n: n };
+        }
+        let mut n: Node = new_node(34, ln, cl);
+        n.name = t;
+        return POut { p: p, n: n };
+    }
+    if at_op(p, "(") {
+        let tok: TOut = expect_op(p, "(");
+        p = tok.p;
+        let first: POut = parse_expr(p);
+        p = first.p;
+        if at_op(p, ",") {
+            let mut elems: [Node] = [first.n];
+            while at_op(p, ",") {
+                let c: TOut = expect_op(p, ",");
+                p = c.p;
+                let e: POut = parse_expr(p);
+                p = e.p;
+                push(elems, e.n);
+            }
+            let c: TOut = expect_op(p, ")");
+            p = c.p;
+            let mut n: Node = new_node(30, tok.line, tok.col);
+            n.kids = elems;
+            return POut { p: p, n: n };
+        }
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        return POut { p: p, n: first.n };
+    }
+    if at_op(p, "[") {
+        let tok: TOut = expect_op(p, "[");
+        p = tok.p;
+        let mut elems: [Node] = [];
+        if !at_op(p, "]") {
+            while true {
+                let e: POut = parse_expr(p);
+                p = e.p;
+                push(elems, e.n);
+                if at_op(p, ",") {
+                    let c: TOut = expect_op(p, ",");
+                    p = c.p;
+                    continue;
+                }
+                break;
+            }
+        }
+        let c: TOut = expect_op(p, "]");
+        p = c.p;
+        let mut n: Node = new_node(29, tok.line, tok.col);
+        n.kids = elems;
+        return POut { p: p, n: n };
+    }
+    fail_compile("expected an expression, got '" + peek(p) + "'");
+    let dummy: Node = new_node(34, 0, 0);
+    return POut { p: p, n: dummy };
+}
+
+fn parse_block(p0: HParser) -> POut {
+    let o: TOut = expect_op(p0, "{");
+    let mut p: HParser = o.p;
+    let mut stmts: [Node] = [];
+    while !at_op(p, "}") {
+        if at_eof(p) {
+            fail_compile("unterminated block");
+        }
+        let s: POut = parse_stmt(p);
+        p = s.p;
+        push(stmts, s.n);
+    }
+    let c: TOut = expect_op(p, "}");
+    p = c.p;
+    let mut n: Node = new_node(9, o.line, o.col);
+    n.kids = stmts;
+    return POut { p: p, n: n };
+}
+
+fn parse_stmt(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    if at_kw(p, "let") {
+        let kw: TOut = expect_kw(p, "let");
+        p = kw.p;
+        let mut mutable: bool = false;
+        if at_kw(p, "mut") {
+            let m: TOut = expect_kw(p, "mut");
+            p = m.p;
+            mutable = true;
+        }
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        let mut ann: str = "";
+        if at_op(p, ":") {
+            let c: TOut = expect_op(p, ":");
+            p = c.p;
+            let t: TOut = parse_type(p, true);
+            p = t.p;
+            ann = t.text;
+        }
+        let e: TOut = expect_op(p, "=");
+        p = e.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let mut n: Node = new_node(10, kw.line, kw.col);
+        n.name = nm.text;
+        n.bval = mutable;
+        n.sval = ann;
+        n.kids = [ex.n];
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "if") {
+        let kw: TOut = expect_kw(p, "if");
+        p = kw.p;
+        let cond: POut = parse_expr(p);
+        p = cond.p;
+        let then: POut = parse_block(p);
+        p = then.p;
+        let mut kids: [Node] = [cond.n, then.n];
+        if at_kw(p, "else") {
+            let e: TOut = expect_kw(p, "else");
+            p = e.p;
+            if at_kw(p, "if") {
+                let elif: POut = parse_stmt(p);
+                p = elif.p;
+                let mut eb: Node = new_node(9, e.line, e.col);
+                eb.kids = [elif.n];
+                push(kids, eb);
+            } else {
+                let els: POut = parse_block(p);
+                p = els.p;
+                push(kids, els.n);
+            }
+        }
+        let mut n: Node = new_node(14, kw.line, kw.col);
+        n.kids = kids;
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "while") {
+        let kw: TOut = expect_kw(p, "while");
+        p = kw.p;
+        let cond: POut = parse_expr(p);
+        p = cond.p;
+        let body: POut = parse_block(p);
+        p = body.p;
+        let mut n: Node = new_node(15, kw.line, kw.col);
+        n.kids = [cond.n, body.n];
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "for") {
+        let kw: TOut = expect_kw(p, "for");
+        p = kw.p;
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        let i: TOut = expect_kw(p, "in");
+        p = i.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let body: POut = parse_block(p);
+        p = body.p;
+        let mut n: Node = new_node(16, kw.line, kw.col);
+        n.name = nm.text;
+        n.kids = [ex.n, body.n];
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "return") {
+        let tok: TOut = expect_kw(p, "return");
+        p = tok.p;
+        let mut kids: [Node] = [];
+        if !at_op(p, ";") {
+            let ex: POut = parse_expr(p);
+            p = ex.p;
+            push(kids, ex.n);
+        }
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let mut n: Node = new_node(17, tok.line, tok.col);
+        n.kids = kids;
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "break") {
+        let tok: TOut = expect_kw(p, "break");
+        p = tok.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let n: Node = new_node(18, tok.line, tok.col);
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "continue") {
+        let tok: TOut = expect_kw(p, "continue");
+        p = tok.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let n: Node = new_node(19, tok.line, tok.col);
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "defer") {
+        let kw: TOut = expect_kw(p, "defer");
+        p = kw.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        if ex.n.kind != 35 && ex.n.kind != 33 {
+            fail_compile("defer needs a call");
+        }
+        let mut n: Node = new_node(23, kw.line, kw.col);
+        n.kids = [ex.n];
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "match") {
+        let kw: TOut = expect_kw(p, "match");
+        p = kw.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let o: TOut = expect_op(p, "{");
+        p = o.p;
+        let mut kids: [Node] = [ex.n];
+        while !at_op(p, "}") {
+            if at_eof(p) {
+                fail_compile("unterminated match");
+            }
+            let pat: TOut = expect_ident(p);
+            p = pat.p;
+            let mut binding: str = "";
+            if at_op(p, "(") {
+                let op: TOut = expect_op(p, "(");
+                p = op.p;
+                let b: TOut = expect_ident(p);
+                p = b.p;
+                binding = b.text;
+                let c: TOut = expect_op(p, ")");
+                p = c.p;
+            }
+            let a: TOut = expect_op(p, "=>");
+            p = a.p;
+            let body: POut = parse_block(p);
+            p = body.p;
+            let mut arm: Node = new_node(45, pat.line, pat.col);
+            arm.name = pat.text;
+            arm.sval = binding;
+            arm.kids = [body.n];
+            push(kids, arm);
+            if at_op(p, ",") {
+                let c: TOut = expect_op(p, ",");
+                p = c.p;
+            }
+        }
+        let c: TOut = expect_op(p, "}");
+        p = c.p;
+        let mut n: Node = new_node(20, kw.line, kw.col);
+        n.kids = kids;
+        return POut { p: p, n: n };
+    }
+    if at_kw(p, "spawn") {
+        let kw: TOut = expect_kw(p, "spawn");
+        p = kw.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        if ex.n.kind != 35 {
+            fail_compile("spawn needs a function call");
+        }
+        let mut n: Node = new_node(21, kw.line, kw.col);
+        n.kids = [ex.n];
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 3 && peek(p) == "scope" && peek_kind_at(p, 1) == 5 && peek_at(p, 1) == "{" {
+        let kw: TOut = expect_ident(p);
+        p = kw.p;
+        let body: POut = parse_block(p);
+        p = body.p;
+        let mut n: Node = new_node(22, kw.line, kw.col);
+        n.kids = [body.n];
+        return POut { p: p, n: n };
+    }
+    if at_op(p, "{") {
+        return parse_block(p);
+    }
+    let ln: int = peek_line(p);
+    let cl: int = peek_col(p);
+    let expr: POut = parse_expr(p);
+    p = expr.p;
+    if at_op(p, "=") {
+        let e: TOut = expect_op(p, "=");
+        p = e.p;
+        let rhs: POut = parse_expr(p);
+        p = rhs.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        if expr.n.kind == 34 {
+            let mut n: Node = new_node(11, expr.n.line, expr.n.col);
+            n.name = expr.n.name;
+            n.kids = [rhs.n];
+            return POut { p: p, n: n };
+        }
+        if expr.n.kind == 36 {
+            let mut n: Node = new_node(12, expr.n.line, expr.n.col);
+            n.kids = [expr.n, rhs.n];
+            return POut { p: p, n: n };
+        }
+        if expr.n.kind == 32 {
+            let mut n: Node = new_node(13, expr.n.line, expr.n.col);
+            n.kids = [expr.n, rhs.n];
+            return POut { p: p, n: n };
+        }
+        fail_compile("assignment target must be a variable, an index, or a field");
+    }
+    let s: TOut = expect_op(p, ";");
+    p = s.p;
+    let mut n: Node = new_node(24, ln, cl);
+    n.kids = [expr.n];
+    return POut { p: p, n: n };
+}
+
+fn parse_params(p0: HParser) -> TOut {
+    // Returns params encoded as "name:type~name:type" in text.
+    // Separator is "~" (not ",") because generic types like
+    // Result<int, str> contain commas inside the type spelling.
+    let mut p: HParser = p0;
+    let mut out: str = "";
+    if !at_op(p, ")") {
+        while true {
+            let nm: TOut = expect_ident(p);
+            p = nm.p;
+            let c: TOut = expect_op(p, ":");
+            p = c.p;
+            let t: TOut = parse_type(p, true);
+            p = t.p;
+            let one: str = nm.text + ":" + t.text;
+            if out == "" {
+                out = one;
+            } else {
+                out = out + "~" + one;
+            }
+            if at_op(p, ",") {
+                let cc: TOut = expect_op(p, ",");
+                p = cc.p;
+                continue;
+            }
+            break;
+        }
+    }
+    return TOut { p: p, text: out, line: 0, col: 0 };
+}
+
+fn parse_func(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "fn");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let tp: TOut = parse_type_params(p);
+    p = tp.p;
+    let o: TOut = expect_op(p, "(");
+    p = o.p;
+    let pr: TOut = parse_params(p);
+    p = pr.p;
+    let c: TOut = expect_op(p, ")");
+    p = c.p;
+    let mut ret: str = "void";
+    if at_op(p, "->") {
+        let a: TOut = expect_op(p, "->");
+        p = a.p;
+        let t: TOut = parse_type(p, true);
+        p = t.p;
+        ret = t.text;
+    }
+    let body: POut = parse_block(p);
+    p = body.p;
+    let mut n: Node = new_node(2, kw.line, kw.col);
+    n.name = nm.text;
+    n.sval = ret;
+    // kids: params as Param nodes, then the body block.
+    let mut kids: [Node] = [];
+    if pr.text != "" {
+        let parts: [str] = split(pr.text, "~");
+        let mut i: int = 0;
+        while i < len(parts) {
+            let kv: [str] = split(parts[i], ":");
+            let mut pn: Node = new_node(43, kw.line, kw.col);
+            pn.name = kv[0];
+            pn.sval = kv[1];
+            push(kids, pn);
+            i = i + 1;
+        }
+    }
+    push(kids, body.n);
+    n.kids = kids;
+    // type params are recorded in name as "name<T,U>" when present.
+    if tp.text != "" {
+        n.name = nm.text + "<" + tp.text + ">";
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_struct(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "struct");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let tp: TOut = parse_type_params(p);
+    p = tp.p;
+    let o: TOut = expect_op(p, "{");
+    p = o.p;
+    let mut fields: [Node] = [];
+    while !at_op(p, "}") {
+        if at_eof(p) {
+            fail_compile("unterminated struct");
+        }
+        let fnm: TOut = expect_ident(p);
+        p = fnm.p;
+        let c: TOut = expect_op(p, ":");
+        p = c.p;
+        let t: TOut = parse_type(p, true);
+        p = t.p;
+        let mut f: Node = new_node(44, fnm.line, fnm.col);
+        f.name = fnm.text;
+        f.sval = t.text;
+        push(fields, f);
+        if at_op(p, ",") || at_op(p, ";") {
+            let cc: TOut = expect_op(p, peek(p));
+            p = cc.p;
+            continue;
+        }
+        if at_op(p, "}") {
+            break;
+        }
+        fail_compile("expected ',' or ';' between struct fields");
+    }
+    let c: TOut = expect_op(p, "}");
+    p = c.p;
+    let mut n: Node = new_node(3, kw.line, kw.col);
+    n.name = nm.text;
+    n.kids = fields;
+    if tp.text != "" {
+        n.name = nm.text + "<" + tp.text + ">";
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_extern(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "extern");
+    let mut p: HParser = kw.p;
+    let f: TOut = expect_kw(p, "fn");
+    p = f.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let o: TOut = expect_op(p, "(");
+    p = o.p;
+    let pr: TOut = parse_params(p);
+    p = pr.p;
+    let c: TOut = expect_op(p, ")");
+    p = c.p;
+    let mut ret: str = "void";
+    if at_op(p, "->") {
+        let a: TOut = expect_op(p, "->");
+        p = a.p;
+        let t: TOut = parse_type(p, true);
+        p = t.p;
+        ret = t.text;
+    }
+    let s: TOut = expect_op(p, ";");
+    p = s.p;
+    let mut n: Node = new_node(2, kw.line, kw.col);
+    n.name = nm.text;
+    n.sval = ret;
+    n.bval = true;
+    let mut kids: [Node] = [];
+    if pr.text != "" {
+        let parts: [str] = split(pr.text, "~");
+        let mut i: int = 0;
+        while i < len(parts) {
+            let kv: [str] = split(parts[i], ":");
+            let mut pn: Node = new_node(43, kw.line, kw.col);
+            pn.name = kv[0];
+            pn.sval = kv[1];
+            push(kids, pn);
+            i = i + 1;
+        }
+    }
+    let mut body: Node = new_node(9, kw.line, kw.col);
+    push(kids, body);
+    n.kids = kids;
+    return POut { p: p, n: n };
+}
+
+fn parse_program(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    // Group top-level items by category, matching the Python
+    // Program AST (imports, funcs, structs, enums, traits,
+    // impls, aliases, newtypes), not source order.
+    let mut imports: [Node] = [];
+    let mut funcs: [Node] = [];
+    let mut structs: [Node] = [];
+    let mut enums: [Node] = [];
+    let mut traits: [Node] = [];
+    let mut impls: [Node] = [];
+    let mut aliases: [Node] = [];
+    let mut newtypes: [Node] = [];
+    while !at_eof(p) {
+        if at_kw(p, "import") {
+            let kw: TOut = expect_kw(p, "import");
+            p = kw.p;
+            if peek_kind(p) != 2 {
+                fail_compile("import needs a string path");
+            }
+            let path: str = peek(p);
+            p = advance(p);
+            let s: TOut = expect_op(p, ";");
+            p = s.p;
+            let mut n: Node = new_node(1, kw.line, kw.col);
+            n.sval = path;
+            push(imports, n);
+            continue;
+        }
+        if at_kw(p, "struct") {
+            let s: POut = parse_struct(p);
+            p = s.p;
+            push(structs, s.n);
+            continue;
+        }
+        if at_kw(p, "enum") {
+            let e: POut = parse_enum(p);
+            p = e.p;
+            push(enums, e.n);
+            continue;
+        }
+        if at_kw(p, "trait") {
+            let t: POut = parse_trait(p);
+            p = t.p;
+            push(traits, t.n);
+            continue;
+        }
+        if at_kw(p, "impl") {
+            let im: POut = parse_impl(p);
+            p = im.p;
+            push(impls, im.n);
+            continue;
+        }
+        if at_kw(p, "type") {
+            let a: POut = parse_alias(p);
+            p = a.p;
+            push(aliases, a.n);
+            continue;
+        }
+        if at_kw(p, "newtype") {
+            let nt: POut = parse_newtype(p);
+            p = nt.p;
+            push(newtypes, nt.n);
+            continue;
+        }
+        if at_kw(p, "extern") {
+            let e: POut = parse_extern(p);
+            p = e.p;
+            push(funcs, e.n);
+            continue;
+        }
+        let f: POut = parse_func(p);
+        p = f.p;
+        push(funcs, f.n);
+    }
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(imports) {
+        push(kids, imports[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(funcs) {
+        push(kids, funcs[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(structs) {
+        push(kids, structs[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(enums) {
+        push(kids, enums[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(traits) {
+        push(kids, traits[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(impls) {
+        push(kids, impls[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(aliases) {
+        push(kids, aliases[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(newtypes) {
+        push(kids, newtypes[i]);
+        i = i + 1;
+    }
+    let mut n: Node = new_node(0, 1, 1);
+    n.kids = kids;
+    return POut { p: p, n: n };
+}
+
+fn dump_escape(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dump(n: Node) -> str {
+    let k: int = n.kind;
+    if k == 0 {
+        let mut s: str = "(Program";
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 1 {
+        return "(Import \"" + dump_escape(n.sval) + "\")";
+    }
+    if k == 2 {
+        let mut s: str = "(FuncDef " + n.name + " " + n.sval;
+        if n.bval {
+            s = s + " extern";
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 3 {
+        let mut s: str = "(StructDef " + n.name;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 4 {
+        let mut s: str = "(EnumDef " + n.name;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 5 {
+        let mut s: str = "(TraitDef " + n.name;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 6 {
+        let mut s: str = "(ImplDef " + n.name;
+        if n.sval == "" {
+            s = s + " -";
+        } else {
+            s = s + " " + n.sval;
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 7 {
+        return "(AliasDef " + n.name + " " + n.sval + ")";
+    }
+    if k == 8 {
+        return "(NewtypeDef " + n.name + " " + n.sval + ")";
+    }
+    if k == 9 {
+        let mut s: str = "(Block";
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 10 {
+        let mut s: str = "(Let " + n.name;
+        if n.bval {
+            s = s + " mut";
+        }
+        if n.sval == "" {
+            s = s + " -";
+        } else {
+            s = s + " " + n.sval;
+        }
+        return s + " " + dump(n.kids[0]) + ")";
+    }
+    if k == 11 {
+        return "(Assign " + n.name + " " + dump(n.kids[0]) + ")";
+    }
+    if k == 12 {
+        return "(IndexAssign " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 13 {
+        return "(FieldAssign " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 14 {
+        let mut s: str = "(If " + dump(n.kids[0]) + " " + dump(n.kids[1]);
+        if len(n.kids) > 2 {
+            s = s + " " + dump(n.kids[2]);
+        } else {
+            s = s + " -";
+        }
+        return s + ")";
+    }
+    if k == 15 {
+        return "(While " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 16 {
+        return "(For " + n.name + " " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 17 {
+        if len(n.kids) == 0 {
+            return "(Return)";
+        }
+        return "(Return " + dump(n.kids[0]) + ")";
+    }
+    if k == 18 {
+        return "(Break)";
+    }
+    if k == 19 {
+        return "(Continue)";
+    }
+    if k == 20 {
+        let mut s: str = "(Match " + dump(n.kids[0]);
+        let mut i: int = 1;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 21 {
+        return "(Spawn " + dump(n.kids[0]) + ")";
+    }
+    if k == 22 {
+        return "(Scope " + dump(n.kids[0]) + ")";
+    }
+    if k == 23 {
+        return "(Defer " + dump(n.kids[0]) + ")";
+    }
+    if k == 24 {
+        return "(ExprStmt " + dump(n.kids[0]) + ")";
+    }
+    if k == 25 {
+        return "(IntLit " + n.sval + ")";
+    }
+    if k == 26 {
+        return "(FloatLit " + n.sval + ")";
+    }
+    if k == 27 {
+        return "(StrLit \"" + dump_escape(n.sval) + "\")";
+    }
+    if k == 28 {
+        if n.bval {
+            return "(BoolLit true)";
+        }
+        return "(BoolLit false)";
+    }
+    if k == 29 {
+        let mut s: str = "(ArrayLit";
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 30 {
+        let mut s: str = "(TupleLit";
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 31 {
+        let mut s: str = "(StructLit " + n.name;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 32 {
+        return "(FieldAccess " + dump(n.kids[0]) + " " + n.name + ")";
+    }
+    if k == 33 {
+        let mut s: str = "(MethodCall " + dump(n.kids[0]) + " " + n.name;
+        let mut i: int = 1;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 34 {
+        return "(Var " + n.name + ")";
+    }
+    if k == 35 {
+        let mut s: str = "(Call " + n.name;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = s + " " + dump(n.kids[i]);
+            i = i + 1;
+        }
+        return s + ")";
+    }
+    if k == 36 {
+        return "(Index " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 37 {
+        return "(TupleIndex " + dump(n.kids[0]) + " " + i2s(n.ival) + ")";
+    }
+    if k == 38 {
+        return "(RangeLit " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 39 {
+        return "(Cast " + dump(n.kids[0]) + " " + n.sval + ")";
+    }
+    if k == 40 {
+        return "(BinOp " + n.name + " " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+    }
+    if k == 41 {
+        return "(UnaryOp " + n.name + " " + dump(n.kids[0]) + ")";
+    }
+    if k == 42 {
+        return "(Try " + dump(n.kids[0]) + ")";
+    }
+    if k == 43 {
+        return "(Param " + n.name + " " + n.sval + ")";
+    }
+    if k == 44 {
+        if len(n.kids) == 0 {
+            if n.sval == "" {
+                return "(Field " + n.name + " -)";
+            }
+            return "(Field " + n.name + " " + n.sval + ")";
+        }
+        return "(Field " + n.name + " " + dump(n.kids[0]) + ")";
+    }
+    if k == 45 {
+        let mut s: str = "(Arm " + n.name;
+        if n.sval == "" {
+            s = s + " -";
+        } else {
+            s = s + " " + n.sval;
+        }
+        return s + " " + dump(n.kids[0]) + ")";
+    }
+    return "(?" + i2s(k) + ")";
+}
+
+fn i2s(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut v: int = n;
+    if v < 0 {
+        neg = true;
+        v = -v;
+    }
+    let mut out: str = "";
+    while v > 0 {
+        let d: int = v % 10;
+        let mut ch: str = "?";
+        if d == 0 { ch = "0"; }
+        else if d == 1 { ch = "1"; }
+        else if d == 2 { ch = "2"; }
+        else if d == 3 { ch = "3"; }
+        else if d == 4 { ch = "4"; }
+        else if d == 5 { ch = "5"; }
+        else if d == 6 { ch = "6"; }
+        else if d == 7 { ch = "7"; }
+        else if d == 8 { ch = "8"; }
+        else { ch = "9"; }
+        out = ch + out;
+        v = v / 10;
+    }
+    if neg {
+        out = "-" + out;
+    }
+    return out;
+}
+
+fn parse_enum(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "enum");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let tp: TOut = parse_type_params(p);
+    p = tp.p;
+    let o: TOut = expect_op(p, "{");
+    p = o.p;
+    let mut variants: [Node] = [];
+    while !at_op(p, "}") {
+        if at_eof(p) {
+            fail_compile("unterminated enum");
+        }
+        let v: TOut = expect_ident(p);
+        p = v.p;
+        let mut payload: str = "";
+        if at_op(p, "(") {
+            let op: TOut = expect_op(p, "(");
+            p = op.p;
+            let t: TOut = parse_type(p, true);
+            p = t.p;
+            payload = t.text;
+            if at_op(p, ",") {
+                fail_compile("enum variants take at most one payload type in v1");
+            }
+            let c: TOut = expect_op(p, ")");
+            p = c.p;
+        }
+        let mut vn: Node = new_node(44, v.line, v.col);
+        vn.name = v.text;
+        vn.sval = payload;
+        push(variants, vn);
+        if at_op(p, ",") || at_op(p, ";") {
+            let cc: TOut = expect_op(p, peek(p));
+            p = cc.p;
+            continue;
+        }
+        if at_op(p, "}") {
+            break;
+        }
+        fail_compile("expected ',' or ';' between enum variants");
+    }
+    let c: TOut = expect_op(p, "}");
+    p = c.p;
+    let mut n: Node = new_node(4, kw.line, kw.col);
+    n.name = nm.text;
+    n.kids = variants;
+    if tp.text != "" {
+        n.name = nm.text + "<" + tp.text + ">";
+    }
+    return POut { p: p, n: n };
+}
+
+fn parse_trait(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "trait");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let tp: TOut = parse_type_params(p);
+    p = tp.p;
+    if tp.text != "" {
+        fail_compile("generic traits are not supported in v1");
+    }
+    let o: TOut = expect_op(p, "{");
+    p = o.p;
+    let mut methods: [Node] = [];
+    while !at_op(p, "}") {
+        if at_eof(p) {
+            fail_compile("unterminated trait");
+        }
+        let f: TOut = expect_kw(p, "fn");
+        p = f.p;
+        let mn: TOut = expect_ident(p);
+        p = mn.p;
+        let op: TOut = expect_op(p, "(");
+        p = op.p;
+        let pr: TOut = parse_params(p);
+        p = pr.p;
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        let mut ret: str = "void";
+        if at_op(p, "->") {
+            let a: TOut = expect_op(p, "->");
+            p = a.p;
+            let t: TOut = parse_type(p, true);
+            p = t.p;
+            ret = t.text;
+        }
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let mut m: Node = new_node(2, f.line, f.col);
+        m.name = mn.text;
+        m.sval = ret;
+        let mut kids: [Node] = [];
+        if pr.text != "" {
+            let parts: [str] = split(pr.text, "~");
+            let mut i: int = 0;
+            while i < len(parts) {
+                let kv: [str] = split(parts[i], ":");
+                let mut pn: Node = new_node(43, f.line, f.col);
+                pn.name = kv[0];
+                pn.sval = kv[1];
+                push(kids, pn);
+                i = i + 1;
+            }
+        }
+        let mut body: Node = new_node(9, f.line, f.col);
+        push(kids, body);
+        m.kids = kids;
+        push(methods, m);
+    }
+    let c: TOut = expect_op(p, "}");
+    p = c.p;
+    let mut n: Node = new_node(5, kw.line, kw.col);
+    n.name = nm.text;
+    n.kids = methods;
+    return POut { p: p, n: n };
+}
+
+fn parse_impl(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "impl");
+    let mut p: HParser = kw.p;
+    let first: TOut = expect_ident(p);
+    p = first.p;
+    let mut trait_name: str = "";
+    let mut struct_name: str = first.text;
+    if at_kw(p, "for") {
+        let f: TOut = expect_kw(p, "for");
+        p = f.p;
+        trait_name = first.text;
+        let s: TOut = expect_ident(p);
+        p = s.p;
+        struct_name = s.text;
+    }
+    let o: TOut = expect_op(p, "{");
+    p = o.p;
+    let mut methods: [Node] = [];
+    while !at_op(p, "}") {
+        if at_eof(p) {
+            fail_compile("unterminated impl");
+        }
+        let m: POut = parse_func(p);
+        p = m.p;
+        if m.n.name != "" && len(m.n.name) > 0 {
+            // generic methods are rejected by the Python parser;
+            // the hosted parser folds type params into the name,
+            // so a '<' in the name means a generic method.
+            let parts: [str] = split(m.n.name, "<");
+            if len(parts) > 1 {
+                fail_compile("generic methods are not supported in traits v1");
+            }
+        }
+        push(methods, m.n);
+    }
+    let c: TOut = expect_op(p, "}");
+    p = c.p;
+    let mut n: Node = new_node(6, kw.line, kw.col);
+    n.name = struct_name;
+    n.sval = trait_name;
+    n.kids = methods;
+    return POut { p: p, n: n };
+}
+
+fn parse_alias(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "type");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let e: TOut = expect_op(p, "=");
+    p = e.p;
+    let t: TOut = parse_type(p, true);
+    p = t.p;
+    let s: TOut = expect_op(p, ";");
+    p = s.p;
+    let mut n: Node = new_node(7, kw.line, kw.col);
+    n.name = nm.text;
+    n.sval = t.text;
+    return POut { p: p, n: n };
+}
+
+fn parse_newtype(p0: HParser) -> POut {
+    let kw: TOut = expect_kw(p0, "newtype");
+    let mut p: HParser = kw.p;
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let e: TOut = expect_op(p, "=");
+    p = e.p;
+    let t: TOut = parse_type(p, true);
+    p = t.p;
+    let s: TOut = expect_op(p, ";");
+    p = s.p;
+    let mut n: Node = new_node(8, kw.line, kw.col);
+    n.name = nm.text;
+    n.sval = t.text;
+    return POut { p: p, n: n };
+}

@@ -1,0 +1,15 @@
+fn main() {
+    let mut slots: [str] = ["", "", ""];
+    let mut head: int = 0;
+    let lines: [str] = ["boot", "init", "login", "http", "shutdown"];
+    let mut i: int = 0;
+    while i < len(lines) {
+        slots[head] = lines[i];
+        head = (head + 1) % 3;
+        i = i + 1;
+    }
+    println(3);
+    println(slots[head]);
+    println(slots[(head + 1) % 3]);
+    println(slots[(head + 2) % 3]);
+}

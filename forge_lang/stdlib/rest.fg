@@ -1,0 +1,59 @@
+import "http_client.fg";
+
+fn rest_url(base: str, path: str, query: str) -> str {
+    return http_url(base, path, query);
+}
+
+fn rest_ok(code: int) -> bool {
+    return http_status_ok(code);
+}
+
+fn rest_find(hay: str, needle: str) -> int {
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rest_field(body: str, key: str) -> str {
+    let needle: str = "\"" + key + "\":\"";
+    let idx: int = rest_find(body, needle);
+    if idx < 0 {
+        return "";
+    }
+    let start: int = idx + len(needle);
+    let mut j: int = start;
+    while j < len(body) {
+        if body[j] == "\"" {
+            return substr(body, start, j - start);
+        }
+        j = j + 1;
+    }
+    return "";
+}
+
+fn rest_error_text(code: int) -> str {
+    if code >= 200 && code < 300 {
+        return "OK";
+    }
+    if code == 400 {
+        return "Bad Request";
+    }
+    if code == 401 {
+        return "Unauthorized";
+    }
+    if code == 403 {
+        return "Forbidden";
+    }
+    if code == 404 {
+        return "Not Found";
+    }
+    if code == 500 {
+        return "Internal Server Error";
+    }
+    return "Unknown";
+}

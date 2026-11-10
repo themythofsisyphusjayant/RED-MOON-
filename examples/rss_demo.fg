@@ -1,0 +1,15 @@
+import "rss.fg";
+
+fn main() {
+    let feed: str = "<rss><channel><title>News</title><item><title>First post</title><link>https://a.example/1</link></item><item><title>Second post</title><link>https://a.example/2</link></item><item><title>Third post</title><link>https://a.example/3</link></item></channel></rss>";
+    let titles: [str] = rss_titles(feed);
+    println(len(titles));
+    println(titles[0]);
+    println(titles[1]);
+    println(titles[2]);
+    let links: [str] = rss_links(feed);
+    println(len(links));
+    println(links[0]);
+    println(links[1]);
+    println(links[2]);
+}

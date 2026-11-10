@@ -1,0 +1,22 @@
+import "matrices.fg";
+
+fn main() {
+    let a: Mat = mat_new([1.0, 2.0, 3.0, 4.0], 2, 2);
+    let b: Mat = mat_new([5.0, 6.0, 7.0, 8.0], 2, 2);
+    let s: Mat = mat_add(a, b);
+    println(s.data[0]);
+    println(s.data[1]);
+    println(s.data[2]);
+    println(s.data[3]);
+    let p: Mat = mat_mul(a, b);
+    println(p.data[0]);
+    println(p.data[1]);
+    println(p.data[2]);
+    println(p.data[3]);
+    let t: Mat = mat_transpose(a);
+    println(t.data[0]);
+    println(t.data[1]);
+    println(t.data[2]);
+    println(t.data[3]);
+    println(mat_trace(a));
+}

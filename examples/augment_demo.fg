@@ -1,0 +1,9 @@
+import "augment.fg";
+
+fn main() {
+    let text: str = "the quick brown fox";
+    println(aug_swap_ends(text));
+    println(aug_drop_at(text, 1));
+    println(aug_swap_pairs(text));
+    println(aug_word_count(text));
+}

@@ -1,0 +1,15 @@
+struct Semicircle {
+    r: int;
+}
+
+fn semicircle_new(r: int) -> Semicircle {
+    return Semicircle { r: r };
+}
+
+fn semicircle_area2(s: Semicircle) -> int {
+    return 3 * s.r * s.r / 2;
+}
+
+fn semicircle_perim2(s: Semicircle) -> int {
+    return 3 * s.r + 2 * s.r;
+}

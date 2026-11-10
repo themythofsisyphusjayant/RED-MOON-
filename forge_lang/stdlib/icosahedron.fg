@@ -1,0 +1,15 @@
+struct Icosahedron {
+    a: int;
+}
+
+fn icosahedron_new(a: int) -> Icosahedron {
+    return Icosahedron { a: a };
+}
+
+fn icosahedron_area2(i: Icosahedron) -> int {
+    return 9 * i.a * i.a;
+}
+
+fn icosahedron_volume2(i: Icosahedron) -> int {
+    return 3 * i.a * i.a * i.a;
+}

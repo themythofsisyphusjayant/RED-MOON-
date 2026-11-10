@@ -1,0 +1,24 @@
+fn fs_exists(path: str) -> bool {
+    return file_exists(path);
+}
+
+fn fs_copy(src: str, dst: str) -> bool {
+    if !file_exists(src) {
+        return false;
+    }
+    return write_file(dst, read_file(src));
+}
+
+fn fs_append(path: str, text: str) -> bool {
+    if file_exists(path) {
+        return write_file(path, read_file(path) + text);
+    }
+    return write_file(path, text);
+}
+
+fn fs_size(path: str) -> int {
+    if !file_exists(path) {
+        return -1;
+    }
+    return len(read_file(path));
+}

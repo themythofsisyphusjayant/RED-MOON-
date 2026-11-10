@@ -1,0 +1,1282 @@
+// Hosted type-inference pass for codegen (slice 4, stage 4a).
+// Mirrors forge_lang/infer.py: runs AFTER a successful check on an
+// already-valid program, never fails, degrades to "int" / "void".
+// Output: a type table keyed by node position ("line:col" -> type
+// string), since Qasida has no object identity. The hosted codegen
+// queries it through infer_type_of; a missing key returns "int"
+// (exactly Python's self._types.get(id(expr), "int")).
+// Stage 4a implements the full S1 walk (literals, Var, Let, BinOp
+// incl. the fixed-int literal adaptation, Call, Return, ExprStmt,
+// plus ArrayLit/TupleLit/RangeLit/UnaryOp/Index/Cast/Try/FieldAccess/
+// StructLit/MethodCall and the statement forms) so later stages
+// only extend the corpus, not this file's shape.
+
+import "selfhost_check.fg";
+
+struct HInfer {
+    fn_names: [str];
+    fn_rets: [str];
+    fn_params: [str];
+    struct_names: [str];
+    struct_fields: [str];
+    variant_names: [str];
+    variant_enums: [str];
+    enum_names: [str];
+    enum_tparams: [str];
+    payload_keys: [str];
+    payload_types: [str];
+    trait_names: [str];
+    trait_methods: [str];
+    type_keys: [str];
+    type_vals: [str];
+    scope_names: [str];
+    scope_types: [str];
+    scope_marks: [int];
+    current_ret: str;
+    // 4d: positions walked under a generic template body, so the
+    // collect pass can tell template mentions apart from uses.
+    template_keys: [str];
+    in_template: bool;
+}
+
+fn infer_new() -> HInfer {
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false };
+}
+
+// First index of needle in hay (needle may be multi-char), or -1.
+fn infer_find_str(hay: str, needle: str) -> int {
+    let hn: int = len(hay);
+    let nn: int = len(needle);
+    if nn == 0 || nn > hn {
+        return -1;
+    }
+    let mut i: int = 0;
+    while i + nn <= hn {
+        if substr(hay, i, nn) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Linear scan of parallel key/value arrays; last match wins so a
+// re-walked node (move / weak_upgrade double-walk) keeps its latest
+// type. Missing key returns the default.
+fn infer_table_get(keys: [str], vals: [str], k: str, dflt: str) -> str {
+    let mut out: str = dflt;
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == k {
+            out = vals[i];
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// First index of k in keys, or -1.
+fn infer_table_find(keys: [str], k: str) -> int {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == k {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn infer_trunc_str(a0: [str], n: int) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < n && i < len(a0) {
+        push(out, a0[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn infer_trunc_int(a0: [int], n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n && i < len(a0) {
+        push(out, a0[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// "line:col" key for a node (own itoa via the checker: int_to_str
+// is stdlib, not a builtin).
+fn infer_key(n: Node) -> str {
+    return itoa(n.line) + ":" + itoa(n.col);
+}
+
+// Record a node's type. Append-only: duplicate keys cannot occur
+// for distinct nodes, and re-walks set the same type again.
+fn infer_set(h0: HInfer, n: Node, t: str) -> HInfer {
+    let mut h: HInfer = h0;
+    // Template-walk entries live under a "T:"-prefixed key (4d fix
+    // for the v32 regression): infer keys are line:col only, and
+    // merged imports keep per-file positions, so a template node
+    // can share a key with a concrete node in another file
+    // (opt_some's `v` at 15:42 vs v32's literal `0` at 15:42).
+    // An unprefixed template entry recorded last would shadow the
+    // concrete type ("T" over "int") and corrupt codegen.
+    // Prefixed keys can never collide with concrete keys.
+    if h.in_template {
+        push(h.type_keys, "T:" + infer_key(n));
+        push(h.type_vals, t);
+        push(h.template_keys, "T:" + infer_key(n));
+    } else {
+        push(h.type_keys, infer_key(n));
+        push(h.type_vals, t);
+    }
+    return h;
+}
+
+// The inferred type of a node; missing key -> "int".
+fn infer_type_of(h: HInfer, n: Node) -> str {
+    // Inside a template walk, template entries (prefixed "T:")
+    // win over any concrete entry sharing the line:col key.
+    if h.in_template {
+        let t: str = infer_table_get(h.type_keys, h.type_vals, "T:" + infer_key(n), "");
+        if t != "" {
+            return t;
+        }
+    }
+    return infer_table_get(h.type_keys, h.type_vals, infer_key(n), "int");
+}
+
+fn infer_push_scope(h0: HInfer) -> HInfer {
+    let mut h: HInfer = h0;
+    push(h.scope_marks, len(h.scope_names));
+    return h;
+}
+
+fn infer_pop_scope(h0: HInfer) -> HInfer {
+    let mut h: HInfer = h0;
+    let mark: int = h.scope_marks[len(h.scope_marks) - 1];
+    h.scope_marks = infer_trunc_int(h.scope_marks, len(h.scope_marks) - 1);
+    h.scope_names = infer_trunc_str(h.scope_names, mark);
+    h.scope_types = infer_trunc_str(h.scope_types, mark);
+    return h;
+}
+
+// Bind name -> t in the innermost scope. Append-only: lookup scans
+// from the end, so a redeclare in the same scope shadows correctly
+// and both entries vanish when the scope pops.
+fn infer_declare(h0: HInfer, name: str, t: str) -> HInfer {
+    let mut h: HInfer = h0;
+    push(h.scope_names, name);
+    push(h.scope_types, t);
+    return h;
+}
+
+// Innermost scope outward, then enum-variant name, else "int".
+fn infer_lookup(h: HInfer, name: str) -> str {
+    let mut i: int = len(h.scope_names) - 1;
+    while i >= 0 {
+        if h.scope_names[i] == name {
+            return h.scope_types[i];
+        }
+        i = i - 1;
+    }
+    let vi: int = infer_table_find(h.variant_names, name);
+    if vi >= 0 {
+        return h.variant_enums[vi];
+    }
+    return "int";
+}
+
+// "Box<int>" -> "Box_int"; "[T]" -> "Array_T"; recurse into args.
+fn infer_is_generic(t: str) -> bool {
+    return find_lt(t) >= 0 && substr(t, len(t) - 1, 1) == ">";
+}
+
+fn infer_mangle_type(t: str) -> str {
+    if infer_is_generic(t) {
+        let base: str = generic_base(t);
+        let args: [str] = generic_args(t);
+        let mut out: str = base + "_";
+        let mut i: int = 0;
+        while i < len(args) {
+            if i > 0 {
+                out = out + "_";
+            }
+            out = out + infer_mangle_type(args[i]);
+            i = i + 1;
+        }
+        return out;
+    }
+    if len(t) >= 2 && substr(t, 0, 1) == "[" && substr(t, len(t) - 1, 1) == "]" {
+        return "Array_" + infer_mangle_type(substr(t, 1, len(t) - 2));
+    }
+    return t;
+}
+
+fn infer_is_tuple_type(t: str) -> bool {
+    if !is_tuple(t) {
+        return false;
+    }
+    return len(tuple_elems(t)) >= 2;
+}
+
+fn infer_is_opaque_type(t: str) -> bool {
+    if !starts_with(t, "opaque ") || len(t) <= 7 {
+        return false;
+    }
+    let rest: str = substr(t, 7, len(t) - 7);
+    if infer_find_str(rest, " ") >= 0 {
+        return false;
+    }
+    if infer_find_str(rest, "|") >= 0 {
+        return false;
+    }
+    if infer_find_str(rest, "<") >= 0 {
+        return false;
+    }
+    if infer_find_str(rest, "[") >= 0 {
+        return false;
+    }
+    return true;
+}
+
+fn infer_opaque_trait(t: str) -> str {
+    return substr(t, 7, len(t) - 7);
+}
+
+fn infer_mangle_method(s: str, m: str) -> str {
+    return s + "__" + m;
+}
+
+// Element type of any array spelling, sized or dynamic; readonly
+// prefix stripped first. Only call on array spellings.
+fn infer_array_elem(t: str) -> str {
+    if starts_with(t, "readonly ") {
+        return infer_array_elem(substr(t, 9, len(t) - 9));
+    }
+    if is_sized_array(t) {
+        return elem_type(t);
+    }
+    return substr(t, 1, len(t) - 2);
+}
+
+fn infer_is_fixed_int(t: str) -> bool {
+    return t == "i8" || t == "i16" || t == "i32" || t == "u8" || t == "u16" || t == "u32" || t == "u64";
+}
+
+// [lo, hi] for a fixed-width int type. DEVIATION (documented):
+// u64 hi is capped at INT_MAX (9223372036854775807) because Qasida
+// int is int64 and 2^64-1 is not representable; Python's is
+// 2^64-1. Only affects literals above INT_MAX, which cannot be
+// written as in-range int64 literals anyway.
+fn infer_fixed_range(t: str) -> [int] {
+    if t == "i8" {
+        return [-128, 127];
+    }
+    if t == "i16" {
+        return [-32768, 32767];
+    }
+    if t == "i32" {
+        return [-2147483648, 2147483647];
+    }
+    if t == "u8" {
+        return [0, 255];
+    }
+    if t == "u16" {
+        return [0, 65535];
+    }
+    if t == "u32" {
+        return [0, 4294967295];
+    }
+    return [0, 9223372036854775807];
+}
+
+// Integer value of a literal expression, or [] when not one.
+// Covers direct literals and negated literals (-5 parses as a
+// unary minus over a literal).
+fn infer_literal_value(n: Node) -> [int] {
+    if n.kind == 25 {
+        return [n.ival];
+    }
+    if n.kind == 41 && n.name == "-" && len(n.kids) == 1 && n.kids[0].kind == 25 {
+        return [0 - n.kids[0].ival];
+    }
+    return [];
+}
+
+// "p1:t1,p2:t2" -> ["p1:t1", "p2:t2"]; "" -> [].
+fn infer_parse_params(enc: str) -> [str] {
+    if enc == "" {
+        return [];
+    }
+    return split_top_commas(enc);
+}
+
+// One "p:t" entry -> [name, type].
+fn infer_split_param(entry: str) -> [str] {
+    return split(entry, ":");
+}
+
+// "f1:t1~f2:t2" -> ["f1:t1", "f2:t2"]; "" -> [].
+fn infer_parse_fields(enc: str) -> [str] {
+    if enc == "" {
+        return [];
+    }
+    return split(enc, "~");
+}
+
+// Struct field map encoding for a struct name, or "" if unknown.
+// Mangled name first, then the plain name (mirrors infer.py).
+fn infer_struct_fields(h: HInfer, name: str) -> str {
+    let mangled: str = infer_mangle_type(name);
+    let mut i: int = 0;
+    while i < len(h.struct_names) {
+        if h.struct_names[i] == mangled {
+            return h.struct_fields[i];
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(h.struct_names) {
+        if h.struct_names[i] == name {
+            return h.struct_fields[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Field type from a "f:t~..." encoding, or "" if absent.
+fn infer_field_type(enc: str, fname: str) -> str {
+    let parts: [str] = infer_parse_fields(enc);
+    let mut i: int = 0;
+    while i < len(parts) {
+        let kv: [str] = split(parts[i], ":");
+        if len(kv) >= 2 && kv[0] == fname {
+            return kv[1];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Function lookup: ["1", ret, params_enc] or ["0", "", ""].
+fn infer_fn_lookup(h: HInfer, name: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(h.fn_names) {
+        if h.fn_names[i] == name {
+            return ["1", h.fn_rets[i], h.fn_params[i]];
+        }
+        i = i + 1;
+    }
+    return ["0", "", ""];
+}
+
+// Generic-template lookup (4d): ["1", ret, params_enc, tparams]
+// for the template whose base name matches, else ["0", "", "", ""].
+
+// Generic-template lookup (4d): ["1", ret, params_enc, tparams]
+// for the template whose base name matches, else ["0", "", "", ""].
+fn infer_template_lookup(h: HInfer, name: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(h.fn_names) {
+        let sp: [str] = split_tparams(h.fn_names[i]);
+        if sp[0] == name && sp[1] != "" {
+            return ["1", h.fn_rets[i], h.fn_params[i], sp[1]];
+        }
+        i = i + 1;
+    }
+    return ["0", "", "", ""];
+}
+
+// Trait method lookup: ["1", ret, params_enc] or ["0", "", ""].
+// Encoding per trait: "m(p1:t1,p2:t2)->ret;m2(...)->ret".
+fn infer_trait_sig(h: HInfer, trait_name: str, method: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(h.trait_names) {
+        if h.trait_names[i] == trait_name {
+            let entries: [str] = split(h.trait_methods[i], ";");
+            let mut j: int = 0;
+            while j < len(entries) {
+                let e: str = entries[j];
+                let lp: int = infer_find_str(e, "(");
+                if lp >= 0 && substr(e, 0, lp) == method {
+                    let rp: int = infer_find_str(e, ")");
+                    let params_enc: str = substr(e, lp + 1, rp - lp - 1);
+                    let ret: str = substr(e, rp + 3, len(e) - rp - 3);
+                    return ["1", ret, params_enc];
+                }
+                j = j + 1;
+            }
+            return ["0", "", ""];
+        }
+        i = i + 1;
+    }
+    return ["0", "", ""];
+}
+
+// Enum type params for an enum base name: ["T", "U"] or [].
+fn infer_enum_tparams(h: HInfer, ename: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(h.enum_names) {
+        if h.enum_names[i] == ename {
+            if h.enum_tparams[i] == "" {
+                return [];
+            }
+            return split(h.enum_tparams[i], "~");
+        }
+        i = i + 1;
+    }
+    return [];
+}
+
+// Payload type for "Enum.variant", or "" when payload-less/absent.
+fn infer_payload_type(h: HInfer, key: str) -> str {
+    return infer_table_get(h.payload_keys, h.payload_types, key, "");
+}
+
+fn infer_build_tables(h0: HInfer, prog: Node) -> HInfer {
+    let mut h: HInfer = h0;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            // FuncDef: name (may carry "<T,U>"), sval = ret,
+            // kids = Param nodes then the body Block.
+            let mut enc: str = "";
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let k: Node = n.kids[j];
+                if k.kind == 43 {
+                    let one: str = k.name + ":" + k.sval;
+                    if enc == "" {
+                        enc = one;
+                    } else {
+                        enc = enc + "," + one;
+                    }
+                }
+                j = j + 1;
+            }
+            push(h.fn_names, n.name);
+            push(h.fn_rets, n.sval);
+            push(h.fn_params, enc);
+        }
+        if n.kind == 3 {
+            // StructDef: name (may carry "<T,U>"), kids are Field
+            // nodes (kind 44: name = field, sval = field type).
+            let sp: [str] = split_tparams(n.name);
+            let mut enc: str = "";
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let f: Node = n.kids[j];
+                let one: str = f.name + ":" + f.sval;
+                if enc == "" {
+                    enc = one;
+                } else {
+                    enc = enc + "~" + one;
+                }
+                j = j + 1;
+            }
+            push(h.struct_names, sp[0]);
+            push(h.struct_fields, enc);
+        }
+        if n.kind == 4 {
+            // EnumDef: kids are variant Field nodes (kind 44:
+            // name = variant, sval = payload type or "").
+            let sp: [str] = split_tparams(n.name);
+            let ename: str = sp[0];
+            push(h.enum_names, ename);
+            push(h.enum_tparams, sp[1]);
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let v: Node = n.kids[j];
+                push(h.variant_names, v.name);
+                push(h.variant_enums, ename);
+                push(h.payload_keys, ename + "." + v.name);
+                push(h.payload_types, v.sval);
+                j = j + 1;
+            }
+        }
+        if n.kind == 5 {
+            // TraitDef: kids are FuncDef-like method nodes
+            // (kind 2: name = method, sval = ret, kids = Params).
+            let mut enc: str = "";
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                let mut penc: str = "";
+                let mut k: int = 0;
+                while k < len(m.kids) {
+                    let p: Node = m.kids[k];
+                    if p.kind == 43 {
+                        let one: str = p.name + ":" + p.sval;
+                        if penc == "" {
+                            penc = one;
+                        } else {
+                            penc = penc + "," + one;
+                        }
+                    }
+                    k = k + 1;
+                }
+                let one: str = m.name + "(" + penc + ")->" + m.sval;
+                if enc == "" {
+                    enc = one;
+                } else {
+                    enc = enc + ";" + one;
+                }
+                j = j + 1;
+            }
+            push(h.trait_names, n.name);
+            push(h.trait_methods, enc);
+        }
+        if n.kind == 6 {
+            // ImplDef (4c): register each method under its mangled
+            // name (Struct__method), so MethodCall return types
+            // resolve and Call lookups find them, as in Python
+            // (checker appends mangled impl methods to funcs).
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                let mut enc: str = "";
+                let mut k: int = 0;
+                while k < len(m.kids) {
+                    let pk: Node = m.kids[k];
+                    if pk.kind == 43 {
+                        let one: str = pk.name + ":" + pk.sval;
+                        if enc == "" {
+                            enc = one;
+                        } else {
+                            enc = enc + "," + one;
+                        }
+                    }
+                    k = k + 1;
+                }
+                push(h.fn_names, n.name + "__" + m.name);
+                push(h.fn_rets, m.sval);
+                push(h.fn_params, enc);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return h;
+}
+
+// Set a literal's type from context, filling holes in nested
+// empty literals. Only ArrayLit / TupleLit nodes recurse.
+fn infer_fill_lit(h0: HInfer, e: Node, expected: str) -> HInfer {
+    let mut h: HInfer = h0;
+    h = infer_set(h, e, expected);
+    if e.kind == 29 && len(e.kids) > 0 {
+        if len(expected) >= 2 && substr(expected, 0, 1) == "[" && substr(expected, len(expected) - 1, 1) == "]" {
+            let elem: str = elem_type(expected);
+            let mut i: int = 0;
+            while i < len(e.kids) {
+                let c: Node = e.kids[i];
+                if c.kind == 29 || c.kind == 30 {
+                    h = infer_fill_lit(h, c, elem);
+                } else {
+                    h = infer_walk_expr(h, c);
+                }
+                i = i + 1;
+            }
+            return h;
+        }
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        return h;
+    }
+    if e.kind == 30 && len(e.kids) > 0 {
+        if infer_is_tuple_type(expected) {
+            let elems: [str] = tuple_elems(expected);
+            if len(elems) == len(e.kids) {
+                let mut i: int = 0;
+                while i < len(e.kids) {
+                    let c: Node = e.kids[i];
+                    if c.kind == 29 || c.kind == 30 {
+                        h = infer_fill_lit(h, c, elems[i]);
+                    } else {
+                        h = infer_walk_expr(h, c);
+                    }
+                    i = i + 1;
+                }
+                return h;
+            }
+        }
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        return h;
+    }
+    return h;
+}
+
+fn infer_walk_block(h0: HInfer, blk: Node) -> HInfer {
+    let mut h: HInfer = h0;
+    h = infer_push_scope(h);
+    let mut i: int = 0;
+    while i < len(blk.kids) {
+        h = infer_walk_stmt(h, blk.kids[i]);
+        i = i + 1;
+    }
+    h = infer_pop_scope(h);
+    return h;
+}
+
+// Walk one call argument against its declared param type: the
+// fill rule applies only when the arg is an ArrayLit/TupleLit
+// and the param type is an array or tuple type.
+fn infer_walk_arg(h0: HInfer, arg: Node, pt: str) -> HInfer {
+    if (arg.kind == 29 || arg.kind == 30) && (starts_with(pt, "[") || infer_is_tuple_type(pt)) {
+        return infer_fill_lit(h0, arg, pt);
+    }
+    return infer_walk_expr(h0, arg);
+}
+
+fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
+    let mut h: HInfer = h0;
+    if st.kind == 9 {
+        return infer_walk_block(h, st);
+    }
+    if st.kind == 22 {
+        return infer_walk_block(h, st.kids[0]);
+    }
+    if st.kind == 10 {
+        // Let: name, bval = mutable, sval = annotation, kids = [init].
+        let init: Node = st.kids[0];
+        if (init.kind == 29 || init.kind == 30) && st.sval != "" {
+            h = infer_fill_lit(h, init, st.sval);
+            h = infer_declare(h, st.name, st.sval);
+            return h;
+        }
+        h = infer_walk_expr(h, init);
+        let mut t: str = infer_type_of(h, init);
+        if st.sval != "" {
+            t = st.sval;
+        }
+        h = infer_declare(h, st.name, t);
+        return h;
+    }
+    if st.kind == 11 {
+        // Assign: name, kids = [rhs].
+        let rhs: Node = st.kids[0];
+        if rhs.kind == 29 || rhs.kind == 30 {
+            let vt: str = infer_lookup(h, st.name);
+            if starts_with(vt, "[") || infer_is_tuple_type(vt) {
+                return infer_fill_lit(h, rhs, vt);
+            }
+            return infer_walk_expr(h, rhs);
+        }
+        return infer_walk_expr(h, rhs);
+    }
+    if st.kind == 20 {
+        // Match: kids = [scrutinee, Arm...]; Arm: name = pattern,
+        // sval = binding ("" if none), kids = [body Block].
+        h = infer_walk_expr(h, st.kids[0]);
+        let et: str = infer_type_of(h, st.kids[0]);
+        if is_union_type(et) {
+            let members: [str] = union_members(et);
+            let mut a: int = 1;
+            while a < len(st.kids) {
+                let arm: Node = st.kids[a];
+                let mut bound: bool = false;
+                if arm.sval != "" {
+                    let mut m: int = 0;
+                    while m < len(members) {
+                        if members[m] == arm.name {
+                            bound = true;
+                        }
+                        m = m + 1;
+                    }
+                }
+                if bound {
+                    h = infer_push_scope(h);
+                    h = infer_declare(h, arm.sval, arm.name);
+                    h = infer_walk_block(h, arm.kids[0]);
+                    h = infer_pop_scope(h);
+                } else {
+                    h = infer_walk_block(h, arm.kids[0]);
+                }
+                a = a + 1;
+            }
+            return h;
+        }
+        // Enum path: substitute payload types through generic
+        // bindings only when arities match.
+        let base: str = generic_base(et);
+        let gargs: [str] = generic_args(et);
+        let enames: [str] = infer_enum_tparams(h, base);
+        let mut bind_names: [str] = [];
+        let mut bind_types: [str] = [];
+        if len(gargs) > 0 && len(enames) == len(gargs) {
+            bind_names = enames;
+            bind_types = gargs;
+        }
+        let mut a: int = 1;
+        while a < len(st.kids) {
+            let arm: Node = st.kids[a];
+            if arm.sval != "" {
+                let pt: str = infer_payload_type(h, base + "." + arm.name);
+                let mut cpt: str = "";
+                if pt == "" {
+                    cpt = "int";
+                } else {
+                    cpt = substitute_type(pt, bind_names, bind_types);
+                }
+                h = infer_push_scope(h);
+                h = infer_declare(h, arm.sval, cpt);
+                h = infer_walk_block(h, arm.kids[0]);
+                h = infer_pop_scope(h);
+            } else {
+                h = infer_walk_block(h, arm.kids[0]);
+            }
+            a = a + 1;
+        }
+        return h;
+    }
+    if st.kind == 21 || st.kind == 23 {
+        // Spawn / Defer: kids = [Call].
+        return infer_walk_expr(h, st.kids[0]);
+    }
+    if st.kind == 13 || st.kind == 12 {
+        // FieldAssign / IndexAssign: kids = [target, value].
+        h = infer_walk_expr(h, st.kids[0]);
+        h = infer_walk_expr(h, st.kids[1]);
+        return h;
+    }
+    if st.kind == 14 {
+        // If: kids = [cond, then, else?].
+        h = infer_walk_expr(h, st.kids[0]);
+        h = infer_walk_block(h, st.kids[1]);
+        if len(st.kids) > 2 {
+            h = infer_walk_block(h, st.kids[2]);
+        }
+        return h;
+    }
+    if st.kind == 15 {
+        // While: kids = [cond, body].
+        h = infer_walk_expr(h, st.kids[0]);
+        h = infer_walk_block(h, st.kids[1]);
+        return h;
+    }
+    if st.kind == 16 {
+        // For: name = loop var, kids = [iterable, body]. The elem
+        // slice is naive in Python too (at[1:-1]); port faithfully.
+        // The body stmts are walked DIRECTLY inside the pushed
+        // scope, not via walk_block.
+        h = infer_walk_expr(h, st.kids[0]);
+        let at: str = infer_type_of(h, st.kids[0]);
+        let mut et: str = "int";
+        if starts_with(at, "[") {
+            et = substr(at, 1, len(at) - 2);
+        }
+        h = infer_push_scope(h);
+        h = infer_declare(h, st.name, et);
+        let body: Node = st.kids[1];
+        let mut i: int = 0;
+        while i < len(body.kids) {
+            h = infer_walk_stmt(h, body.kids[i]);
+            i = i + 1;
+        }
+        h = infer_pop_scope(h);
+        return h;
+    }
+    if st.kind == 17 {
+        // Return: kids = [expr] or [].
+        if len(st.kids) == 0 {
+            return h;
+        }
+        let e: Node = st.kids[0];
+        if e.kind == 29 && starts_with(h.current_ret, "[") {
+            return infer_fill_lit(h, e, h.current_ret);
+        }
+        if e.kind == 30 {
+            if infer_is_tuple_type(h.current_ret) {
+                return infer_fill_lit(h, e, h.current_ret);
+            }
+            return infer_walk_expr(h, e);
+        }
+        return infer_walk_expr(h, e);
+    }
+    if st.kind == 24 {
+        // ExprStmt: kids = [expr].
+        return infer_walk_expr(h, st.kids[0]);
+    }
+    // Break (18) / Continue (19): no case in Python — no-op.
+    return h;
+}
+
+fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
+    let mut h: HInfer = h0;
+    if e.kind == 25 {
+        return infer_set(h, e, "int");
+    }
+    if e.kind == 26 {
+        return infer_set(h, e, "float");
+    }
+    if e.kind == 27 {
+        return infer_set(h, e, "str");
+    }
+    if e.kind == 28 {
+        return infer_set(h, e, "bool");
+    }
+    if e.kind == 34 {
+        return infer_set(h, e, infer_lookup(h, e.name));
+    }
+    if e.kind == 29 {
+        // ArrayLit: empty -> "[?]"; else "[t0]".
+        if len(e.kids) == 0 {
+            return infer_set(h, e, "[?]");
+        }
+        h = infer_walk_expr(h, e.kids[0]);
+        let t0: str = infer_type_of(h, e.kids[0]);
+        let mut i: int = 1;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        return infer_set(h, e, "[" + t0 + "]");
+    }
+    if e.kind == 30 {
+        // TupleLit: "(t1, t2, ...)".
+        let mut out: str = "(";
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            if i > 0 {
+                out = out + ", ";
+            }
+            out = out + infer_type_of(h, e.kids[i]);
+            i = i + 1;
+        }
+        return infer_set(h, e, out + ")");
+    }
+    if e.kind == 37 {
+        // TupleIndex: in-range tuple elem, else fall through to "int".
+        h = infer_walk_expr(h, e.kids[0]);
+        let bt: str = infer_type_of(h, e.kids[0]);
+        if infer_is_tuple_type(bt) {
+            let elems: [str] = tuple_elems(bt);
+            if e.ival < len(elems) {
+                return infer_set(h, e, elems[e.ival]);
+            }
+        }
+        return infer_set(h, e, "int");
+    }
+    if e.kind == 38 {
+        // RangeLit: kids = [start, end].
+        h = infer_walk_expr(h, e.kids[0]);
+        h = infer_walk_expr(h, e.kids[1]);
+        return infer_set(h, e, "range");
+    }
+    if e.kind == 31 {
+        // StructLit: name, kids are Field nodes (kind 44).
+        let concrete: str = e.name;
+        let mangled: str = infer_mangle_type(concrete);
+        let fields: str = infer_struct_fields(h, concrete);
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let f: Node = e.kids[i];
+            let fexpr: Node = f.kids[0];
+            let ft: str = infer_field_type(fields, f.name);
+            if (fexpr.kind == 29 || fexpr.kind == 30) && ft != "" {
+                h = infer_fill_lit(h, fexpr, ft);
+            } else {
+                h = infer_walk_expr(h, fexpr);
+            }
+            i = i + 1;
+        }
+        return infer_set(h, e, concrete);
+    }
+    if e.kind == 32 {
+        // FieldAccess: kids = [base], name = field.
+        h = infer_walk_expr(h, e.kids[0]);
+        let bt: str = infer_type_of(h, e.kids[0]);
+        let fields: str = infer_struct_fields(h, bt);
+        let ft: str = infer_field_type(fields, e.name);
+        if ft == "" {
+            return infer_set(h, e, "int");
+        }
+        return infer_set(h, e, ft);
+    }
+    if e.kind == 36 {
+        // Index: kids = [base, index].
+        h = infer_walk_expr(h, e.kids[0]);
+        h = infer_walk_expr(h, e.kids[1]);
+        let bt: str = infer_type_of(h, e.kids[0]);
+        if bt == "str" {
+            return infer_set(h, e, "str");
+        }
+        if starts_with(bt, "[") {
+            return infer_set(h, e, infer_array_elem(bt));
+        }
+        return infer_set(h, e, "int");
+    }
+    if e.kind == 39 {
+        // Cast: sval = target type, kids = [expr].
+        h = infer_walk_expr(h, e.kids[0]);
+        return infer_set(h, e, e.sval);
+    }
+    if e.kind == 42 {
+        // Try: kids = [expr]; Result<T, E> -> T, else "int".
+        h = infer_walk_expr(h, e.kids[0]);
+        let t: str = infer_type_of(h, e.kids[0]);
+        let args: [str] = generic_args(t);
+        if len(args) >= 1 {
+            return infer_set(h, e, args[0]);
+        }
+        return infer_set(h, e, "int");
+    }
+    if e.kind == 41 {
+        // UnaryOp: name = op, kids = [operand].
+        h = infer_walk_expr(h, e.kids[0]);
+        let t: str = infer_type_of(h, e.kids[0]);
+        if e.name == "!" {
+            return infer_set(h, e, "bool");
+        }
+        return infer_set(h, e, t);
+    }
+    if e.kind == 40 {
+        // BinOp: name = op, kids = [left, right].
+        h = infer_walk_expr(h, e.kids[0]);
+        let lt: str = infer_type_of(h, e.kids[0]);
+        h = infer_walk_expr(h, e.kids[1]);
+        let rt: str = infer_type_of(h, e.kids[1]);
+        if e.name == "<" || e.name == "<=" || e.name == ">" || e.name == ">=" || e.name == "==" || e.name == "!=" || e.name == "&&" || e.name == "||" {
+            return infer_set(h, e, "bool");
+        }
+        if e.name == "+" && lt == "str" {
+            return infer_set(h, e, "str");
+        }
+        // Fixed-int literal adaptation (mirrors the checker): a
+        // fitting literal takes the other operand's fixed type.
+        if lt != rt && e.name != "<<" && e.name != ">>" {
+            if infer_is_fixed_int(lt) {
+                let v: [int] = infer_literal_value(e.kids[1]);
+                if len(v) == 1 && (e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" || e.name == "&" || e.name == "|" || e.name == "^") {
+                    let r: [int] = infer_fixed_range(lt);
+                    if r[0] <= v[0] && v[0] <= r[1] {
+                        return infer_set(h, e, lt);
+                    }
+                }
+            }
+            if infer_is_fixed_int(rt) {
+                let v: [int] = infer_literal_value(e.kids[0]);
+                if len(v) == 1 && (e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" || e.name == "&" || e.name == "|" || e.name == "^") {
+                    let r: [int] = infer_fixed_range(rt);
+                    if r[0] <= v[0] && v[0] <= r[1] {
+                        return infer_set(h, e, rt);
+                    }
+                }
+            }
+        }
+        return infer_set(h, e, lt);
+    }
+    if e.kind == 33 {
+        // MethodCall: name = method, kids = [receiver, args...].
+        h = infer_walk_expr(h, e.kids[0]);
+        let rt: str = infer_type_of(h, e.kids[0]);
+        if infer_is_opaque_type(rt) {
+            let sig: [str] = infer_trait_sig(h, infer_opaque_trait(rt), e.name);
+            if sig[0] == "1" {
+                let params: [str] = infer_parse_params(sig[2]);
+                let mut i: int = 1;
+                while i < len(e.kids) {
+                    let a: Node = e.kids[i];
+                    if i - 1 < len(params) {
+                        let kv: [str] = infer_split_param(params[i - 1]);
+                        if len(kv) >= 2 {
+                            h = infer_walk_arg(h, a, kv[1]);
+                        } else {
+                            h = infer_walk_expr(h, a);
+                        }
+                    } else {
+                        h = infer_walk_expr(h, a);
+                    }
+                    i = i + 1;
+                }
+                return infer_set(h, e, sig[1]);
+            }
+            let mut i: int = 1;
+            while i < len(e.kids) {
+                h = infer_walk_expr(h, e.kids[i]);
+                i = i + 1;
+            }
+            return infer_set(h, e, "int");
+        }
+        let is_struct: bool = infer_table_find(h.struct_names, rt) >= 0;
+        if is_struct {
+            let fn_name: str = infer_mangle_method(rt, e.name);
+            let found: [str] = infer_fn_lookup(h, fn_name);
+            if found[0] == "1" {
+                let params: [str] = infer_parse_params(found[2]);
+                // Skip the receiver param (params[0]).
+                let mut i: int = 1;
+                while i < len(e.kids) {
+                    let a: Node = e.kids[i];
+                    if i < len(params) {
+                        let kv: [str] = infer_split_param(params[i]);
+                        if len(kv) >= 2 {
+                            h = infer_walk_arg(h, a, kv[1]);
+                        } else {
+                            h = infer_walk_expr(h, a);
+                        }
+                    } else {
+                        h = infer_walk_expr(h, a);
+                    }
+                    i = i + 1;
+                }
+                return infer_set(h, e, found[1]);
+            }
+        }
+        let mut i: int = 1;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        return infer_set(h, e, "int");
+    }
+    if e.kind == 35 {
+        // Call: name = fn, kids = [args].
+        let vi: int = infer_table_find(h.variant_names, e.name);
+        if vi >= 0 {
+            let mut i: int = 0;
+            while i < len(e.kids) {
+                h = infer_walk_expr(h, e.kids[i]);
+                i = i + 1;
+            }
+            return infer_set(h, e, h.variant_enums[vi]);
+        }
+        if e.name != "print" && e.name != "println" && e.name != "push" && e.name != "fail" && e.name != "fail_compile" && e.name != "eprintln" {
+            let found: [str] = infer_fn_lookup(h, e.name);
+            if found[0] == "1" {
+                let params: [str] = infer_parse_params(found[2]);
+                let mut i: int = 0;
+                while i < len(e.kids) {
+                    let a: Node = e.kids[i];
+                    if i < len(params) {
+                        let kv: [str] = infer_split_param(params[i]);
+                        if len(kv) >= 2 {
+                            h = infer_walk_arg(h, a, kv[1]);
+                        } else {
+                            h = infer_walk_expr(h, a);
+                        }
+                    } else {
+                        h = infer_walk_expr(h, a);
+                    }
+                    i = i + 1;
+                }
+                return infer_set(h, e, found[1]);
+            }
+            // Generic template call (4d): infer bindings from the
+            // argument types, return the substituted return type.
+            // (Python's infer never does this — the Python checker
+            // rewrites call names to mangled first. The hosted
+            // checker does not rewrite, so hosted infer unifies.)
+            let tf: [str] = infer_template_lookup(h, e.name);
+            if tf[0] == "1" {
+                let tparams: [str] = split(tf[3], "~");
+                let params: [str] = infer_parse_params(tf[2]);
+                let mut names: [str] = tparams;
+                let mut types: [str] = [];
+                let mut ti: int = 0;
+                while ti < len(tparams) {
+                    push(types, "?");
+                    ti = ti + 1;
+                }
+                let mut i: int = 0;
+                while i < len(e.kids) {
+                    let a: Node = e.kids[i];
+                    if i < len(params) {
+                        let kv: [str] = infer_split_param(params[i]);
+                        if len(kv) >= 2 {
+                            h = infer_walk_arg(h, a, kv[1]);
+                        } else {
+                            h = infer_walk_expr(h, a);
+                        }
+                    } else {
+                        h = infer_walk_expr(h, a);
+                    }
+                    i = i + 1;
+                }
+                let mut ok: bool = true;
+                let mut j: int = 0;
+                while j < len(e.kids) {
+                    if j < len(params) {
+                        let kv: [str] = infer_split_param(params[j]);
+                        if len(kv) >= 2 {
+                            let u: UOut = unify(kv[1], infer_type_of(h, e.kids[j]), names, types);
+                            if !u.ok {
+                                ok = false;
+                            }
+                            names = u.names;
+                            types = u.types;
+                        }
+                    }
+                    j = j + 1;
+                }
+                if ok {
+                    return infer_set(h, e, substitute_type(tf[1], names, types));
+                }
+            }
+        }
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        if e.name == "len" || e.name == "clock_micros" || e.name == "abs" || e.name == "parse_int" || e.name == "run_command" || e.name == "alloc_count" || e.name == "free_count" || e.name == "arr_alloc_count" || e.name == "arr_free_count" || e.name == "refcount" || e.name == "weak_new" || e.name == "mmap_open" || e.name == "mmap_get" || e.name == "mmap_grow" || e.name == "mmap_get32" || e.name == "peek32" || e.name == "csr_read" || e.name == "ecall" || e.name == "ecall3" || e.name == "wrapping_add" || e.name == "wrapping_sub" || e.name == "wrapping_mul" || e.name == "wrapping_neg" {
+            return infer_set(h, e, "int");
+        }
+        if e.name == "weak_upgrade" {
+            let mut j: int = 0;
+            while j < len(e.kids) {
+                h = infer_walk_expr(h, e.kids[j]);
+                j = j + 1;
+            }
+            return infer_set(h, e, "(bool, [int])");
+        }
+        if e.name == "move" {
+            h = infer_walk_expr(h, e.kids[0]);
+            return infer_set(h, e, infer_type_of(h, e.kids[0]));
+        }
+        if e.name == "parallel_dot" {
+            let mut j: int = 0;
+            while j < len(e.kids) {
+                h = infer_walk_expr(h, e.kids[j]);
+                j = j + 1;
+            }
+            return infer_set(h, e, "float");
+        }
+        if e.name == "parallel_matmul" {
+            let mut j: int = 0;
+            while j < len(e.kids) {
+                h = infer_walk_expr(h, e.kids[j]);
+                j = j + 1;
+            }
+            return infer_set(h, e, "[float]");
+        }
+        if e.name == "range" {
+            return infer_set(h, e, "[int]");
+        }
+        if e.name == "args" || e.name == "split" {
+            return infer_set(h, e, "[str]");
+        }
+        if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "pow" || e.name == "parse_float" {
+            return infer_set(h, e, "float");
+        }
+        if e.name == "read_file" || e.name == "read_line" || e.name == "join" || e.name == "substr" || e.name == "trim" {
+            return infer_set(h, e, "str");
+        }
+        if e.name == "write_file" {
+            return infer_set(h, e, "bool");
+        }
+        if e.name == "try_alloc" {
+            // 4e: Python's infer returns the checker's concrete_type
+            // for try_alloc ("Result<[int], str>", checker.py:2531).
+            // The hosted checker returns the same type but Node has
+            // no concrete_type field, so infer records the constant
+            // directly — same result, no checker change.
+            return infer_set(h, e, "Result<[int], str>");
+        }
+        if e.name == "read_bytes" {
+            return infer_set(h, e, "[int]");
+        }
+        if e.name == "write_bytes" {
+            return infer_set(h, e, "bool");
+        }
+        if e.name == "starts_with" || e.name == "ends_with" || e.name == "file_exists" {
+            return infer_set(h, e, "bool");
+        }
+        if e.name == "http_get" || e.name == "http_read_request" {
+            return infer_set(h, e, "str");
+        }
+        if e.name == "http_listen" || e.name == "http_accept" || e.name == "http_respond" || e.name == "http_respond_status" || e.name == "http_close" {
+            return infer_set(h, e, "int");
+        }
+        return infer_set(h, e, "void");
+    }
+    return infer_set(h, e, "int");
+}
+
+// Entry point: build the tables, walk every non-extern,
+// non-generic function body. type_keys/type_vals are the output.
+fn run_infer(prog: Node) -> HInfer {
+    let mut h: HInfer = infer_new();
+    h = infer_build_tables(h, prog);
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            // Skip extern declarations (bval). Generic templates
+            // are walked too (4d): their body types carry type
+            // params (T, [T]); codegen substitutes per instantiation
+            // at lookup time. Positions walked under a template are
+            // recorded in template_keys so the collect pass does not
+            // register their types as used (Python only instantiates
+            // types actually used by a concrete body).
+            if !n.bval {
+                let sp: [str] = split_tparams(n.name);
+                if sp[1] != "" {
+                    h.in_template = true;
+                }
+                h.current_ret = n.sval;
+                h.scope_names = infer_trunc_str(h.scope_names, 0);
+                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                h = infer_push_scope(h);
+                let mut j: int = 0;
+                while j < len(n.kids) {
+                    let k: Node = n.kids[j];
+                    if k.kind == 43 {
+                        h = infer_declare(h, k.name, k.sval);
+                    }
+                    j = j + 1;
+                }
+                let body: Node = n.kids[len(n.kids) - 1];
+                h = infer_walk_block(h, body);
+                h.scope_names = infer_trunc_str(h.scope_names, 0);
+                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                h.in_template = false;
+            }
+        }
+        if n.kind == 6 {
+            // ImplDef (4c): walk each method body like a function,
+            // so nodes inside methods get type-table entries.
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                h.current_ret = m.sval;
+                h.scope_names = infer_trunc_str(h.scope_names, 0);
+                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                h = infer_push_scope(h);
+                let mut k: int = 0;
+                while k < len(m.kids) {
+                    let pk: Node = m.kids[k];
+                    if pk.kind == 43 {
+                        h = infer_declare(h, pk.name, pk.sval);
+                    }
+                    k = k + 1;
+                }
+                let body: Node = m.kids[len(m.kids) - 1];
+                h = infer_walk_block(h, body);
+                h.scope_names = infer_trunc_str(h.scope_names, 0);
+                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return h;
+}

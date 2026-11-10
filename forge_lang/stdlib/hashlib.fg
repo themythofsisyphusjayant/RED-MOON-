@@ -1,0 +1,190 @@
+fn sha_rotr(x: int, n: int) -> int {
+    return (x >> n | x << 32 - n) & 4294967295;
+}
+
+fn sha_ch(e: int, f: int, g: int) -> int {
+    return (e & f ^ 4294967295 - e & g) & 4294967295;
+}
+
+fn sha_maj(a: int, b: int, c: int) -> int {
+    return (a & b ^ a & c ^ b & c) & 4294967295;
+}
+
+fn sha_big_s0(a: int) -> int {
+    return (sha_rotr(a, 2) ^ sha_rotr(a, 13) ^ sha_rotr(a, 22)) & 4294967295;
+}
+
+fn sha_big_s1(e: int) -> int {
+    return (sha_rotr(e, 6) ^ sha_rotr(e, 11) ^ sha_rotr(e, 25)) & 4294967295;
+}
+
+fn sha_small_s0(x: int) -> int {
+    return (sha_rotr(x, 7) ^ sha_rotr(x, 18) ^ x >> 3) & 4294967295;
+}
+
+fn sha_small_s1(x: int) -> int {
+    return (sha_rotr(x, 17) ^ sha_rotr(x, 19) ^ x >> 10) & 4294967295;
+}
+
+fn sha_hex_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    if d == 9 {
+        return "9";
+    }
+    if d == 10 {
+        return "a";
+    }
+    if d == 11 {
+        return "b";
+    }
+    if d == 12 {
+        return "c";
+    }
+    if d == 13 {
+        return "d";
+    }
+    if d == 14 {
+        return "e";
+    }
+    return "f";
+}
+
+fn sha256_bytes(data: [int]) -> [int] {
+    let k: [int] = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298];
+    let mut h0: int = 1779033703;
+    let mut h1: int = 3144134277;
+    let mut h2: int = 1013904242;
+    let mut h3: int = 2773480762;
+    let mut h4: int = 1359893119;
+    let mut h5: int = 2600822924;
+    let mut h6: int = 528734635;
+    let mut h7: int = 1541459225;
+    let bitlen: int = len(data) * 8;
+    let mut total: int = len(data) + 9;
+    while total % 64 != 0 {
+        total = total + 1;
+    }
+    let mut msg: [int] = [];
+    let mut di: int = 0;
+    while di < len(data) {
+        push(msg, data[di]);
+        di = di + 1;
+    }
+    push(msg, 128);
+    while len(msg) < total - 8 {
+        push(msg, 0);
+    }
+    push(msg, 0);
+    push(msg, 0);
+    push(msg, 0);
+    push(msg, 0);
+    push(msg, bitlen >> 24 & 255);
+    push(msg, bitlen >> 16 & 255);
+    push(msg, bitlen >> 8 & 255);
+    push(msg, bitlen & 255);
+    let mut block: int = 0;
+    while block < total / 64 {
+        let mut w: [int] = [];
+        let mut wi: int = 0;
+        while wi < 64 {
+            push(w, 0);
+            wi = wi + 1;
+        }
+        let mut j: int = 0;
+        while j < 16 {
+            let base: int = block * 64 + j * 4;
+            w[j] = msg[base] << 24 | msg[base + 1] << 16 | msg[base + 2] << 8 | msg[base + 3];
+            j = j + 1;
+        }
+        let mut m: int = 16;
+        while m < 64 {
+            let s0: int = sha_small_s0(w[m - 15]);
+            let s1: int = sha_small_s1(w[m - 2]);
+            w[m] = ((s1 + w[m - 7] & 4294967295) + s0 & 4294967295) + w[m - 16];
+            w[m] = w[m] & 4294967295;
+            m = m + 1;
+        }
+        let mut a: int = h0;
+        let mut b: int = h1;
+        let mut c: int = h2;
+        let mut d: int = h3;
+        let mut e: int = h4;
+        let mut f: int = h5;
+        let mut g: int = h6;
+        let mut hh: int = h7;
+        let mut r: int = 0;
+        while r < 64 {
+            let t1a: int = hh + sha_big_s1(e) & 4294967295;
+            let t1b: int = t1a + sha_ch(e, f, g) & 4294967295;
+            let t1c: int = t1b + k[r] & 4294967295;
+            let t1m: int = t1c + w[r] & 4294967295;
+            let t2: int = sha_big_s0(a) + sha_maj(a, b, c) & 4294967295;
+            hh = g;
+            g = f;
+            f = e;
+            e = d + t1m & 4294967295;
+            d = c;
+            c = b;
+            b = a;
+            a = t1m + t2 & 4294967295;
+            r = r + 1;
+        }
+        h0 = h0 + a & 4294967295;
+        h1 = h1 + b & 4294967295;
+        h2 = h2 + c & 4294967295;
+        h3 = h3 + d & 4294967295;
+        h4 = h4 + e & 4294967295;
+        h5 = h5 + f & 4294967295;
+        h6 = h6 + g & 4294967295;
+        h7 = h7 + hh & 4294967295;
+        block = block + 1;
+    }
+    let mut out: [int] = [];
+    let hs: [int] = [h0, h1, h2, h3, h4, h5, h6, h7];
+    let mut hi: int = 0;
+    while hi < 8 {
+        push(out, hs[hi] >> 24 & 255);
+        push(out, hs[hi] >> 16 & 255);
+        push(out, hs[hi] >> 8 & 255);
+        push(out, hs[hi] & 255);
+        hi = hi + 1;
+    }
+    return out;
+}
+
+fn sha256_hex(data: [int]) -> str {
+    let digest: [int] = sha256_bytes(data);
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(digest) {
+        out = out + sha_hex_digit(digest[i] >> 4) + sha_hex_digit(digest[i] & 15);
+        i = i + 1;
+    }
+    return out;
+}

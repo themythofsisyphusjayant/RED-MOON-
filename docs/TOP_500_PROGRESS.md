@@ -570,3 +570,100 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   2^63-byte calloc). Counts after #36: HAVE 68, PARTIAL 60,
   GAP 372, to build 432. NOT pushed: rides the 1.5.0 push retry
   (authorized 13:26 IST). Next in priority: #37 pool allocators.
+- #37 pool allocators DONE 7 Nov 2026 (pipeline run): fixed-size
+  object pools for drivers, pure Qasida
+  (forge_lang/stdlib/pool.fg + examples/pool_demo.fg +
+  tests/test_pool_v1.py, no compiler change). One pool serves one
+  fixed object size (an int slot in v1), never grows, alloc is O(1)
+  through a separate free stack, and out-of-memory is a value (-1).
+  A freed slot's value is never clobbered by a next-pointer
+  (unlike #22's intrusive freelist), and an occupancy bitmap makes
+  double-free and use-after-free detectable: pool_free / pool_set /
+  pool_get on a free or out-of-range slot return false and leave
+  the pool unchanged. Freed slots are zeroed, so reuse never leaks
+  the old value. Verified by tests/test_pool_v1.py ALL PASS (18
+  checks: demo 4/4/0/1/2/3/true/true/100/false/3/true/-1/true/false/
+  false/1/0/0/4/0, alloc order, full -1, double-free, LIFO reuse,
+  reset, cap 0/negative, cap 1, bad slots, neighbours, set-on-free;
+  fmt idempotent; big32/WASM reject with the named "tuples are not
+  supported" error; ASan clean). Full-suite regression check
+  confirmed clean 7 Nov 2026 (log forge_suite_pool_32639.log:
+  PASS). V1 limits are in the
+  catalog entry ([int] slots only, native only, rebind the returned
+  Pool). Counts after #37: HAVE 69, PARTIAL 60, GAP 371, to build
+  431. NOT pushed: push authorization is SPENT — further pushes
+  need Jayant's fresh word. Next in priority: #38 stack-usage
+  diagnostics.
+- #38 stack-usage diagnostics DONE 8 Nov 2026 (pipeline run):
+  new `qasida stack <file.fg>` subcommand
+  (forge_lang/stackusage.py + cli.py wiring +
+  examples/stackusage_demo.fg). Reports the max stack frame size
+  per Qasida function from real `cc -fstack-usage` data at -O0,
+  with a warning over the 2048-byte kernel frame budget
+  (default limit, `--limit N` overrides it). Generic
+  instantiations, methods (Struct::method), freestanding main,
+  and never-emitted functions are all labelled honestly;
+  runtime helpers are summarized. Verified by
+  tests/test_stackusage_v1.py ALL PASS (14 checks: demo 90,
+  small frames no warning, frame table parses, big frame warns,
+  big-frame program runs 44852, --limit 0 / 100000, generic,
+  method, freestanding, not-emitted, missing file, checker
+  error, fmt idempotent; ASan clean). Full-suite regression
+  check confirmed clean 8 Nov 2026 (log
+  forge_suite_stackusage_28152_200.log: PASS). V1 limits are in
+  the catalog entry (frames at -O0, per-function only,
+  warn-only). Counts after #38: HAVE 70, PARTIAL 60, GAP 370,
+  to build 430. NOT pushed: push authorization is SPENT —
+  further pushes need Jayant's fresh word. Next in priority:
+  #39 no implicit heap allocation in freestanding mode.
+- #39 no implicit heap allocation in freestanding mode DONE
+  9 Nov 2026 (pipeline run): the rule is enforced at compile
+  time, in the checker, with a named error for the first heap
+  value — any expression whose type is heap-backed (str, any
+  array incl. sized, a struct/enum/tuple carrying one) is
+  rejected, and push() is rejected outright; plain structs are
+  stack values, and their emitted freestanding C contains no
+  malloc, free, or memset (per-struct heap-array helpers not
+  emitted when freestanding). Verified by
+  tests/test_noheap_freestanding_v1.py ALL PASS (40 checks: 12
+  named rejections, 7 freestanding programs build and run incl.
+  the demo exiting 42, emit has no heap calls, big32 builds to
+  .hex and rejects a string literal, hosted controls, fmt
+  idempotent; ASan clean). Full-suite regression check confirmed
+  clean 9 Nov 2026 (log forge_suite_noheap_10321-6909.log:
+  PASS). V1 limits are in the catalog entry (dead declarations
+  naming heap types still declare; sized arrays stay rejected;
+  fail()/assert() with a string message stay rejected). Counts
+  after #39: HAVE 71, PARTIAL 60, GAP 369, to build 429. NOT
+  pushed: push authorization is SPENT — further pushes need
+  Jayant's fresh word. Next in priority: #40 use-after-move
+  checking.
+- #40 use-after-move checking DONE 10 Nov 2026 (pipeline run):
+  checker-only fix closing five holes in the move checking
+  (#27 v2 already rejected the direct uses): push() and
+  index-assign through a moved array, whole-value use of an
+  intermediate struct path after a nested field move, a while
+  condition the body moves, and moving a for loop's iterable
+  in its body. Each hole was confirmed as a real
+  heap-use-after-free under AddressSanitizer before the fix
+  (for-iterable, while-condition index, push-then-read).
+  Also fixed in the same run: assigning a whole intermediate
+  struct did not revive a moved field under it (FieldAssign
+  discarded only the exact target path). Verified by
+  tests/test_useaftermove_v1.py ALL PASS (demo, 11 run cases,
+  14 rejection cases, big32/WASM named rejections, fmt
+  idempotent; ASan clean). Full-suite regression check
+  confirmed clean 10 Nov 2026 (log
+  forge_suite_useaftermove_10671.log: sole failure the known
+  scope_demo println-interleaving flake, 4/4 clean on direct
+  rerun). Self-host safety: python-checker verdicts over all
+  158 corpus files identical before/after the edit (124
+  accept / 34 reject), and both self-host harness files check
+  clean — the in-flight 4f verification was not contaminated.
+  V1 limits are in the catalog entry (field moves in loops
+  still report the v2 message first; match-arm binding moves
+  still untracked). Counts after #40: HAVE 72, PARTIAL 60,
+  GAP 368, to build 428. NOT pushed: push authorization is
+  SPENT — further pushes need Jayant's fresh word. Next in
+  priority: #42 error wrapping with context (#41 is already
+  HAVE).

@@ -1,0 +1,22 @@
+fn auth(names: [str], passes: [str], want: str, pass: str) -> bool {
+    let mut i: int = 0;
+    while i < len(names) {
+        if names[i] == want && passes[i] == pass {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn main() {
+    let mut names: [str] = ["root", "guest"];
+    let mut passes: [str] = ["toor", "guest"];
+    println(auth(names, passes, "root", "toor"));
+    println(auth(names, passes, "root", "wrong"));
+    println(auth(names, passes, "guest", "guest"));
+    println(auth(names, passes, "nobody", "x"));
+    push(names, "jay");
+    push(passes, "qasida");
+    println(len(names));
+}

@@ -1,0 +1,7 @@
+import "frustum.fg";
+
+fn main() {
+    let mut f: Frustum = frustum_new(3, 2, 4);
+    println(frustum_volume2(f));
+    println(frustum_slant2(f));
+}
