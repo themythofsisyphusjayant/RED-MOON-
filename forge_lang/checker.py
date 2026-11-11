@@ -2,8 +2,8 @@
 
 Types: int, float, bool, str, void, and [T] dynamic arrays.
 Builtins:
-  statement-only: print, println, push, fail
-  expression: len, range, clock_micros, sqrt, exp, log, pow, abs
+  statement-only: print, println, push, fail, fail_compile, eprintln
+  expression: len, range, clock_micros, sqrt, exp, log, pow, abs, run_command
 Rules: no null, no implicit conversion (except int->float via `as`),
 immutable by default, bool conditions only, checked calls, and a
 non-void function must end with a return.
@@ -81,11 +81,13 @@ C_KEYWORDS = {"auto", "case", "char", "const", "continue", "default",
               "void", "volatile", "_Bool", "_Complex", "_Imaginary"}
 STMT_BUILTINS = {"print", "println", "push", "pin", "fail", "assert", "poke32",
                  "mmap_set", "mmap_close", "mmap_set32",
-                 "csr_write", "csr_set", "csr_clear"}
+                 "csr_write", "csr_set", "csr_clear",
+                 "fail_compile", "eprintln"}
 EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
+                 "run_command",
                  "try_alloc",
                  "split", "join", "substr", "trim", "starts_with", "ends_with",
                  "http_get", "http_listen", "http_accept", "http_read_request",
@@ -833,7 +835,7 @@ class Checker:
         if e is None:
             return False
         if isinstance(e, A.Call):
-            if e.name == "fail":
+            if e.name in ("fail", "fail_compile"):
                 return True
             fn = self.funcs.get(e.name)
             if fn is not None and fn.ret == "never":
@@ -1800,6 +1802,26 @@ class Checker:
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
                 raise ForgeError("fail() takes exactly one str argument", call.line, call.col)
             return
+        if call.name == "fail_compile":
+            # Slice 5 driver builtin: a compile-time error. Prints
+            # "qasida: error: <msg>" to stderr and exits 1 (the CLI's
+            # error prefix, which fail() cannot produce). The hosted
+            # lexer/parser/checker report their errors through it.
+            if self.freestanding:
+                raise ForgeError("fail_compile() writes to stderr "
+                                 "(not in freestanding v1)",
+                                 call.line, call.col)
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("fail_compile() takes exactly one str argument", call.line, call.col)
+            return
+        if call.name == "eprintln":
+            if self.freestanding:
+                raise ForgeError("eprintln needs the hosted I/O library "
+                                 "(not in freestanding v1); use poke32 for MMIO output",
+                                 call.line, call.col)
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("eprintln() takes exactly one str argument", call.line, call.col)
+            return
         if call.name == "mmap_set":
             if self.freestanding:
                 raise ForgeError("mmap needs the hosted runtime (not in freestanding v1)",
@@ -2362,7 +2384,7 @@ class Checker:
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
                 "clock_micros", "args", "parallel_dot", "parallel_matmul",
-                "sqrt", "exp", "log", "pow", "abs"):
+                "sqrt", "exp", "log", "pow", "abs", "run_command"):
             raise ForgeError(f"'{call.name}' needs the hosted runtime "
                              f"(not in freestanding v1)",
                              call.line, call.col)
@@ -2661,6 +2683,11 @@ class Checker:
         if call.name == "parse_int":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
                 raise ForgeError("parse_int() takes exactly one str argument",
+                                 call.line, call.col)
+            return "int"
+        if call.name == "run_command":
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("run_command() takes exactly one str argument",
                                  call.line, call.col)
             return "int"
         if call.name == "parse_float":

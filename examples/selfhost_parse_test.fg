@@ -13,7 +13,7 @@ fn main() -> int {
     }
     let src: str = read_file(argv[0]);
     let lx: LexOut = lex(src);
-    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0 };
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
     let prog: POut = parse_program(hp);
     println(dump(prog.n));
     return 0;

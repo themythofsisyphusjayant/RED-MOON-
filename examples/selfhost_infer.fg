@@ -37,10 +37,16 @@ struct HInfer {
     // collect pass can tell template mentions apart from uses.
     template_keys: [str];
     in_template: bool;
+    // Bootstrap: the function whose body is being walked, so type
+    // keys are "fn:line:col". Bare "line:col" keys collide across
+    // merged imports (two files, same position, different types;
+    // table_get is last-wins, so the later file's type shadowed
+    // the earlier one's — e.g. parse's p.kinds read as [str]).
+    current_fn: str;
 }
 
 fn infer_new() -> HInfer {
-    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false };
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false, current_fn: "" };
 }
 
 // First index of needle in hay (needle may be multi-char), or -1.
@@ -108,9 +114,14 @@ fn infer_trunc_int(a0: [int], n: int) -> [int] {
 }
 
 // "line:col" key for a node (own itoa via the checker: int_to_str
-// is stdlib, not a builtin).
-fn infer_key(n: Node) -> str {
-    return itoa(n.line) + ":" + itoa(n.col);
+// is stdlib, not a builtin). With a function name it is the
+// collision-proof "fn:line:col" key; "" keeps the bare form for
+// template ("T:") keys, which are already prefixed.
+fn infer_key(n: Node, fname: str) -> str {
+    if fname == "" {
+        return itoa(n.line) + ":" + itoa(n.col);
+    }
+    return fname + ":" + itoa(n.line) + ":" + itoa(n.col);
 }
 
 // Record a node's type. Append-only: duplicate keys cannot occur
@@ -126,11 +137,11 @@ fn infer_set(h0: HInfer, n: Node, t: str) -> HInfer {
     // concrete type ("T" over "int") and corrupt codegen.
     // Prefixed keys can never collide with concrete keys.
     if h.in_template {
-        push(h.type_keys, "T:" + infer_key(n));
+        push(h.type_keys, "T:" + infer_key(n, ""));
         push(h.type_vals, t);
-        push(h.template_keys, "T:" + infer_key(n));
+        push(h.template_keys, "T:" + infer_key(n, ""));
     } else {
-        push(h.type_keys, infer_key(n));
+        push(h.type_keys, infer_key(n, h.current_fn));
         push(h.type_vals, t);
     }
     return h;
@@ -141,12 +152,12 @@ fn infer_type_of(h: HInfer, n: Node) -> str {
     // Inside a template walk, template entries (prefixed "T:")
     // win over any concrete entry sharing the line:col key.
     if h.in_template {
-        let t: str = infer_table_get(h.type_keys, h.type_vals, "T:" + infer_key(n), "");
+        let t: str = infer_table_get(h.type_keys, h.type_vals, "T:" + infer_key(n, ""), "");
         if t != "" {
             return t;
         }
     }
-    return infer_table_get(h.type_keys, h.type_vals, infer_key(n), "int");
+    return infer_table_get(h.type_keys, h.type_vals, infer_key(n, h.current_fn), "int");
 }
 
 fn infer_push_scope(h0: HInfer) -> HInfer {
@@ -1229,6 +1240,7 @@ fn run_infer(prog: Node) -> HInfer {
                     h.in_template = true;
                 }
                 h.current_ret = n.sval;
+                h.current_fn = n.name;
                 h.scope_names = infer_trunc_str(h.scope_names, 0);
                 h.scope_types = infer_trunc_str(h.scope_types, 0);
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
@@ -1256,6 +1268,10 @@ fn run_infer(prog: Node) -> HInfer {
             while j < len(n.kids) {
                 let m: Node = n.kids[j];
                 h.current_ret = m.sval;
+                // Impl methods are generated under the mangled
+                // Struct__method name (codegen cg_gen_func_named),
+                // so their type keys use that name too.
+                h.current_fn = n.name + "__" + m.name;
                 h.scope_names = infer_trunc_str(h.scope_names, 0);
                 h.scope_types = infer_trunc_str(h.scope_types, 0);
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);

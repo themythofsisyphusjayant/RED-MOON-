@@ -1,0 +1,7 @@
+// Bootstrap wrapper: compile selfhost_codegen.fg as an imported module
+// plus a trivial main, so both compilers see a complete program.
+import "selfhost_codegen.fg";
+
+fn main() -> int {
+    return 0;
+}

@@ -104,31 +104,6 @@ fn is_c_keyword(name: str) -> bool {
 
 // ---------- type helpers ----------
 
-// Integer to decimal string (int_to_str lives in nn.fg; the
-// checker stays standalone).
-fn itoa(n: int) -> str {
-    if n == 0 {
-        return "0";
-    }
-    let mut neg: bool = false;
-    let mut v: int = n;
-    if v < 0 {
-        neg = true;
-        v = 0 - v;
-    }
-    let mut out: str = "";
-    while v > 0 {
-        let d: int = v % 10;
-        let digit: str = "0123456789";
-        out = substr(digit, d, 1) + out;
-        v = v / 10;
-    }
-    if neg {
-        return "-" + out;
-    }
-    return out;
-}
-
 fn is_int(t: str) -> bool {
     return t == "int";
 }
@@ -595,7 +570,7 @@ fn sized_literal_ok(c0: HChecker, expr: Node, expected: str) -> bool {
     if is_sized_array(expected) {
         elem = elem_type(expected);
         if len(expr.kids) != sized_len(expected) {
-            fail_compile("sized array " + expected + " needs " + itoa(sized_len(expected)) + " elements, got " + itoa(len(expr.kids)));
+            fail_at(expr.line, expr.col, "sized array " + expected + " needs " + itoa(sized_len(expected)) + " elements, got " + itoa(len(expr.kids)));
         }
     } else if is_array(expected) && contains_sized(substr(expected, 1, len(expected) - 2)) {
         elem = substr(expected, 1, len(expected) - 2);
@@ -827,12 +802,12 @@ fn env_lookup(c: HChecker, name: str, line: int, col: int) -> str {
     while i >= 0 {
         if c.var_names[i] == name {
             if c.var_moved[i] {
-                fail_compile("use of moved value '" + name + "'");
+                fail_at(line, col, "use of moved value '" + name + "'");
             }
             if c.var_pinned[i] && c.pinned_base_depth == 0
                     && c.pinned_write_root != name
                     && c.pinned_observe == 0 {
-                fail_compile("use of pinned value '" + name + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
+                fail_at(line, col, "use of pinned value '" + name + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
             }
             if c.pinned_base_depth == 0 {
                 // A whole-value use after a field move is unsafe.
@@ -840,7 +815,7 @@ fn env_lookup(c: HChecker, name: str, line: int, col: int) -> str {
                 while j < len(c.moved_fields) {
                     let p: str = c.moved_fields[j];
                     if len(p) > len(name) + 1 && substr(p, 0, len(name) + 1) == name + "." {
-                        fail_compile("use of value '" + name + "' with moved field '" + p + "'");
+                        fail_at(line, col, "use of value '" + name + "' with moved field '" + p + "'");
                     }
                     j = j + 1;
                 }
@@ -849,7 +824,7 @@ fn env_lookup(c: HChecker, name: str, line: int, col: int) -> str {
         }
         i = i - 1;
     }
-    fail_compile("undefined variable '" + name + "'");
+    fail_at(line, col, "undefined variable '" + name + "'");
     return "";
 }
 
@@ -1003,11 +978,11 @@ fn struct_field_type(c: HChecker, sname: str, fname: str, line: int, col: int) -
                 }
                 j = j + 1;
             }
-            fail_compile("struct '" + sname + "' has no field '" + fname + "'");
+            fail_at(line, col, "struct '" + sname + "' has no field '" + fname + "'");
         }
         i = i + 1;
     }
-    fail_compile("undefined struct '" + sname + "'");
+    fail_at(line, col, "undefined struct '" + sname + "'");
     return "";
 }
 
@@ -1112,7 +1087,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             let sp: [str] = split_tparams(n.name);
             let sname: str = sp[0];
             if is_c_keyword(sname) {
-                fail_compile("'" + sname + "' is a C keyword and cannot be used as a struct name");
+                fail_at(n.line, n.col, "'" + sname + "' is a C keyword and cannot be used as a struct name");
             }
             // StructDef: name, kids are Field nodes (kind 44:
             // name = field name, sval = field type).
@@ -1138,7 +1113,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             let sp: [str] = split_tparams(n.name);
             let ename: str = sp[0];
             if is_c_keyword(ename) {
-                fail_compile("'" + ename + "' is a C keyword and cannot be used as an enum name");
+                fail_at(n.line, n.col, "'" + ename + "' is a C keyword and cannot be used as an enum name");
             }
             let mut enc: str = "";
             let mut j: int = 0;
@@ -1166,7 +1141,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             // (kind 2, with Param kids + an empty body Block).
             let tname: str = n.name;
             if is_c_keyword(tname) {
-                fail_compile("'" + tname + "' is a C keyword and cannot be used as a trait name");
+                fail_at(n.line, n.col, "'" + tname + "' is a C keyword and cannot be used as a trait name");
             }
             let mut j: int = 0;
             while j < len(n.kids) {
@@ -1214,17 +1189,17 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
                     ri = ri + 1;
                 }
                 if recv != sname {
-                    fail_compile("first parameter of method '" + m.name + "' must be the struct '" + sname + "'");
+                    fail_at(m.line, m.col, "first parameter of method '" + m.name + "' must be the struct '" + sname + "'");
                 }
                 if m.name == "drop" {
                     if len(m.kids) != 2 {
-                        fail_compile("drop must take only its struct as receiver");
+                        fail_at(m.line, m.col, "drop must take only its struct as receiver");
                     }
                     if m.sval != "void" {
-                        fail_compile("drop must return void");
+                        fail_at(m.line, m.col, "drop must return void");
                     }
                     if c.freestanding {
-                        fail_compile("drop is not supported in freestanding v1 (scope-end frees do not run there)");
+                        fail_at(m.line, m.col, "drop is not supported in freestanding v1 (scope-end frees do not run there)");
                     }
                 }
                 let mut enc: str = m.name + ":";
@@ -1251,7 +1226,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             let sp: [str] = split_tparams(n.name);
             let fname: str = sp[0];
             if is_c_keyword(fname) {
-                fail_compile("'" + fname + "' is a C keyword and cannot be used as a function name; rename it");
+                fail_at(n.line, n.col, "'" + fname + "' is a C keyword and cannot be used as a function name; rename it");
             }
             // FuncDef: name, sval = return type, kids are Param
             // nodes (kind 43) then the body Block.
@@ -1328,7 +1303,7 @@ fn func_tparams(c: HChecker, name: str) -> str {
 
 // Payload type of an enum variant ("" when the variant carries
 // no value); fails when the enum or variant does not exist.
-fn enum_payload(c: HChecker, ename: str, variant: str) -> str {
+fn enum_payload(c: HChecker, ename: str, variant: str, line: int, col: int) -> str {
     let mut i: int = 0;
     while i < len(c.enum_names) {
         if c.enum_names[i] == ename {
@@ -1341,11 +1316,11 @@ fn enum_payload(c: HChecker, ename: str, variant: str) -> str {
                 }
                 j = j + 1;
             }
-            fail_compile("'" + variant + "' is not a variant of enum '" + ename + "'");
+            fail_at(line, col, "'" + variant + "' is not a variant of enum '" + ename + "'");
         }
         i = i + 1;
     }
-    fail_compile("undefined enum '" + ename + "'");
+    fail_at(line, col, "undefined enum '" + ename + "'");
     return "";
 }
 
@@ -1455,7 +1430,7 @@ fn check_method_call(c0: HChecker, n: Node) -> COut {
             params = "";
             ret = "int";
         } else {
-            fail_compile("range has no method '" + n.name + "'");
+            fail_at(n.line, n.col, "range has no method '" + n.name + "'");
         }
         let want: [str] = split(params, "~");
         let nargs: int = len(n.kids) - 1;
@@ -1464,14 +1439,14 @@ fn check_method_call(c0: HChecker, n: Node) -> COut {
             nwant = len(want);
         }
         if nargs != nwant {
-            fail_compile("method '" + n.name + "' on 'range' takes " + itoa(nwant) + " arguments, got " + itoa(nargs));
+            fail_at(n.line, n.col, "method '" + n.name + "' on 'range' takes " + itoa(nwant) + " arguments, got " + itoa(nargs));
         }
         let mut i: int = 1;
         while i < len(n.kids) {
             let a: COut = check_expr(c, n.kids[i]);
             c = a.c;
             if !type_matches(a.typ, want[i - 1]) {
-                fail_compile("method '" + n.name + "' on 'range' expects " + want[i - 1] + ", got " + a.typ);
+                fail_at(n.line, n.col, "method '" + n.name + "' on 'range' expects " + want[i - 1] + ", got " + a.typ);
             }
             i = i + 1;
         }
@@ -1482,16 +1457,16 @@ fn check_method_call(c0: HChecker, n: Node) -> COut {
         let tname: str = substr(rt, 7, len(rt) - 7);
         let sig: str = trait_sig(c, tname, n.name);
         if sig == "" {
-            fail_compile("trait '" + tname + "' has no method '" + n.name + "'");
+            fail_at(n.line, n.col, "trait '" + tname + "' has no method '" + n.name + "'");
         }
         return check_sig_args(c, n, sig);
     }
     if find_lt(rt) >= 0 {
-        fail_compile("no methods on type '" + rt + "' (trait methods need a struct with an impl block)");
+        fail_at(n.line, n.col, "no methods on type '" + rt + "' (trait methods need a struct with an impl block)");
     }
     let sig: str = method_sig(c, rt, n.name);
     if sig == "" {
-        fail_compile("struct '" + rt + "' has no method '" + n.name + "'");
+        fail_at(n.line, n.col, "struct '" + rt + "' has no method '" + n.name + "'");
     }
     return check_sig_args(c, n, sig);
 }
@@ -1502,7 +1477,7 @@ fn check_sig_args(c0: HChecker, n: Node, sig: str) -> COut {
     let mut c: HChecker = c0;
     let parts: [str] = split(sig, "->");
     if len(parts) != 2 {
-        fail_compile("bad method signature '" + sig + "'");
+        fail_at(n.line, n.col, "bad method signature '" + sig + "'");
     }
     let pstr: str = parts[0];
     let ret: str = parts[1];
@@ -1513,14 +1488,14 @@ fn check_sig_args(c0: HChecker, n: Node, sig: str) -> COut {
         nwant = len(want);
     }
     if nargs != nwant {
-        fail_compile("method '" + n.name + "' takes " + itoa(nwant) + " arguments, got " + itoa(nargs));
+        fail_at(n.line, n.col, "method '" + n.name + "' takes " + itoa(nwant) + " arguments, got " + itoa(nargs));
     }
     let mut i: int = 1;
     while i < len(n.kids) {
         let a: COut = check_expr(c, n.kids[i]);
         c = a.c;
         if !accepts(c, a.typ, want[i - 1]) && !sized_literal_ok(c, n.kids[i], want[i - 1]) && !literal_fits_fixed(n.kids[i], want[i - 1]) {
-            fail_compile("method '" + n.name + "' expects " + want[i - 1] + ", got " + a.typ);
+            fail_at(n.line, n.col, "method '" + n.name + "' expects " + want[i - 1] + ", got " + a.typ);
         }
         i = i + 1;
     }
@@ -1536,7 +1511,7 @@ fn check_sig_args(c0: HChecker, n: Node, sig: str) -> COut {
 fn check_expr(c0: HChecker, n: Node) -> COut {
     let out: COut = check_expr_inner(c0, n);
     if out.c.freestanding && heap_backed_top(out.c, out.typ) {
-        fail_compile(heap_error(n, out.typ));
+        fail_at(n.line, n.col, heap_error(n, out.typ));
     }
     return out;
 }
@@ -1590,7 +1565,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 i = i + 1;
                 continue;
             }
-            fail_compile("array literal elements must all have the same type");
+            fail_at(n.kids[i].line, n.kids[i].col, "array literal elements must all have the same type");
         }
         return COut { c: c, typ: "[" + t0 + "]" };
     }
@@ -1621,17 +1596,17 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         c = b.c;
         c.pinned_base_depth = c.pinned_base_depth - 1;
         if !is_tuple(b.typ) {
-            fail_compile("tuple index ." + n.name + " needs a tuple value, got " + b.typ);
+            fail_at(n.line, n.col, "tuple index ." + n.name + " needs a tuple value, got " + b.typ);
         }
         let elems: [str] = tuple_elems(b.typ);
         let idx: int = n.ival;
         if idx < 0 || idx >= len(elems) {
-            fail_compile("tuple index out of range");
+            fail_at(n.line, n.col, "tuple index out of range");
         }
         if outermost && c.pinned_observe == 0 {
             let root: str = access_root(n);
             if root != "" && is_pinned(c, root) && c.pinned_write_root != root && is_owned_type(c, elems[idx]) {
-                fail_compile("use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
+                fail_at(n.line, n.col, "use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
             }
         }
         return COut { c: c, typ: elems[idx] };
@@ -1643,7 +1618,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         let e: COut = check_expr(c, n.kids[1]);
         c = e.c;
         if s.typ != "int" || e.typ != "int" {
-            fail_compile("range endpoints must be int, got " + s.typ + " and " + e.typ);
+            fail_at(n.line, n.col, "range endpoints must be int, got " + s.typ + " and " + e.typ);
         }
         return COut { c: c, typ: "range" };
     }
@@ -1670,7 +1645,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         if outermost && c.pinned_observe == 0 {
             let root: str = access_root(n);
             if root != "" && is_pinned(c, root) && c.pinned_write_root != root && is_owned_type(c, ft) {
-                fail_compile("use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
+                fail_at(n.line, n.col, "use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
             }
         }
         return COut { c: c, typ: ft };
@@ -1690,26 +1665,26 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         if b.typ == "str" {
             // Indexing a string yields a one-character string.
             if ix.typ != "int" {
-                fail_compile("string index must be int, got " + ix.typ);
+                fail_at(n.line, n.col, "string index must be int, got " + ix.typ);
             }
             if outermost && c.pinned_observe == 0 {
                 let root: str = access_root(n);
                 if root != "" && is_pinned(c, root) && c.pinned_write_root != root {
-                    fail_compile("use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
+                    fail_at(n.line, n.col, "use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
                 }
             }
             return COut { c: c, typ: "str" };
         }
         if !is_array(b.typ) {
-            fail_compile("cannot index non-array value of type " + b.typ);
+            fail_at(n.line, n.col, "cannot index non-array value of type " + b.typ);
         }
         if ix.typ != "int" {
-            fail_compile("array index must be int, got " + ix.typ);
+            fail_at(n.line, n.col, "array index must be int, got " + ix.typ);
         }
         if outermost && c.pinned_observe == 0 {
             let root: str = access_root(n);
             if root != "" && is_pinned(c, root) && c.pinned_write_root != root && is_owned_type(c, elem_type(b.typ)) {
-                fail_compile("use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
+                fail_at(n.line, n.col, "use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
             }
         }
         return COut { c: c, typ: elem_type(b.typ) };
@@ -1722,21 +1697,21 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             if o.typ == "int" || o.typ == "float" {
                 return COut { c: c, typ: o.typ };
             }
-            fail_compile("unary - needs a number, got " + o.typ);
+            fail_at(n.line, n.col, "unary - needs a number, got " + o.typ);
         }
         if n.name == "!" {
             if o.typ == "bool" {
                 return COut { c: c, typ: "bool" };
             }
-            fail_compile("unary ! needs a bool, got " + o.typ);
+            fail_at(n.line, n.col, "unary ! needs a bool, got " + o.typ);
         }
         if n.name == "~" {
             if o.typ == "int" {
                 return COut { c: c, typ: "int" };
             }
-            fail_compile("unary ~ needs an int, got " + o.typ);
+            fail_at(n.line, n.col, "unary ~ needs an int, got " + o.typ);
         }
-        fail_compile("unknown unary operator '" + n.name + "'");
+        fail_at(n.line, n.col, "unknown unary operator '" + n.name + "'");
     }
     if n.kind == 39 {
         // Cast: "as" — target type is in sval.
@@ -1744,7 +1719,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         c = o.c;
         let tgt: str = n.sval;
         if o.typ == tgt {
-            fail_compile("identity cast to " + tgt + " is not allowed");
+            fail_at(n.line, n.col, "identity cast to " + tgt + " is not allowed");
         }
         if (o.typ == "int" && tgt == "float") || (o.typ == "float" && tgt == "int") {
             return COut { c: c, typ: tgt };
@@ -1773,7 +1748,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 mi = mi + 1;
             }
         }
-        fail_compile("cannot cast " + o.typ + " to " + tgt);
+        fail_at(n.line, n.col, "cannot cast " + o.typ + " to " + tgt);
     }
     if n.kind == 42 {
         // Try (?): operand must be Option/Result; returns value type.
@@ -1786,7 +1761,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 return COut { c: c, typ: args[0] };
             }
         }
-        fail_compile("? needs an Option or Result value, got " + o.typ);
+        fail_at(n.line, n.col, "? needs an Option or Result value, got " + o.typ);
     }
     if n.kind == 31 {
         // StructLit: all fields present, no extras, types match.
@@ -1804,7 +1779,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 i = i + 1;
             }
             if !found {
-                fail_compile("undefined struct '" + sname + "'");
+                fail_at(n.line, n.col, "undefined struct '" + sname + "'");
             }
         }
         // kids are Field nodes (kind 44): name = field, kids[0] = value.
@@ -1827,12 +1802,12 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         while i < len(n.kids) {
             let f: Node = n.kids[i];
             if !struct_has_field(c, sname, f.name) {
-                fail_compile("struct '" + sname + "' has no field '" + f.name + "'");
+                fail_at(n.line, n.col, "struct '" + sname + "' has no field '" + f.name + "'");
             }
             let mut j: int = 0;
             while j < len(seen) {
                 if seen[j] == f.name {
-                    fail_compile("duplicate field '" + f.name + "' in struct literal");
+                    fail_at(n.line, n.col, "duplicate field '" + f.name + "' in struct literal");
                 }
                 j = j + 1;
             }
@@ -1843,12 +1818,12 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             if tps0 != "" {
                 let u: UOut = unify(want, v.typ, bnames, btypes);
                 if !u.ok {
-                    fail_compile("field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
+                    fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
                 }
                 bnames = u.names;
                 btypes = u.types;
             } else if !type_matches(v.typ, want) && !sized_literal_ok(c, f.kids[0], want) && !literal_fits_fixed(f.kids[0], want) {
-                fail_compile("field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
+                fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
             }
             i = i + 1;
         }
@@ -1863,7 +1838,7 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 j = j + 1;
             }
             if !present {
-                fail_compile("struct literal '" + sname + "' is missing field '" + fields[k] + "'");
+                fail_at(n.line, n.col, "struct literal '" + sname + "' is missing field '" + fields[k] + "'");
             }
             k = k + 1;
         }
@@ -1894,33 +1869,33 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         // BinOp: name is the operator, kids are [left, right].
         return check_binop(c, n);
     }
-    fail_compile("unsupported expression kind " + node_kind_name(n.kind));
+    fail_at(n.line, n.col, "unsupported expression kind " + node_kind_name(n.kind));
     return COut { c: c, typ: "?" };
 }
 
 fn check_call(c0: HChecker, n: Node) -> COut {
     let mut c: HChecker = c0;
     if c.freestanding && is_fs_blocked_builtin(n.name) {
-        fail_compile("'" + n.name + "' needs the hosted runtime (not in freestanding v1)");
+        fail_at(n.line, n.col, "'" + n.name + "' needs the hosted runtime (not in freestanding v1)");
     }
     // Enum variant construction: Some(5) builds a value of the
     // enum, with the payload type checked.
     let ven: str = enum_of_variant(c, n.name);
     if ven != "" {
-        let payload: str = enum_payload(c, ven, n.name);
+        let payload: str = enum_payload(c, ven, n.name, n.line, n.col);
         if payload == "" {
             if len(n.kids) != 0 {
-                fail_compile("variant '" + n.name + "' takes no payload");
+                fail_at(n.line, n.col, "variant '" + n.name + "' takes no payload");
             }
             return COut { c: c, typ: ven };
         }
         if len(n.kids) != 1 {
-            fail_compile("variant '" + n.name + "' takes exactly one payload argument");
+            fail_at(n.line, n.col, "variant '" + n.name + "' takes exactly one payload argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if !accepts(c, a.typ, payload) {
-            fail_compile("variant '" + n.name + "' payload must be " + payload + ", got " + a.typ);
+            fail_at(n.line, n.col, "variant '" + n.name + "' payload must be " + payload + ", got " + a.typ);
         }
         return COut { c: c, typ: ven };
     }
@@ -1939,7 +1914,7 @@ fn check_call(c0: HChecker, n: Node) -> COut {
         i = i + 1;
     }
     if ai < 0 {
-        fail_compile("bad signature for '" + n.name + "'");
+        fail_at(n.line, n.col, "bad signature for '" + n.name + "'");
     }
     let param_part: str = substr(sig, 0, ai);
     let ret0: str = substr(sig, ai + 2, len(sig) - ai - 2);
@@ -1948,7 +1923,7 @@ fn check_call(c0: HChecker, n: Node) -> COut {
         want = split(param_part, "~");
     }
     if len(n.kids) != len(want) {
-        fail_compile("function '" + n.name + "' takes " + itoa(len(want)) + " argument(s), got " + itoa(len(n.kids)));
+        fail_at(n.line, n.col, "function '" + n.name + "' takes " + itoa(len(want)) + " argument(s), got " + itoa(len(n.kids)));
     }
     // Generic function: infer the type params from the arguments,
     // then substitute them into the return type.
@@ -1970,12 +1945,12 @@ fn check_call(c0: HChecker, n: Node) -> COut {
         if tps != "" {
             let u: UOut = unify(want[j], a.typ, bnames, btypes);
             if !u.ok {
-                fail_compile("argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
+                fail_at(n.line, n.col, "argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
             }
             bnames = u.names;
             btypes = u.types;
         } else if !accepts(c, a.typ, want[j]) && !sized_literal_ok(c, n.kids[j], want[j]) && !literal_fits_fixed(n.kids[j], want[j]) {
-            fail_compile("argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
+            fail_at(n.line, n.col, "argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
         }
         j = j + 1;
     }
@@ -1990,14 +1965,14 @@ fn check_call(c0: HChecker, n: Node) -> COut {
 fn expect_args(c0: HChecker, n: Node, want: [str]) -> HChecker {
     let mut c: HChecker = c0;
     if len(n.kids) != len(want) {
-        fail_compile("'" + n.name + "' takes " + itoa(len(want)) + " argument(s), got " + itoa(len(n.kids)));
+        fail_at(n.line, n.col, "'" + n.name + "' takes " + itoa(len(want)) + " argument(s), got " + itoa(len(n.kids)));
     }
     let mut i: int = 0;
     while i < len(n.kids) {
         let a: COut = check_expr(c, n.kids[i]);
         c = a.c;
         if !accepts(c, a.typ, want[i]) {
-            fail_compile("'" + n.name + "' expects " + want[i] + " for argument " + itoa(i + 1) + ", got " + a.typ);
+            fail_at(n.line, n.col, "'" + n.name + "' expects " + want[i] + " for argument " + itoa(i + 1) + ", got " + a.typ);
         }
         i = i + 1;
     }
@@ -2009,7 +1984,7 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     // A small set of builtins with known signatures.
     if n.name == "len" {
         if len(n.kids) != 1 {
-            fail_compile("len takes 1 argument");
+            fail_at(n.line, n.col, "len takes 1 argument");
         }
         // Read-only observation: a pinned value may be measured.
         c.pinned_observe = c.pinned_observe + 1;
@@ -2019,53 +1994,53 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         if is_array(a.typ) || a.typ == "str" {
             return COut { c: c, typ: "int" };
         }
-        fail_compile("len needs an array or string, got " + a.typ);
+        fail_at(n.line, n.col, "len needs an array or string, got " + a.typ);
     }
     if n.name == "move" {
         // move(x) transfers ownership; move(p.field) transfers a field.
         if len(n.kids) != 1 {
-            fail_compile("move() takes exactly one argument");
+            fail_at(n.line, n.col, "move() takes exactly one argument");
         }
         let arg: Node = n.kids[0];
         if arg.kind != 34 && arg.kind != 32 {
-            fail_compile("move needs a variable or field");
+            fail_at(n.line, n.col, "move needs a variable or field");
         }
         if arg.kind == 34 {
             // move of a for-loop variable is not supported in v2.
             let mut lv: int = 0;
             while lv < len(c.loop_vars) {
                 if c.loop_vars[lv] == arg.name {
-                    fail_compile("move of a for-loop variable is not supported in v2; copy it into a let first, then move that");
+                    fail_at(n.line, n.col, "move of a for-loop variable is not supported in v2; copy it into a let first, then move that");
                 }
                 lv = lv + 1;
             }
             if is_pinned(c, arg.name) {
-                fail_compile("cannot move pinned value '" + arg.name + "' (pin forbids moving it)");
+                fail_at(n.line, n.col, "cannot move pinned value '" + arg.name + "' (pin forbids moving it)");
             }
             let t: COut = check_expr(c, arg);
             c = t.c;
             if !is_owned_type(c, t.typ) {
-                fail_compile("move needs an owned value (array, str, struct, tuple), got " + t.typ);
+                fail_at(n.line, n.col, "move needs an owned value (array, str, struct, tuple), got " + t.typ);
             }
             c = env_mark_moved(c, arg.name);
             return COut { c: c, typ: t.typ };
         }
         // Field move: straight-line only in v2.
         if c.loop_depth > 0 || c.branch_depth > 0 {
-            fail_compile("move of a field inside a branch or loop is not supported in v2; move the field in straight-line code");
+            fail_at(n.line, n.col, "move of a field inside a branch or loop is not supported in v2; move the field in straight-line code");
         }
         let path: str = field_path(arg);
         if path == "" {
-            fail_compile("move needs a variable or field");
+            fail_at(n.line, n.col, "move needs a variable or field");
         }
         let root: str = access_root(arg);
         if root != "" && is_pinned(c, root) {
-            fail_compile("cannot move a field of pinned value '" + root + "' (pin forbids moving it)");
+            fail_at(n.line, n.col, "cannot move a field of pinned value '" + root + "' (pin forbids moving it)");
         }
         let t: COut = check_expr(c, arg);
         c = t.c;
         if !is_owned_type(c, t.typ) {
-            fail_compile("move needs an owned value (array, str, struct, tuple), got " + t.typ);
+            fail_at(n.line, n.col, "move needs an owned value (array, str, struct, tuple), got " + t.typ);
         }
         push(c.moved_fields, path);
         return COut { c: c, typ: t.typ };
@@ -2075,12 +2050,12 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         // The Result struct comes from stdlib/result.fg, so the
         // program must define (or import) it.
         if len(n.kids) != 1 {
-            fail_compile("try_alloc() takes exactly one int argument");
+            fail_at(n.line, n.col, "try_alloc() takes exactly one int argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "int" {
-            fail_compile("try_alloc() takes exactly one int argument");
+            fail_at(n.line, n.col, "try_alloc() takes exactly one int argument");
         }
         let mut found: bool = false;
         let mut fi: int = 0;
@@ -2091,7 +2066,7 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
             fi = fi + 1;
         }
         if !found {
-            fail_compile("try_alloc() needs import \"result.fg\" (it returns Result<[int], str>)");
+            fail_at(n.line, n.col, "try_alloc() needs import \"result.fg\" (it returns Result<[int], str>)");
         }
         return COut { c: c, typ: "Result<[int], str>" };
     }
@@ -2106,12 +2081,12 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     }
     if n.name == "fail" {
         if len(n.kids) != 1 {
-            fail_compile("fail takes 1 argument");
+            fail_at(n.line, n.col, "fail takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("fail needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "fail needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "void" };
     }
@@ -2120,62 +2095,62 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         // error: <msg>" on stderr, exits 1. The hosted
         // lexer/parser/checker report their errors through it.
         if len(n.kids) != 1 {
-            fail_compile("fail_compile takes 1 argument");
+            fail_at(n.line, n.col, "fail_compile takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("fail_compile needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "fail_compile needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "void" };
     }
     if n.name == "eprintln" {
         if len(n.kids) != 1 {
-            fail_compile("eprintln takes 1 argument");
+            fail_at(n.line, n.col, "eprintln takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("eprintln needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "eprintln needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "void" };
     }
     if n.name == "args" {
         if len(n.kids) != 0 {
-            fail_compile("args takes no arguments");
+            fail_at(n.line, n.col, "args takes no arguments");
         }
         return COut { c: c, typ: "[str]" };
     }
     if n.name == "parse_int" {
         if len(n.kids) != 1 {
-            fail_compile("parse_int takes 1 argument");
+            fail_at(n.line, n.col, "parse_int takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("parse_int needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "parse_int needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "int" };
     }
     if n.name == "run_command" {
         if len(n.kids) != 1 {
-            fail_compile("run_command takes 1 argument");
+            fail_at(n.line, n.col, "run_command takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("run_command needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "run_command needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "int" };
     }
     if n.name == "parse_float" {
         if len(n.kids) != 1 {
-            fail_compile("parse_float takes 1 argument");
+            fail_at(n.line, n.col, "parse_float takes 1 argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("parse_float needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "parse_float needs a string, got " + a.typ);
         }
         return COut { c: c, typ: "float" };
     }
@@ -2225,10 +2200,10 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     }
     if n.name == "csr_read" {
         if len(n.kids) != 1 || n.kids[0].kind != 25 {
-            fail_compile("csr_read() takes exactly one literal CSR number");
+            fail_at(n.line, n.col, "csr_read() takes exactly one literal CSR number");
         }
         if n.kids[0].ival < 0 || n.kids[0].ival > 4095 {
-            fail_compile("CSR number must be in 0..4095");
+            fail_at(n.line, n.col, "CSR number must be in 0..4095");
         }
         return COut { c: c, typ: "int" };
     }
@@ -2274,14 +2249,14 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     }
     if n.name == "refcount" {
         if len(n.kids) != 1 {
-            fail_compile("refcount() takes exactly one argument");
+            fail_at(n.line, n.col, "refcount() takes exactly one argument");
         }
         c.pinned_observe = c.pinned_observe + 1;
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         c.pinned_observe = c.pinned_observe - 1;
         if !is_array(a.typ) {
-            fail_compile("refcount() needs an array, got " + a.typ);
+            fail_at(n.line, n.col, "refcount() needs an array, got " + a.typ);
         }
         return COut { c: c, typ: "int" };
     }
@@ -2337,7 +2312,7 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         c = expect_args(c, n, ["int", "int", "str"]);
         return COut { c: c, typ: "int" };
     }
-    fail_compile("undefined function '" + n.name + "'");
+    fail_at(n.line, n.col, "undefined function '" + n.name + "'");
     return COut { c: c, typ: "?" };
 }
 
@@ -2361,7 +2336,7 @@ fn binop_adapt(op: str, lt: str, rt: str, left: Node, right: Node) -> str {
                         return "bool";
                     }
                 }
-                fail_compile("integer literal " + itoa(lv[0]) + " does not fit in " + lt);
+                fail_at(left.line, left.col, "integer literal " + itoa(lv[0]) + " does not fit in " + lt);
             }
         }
         if is_fixed_int(rt) {
@@ -2375,7 +2350,7 @@ fn binop_adapt(op: str, lt: str, rt: str, left: Node, right: Node) -> str {
                         return "bool";
                     }
                 }
-                fail_compile("integer literal " + itoa(lv[0]) + " does not fit in " + rt);
+                fail_at(left.line, left.col, "integer literal " + itoa(lv[0]) + " does not fit in " + rt);
             }
         }
     }
@@ -2408,20 +2383,20 @@ fn check_binop(c0: HChecker, n: Node) -> COut {
         if l.typ == r.typ && is_fixed_int(l.typ) {
             return COut { c: c, typ: l.typ };
         }
-        fail_compile("operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
+        fail_at(n.line, n.col, "operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
     }
     // Comparison: same-type operands, result bool.
     if op == "==" || op == "!=" {
         if l.typ == r.typ || type_matches(l.typ, r.typ) || type_matches(r.typ, l.typ) {
             return COut { c: c, typ: "bool" };
         }
-        fail_compile("operator '" + op + "' needs matching types, got " + l.typ + " and " + r.typ);
+        fail_at(n.line, n.col, "operator '" + op + "' needs matching types, got " + l.typ + " and " + r.typ);
     }
     if op == "<" || op == "<=" || op == ">" || op == ">=" {
         if (l.typ == "int" && r.typ == "int") || (l.typ == "float" && r.typ == "float") || (l.typ == r.typ && is_fixed_int(l.typ)) {
             return COut { c: c, typ: "bool" };
         }
-        fail_compile("operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
+        fail_at(n.line, n.col, "operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
     }
     // Bitwise / shifts: ints.
     if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" {
@@ -2434,16 +2409,16 @@ fn check_binop(c0: HChecker, n: Node) -> COut {
         if (op == "<<" || op == ">>") && is_fixed_int(l.typ) && (r.typ == "int" || r.typ == l.typ) {
             return COut { c: c, typ: l.typ };
         }
-        fail_compile("operator '" + op + "' needs ints, got " + l.typ + " and " + r.typ);
+        fail_at(n.line, n.col, "operator '" + op + "' needs ints, got " + l.typ + " and " + r.typ);
     }
     // Logic: bools.
     if op == "&&" || op == "||" {
         if l.typ == "bool" && r.typ == "bool" {
             return COut { c: c, typ: "bool" };
         }
-        fail_compile("operator '" + op + "' needs bools, got " + l.typ + " and " + r.typ);
+        fail_at(n.line, n.col, "operator '" + op + "' needs bools, got " + l.typ + " and " + r.typ);
     }
-    fail_compile("unknown binary operator '" + op + "'");
+    fail_at(n.line, n.col, "unknown binary operator '" + op + "'");
     return COut { c: c, typ: "?" };
 }
 
@@ -2540,50 +2515,50 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
         // Pinning (Top-500 #34): pin(x); marks an owned binding
         // immovable for the rest of its scope.
         if len(n.kids) != 1 {
-            fail_compile("pin() takes exactly one argument");
+            fail_at(n.line, n.col, "pin() takes exactly one argument");
         }
         let arg: Node = n.kids[0];
         if arg.kind != 34 {
-            fail_compile("pin needs a variable in v1; pin the whole binding, not a field");
+            fail_at(n.line, n.col, "pin needs a variable in v1; pin the whole binding, not a field");
         }
         let mut lv: int = 0;
         while lv < len(c.loop_vars) {
             if c.loop_vars[lv] == arg.name {
-                fail_compile("pin of a for-loop variable is not supported in v1; copy it into a let first, then pin that");
+                fail_at(n.line, n.col, "pin of a for-loop variable is not supported in v1; copy it into a let first, then pin that");
             }
             lv = lv + 1;
         }
         if is_moved(c, arg.name) {
-            fail_compile("cannot pin moved value '" + arg.name + "'");
+            fail_at(n.line, n.col, "cannot pin moved value '" + arg.name + "'");
         }
         if is_pinned(c, arg.name) {
-            fail_compile("'" + arg.name + "' is already pinned");
+            fail_at(n.line, n.col, "'" + arg.name + "' is already pinned");
         }
         let t: str = env_lookup(c, arg.name, n.line, n.col);
         if !is_owned_type(c, t) {
-            fail_compile("pin needs an owned value (array, str, struct, tuple), got " + t);
+            fail_at(n.line, n.col, "pin needs an owned value (array, str, struct, tuple), got " + t);
         }
         return env_set_pinned(c, arg.name);
     }
     if n.name == "assert" {
         if len(n.kids) != 2 {
-            fail_compile("assert() takes a bool condition and a str message");
+            fail_at(n.line, n.col, "assert() takes a bool condition and a str message");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "bool" {
-            fail_compile("assert() condition must be bool");
+            fail_at(n.line, n.col, "assert() condition must be bool");
         }
         let b: COut = check_expr(c, n.kids[1]);
         c = b.c;
         if b.typ != "str" {
-            fail_compile("assert() message must be str");
+            fail_at(n.line, n.col, "assert() message must be str");
         }
         return c;
     }
     if n.name == "print" || n.name == "println" {
         if c.freestanding {
-            fail_compile("print/println need the hosted I/O library (not in freestanding v1); use poke32 for MMIO output");
+            fail_at(n.line, n.col, "print/println need the hosted I/O library (not in freestanding v1); use poke32 for MMIO output");
         }
         let mut i: int = 0;
         while i < len(n.kids) {
@@ -2595,60 +2570,60 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
     }
     if n.name == "fail" {
         if len(n.kids) != 1 {
-            fail_compile("fail() takes exactly one str argument");
+            fail_at(n.line, n.col, "fail() takes exactly one str argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("fail() takes exactly one str argument");
+            fail_at(n.line, n.col, "fail() takes exactly one str argument");
         }
         return c;
     }
     if n.name == "fail_compile" {
         if c.freestanding {
-            fail_compile("fail_compile() writes to stderr (not in freestanding v1)");
+            fail_at(n.line, n.col, "fail_compile() writes to stderr (not in freestanding v1)");
         }
         if len(n.kids) != 1 {
-            fail_compile("fail_compile() takes exactly one str argument");
+            fail_at(n.line, n.col, "fail_compile() takes exactly one str argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("fail_compile() takes exactly one str argument");
+            fail_at(n.line, n.col, "fail_compile() takes exactly one str argument");
         }
         return c;
     }
     if n.name == "eprintln" {
         if c.freestanding {
-            fail_compile("eprintln needs the hosted I/O library (not in freestanding v1); use poke32 for MMIO output");
+            fail_at(n.line, n.col, "eprintln needs the hosted I/O library (not in freestanding v1); use poke32 for MMIO output");
         }
         if len(n.kids) != 1 {
-            fail_compile("eprintln() takes exactly one str argument");
+            fail_at(n.line, n.col, "eprintln() takes exactly one str argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_compile("eprintln() takes exactly one str argument");
+            fail_at(n.line, n.col, "eprintln() takes exactly one str argument");
         }
         return c;
     }
     if n.name == "push" {
         if c.freestanding {
-            fail_compile("push() reallocates the heap buffer (not in freestanding v1; freestanding code has no heap allocator)");
+            fail_at(n.line, n.col, "push() reallocates the heap buffer (not in freestanding v1; freestanding code has no heap allocator)");
         }
         // push(arr, value): the target must be a variable or
         // field, not pinned, an array (not sized, not readonly);
         // the value must match the element type.
         if len(n.kids) != 2 {
-            fail_compile("push() takes a variable or field and a value");
+            fail_at(n.line, n.col, "push() takes a variable or field and a value");
         }
         let tgt: Node = n.kids[0];
         if tgt.kind != 34 && tgt.kind != 32 {
-            fail_compile("push() takes a variable or field and a value");
+            fail_at(n.line, n.col, "push() takes a variable or field and a value");
         }
         let root: str = access_root(tgt);
         if root != "" && is_pinned(c, root) {
-            fail_compile("cannot push to pinned value '" + root + "' (push can reallocate the buffer; grow it before pinning, then write in place)");
+            fail_at(n.line, n.col, "cannot push to pinned value '" + root + "' (push can reallocate the buffer; grow it before pinning, then write in place)");
         }
         let mut vt: str = "";
         if tgt.kind == 34 {
@@ -2659,31 +2634,31 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
             vt = b.typ;
         }
         if !is_array(vt) {
-            fail_compile("push() needs an array, got " + vt);
+            fail_at(n.line, n.col, "push() needs an array, got " + vt);
         }
         if is_sized_array(vt) {
-            fail_compile("cannot push to a sized array " + vt + " (its length is fixed)");
+            fail_at(n.line, n.col, "cannot push to a sized array " + vt + " (its length is fixed)");
         }
         if is_readonly(vt) {
-            fail_compile("cannot push to a readonly view " + vt);
+            fail_at(n.line, n.col, "cannot push to a readonly view " + vt);
         }
         let v: COut = check_expr(c, n.kids[1]);
         c = v.c;
         if !accepts(c, v.typ, elem_type(vt)) {
-            fail_compile("push() value must be " + elem_type(vt) + ", got " + v.typ);
+            fail_at(n.line, n.col, "push() value must be " + elem_type(vt) + ", got " + v.typ);
         }
         return c;
     }
     if n.name == "poke32" {
         if len(n.kids) != 2 {
-            fail_compile("poke32() takes exactly two arguments");
+            fail_at(n.line, n.col, "poke32() takes exactly two arguments");
         }
         let mut i: int = 0;
         while i < 2 {
             let a: COut = check_expr(c, n.kids[i]);
             c = a.c;
             if a.typ != "int" {
-                fail_compile("poke32() takes int arguments");
+                fail_at(n.line, n.col, "poke32() takes int arguments");
             }
             i = i + 1;
         }
@@ -2691,17 +2666,17 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
     }
     if n.name == "mmap_set" || n.name == "mmap_set32" {
         if c.freestanding {
-            fail_compile("mmap needs the hosted runtime (not in freestanding v1)");
+            fail_at(n.line, n.col, "mmap needs the hosted runtime (not in freestanding v1)");
         }
         if len(n.kids) != 3 {
-            fail_compile("'" + n.name + "' takes a mapping id, an index, and a value");
+            fail_at(n.line, n.col, "'" + n.name + "' takes a mapping id, an index, and a value");
         }
         let mut i: int = 0;
         while i < 3 {
             let a: COut = check_expr(c, n.kids[i]);
             c = a.c;
             if a.typ != "int" {
-                fail_compile("'" + n.name + "' arguments must be int");
+                fail_at(n.line, n.col, "'" + n.name + "' arguments must be int");
             }
             i = i + 1;
         }
@@ -2709,33 +2684,33 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
     }
     if n.name == "mmap_close" {
         if c.freestanding {
-            fail_compile("mmap needs the hosted runtime (not in freestanding v1)");
+            fail_at(n.line, n.col, "mmap needs the hosted runtime (not in freestanding v1)");
         }
         if len(n.kids) != 1 {
-            fail_compile("mmap_close() takes a mapping id (int)");
+            fail_at(n.line, n.col, "mmap_close() takes a mapping id (int)");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "int" {
-            fail_compile("mmap_close() takes a mapping id (int)");
+            fail_at(n.line, n.col, "mmap_close() takes a mapping id (int)");
         }
         return c;
     }
     if n.name == "csr_write" || n.name == "csr_set" || n.name == "csr_clear" {
         if len(n.kids) != 2 || n.kids[0].kind != 25 {
-            fail_compile("'" + n.name + "' takes a literal CSR number and an int value");
+            fail_at(n.line, n.col, "'" + n.name + "' takes a literal CSR number and an int value");
         }
         if n.kids[0].ival < 0 || n.kids[0].ival > 4095 {
-            fail_compile("CSR number must be in 0..4095");
+            fail_at(n.line, n.col, "CSR number must be in 0..4095");
         }
         let a: COut = check_expr(c, n.kids[1]);
         c = a.c;
         if a.typ != "int" {
-            fail_compile("'" + n.name + "' value must be int");
+            fail_at(n.line, n.col, "'" + n.name + "' value must be int");
         }
         return c;
     }
-    fail_compile("unknown statement builtin '" + n.name + "'");
+    fail_at(n.line, n.col, "unknown statement builtin '" + n.name + "'");
     return c;
 }
 
@@ -2754,17 +2729,17 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // Let: duplicate in the same scope, void, then declare.
         // A fresh binding revives a moved/pinned shadowed name.
         if is_c_keyword(n.name) {
-            fail_compile("'" + n.name + "' is a C keyword and cannot be used as a variable name");
+            fail_at(n.line, n.col, "'" + n.name + "' is a C keyword and cannot be used as a variable name");
         }
         let init: COut = check_expr(c, n.kids[0]);
         c = init.c;
         if init.typ == "void" && n.sval == "" {
-            fail_compile("void has no value to bind");
+            fail_at(n.line, n.col, "void has no value to bind");
         }
         let mut t: str = init.typ;
         if n.sval != "" {
             if !accepts(c, t, n.sval) && !sized_literal_ok(c, n.kids[0], n.sval) && !literal_fits_fixed(n.kids[0], n.sval) {
-                fail_compile("let '" + n.name + "' is declared " + n.sval + " but initialised with " + t);
+                fail_at(n.line, n.col, "variable '" + n.name + "' is declared " + n.sval + " but initialised with " + t);
             }
             t = n.sval;
         }
@@ -2775,16 +2750,16 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // Assign: the target must be mutable and not pinned;
         // reassignment revives a moved variable.
         if !env_is_mut(c, n.name) {
-            fail_compile("cannot assign to immutable variable '" + n.name + "' (declare it with 'let mut')");
+            fail_at(n.line, n.col, "cannot assign to immutable variable '" + n.name + "' (declare it with 'let mut')");
         }
         if is_pinned(c, n.name) {
-            fail_compile("cannot reassign pinned variable '" + n.name + "' (pin forbids replacing the value; change it in place through its fields or indexes)");
+            fail_at(n.line, n.col, "cannot reassign pinned variable '" + n.name + "' (pin forbids replacing the value; change it in place through its fields or indexes)");
         }
         let val: COut = check_expr(c, n.kids[0]);
         c = val.c;
         let want: str = env_lookup(c, n.name, n.line, n.col);
         if !accepts(c, val.typ, want) && !sized_literal_ok(c, n.kids[0], want) && !literal_fits_fixed(n.kids[0], want) {
-            fail_compile("cannot assign " + val.typ + " to '" + n.name + "' of type " + want);
+            fail_at(n.line, n.col, "cannot assign " + val.typ + " to '" + n.name + "' of type " + want);
         }
         return env_revive(c, n.name);
     }
@@ -2793,10 +2768,10 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // mutable; the write is in place, so a pinned root is OK.
         let root: str = access_root(n.kids[0]);
         if root == "" {
-            fail_compile("assignment target must start from a variable");
+            fail_at(n.line, n.col, "assignment target must start from a variable");
         }
         if !env_is_mut(c, root) {
-            fail_compile("cannot assign to a field of immutable variable '" + root + "' (declare it with 'let mut')");
+            fail_at(n.line, n.col, "cannot assign to a field of immutable variable '" + root + "' (declare it with 'let mut')");
         }
         c.pinned_write_root = root;
         let base: COut = check_expr(c, n.kids[0]);
@@ -2824,14 +2799,14 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         c = val.c;
         if n.kind == 12 {
             if !is_array(arr_typ) {
-                fail_compile("cannot index-assign into non-array of type " + arr_typ);
+                fail_at(n.line, n.col, "cannot index-assign into non-array of type " + arr_typ);
             }
             if !accepts(c, val.typ, elem_type(arr_typ)) {
-                fail_compile("index assignment needs " + elem_type(arr_typ) + ", got " + val.typ);
+                fail_at(n.line, n.col, "index assignment needs " + elem_type(arr_typ) + ", got " + val.typ);
             }
         } else {
             if !accepts(c, val.typ, base.typ) && !sized_literal_ok(c, n.kids[1], base.typ) {
-                fail_compile("field assignment needs " + base.typ + ", got " + val.typ);
+                fail_at(n.line, n.col, "field assignment needs " + base.typ + ", got " + val.typ);
             }
         }
         // Assigning a field revives it after a field move.
@@ -2853,7 +2828,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         let cond: COut = check_expr(c, n.kids[0]);
         c = cond.c;
         if cond.typ != "bool" {
-            fail_compile("if condition must be bool, got " + cond.typ);
+            fail_at(n.line, n.col, "if condition must be bool, got " + cond.typ);
         }
         let before: HChecker = c;
         let mark: int = len(c.var_names);
@@ -2880,7 +2855,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         let cond: COut = check_expr(c, n.kids[0]);
         c = cond.c;
         if cond.typ != "bool" {
-            fail_compile("while condition must be bool, got " + cond.typ);
+            fail_at(n.line, n.col, "while condition must be bool, got " + cond.typ);
         }
         let before: HChecker = c;
         let mark: int = len(c.var_names);
@@ -2898,7 +2873,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         c = r.c;
         c.pinned_observe = c.pinned_observe - 1;
         if r.typ != "range" && !is_array(r.typ) {
-            fail_compile("for needs a range or array, got " + r.typ);
+            fail_at(n.line, n.col, "for needs a range or array, got " + r.typ);
         }
         let before: HChecker = c;
         let mark: int = len(c.var_names);
@@ -2928,26 +2903,26 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // Return: value must match the enclosing function's type.
         if len(n.kids) == 0 {
             if c.ret_type != "void" {
-                fail_compile("return with no value in a function returning " + c.ret_type);
+                fail_at(n.line, n.col, "function must return " + c.ret_type + "; add a return statement of type " + c.ret_type + " at the end of the function");
             }
             return c;
         }
         let v: COut = check_expr(c, n.kids[0]);
         c = v.c;
         if !accepts(c, v.typ, c.ret_type) && !sized_literal_ok(c, n.kids[0], c.ret_type) && !literal_fits_fixed(n.kids[0], c.ret_type) {
-            fail_compile("return type mismatch: function returns " + c.ret_type + ", got " + v.typ);
+            fail_at(n.line, n.col, "return type is " + v.typ + ", function returns " + c.ret_type);
         }
         return c;
     }
     if n.kind == 18 {
         if c.loop_depth == 0 {
-            fail_compile("break outside a loop; move it inside a 'while' or 'for' loop");
+            fail_at(n.line, n.col, "break outside a loop; move it inside a 'while' or 'for' loop");
         }
         return c;
     }
     if n.kind == 19 {
         if c.loop_depth == 0 {
-            fail_compile("continue outside a loop; move it inside a 'while' or 'for' loop");
+            fail_at(n.line, n.col, "continue outside a loop; move it inside a 'while' or 'for' loop");
         }
         return c;
     }
@@ -2972,10 +2947,10 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 if arm.name == "_" {
                     has_wildcard = true;
                     if a != len(n.kids) - 1 {
-                        fail_compile("match wildcard '_' must be the last arm");
+                        fail_at(n.line, n.col, "match wildcard '_' must be the last arm");
                     }
                     if arm.sval != "" {
-                        fail_compile("wildcard arm cannot bind a value");
+                        fail_at(n.line, n.col, "wildcard arm cannot bind a value");
                     }
                     let mark: int = len(c.var_names);
                     c.branch_depth = c.branch_depth + 1;
@@ -2996,7 +2971,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                     mi = mi + 1;
                 }
                 if !is_member {
-                    fail_compile("'" + arm.name + "' is not a member of union '" + et.typ + "'");
+                    fail_at(n.line, n.col, "'" + arm.name + "' is not a member of union '" + et.typ + "'");
                 }
                 let mut dup: bool = false;
                 let mut di: int = 0;
@@ -3007,11 +2982,11 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                     di = di + 1;
                 }
                 if dup {
-                    fail_compile("duplicate match arm '" + arm.name + "'");
+                    fail_at(n.line, n.col, "duplicate match arm '" + arm.name + "'");
                 }
                 push(seen, arm.name);
                 if arm.sval == "" {
-                    fail_compile("member '" + arm.name + "' has a value; write " + arm.name + "(name) => ...");
+                    fail_at(n.line, n.col, "member '" + arm.name + "' has a value; write " + arm.name + "(name) => ...");
                 }
                 let mark: int = len(c.var_names);
                 c = env_declare(c, arm.sval, arm.name);
@@ -3041,14 +3016,14 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                     mi = mi + 1;
                 }
                 if missing {
-                    fail_compile("match is not exhaustive");
+                    fail_at(n.line, n.col, "match is not exhaustive");
                 }
             }
             return join_moved(before, results);
         }
         let base: str = generic_base(et.typ);
         if !is_enum(c, base) {
-            fail_compile("match needs an enum value, got " + et.typ);
+            fail_at(n.line, n.col, "match needs an enum value, got " + et.typ);
         }
         let variants: [str] = enum_variant_names(c, base);
         let before: HChecker = c;
@@ -3061,10 +3036,10 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             if arm.name == "_" {
                 has_wildcard = true;
                 if a != len(n.kids) - 1 {
-                    fail_compile("match wildcard '_' must be the last arm");
+                    fail_at(n.line, n.col, "match wildcard '_' must be the last arm");
                 }
                 if arm.sval != "" {
-                    fail_compile("wildcard arm cannot bind a value");
+                    fail_at(n.line, n.col, "wildcard arm cannot bind a value");
                 }
                 let mark: int = len(c.var_names);
                 c.branch_depth = c.branch_depth + 1;
@@ -3077,7 +3052,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 continue;
             }
             if !enum_has_variant(c, base, arm.name) {
-                fail_compile("'" + arm.name + "' is not a variant of enum '" + base + "'");
+                fail_at(n.line, n.col, "'" + arm.name + "' is not a variant of enum '" + base + "'");
             }
             let mut dup: bool = false;
             let mut di: int = 0;
@@ -3088,15 +3063,15 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 di = di + 1;
             }
             if dup {
-                fail_compile("duplicate match arm '" + arm.name + "'");
+                fail_at(n.line, n.col, "duplicate match arm '" + arm.name + "'");
             }
             push(seen, arm.name);
-            let payload: str = enum_payload(c, base, arm.name);
+            let payload: str = enum_payload(c, base, arm.name, n.line, n.col);
             if payload == "" && arm.sval != "" {
-                fail_compile("variant '" + arm.name + "' has no payload to bind");
+                fail_at(n.line, n.col, "variant '" + arm.name + "' has no payload to bind");
             }
             if payload != "" && arm.sval == "" {
-                fail_compile("variant '" + arm.name + "' has a payload; write " + arm.name + "(name) => ...");
+                fail_at(n.line, n.col, "variant '" + arm.name + "' has a payload; write " + arm.name + "(name) => ...");
             }
             let mark: int = len(c.var_names);
             if arm.sval != "" {
@@ -3130,21 +3105,21 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 mi = mi + 1;
             }
             if missing {
-                fail_compile("match is not exhaustive");
+                fail_at(n.line, n.col, "match is not exhaustive");
             }
         }
         return join_moved(before, results);
     }
     if n.kind == 21 {
         if c.freestanding {
-            fail_compile("spawn needs the hosted thread runtime (not in freestanding v1)");
+            fail_at(n.line, n.col, "spawn needs the hosted thread runtime (not in freestanding v1)");
         }
         // Spawn: the function must exist, return void, and take
         // 0 or 1 int arguments.
         let call: Node = n.kids[0];
         let sig: str = func_sig(c, call.name);
         if sig == "" {
-            fail_compile("spawn: undefined function '" + call.name + "'");
+            fail_at(n.line, n.col, "spawn: undefined function '" + call.name + "'");
         }
         let mut ai: int = -1;
         let mut i: int = 0;
@@ -3156,23 +3131,23 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         }
         let ret: str = substr(sig, ai + 2, len(sig) - ai - 2);
         if ret != "void" {
-            fail_compile("spawn: function must return void");
+            fail_at(n.line, n.col, "spawn: function must return void");
         }
         if len(call.kids) > 1 {
-            fail_compile("spawn: function must take 0 or 1 int argument");
+            fail_at(n.line, n.col, "spawn: function must take 0 or 1 int argument");
         }
         if len(call.kids) == 1 {
             let a: COut = check_expr(c, call.kids[0]);
             c = a.c;
             if a.typ != "int" {
-                fail_compile("spawn: argument must be int");
+                fail_at(n.line, n.col, "spawn: argument must be int");
             }
         }
         return c;
     }
     if n.kind == 22 {
         if c.freestanding {
-            fail_compile("scope needs the hosted thread runtime (not in freestanding v1)");
+            fail_at(n.line, n.col, "scope needs the hosted thread runtime (not in freestanding v1)");
         }
         // Scope: the block's lets are scoped to it.
         let mark: int = len(c.var_names);
@@ -3184,7 +3159,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // statement; its value (if any) is discarded at exit.
         let call: Node = n.kids[0];
         if call.kind != 35 && call.kind != 33 {
-            fail_compile("defer needs a call");
+            fail_at(n.line, n.col, "defer needs a call");
         }
         let e: COut = check_expr(c, call);
         return e.c;
@@ -3201,7 +3176,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         let e: COut = check_expr(c, e0);
         return e.c;
     }
-    fail_compile("unsupported statement kind " + node_kind_name(n.kind));
+    fail_at(n.line, n.col, "unsupported statement kind " + node_kind_name(n.kind));
     return c;
 }
 
@@ -3230,7 +3205,7 @@ fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
         let k: Node = fn_node.kids[i];
         if k.kind == 43 {
             if is_c_keyword(k.name) {
-                fail_compile("'" + k.name + "' is a C keyword and cannot be used as a parameter name; rename it");
+                fail_at(fn_node.line, fn_node.col, "'" + k.name + "' is a C keyword and cannot be used as a parameter name; rename it");
             }
             c = env_declare(c, k.name, k.sval);
         }
@@ -3240,7 +3215,7 @@ fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
     // freestanding mode they need link-time C symbols.
     if fn_node.bval && c.freestanding {
         let sp: [str] = split_tparams(fn_node.name);
-        fail_compile("extern fn '" + sp[0] + "' needs link-time C symbols (not in freestanding v1)");
+        fail_at(fn_node.line, fn_node.col, "extern fn '" + sp[0] + "' needs link-time C symbols (not in freestanding v1)");
     }
     c.ret_type = fn_node.sval;
     // Fresh per-function state.

@@ -1,0 +1,907 @@
+// Hosted Qasida driver (CLI) — slice 5, part B.
+// Lex -> parse (+ imports) -> check -> infer -> codegen, then cc
+// via run_command for `run` / `build`. Mirrors forge_lang/cli.py
+// + forge_lang/compiler.py (compile_file, build, _cc_flags,
+// load_program); the import-merge logic is reused verbatim in
+// structure from examples/selfhost_codegen_test.fg.
+//
+// DRAFT STATUS (10 Nov 2026): this file uses the three NEW builtins
+//   run_command(cmd: str) -> int   (expression; C system())
+//   fail_compile(msg: str)         (statement; stderr
+//                                   "qasida: error: <msg>", exit 1)
+//   eprintln(msg: str)             (statement; msg + "\n" to stderr)
+// which are being added by a parallel worker. The file CANNOT be
+// checked or built until they land in the Python compiler (the
+// hosted lexer/parser/checker swap their fail() sites to
+// fail_compile at the same time). Do NOT use fail() for CLI errors:
+// fail() prints "qasida: runtime error: ...", which cannot match
+// the CLI's "qasida: error: ..." prefix.
+//
+// Pinned behaviours (verified live against `python3 forge.py`):
+// - --version (any trailing args: argparse's version action fires
+//   first) and the bare `-V` / `version` forms (exact argv only,
+//   cli.py special case) -> "Qasida 2.0.0", 0.
+//   The version is hardcoded "2.0.0" and must be bumped with
+//   forge_lang/__init__.py.
+// - Argparse errors are reproduced byte-for-byte (usage text +
+//   error line to stderr via eprintln, exit 2). Two argparse
+//   quirks are reproduced, not smoothed over: "unrecognized
+//   arguments" errors print the TOP-LEVEL usage, while invalid
+//   choice / missing value / missing file print the SUBCOMMAND
+//   usage; and for `run`, tokens after the file are program args
+//   (argparse REMAINDER), so `run file --freestanding` passes the
+//   flag through to the program, while `run --freestanding file`
+//   is an unrecognized-arguments error.
+// - --mode fast is accepted, and run/build use the fast cc flags,
+//   but the hosted codegen has NO mode parameter (safe only), so
+//   `emit --mode fast` prints the SAFE-mode C, not Python's fast
+//   C. `check --mode fast` matches Python exactly (mode does not
+//   affect checking).
+// - Temp files are /tmp/qasida_run_<clock_micros>.* and
+//   /tmp/qasida_build_<clock_micros>.*. No tempdir builtin exists,
+//   so two runs in the same microsecond would collide, and temp
+//   .c files are NOT deleted afterwards (no delete builtin) —
+//   do not run two hosted-driver builds/runs concurrently.
+// - -h / --help prints argparse's help text for the top level and
+//   for every real subcommand (including the deferred ones) and
+//   exits 0. A -h/--help token consumed as a flag value (e.g.
+//   `check --mode --help`) or after `--` is NOT help; for `run` /
+//   `pkg` tokens after the first positional are program/pkg args.
+//   Unknown subcommands never get help: `frobnicate --help` is the
+//   invalid-choice error, like argparse.
+// - Error-position parity: hosted lex/parse/check messages carry
+//   "line:col: " prefixes via the fail_at helper (slice 5B), so
+//   error stderr matches Python's ForgeError text byte-for-byte.
+// - QASIDA_CC / QASIDA_NO_OPENSSL are not readable (no getenv
+//   builtin): the driver always uses `cc` with -lssl -lcrypto,
+//   retrying once without them when cc reports
+//   "cannot find -lssl", exactly like Python's build/run.
+// - Import lookup mirrors the 4g driver (spelling as-is, then
+//   forge_lang/stdlib/<base>, then stdlib/<base>), NOT Python's
+//   alongside-the-file-first order.
+
+import "selfhost_check.fg";
+import "selfhost_infer.fg";
+import "selfhost_codegen.fg";
+
+// ---------- argparse usage texts (byte-exact, captured live) ----------
+// eprintln appends the one trailing newline, so these carry none.
+
+// Top-level usage, used for: no args, invalid subcommand, and any
+// "unrecognized arguments" error.
+fn usage_top() -> str {
+    return "usage: qasida [-h] [--version]\n              {check,emit,run,test,fmt,doc,lsp,repl,pkg,build,emit-big32,emit-cuda,emit-wasm,stack}\n              ...";
+}
+
+// Subcommand usage, used for invalid choice / missing value /
+// missing required file errors.
+fn usage_for(cmd: str) -> str {
+    if cmd == "check" {
+        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding] file";
+    }
+    if cmd == "emit" {
+        return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file";
+    }
+    if cmd == "run" {
+        return "usage: qasida run [-h] [--mode {safe,fast}] file ...";
+    }
+    return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file";
+}
+
+// ---------- --help texts (byte-exact, captured live from
+// `python3 forge.py <cmd> --help`; each carries no trailing
+// newline — println adds the one argparse print() emits).
+
+fn help_text(cmd: str) -> str {
+    if cmd == "top" {
+        return "usage: qasida [-h] [--version]\n              {check,emit,run,test,fmt,doc,lsp,repl,pkg,build,emit-big32,emit-cuda,emit-wasm,stack}\n              ...\n\nQasida compiler\n\npositional arguments:\n  {check,emit,run,test,fmt,doc,lsp,repl,pkg,build,emit-big32,emit-cuda,emit-wasm,stack}\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show program's version number and exit";
+    }
+    if cmd == "check" {
+        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)";
+    }
+    if cmd == "emit" {
+        return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)";
+    }
+    if cmd == "run" {
+        return "usage: qasida run [-h] [--mode {safe,fast}] file ...\n\npositional arguments:\n  file\n  program_args\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}";
+    }
+    if cmd == "test" {
+        return "usage: qasida test [-h]\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "fmt" {
+        return "usage: qasida fmt [-h] [--check] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help  show this help message and exit\n  --check";
+    }
+    if cmd == "doc" {
+        return "usage: qasida doc [-h] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "lsp" {
+        return "usage: qasida lsp [-h]\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "repl" {
+        return "usage: qasida repl [-h]\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "pkg" {
+        return "usage: qasida pkg [-h] ...\n\npositional arguments:\n  pkg_args\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "build" {
+        return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help            show this help message and exit\n  --mode {safe,fast}\n  --freestanding        build without libc/OS: no files, sockets, threads,\n                        clock, print, or strings/arrays (freestanding v1)\n  --target {native,big32,wasm}\n  --stack-top STACK_TOP\n                        big32 only: initial sp value (decimal or 0x hex);\n                        default 65532, the model flat-memory top. SOC2 builds\n                        pass a RAM address such as 0x800F0000.\n  -o OUTPUT, --output OUTPUT\n  --keep-c KEEP_C\n  --wit WIT             WIT world file to check against (requires --target\n                        wasm)\n  --debug               emit #line directives + compile with -g so gdb steps\n                        through .fg source\n  --shared              build a shared library (.so) for Python ctypes, no\n                        main required";
+    }
+    if cmd == "emit-big32" {
+        return "usage: qasida emit-big32 [-h] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help  show this help message and exit";
+    }
+    if cmd == "emit-cuda" {
+        return "usage: qasida emit-cuda [-h] [-o OUTPUT] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help            show this help message and exit\n  -o OUTPUT, --output OUTPUT";
+    }
+    if cmd == "emit-wasm" {
+        return "usage: qasida emit-wasm [-h] [-o OUTPUT] [--wit WIT] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help            show this help message and exit\n  -o OUTPUT, --output OUTPUT\n  --wit WIT             WIT world file to check against";
+    }
+    if cmd == "stack" {
+        return "usage: qasida stack [-h] [--mode {safe,fast}] [--limit LIMIT] [--freestanding]\n                    file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --limit LIMIT       warn when a frame exceeds this many bytes (default 2048,\n                      the kernel frame budget)\n  --freestanding      measure the freestanding build (no libc/OS)";
+    }
+    return "";
+}
+
+// ---------- -h / --help ----------
+
+// True when tok is a value-taking flag for cmd in its separate-value
+// form: the value is the NEXT token, so the help scan must skip it
+// (argparse reports "expected one argument" for `--mode --help`
+// instead of printing help).
+fn help_value_flag(tok: str, cmd: str) -> bool {
+    if tok == "--mode" {
+        return cmd == "check" || cmd == "emit" || cmd == "run" || cmd == "build" || cmd == "stack";
+    }
+    if cmd == "build" {
+        if tok == "--target" || tok == "-o" || tok == "--output" || tok == "--keep-c" || tok == "--wit" || tok == "--stack-top" {
+            return true;
+        }
+    }
+    if cmd == "stack" && tok == "--limit" {
+        return true;
+    }
+    if (cmd == "emit-cuda" || cmd == "emit-wasm") && (tok == "-o" || tok == "--output") {
+        return true;
+    }
+    if cmd == "emit-wasm" && tok == "--wit" {
+        return true;
+    }
+    return false;
+}
+
+// True when tok is a value-taking flag for cmd in `--flag=value`
+// form with an INVALID choice value: argparse errors on the bad
+// choice before it ever reaches a later --help.
+fn help_bad_choice(tok: str, cmd: str) -> bool {
+    if starts_with(tok, "--mode=") {
+        if cmd == "check" || cmd == "emit" || cmd == "run" || cmd == "build" || cmd == "stack" {
+            let v: str = substr(tok, 7, len(tok) - 7);
+            return v != "safe" && v != "fast";
+        }
+    }
+    if cmd == "build" && starts_with(tok, "--target=") {
+        let v: str = substr(tok, 9, len(tok) - 9);
+        return v != "native" && v != "big32" && v != "wasm";
+    }
+    return false;
+}
+
+// True when argv asks for this subcommand's help: a -h / --help
+// token anywhere argparse would fire the help action. Tokens after
+// `--` are positionals (never help); a token consumed as a flag
+// value is not help either; for `run` / `pkg` the scan stops at the
+// first positional (REMAINDER: later tokens are program/pkg args).
+fn has_help_flag(argv: [str], cmd: str) -> bool {
+    let mut i: int = 1;
+    while i < len(argv) {
+        let tok: str = argv[i];
+        if tok == "--" {
+            return false;
+        }
+        if tok == "-h" || tok == "--help" {
+            return true;
+        }
+        if help_bad_choice(tok, cmd) {
+            return false;
+        }
+        if help_value_flag(tok, cmd) {
+            i = i + 2;
+            continue;
+        }
+        if cmd == "run" || cmd == "pkg" {
+            if !starts_with(tok, "-") || tok == "-" {
+                return false;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------- command sets ----------
+
+fn is_command(cmd: str) -> bool {
+    return cmd == "check" || cmd == "emit" || cmd == "run" || cmd == "test" || cmd == "fmt" || cmd == "doc" || cmd == "lsp" || cmd == "repl" || cmd == "pkg" || cmd == "build" || cmd == "emit-big32" || cmd == "emit-cuda" || cmd == "emit-wasm" || cmd == "stack";
+}
+
+// Deferred: recognised by Python, not implemented in the hosted
+// driver. Rejected with fail_compile, never half-implemented.
+fn is_deferred(cmd: str) -> bool {
+    return cmd == "fmt" || cmd == "doc" || cmd == "lsp" || cmd == "repl" || cmd == "pkg" || cmd == "test" || cmd == "stack" || cmd == "emit-big32" || cmd == "emit-cuda" || cmd == "emit-wasm";
+}
+
+// ---------- import merging (from selfhost_codegen_test.fg) ----------
+
+// Last path component of a "/""-separated path.
+fn import_basename(path: str) -> str {
+    let parts: [str] = split(path, "/");
+    return parts[len(parts) - 1];
+}
+
+// Source text of an import, or "" when it cannot be found.
+// Candidates mirror compiler.load_program: the spelling as-is,
+// then forge_lang/stdlib/<basename>, then stdlib/<basename>.
+fn import_source(path: str) -> str {
+    if file_exists(path) {
+        return read_file(path);
+    }
+    let base: str = import_basename(path);
+    let cand: str = "forge_lang/stdlib/" + base;
+    if file_exists(cand) {
+        return read_file(cand);
+    }
+    let cand2: str = "stdlib/" + base;
+    if file_exists(cand2) {
+        return read_file(cand2);
+    }
+    return "";
+}
+
+// Phase 1 of the import merge: the flat depth-first import order
+// for one source file (Python compiler.load_program order) — the
+// file's own direct imports in order, each followed by its whole
+// subtree, deduplicated by spelling. Returns only spellings, so
+// the recursion needs no struct return value. (An earlier
+// attempt returned a LoadOut { kids: [Node]; seen: [str] } from
+// the recursion; Python emits the per-struct array-free helpers
+// in program struct order with no forward declarations, and a
+// [Node] field in a struct defined before Node (parse.fg) made
+// the C build fail on an implicit forge_Node_array_free
+// declaration. Keeping [Node] out of the new code avoids that
+// latent codegen ordering rule entirely.)
+fn collect_imports(src: str, seen0: [str]) -> [str] {
+    let lx: LexOut = lex(src);
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
+    let prog: POut = parse_program(hp);
+    let mut seen: [str] = seen0;
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(prog.n.kids) {
+        let n: Node = prog.n.kids[i];
+        if n.kind == 1 {
+            let ipath: str = n.sval;
+            let mut done: bool = false;
+            let mut k: int = 0;
+            while k < len(seen) {
+                if seen[k] == ipath {
+                    done = true;
+                }
+                k = k + 1;
+            }
+            if !done {
+                push(seen, ipath);
+                push(out, ipath);
+                let isrc: str = import_source(ipath);
+                if isrc == "" {
+                    fail_compile("import not found: " + ipath + " (looked in . and stdlib)");
+                }
+                let sub: [str] = collect_imports(isrc, seen);
+                let mut m: int = 0;
+                while m < len(sub) {
+                    push(seen, sub[m]);
+                    push(out, sub[m]);
+                    m = m + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Lex + parse one file, merging each import's top-level items into
+// the program depth-first (see collect_imports), deduplicating
+// by import spelling. Merged order: the file's own items first,
+// then each import's own items in the phase-1 order — exactly
+// Python's load_program order, so emitted prototypes and function
+// bodies come out in the same order (the old breadth-first merge
+// put a leaf import before a sibling's whole subtree and the
+// bootstrap codegen stem failed on cg_header's position).
+// Each imported file is parsed twice (once to collect its
+// imports, once to merge) — cheap against the emit that follows.
+fn load_merged(path: str) -> Node {
+    let src: str = read_file(path);
+    let order: [str] = collect_imports(src, []);
+    let lx: LexOut = lex(src);
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
+    let prog: POut = parse_program(hp);
+    let mut kids: [Node] = prog.n.kids;
+    let mut i: int = 0;
+    while i < len(order) {
+        let isrc: str = import_source(order[i]);
+        let lx2: LexOut = lex(isrc);
+        let hp2: HParser = HParser { kinds: lx2.kinds, texts: lx2.texts, lines: lx2.lines, cols: lx2.cols, pos: 0, has_nul: lx2.has_nul };
+        let sub: POut = parse_program(hp2);
+        let mut k: int = 0;
+        while k < len(sub.n.kids) {
+            push(kids, sub.n.kids[k]);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    let mut merged: Node = prog.n;
+    merged.kids = kids;
+    return merged;
+}
+
+// Full hosted pipeline for one file: lex -> parse (+ imports) ->
+// check -> infer -> codegen. Returns the emitted C. Lex/parse/check
+// failures exit inside the pipeline via fail_compile; the !ok
+// branch below is a backstop that cannot fire while they do.
+fn compile_to_c(path: str, freestanding: bool) -> str {
+    let merged: Node = load_merged(path);
+    let ok: bool = check_program(merged, freestanding);
+    if !ok {
+        fail_compile("check failed");
+    }
+    let inf: HInfer = run_infer(merged);
+    let c: str = codegen_program(merged, inf, freestanding);
+    return c;
+}
+
+// ---------- small string helpers ----------
+
+// Wrap s in single quotes, escaping embedded single quotes the
+// standard way: ' -> '\'' . Used for every path/arg interpolated
+// into a run_command string.
+fn shell_quote(s: str) -> str {
+    let mut out: str = "'";
+    let mut i: int = 0;
+    while i < len(s) {
+        let ch: str = s[i];
+        if ch == "'" {
+            out = out + "'\\''";
+        } else {
+            out = out + ch;
+        }
+        i = i + 1;
+    }
+    out = out + "'";
+    return out;
+}
+
+// Python os.path.splitext(path)[0]: drop the extension (last dot
+// in the basename; a leading dot does not count as an extension).
+// No dot -> the path unchanged.
+fn strip_ext(path: str) -> str {
+    let mut slash: int = -1;
+    let mut dot: int = -1;
+    let mut i: int = 0;
+    while i < len(path) {
+        let ch: str = path[i];
+        if ch == "/" {
+            slash = i;
+        }
+        if ch == "." {
+            dot = i;
+        }
+        i = i + 1;
+    }
+    if dot > slash + 1 {
+        return substr(path, 0, dot);
+    }
+    return path;
+}
+
+// True when needle occurs in hay (empty needle matches everywhere).
+fn str_contains(hay: str, needle: str) -> bool {
+    if needle == "" {
+        return true;
+    }
+    if len(needle) > len(hay) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------- cc invocation ----------
+
+// Run a cc command string (stderr redirected to errfile by the
+// caller). Returns cc's stderr text on success. On failure exits
+// via fail_compile("C compiler failed:\n" + stderr), mirroring
+// Python compiler.build / cli.run. When the failure text says the
+// SSL libs are missing, retries once without them (cmd_nossl);
+// pass "" for cmd_nossl when the command has no SSL libs
+// (freestanding), so no retry is attempted.
+fn cc_build(cmd: str, cmd_nossl: str, errfile: str) -> str {
+    let rc: int = run_command(cmd);
+    let mut err: str = "";
+    if file_exists(errfile) {
+        err = read_file(errfile);
+    }
+    if rc != 0 {
+        if cmd_nossl != "" && str_contains(err, "cannot find -lssl") {
+            let rc2: int = run_command(cmd_nossl);
+            let mut err2: str = "";
+            if file_exists(errfile) {
+                err2 = read_file(errfile);
+            }
+            if rc2 != 0 {
+                fail_compile("C compiler failed:\n" + err2);
+            }
+            return err2;
+        }
+        fail_compile("C compiler failed:\n" + err);
+    }
+    return err;
+}
+
+// ---------- flag-value parsing ----------
+
+// Result of reading a `--flag value` / `--flag=value` option:
+// val + the index after the consumed tokens, or err (argparse
+// text, no trailing newline) when the value is missing.
+struct FlagVal {
+    val: str;
+    next: int;
+    err: str;
+}
+
+fn flag_value(argv: [str], i: int, flag: str, label: str, usage: str, prog: str) -> FlagVal {
+    let mut out: FlagVal = FlagVal { val: "", next: i + 1, err: "" };
+    let tok: str = argv[i];
+    let eq: str = flag + "=";
+    if starts_with(tok, eq) {
+        out.val = substr(tok, len(eq), len(tok) - len(eq));
+        return out;
+    }
+    if i + 1 >= len(argv) || (starts_with(argv[i + 1], "-") && len(argv[i + 1]) > 1) {
+        out.err = usage + "\n" + prog + ": error: argument " + label + ": expected one argument";
+        return out;
+    }
+    out.val = argv[i + 1];
+    out.next = i + 2;
+    return out;
+}
+
+// "" when val is one of the choices, else the argparse
+// invalid-choice error text (no trailing newline). c3 == "" means
+// a two-choice flag.
+fn choice_error(val: str, c1: str, c2: str, c3: str, label: str, usage: str, prog: str) -> str {
+    if val == c1 || val == c2 || (c3 != "" && val == c3) {
+        return "";
+    }
+    let mut choices: str = "'" + c1 + "', '" + c2 + "'";
+    if c3 != "" {
+        choices = choices + ", '" + c3 + "'";
+    }
+    return usage + "\n" + prog + ": error: argument " + label + ": invalid choice: '" + val + "' (choose from " + choices + ")";
+}
+
+// ---------- `run` ----------
+
+// `run <file> [--mode safe|fast] [-- program args...]`
+// Flags are parsed only BEFORE the file (argparse REMAINDER: every
+// token after the file is a program arg). Returns the compiled
+// program's exit code.
+fn cmd_run(argv: [str]) -> int {
+    let mut mode: str = "safe";
+    let mut file: str = "";
+    let mut have_file: bool = false;
+    let mut unknowns: [str] = [];
+    let mut prog_args: [str] = [];
+    let mut i: int = 1;
+    let mut no_more_flags: bool = false;
+    while i < len(argv) {
+        let tok: str = argv[i];
+        if !no_more_flags && tok == "--" {
+            no_more_flags = true;
+            i = i + 1;
+            continue;
+        }
+        if !no_more_flags && starts_with(tok, "-") && len(tok) > 1 {
+            if tok == "--mode" || starts_with(tok, "--mode=") {
+                let fv: FlagVal = flag_value(argv, i, "--mode", "--mode", usage_for("run"), "qasida run");
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                let cerr: str = choice_error(fv.val, "safe", "fast", "", "--mode", usage_for("run"), "qasida run");
+                if cerr != "" {
+                    eprintln(cerr);
+                    return 2;
+                }
+                mode = fv.val;
+                continue;
+            }
+            push(unknowns, tok);
+            i = i + 1;
+            continue;
+        }
+        file = tok;
+        have_file = true;
+        let mut j: int = i + 1;
+        while j < len(argv) {
+            push(prog_args, argv[j]);
+            j = j + 1;
+        }
+        break;
+    }
+    if len(unknowns) > 0 {
+        eprintln(usage_top() + "\nqasida: error: unrecognized arguments: " + join(unknowns, " "));
+        return 2;
+    }
+    if !have_file {
+        eprintln(usage_for("run") + "\nqasida run: error: the following arguments are required: file, program_args");
+        return 2;
+    }
+    if !file_exists(file) {
+        fail_compile("file not found: " + file);
+    }
+    // Strip ONE leading "--" from the program args, like Python.
+    if len(prog_args) > 0 && prog_args[0] == "--" {
+        let mut rest: [str] = [];
+        let mut k: int = 1;
+        while k < len(prog_args) {
+            push(rest, prog_args[k]);
+            k = k + 1;
+        }
+        prog_args = rest;
+    }
+    let c: str = compile_to_c(file, false);
+    let stamp: str = itoa(clock_micros());
+    let c_path: str = "/tmp/qasida_run_" + stamp + ".c";
+    let prog: str = "/tmp/qasida_run_" + stamp;
+    let errfile: str = "/tmp/qasida_run_" + stamp + ".err";
+    let wrote: bool = write_file(c_path, c);
+    if !wrote {
+        fail_compile("could not write file: " + c_path);
+    }
+    // cc flags mirror cli.run (safe: -O2; fast: -O3 -march=native).
+    let mut cc_cmd: str = "";
+    let mut cc_nossl: str = "";
+    if mode == "fast" {
+        cc_cmd = "cc -O3 -march=native -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
+        cc_nossl = "cc -O3 -march=native -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
+    } else {
+        cc_cmd = "cc -O2 -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
+        cc_nossl = "cc -O2 -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
+    }
+    // Python's run() does NOT print cc stderr on success (only
+    // build() does): cc's stderr is read — cc_build fails the run
+    // on a nonzero cc exit — and then discarded.
+    let cc_err: str = cc_build(cc_cmd, cc_nossl, errfile);
+    let mut run_cmd: str = shell_quote(prog);
+    let mut a: int = 0;
+    while a < len(prog_args) {
+        run_cmd = run_cmd + " " + shell_quote(prog_args[a]);
+        a = a + 1;
+    }
+    let rc: int = run_command(run_cmd);
+    return rc;
+}
+
+// ---------- `check` / `emit` / `build` ----------
+
+// check <file> [--mode safe|fast] [--freestanding]
+// emit  <file> [--mode safe|fast] [--freestanding]
+// build <file> [-o out] [--mode safe|fast] [--freestanding]
+//       [--target native] [--keep-c out.c]
+// Flags may appear before or after the file (argparse allows
+// intermixed options); unknown flags and extra positionals are
+// collected and reported together as "unrecognized arguments".
+fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
+    let is_build: bool = cmd == "build";
+    let mut mode: str = "safe";
+    let mut freestanding: bool = false;
+    let mut target: str = "native";
+    let mut stack_top: str = "";
+    let mut output: str = "";
+    let mut keep_c: str = "";
+    let mut wit: str = "";
+    let mut debug: bool = false;
+    let mut shared: bool = false;
+    let mut file: str = "";
+    let mut have_file: bool = false;
+    let mut unknowns: [str] = [];
+    let usage: str = usage_for(cmd);
+    let prog: str = "qasida " + cmd;
+    let mut i: int = 1;
+    let mut no_more_flags: bool = false;
+    while i < len(argv) {
+        let tok: str = argv[i];
+        if !no_more_flags && tok == "--" {
+            no_more_flags = true;
+            i = i + 1;
+            continue;
+        }
+        if !no_more_flags && starts_with(tok, "-") && len(tok) > 1 {
+            if tok == "--freestanding" {
+                freestanding = true;
+                i = i + 1;
+                continue;
+            }
+            if tok == "--debug" && is_build {
+                debug = true;
+                i = i + 1;
+                continue;
+            }
+            if tok == "--shared" && is_build {
+                shared = true;
+                i = i + 1;
+                continue;
+            }
+            if tok == "--mode" || starts_with(tok, "--mode=") {
+                let fv: FlagVal = flag_value(argv, i, "--mode", "--mode", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                let cerr: str = choice_error(fv.val, "safe", "fast", "", "--mode", usage, prog);
+                if cerr != "" {
+                    eprintln(cerr);
+                    return 2;
+                }
+                mode = fv.val;
+                continue;
+            }
+            if is_build && (tok == "--target" || starts_with(tok, "--target=")) {
+                let fv: FlagVal = flag_value(argv, i, "--target", "--target", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                let cerr: str = choice_error(fv.val, "native", "big32", "wasm", "--target", usage, prog);
+                if cerr != "" {
+                    eprintln(cerr);
+                    return 2;
+                }
+                target = fv.val;
+                continue;
+            }
+            if is_build && (tok == "-o" || tok == "--output" || starts_with(tok, "--output=") || (starts_with(tok, "-o") && !starts_with(tok, "--") && len(tok) > 2)) {
+                if starts_with(tok, "--output=") {
+                    output = substr(tok, 9, len(tok) - 9);
+                    i = i + 1;
+                    continue;
+                }
+                if starts_with(tok, "-o") && !starts_with(tok, "--") && len(tok) > 2 && tok != "-o" {
+                    output = substr(tok, 2, len(tok) - 2);
+                    i = i + 1;
+                    continue;
+                }
+                let fv: FlagVal = flag_value(argv, i, "--output", "-o/--output", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                output = fv.val;
+                continue;
+            }
+            if is_build && (tok == "--keep-c" || starts_with(tok, "--keep-c=")) {
+                let fv: FlagVal = flag_value(argv, i, "--keep-c", "--keep-c", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                keep_c = fv.val;
+                continue;
+            }
+            if is_build && (tok == "--wit" || starts_with(tok, "--wit=")) {
+                let fv: FlagVal = flag_value(argv, i, "--wit", "--wit", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                wit = fv.val;
+                continue;
+            }
+            if is_build && (tok == "--stack-top" || starts_with(tok, "--stack-top=")) {
+                let fv: FlagVal = flag_value(argv, i, "--stack-top", "--stack-top", usage, prog);
+                if fv.err != "" {
+                    eprintln(fv.err);
+                    return 2;
+                }
+                i = fv.next;
+                stack_top = fv.val;
+                continue;
+            }
+            push(unknowns, tok);
+            i = i + 1;
+            continue;
+        }
+        if !have_file {
+            file = tok;
+            have_file = true;
+        } else {
+            push(unknowns, tok);
+        }
+        i = i + 1;
+    }
+    if len(unknowns) > 0 {
+        eprintln(usage_top() + "\nqasida: error: unrecognized arguments: " + join(unknowns, " "));
+        return 2;
+    }
+    if !have_file {
+        eprintln(usage + "\n" + prog + ": error: the following arguments are required: file");
+        return 2;
+    }
+    if !file_exists(file) {
+        fail_compile("file not found: " + file);
+    }
+    if is_build {
+        // Deferred build flags (Python implements them; the hosted
+        // driver reports each as deferred, none half-implemented).
+        // --stack-top is accepted and ignored: with --target native
+        // Python ignores it too.
+        if target != "native" {
+            fail_compile("--target is not supported by the hosted driver yet");
+        }
+        if wit != "" {
+            fail_compile("--wit is not supported by the hosted driver yet");
+        }
+        if shared {
+            fail_compile("--shared is not supported by the hosted driver yet");
+        }
+        if debug {
+            fail_compile("--debug is not supported by the hosted driver yet");
+        }
+    }
+    let c: str = compile_to_c(file, freestanding);
+    if cmd == "check" {
+        println("ok: no errors");
+        return 0;
+    }
+    if cmd == "emit" {
+        // println adds one trailing "\n": matches Python print().
+        println(c);
+        return 0;
+    }
+    // build: out defaults to the input path minus its extension.
+    let mut out: str = output;
+    if out == "" {
+        out = strip_ext(file);
+    }
+    let stamp: str = itoa(clock_micros());
+    let mut c_path: str = keep_c;
+    if c_path == "" {
+        c_path = "/tmp/qasida_build_" + stamp + ".c";
+    }
+    let errfile: str = "/tmp/qasida_build_" + stamp + ".err";
+    let wrote: bool = write_file(c_path, c);
+    if !wrote {
+        fail_compile("could not write file: " + c_path);
+    }
+    // cc flags mirror compiler._cc_flags (fast drops -Wextra);
+    // freestanding drops -pthread, adds -nostdlib, links nothing.
+    let mut flags: str = "";
+    if mode == "fast" {
+        flags = "cc -O3 -march=native -std=gnu11 -Wall -Wno-unused-function";
+    } else {
+        flags = "cc -O2 -std=gnu11 -Wall -Wextra -Wno-unused-function";
+    }
+    if freestanding {
+        flags = flags + " -nostdlib";
+    } else {
+        flags = flags + " -pthread";
+    }
+    let mut libs: str = "";
+    let mut libs_nossl: str = "";
+    let mut cc_nossl: str = "";
+    if !freestanding {
+        libs = " -lm -lssl -lcrypto";
+        libs_nossl = " -lm";
+    }
+    let cc_cmd: str = flags + " -o " + shell_quote(out) + " " + shell_quote(c_path) + libs + " 2> " + shell_quote(errfile);
+    if !freestanding {
+        cc_nossl = flags + " -o " + shell_quote(out) + " " + shell_quote(c_path) + libs_nossl + " 2> " + shell_quote(errfile);
+    }
+    let cc_err: str = cc_build(cc_cmd, cc_nossl, errfile);
+    if trim(cc_err) != "" {
+        eprintln(cc_err);
+    }
+    if freestanding {
+        println("built: " + out + " (mode=" + mode + ", freestanding)");
+    } else {
+        println("built: " + out + " (mode=" + mode + ")");
+    }
+    return 0;
+}
+
+// ---------- entry point ----------
+
+fn main() -> int {
+    let argv: [str] = args();
+    if len(argv) == 0 {
+        eprintln(usage_top() + "\nqasida: error: the following arguments are required: cmd");
+        return 2;
+    }
+    let cmd: str = argv[0];
+    // --version: argparse's version action fires the moment it is
+    // parsed, so `--version --help` / `--version extra` print the
+    // version. The bare `-V` / `version` forms are a pre-argparse
+    // special case in cli.py (exact argv only); `-V` with trailing
+    // args is an unrecognized top-level flag instead.
+    if cmd == "--version" {
+        // Hardcode "2.0.0": must be bumped with forge_lang/__init__.py.
+        println("Qasida 2.0.0");
+        return 0;
+    }
+    if len(argv) == 1 && (cmd == "-V" || cmd == "version") {
+        println("Qasida 2.0.0");
+        return 0;
+    }
+    // -h / --help as the first token prints the top-level help:
+    // argparse fires the help action while parsing, before any
+    // later token is considered.
+    if cmd == "-h" || cmd == "--help" {
+        println(help_text("top"));
+        return 0;
+    }
+    if !is_command(cmd) {
+        // An unrecognized dash-flag first token (e.g. `-V`,
+        // `--bogus`) is deferred by argparse, so a later -h/--help
+        // still fires the TOP-level help action; anything else is
+        // the invalid-choice error for the first token.
+        if starts_with(cmd, "-") && len(cmd) > 1 {
+            let mut k: int = 1;
+            while k < len(argv) {
+                if argv[k] == "-h" || argv[k] == "--help" {
+                    println(help_text("top"));
+                    return 0;
+                }
+                k = k + 1;
+            }
+        }
+        eprintln(usage_top() + "\nqasida: error: argument cmd: invalid choice: '" + cmd + "' (choose from 'check', 'emit', 'run', 'test', 'fmt', 'doc', 'lsp', 'repl', 'pkg', 'build', 'emit-big32', 'emit-cuda', 'emit-wasm', 'stack')");
+        return 2;
+    }
+    // -h / --help for a real subcommand prints that subcommand's
+    // help and exits 0 — before the deferred-command rejection and
+    // before any argument validation.
+    if has_help_flag(argv, cmd) {
+        println(help_text(cmd));
+        return 0;
+    }
+    if is_deferred(cmd) {
+        // Python checks the file first for the file-taking deferred
+        // commands (fmt/doc/stack/emit-big32/emit-cuda/emit-wasm):
+        // a missing file reports "file not found", not the
+        // deferred error. The file is the first non-flag token;
+        // flag-first forms skip straight to the deferred error.
+        if cmd == "fmt" || cmd == "doc" || cmd == "stack" || cmd == "emit-big32" || cmd == "emit-cuda" || cmd == "emit-wasm" {
+            if len(argv) > 1 && !starts_with(argv[1], "-") {
+                if !file_exists(argv[1]) {
+                    fail_compile("file not found: " + argv[1]);
+                }
+            }
+        }
+        fail_compile(cmd + " is not supported by the hosted driver yet");
+    }
+    if cmd == "run" {
+        return cmd_run(argv);
+    }
+    return cmd_check_emit_build(argv, cmd);
+}

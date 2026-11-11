@@ -33,6 +33,11 @@ struct Node {
     kids: [Node];
     line: int;
     col: int;
+    // Bootstrap \0: true iff sval holds the NUL sentinel (0x01)
+    // for a \0 escape (copied from the lexer's per-token flag).
+    // Only StrLit nodes ever set it; the codegen string emitter
+    // consults it when mapping the sentinel back to \0.
+    has_nul: bool;
 }
 
 struct HParser {
@@ -41,6 +46,9 @@ struct HParser {
     lines: [int];
     cols: [int];
     pos: int;
+    // Parallel to kinds/texts/lines/cols: the lexer's per-token
+    // NUL-sentinel flag (see LexOut.has_nul).
+    has_nul: [bool];
 }
 
 struct POut {
@@ -56,7 +64,7 @@ struct TOut {
 }
 
 fn new_node(kind: int, line: int, col: int) -> Node {
-    return Node { kind: kind, name: "", ival: 0, fval: 0.0, sval: "", bval: false, kids: [], line: line, col: col };
+    return Node { kind: kind, name: "", ival: 0, fval: 0.0, sval: "", bval: false, kids: [], line: line, col: col, has_nul: false };
 }
 
 fn node_kind_name(k: int) -> str {
@@ -163,7 +171,7 @@ fn at_eof(p: HParser) -> bool {
 
 fn expect_op(p0: HParser, v: str) -> TOut {
     if !at_op(p0, v) {
-        fail_compile("expected '" + v + "', got '" + peek(p0) + "'");
+        fail_at(peek_line(p0), peek_col(p0), "expected '" + v + "', got '" + peek(p0) + "'");
     }
     let t: TOut = TOut { p: advance(p0), text: v, line: peek_line(p0), col: peek_col(p0) };
     return t;
@@ -171,7 +179,7 @@ fn expect_op(p0: HParser, v: str) -> TOut {
 
 fn expect_kw(p0: HParser, v: str) -> TOut {
     if !at_kw(p0, v) {
-        fail_compile("expected '" + v + "', got '" + peek(p0) + "'");
+        fail_at(peek_line(p0), peek_col(p0), "expected '" + v + "', got '" + peek(p0) + "'");
     }
     let t: TOut = TOut { p: advance(p0), text: v, line: peek_line(p0), col: peek_col(p0) };
     return t;
@@ -179,7 +187,7 @@ fn expect_kw(p0: HParser, v: str) -> TOut {
 
 fn expect_ident(p0: HParser) -> TOut {
     if p0.kinds[p0.pos] != 3 {
-        fail_compile("expected a name, got '" + peek(p0) + "'");
+        fail_at(peek_line(p0), peek_col(p0), "expected a name, got '" + peek(p0) + "'");
     }
     let t: TOut = TOut { p: advance(p0), text: peek(p0), line: peek_line(p0), col: peek_col(p0) };
     return t;
@@ -234,7 +242,7 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
             let s: TOut = expect_op(p, ";");
             p = s.p;
             if peek_kind(p) != 0 {
-                fail_compile("sized array size must be an integer literal");
+                fail_at(peek_line(p), peek_col(p), "sized array size must be an integer literal");
             }
             let sz: str = peek(p);
             p = advance(p);
@@ -272,7 +280,7 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
         let c: TOut = expect_op(p, ")");
         p = c.p;
         if count < 2 {
-            fail_compile("tuple types need at least two elements");
+            fail_at(peek_line(p), peek_col(p), "tuple types need at least two elements");
         }
         base = "(" + elems + ")";
     } else if at_kw(p, "opaque") {
@@ -285,12 +293,12 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
         let o: TOut = expect_kw(p, "readonly");
         p = o.p;
         if at_kw(p, "readonly") {
-            fail_compile("readonly cannot be nested");
+            fail_at(peek_line(p), peek_col(p), "readonly cannot be nested");
         }
         let inner: TOut = parse_type(p, true);
         p = inner.p;
         if len(inner.text) < 2 || substr(inner.text, 0, 1) != "[" || substr(inner.text, len(inner.text) - 1, 1) != "]" {
-            fail_compile("readonly only applies to array types");
+            fail_at(peek_line(p), peek_col(p), "readonly only applies to array types");
         }
         base = "readonly " + inner.text;
     } else {
@@ -711,9 +719,12 @@ fn parse_primary(p0: HParser) -> POut {
         let t: str = peek(p);
         let ln: int = peek_line(p);
         let cl: int = peek_col(p);
+        // Capture the lexer's NUL flag before advancing past it.
+        let hn: bool = p.has_nul[p.pos];
         p = advance(p);
         let mut n: Node = new_node(27, ln, cl);
         n.sval = t;
+        n.has_nul = hn;
         return POut { p: p, n: n };
     }
     if peek_kind(p) == 4 && (peek(p) == "true" || peek(p) == "false") {
@@ -836,7 +847,7 @@ fn parse_primary(p0: HParser) -> POut {
         n.kids = elems;
         return POut { p: p, n: n };
     }
-    fail_compile("expected an expression, got '" + peek(p) + "'");
+    fail_at(peek_line(p), peek_col(p), "expected an expression, got '" + peek(p) + "'");
     let dummy: Node = new_node(34, 0, 0);
     return POut { p: p, n: dummy };
 }
@@ -847,7 +858,7 @@ fn parse_block(p0: HParser) -> POut {
     let mut stmts: [Node] = [];
     while !at_op(p, "}") {
         if at_eof(p) {
-            fail_compile("unterminated block");
+            fail_at(peek_line(p), peek_col(p), "unterminated block");
         }
         let s: POut = parse_stmt(p);
         p = s.p;
@@ -987,7 +998,7 @@ fn parse_stmt(p0: HParser) -> POut {
         let s: TOut = expect_op(p, ";");
         p = s.p;
         if ex.n.kind != 35 && ex.n.kind != 33 {
-            fail_compile("defer needs a call");
+            fail_at(kw.line, kw.col, "defer needs a call");
         }
         let mut n: Node = new_node(23, kw.line, kw.col);
         n.kids = [ex.n];
@@ -1003,7 +1014,7 @@ fn parse_stmt(p0: HParser) -> POut {
         let mut kids: [Node] = [ex.n];
         while !at_op(p, "}") {
             if at_eof(p) {
-                fail_compile("unterminated match");
+                fail_at(peek_line(p), peek_col(p), "unterminated match");
             }
             let pat: TOut = expect_ident(p);
             p = pat.p;
@@ -1045,7 +1056,7 @@ fn parse_stmt(p0: HParser) -> POut {
         let s: TOut = expect_op(p, ";");
         p = s.p;
         if ex.n.kind != 35 {
-            fail_compile("spawn needs a function call");
+            fail_at(kw.line, kw.col, "spawn needs a function call");
         }
         let mut n: Node = new_node(21, kw.line, kw.col);
         n.kids = [ex.n];
@@ -1090,7 +1101,7 @@ fn parse_stmt(p0: HParser) -> POut {
             n.kids = [expr.n, rhs.n];
             return POut { p: p, n: n };
         }
-        fail_compile("assignment target must be a variable, an index, or a field");
+        fail_at(expr.n.line, expr.n.col, "assignment target must be a variable, an index, or a field");
     }
     let s: TOut = expect_op(p, ";");
     p = s.p;
@@ -1191,7 +1202,7 @@ fn parse_struct(p0: HParser) -> POut {
     let mut fields: [Node] = [];
     while !at_op(p, "}") {
         if at_eof(p) {
-            fail_compile("unterminated struct");
+            fail_at(peek_line(p), peek_col(p), "unterminated struct");
         }
         let fnm: TOut = expect_ident(p);
         p = fnm.p;
@@ -1211,7 +1222,7 @@ fn parse_struct(p0: HParser) -> POut {
         if at_op(p, "}") {
             break;
         }
-        fail_compile("expected ',' or ';' between struct fields");
+        fail_at(peek_line(p), peek_col(p), "expected ',' or ';' between struct fields");
     }
     let c: TOut = expect_op(p, "}");
     p = c.p;
@@ -1288,7 +1299,7 @@ fn parse_program(p0: HParser) -> POut {
             let kw: TOut = expect_kw(p, "import");
             p = kw.p;
             if peek_kind(p) != 2 {
-                fail_compile("import needs a string path");
+                fail_at(peek_line(p), peek_col(p), "import needs a string path");
             }
             let path: str = peek(p);
             p = advance(p);
@@ -1391,7 +1402,7 @@ fn parse_program(p0: HParser) -> POut {
     return POut { p: p, n: n };
 }
 
-fn dump_escape(s: str) -> str {
+fn dump_escape(s: str, has_nul: bool) -> str {
     let mut out: str = "";
     let mut i: int = 0;
     while i < len(s) {
@@ -1406,6 +1417,11 @@ fn dump_escape(s: str) -> str {
             out = out + "\\t";
         } else if c == "\r" {
             out = out + "\\r";
+        } else if has_nul && c == "" {
+            // NUL sentinel (see the lexer): print it as \0 so the
+            // dump stays a faithful, re-parseable spelling. The
+            // literal here is a single raw 0x01 byte.
+            out = out + "\\0";
         } else {
             out = out + c;
         }
@@ -1426,7 +1442,7 @@ fn dump(n: Node) -> str {
         return s + ")";
     }
     if k == 1 {
-        return "(Import \"" + dump_escape(n.sval) + "\")";
+        return "(Import \"" + dump_escape(n.sval, n.has_nul) + "\")";
     }
     if k == 2 {
         let mut s: str = "(FuncDef " + n.name + " " + n.sval;
@@ -1572,7 +1588,7 @@ fn dump(n: Node) -> str {
         return "(FloatLit " + n.sval + ")";
     }
     if k == 27 {
-        return "(StrLit \"" + dump_escape(n.sval) + "\")";
+        return "(StrLit \"" + dump_escape(n.sval, n.has_nul) + "\")";
     }
     if k == 28 {
         if n.bval {
@@ -1721,7 +1737,7 @@ fn parse_enum(p0: HParser) -> POut {
     let mut variants: [Node] = [];
     while !at_op(p, "}") {
         if at_eof(p) {
-            fail_compile("unterminated enum");
+            fail_at(peek_line(p), peek_col(p), "unterminated enum");
         }
         let v: TOut = expect_ident(p);
         p = v.p;
@@ -1733,7 +1749,7 @@ fn parse_enum(p0: HParser) -> POut {
             p = t.p;
             payload = t.text;
             if at_op(p, ",") {
-                fail_compile("enum variants take at most one payload type in v1");
+                fail_at(peek_line(p), peek_col(p), "enum variants take at most one payload type in v1");
             }
             let c: TOut = expect_op(p, ")");
             p = c.p;
@@ -1750,7 +1766,7 @@ fn parse_enum(p0: HParser) -> POut {
         if at_op(p, "}") {
             break;
         }
-        fail_compile("expected ',' or ';' between enum variants");
+        fail_at(peek_line(p), peek_col(p), "expected ',' or ';' between enum variants");
     }
     let c: TOut = expect_op(p, "}");
     p = c.p;
@@ -1771,14 +1787,14 @@ fn parse_trait(p0: HParser) -> POut {
     let tp: TOut = parse_type_params(p);
     p = tp.p;
     if tp.text != "" {
-        fail_compile("generic traits are not supported in v1");
+        fail_at(kw.line, kw.col, "generic traits are not supported in v1");
     }
     let o: TOut = expect_op(p, "{");
     p = o.p;
     let mut methods: [Node] = [];
     while !at_op(p, "}") {
         if at_eof(p) {
-            fail_compile("unterminated trait");
+            fail_at(peek_line(p), peek_col(p), "unterminated trait");
         }
         let f: TOut = expect_kw(p, "fn");
         p = f.p;
@@ -1849,7 +1865,7 @@ fn parse_impl(p0: HParser) -> POut {
     let mut methods: [Node] = [];
     while !at_op(p, "}") {
         if at_eof(p) {
-            fail_compile("unterminated impl");
+            fail_at(peek_line(p), peek_col(p), "unterminated impl");
         }
         let m: POut = parse_func(p);
         p = m.p;
@@ -1859,7 +1875,7 @@ fn parse_impl(p0: HParser) -> POut {
             // so a '<' in the name means a generic method.
             let parts: [str] = split(m.n.name, "<");
             if len(parts) > 1 {
-                fail_compile("generic methods are not supported in traits v1");
+                fail_at(m.n.line, m.n.col, "generic methods are not supported in traits v1");
             }
         }
         push(methods, m.n);

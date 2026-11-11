@@ -1,0 +1,23 @@
+// Probe (bootstrap debugging, temporary): hosted lex -> parse -> check
+// -> infer only, no codegen. Prints INFER PASS if run_infer returns.
+import "selfhost_infer.fg";
+
+fn main() -> int {
+    let argv: [str] = args();
+    if len(argv) < 1 {
+        println("usage: infer_probe -- <path>");
+        return 1;
+    }
+    let src: str = read_file(argv[0]);
+    let lx: LexOut = lex(src);
+    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
+    let prog: POut = parse_program(hp);
+    let ok: bool = check_program(prog.n, false);
+    if !ok {
+        println("CHECK FAIL");
+        return 1;
+    }
+    let inf: HInfer = run_infer(prog.n);
+    println("INFER PASS");
+    return 0;
+}

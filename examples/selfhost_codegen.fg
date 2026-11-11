@@ -202,6 +202,16 @@ fn cg_trunc_bool(a0: [bool], n: int) -> [bool] {
     return out;
 }
 
+fn cg_trunc_snap(a0: [FactSnap], n: int) -> [FactSnap] {
+    let mut out: [FactSnap] = [];
+    let mut i: int = 0;
+    while i < n && i < len(a0) {
+        push(out, a0[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // The inferred type of a node; missing key -> "int".
 // 4c: several node kinds need a COMPUTED type, because the infer
 // pass records only a base name for them: generic StructLit
@@ -230,12 +240,12 @@ fn cg_expr_type_raw(g: HCodegen, n: Node) -> str {
     // entries (prefixed "T:") win over concrete entries sharing
     // the line:col key (4d v32 fix).
     if len(g.subst_names) > 0 {
-        let t: str = infer_table_get(g.type_keys, g.type_vals, "T:" + infer_key(n), "");
+        let t: str = infer_table_get(g.type_keys, g.type_vals, "T:" + infer_key(n, ""), "");
         if t != "" {
             return t;
         }
     }
-    let base: str = infer_table_get(g.type_keys, g.type_vals, infer_key(n), "int");
+    let base: str = infer_table_get(g.type_keys, g.type_vals, infer_key(n, g.current_fn), "int");
     // ArrayLit (29): the infer table records the base name for
     // generic element types, so rebuild from the children's
     // computed types — except a sized annotation, which the
@@ -982,7 +992,12 @@ fn cg_c_type(g: HCodegen, t: str) -> str {
 }
 
 // c_str_literal (codegen.py:2348): escapes exactly \n \t \r \\ \" \0.
-fn cg_c_str_literal(v: str) -> str {
+// has_nul: true iff v holds the lexer's NUL sentinel (0x01) for
+// \0 escapes. Only then is the sentinel mapped back to \0; a
+// genuine raw 0x01 byte (has_nul false) emits verbatim, exactly
+// like Python's c_str_literal. The sentinel literal below is a
+// single raw 0x01 byte.
+fn cg_c_str_literal(v: str, has_nul: bool) -> str {
     let mut out: str = "\"";
     let mut i: int = 0;
     while i < len(v) {
@@ -997,7 +1012,7 @@ fn cg_c_str_literal(v: str) -> str {
             out = out + "\\\\";
         } else if ch == "\"" {
             out = out + "\\\"";
-        } else if ch == "\0" {
+        } else if has_nul && ch == "" {
             out = out + "\\0";
         } else {
             out = out + ch;
@@ -2399,14 +2414,23 @@ fn cg_float_to_int_cast(g0: HCodegen, code: str, to_t: str) -> CGExpr {
 // element/field/param type — never_wrap, str copy, union wrap /
 // shared-union copy, opaque convert, array inc, struct own,
 // tuple own. Temp form uses __forge_arg{n} (increment-then-read).
-fn cg_convert_owned(g0: HCodegen, code0: str, child_t: str, et: str, child: Node) -> CGExpr {
+// Convert a value to an owned value of the expected type at a
+// receiving site. str_copy_always: Python copies str elements
+// of TupleLit/StructLit UNCONDITIONALLY (codegen.py:3642, 3687),
+// but a user-call str argument only when it is NOT fresh
+// (codegen.py:4378); the hosted version used to copy always at
+// every site, which made fresh substr/concat results gain a
+// spurious forge_copy_str (lex bootstrap diffs).
+fn cg_convert_owned(g0: HCodegen, code0: str, child_t: str, et: str, child: Node, str_copy_always: bool) -> CGExpr {
     let mut g: HCodegen = g0;
     let mut code: str = code0;
     if child_t == "never" && et != "" {
         code = cg_never_wrap(code, et, g);
     }
     if et == "str" {
-        code = "forge_copy_str(" + code + ")";
+        if str_copy_always || !cg_is_fresh_str(g, child) {
+            code = "forge_copy_str(" + code + ")";
+        }
     } else if is_union_type(et) {
         if cg_str_in(child_t, union_members(et)) {
             let cs: bool = child_t == "str" && !cg_is_fresh_str(g, child);
@@ -2708,6 +2732,9 @@ fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
         if sp[1] != "" {
             return g;
         }
+        // Type lookups below are keyed "fn:line:col" (bootstrap
+        // fix), so the walk must know whose body it is in.
+        g.current_fn = node.name;
     }
     if node.kind == 31 {
         let conc: str = cg_structlit_concrete(g, node);
@@ -2753,7 +2780,23 @@ fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
     }
     let mut i: int = 0;
     while i < len(node.kids) {
-        g = cg_collect_walk(g, node.kids[i]);
+        if node.kind == 6 {
+            // Impl method: walk its kids with the mangled
+            // Struct__method name pinned (the kind-2 branch
+            // would otherwise reset it to the plain method
+            // name). Methods cannot be generic (parser
+            // rejects them), so skipping the kind-2 header
+            // loses nothing.
+            let m: Node = node.kids[i];
+            g.current_fn = node.name + "__" + m.name;
+            let mut k: int = 0;
+            while k < len(m.kids) {
+                g = cg_collect_walk(g, m.kids[k]);
+                k = k + 1;
+            }
+        } else {
+            g = cg_collect_walk(g, node.kids[i]);
+        }
         i = i + 1;
     }
     return g;
@@ -3398,7 +3441,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         return CGExpr { g: g, code: e.sval };
     }
     if e.kind == 27 {
-        return CGExpr { g: g, code: cg_c_str_literal(e.sval) };
+        return CGExpr { g: g, code: cg_c_str_literal(e.sval, e.has_nul) };
     }
     if e.kind == 28 {
         if e.bval {
@@ -3636,7 +3679,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let child: Node = e.kids[i];
             let cout: CGExpr = cg_gen_expr(g, child);
             g = cout.g;
-            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, child), elems[i], child);
+            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, child), elems[i], child, true);
             g = conv.g;
             push(parts, conv.code);
             i = i + 1;
@@ -3657,7 +3700,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let cout: CGExpr = cg_gen_expr(g, fexpr);
             g = cout.g;
             let ft: str = infer_field_type(enc, field.name);
-            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, fexpr), ft, fexpr);
+            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, fexpr), ft, fexpr, true);
             g = conv.g;
             push(parts, "." + field.name + " = " + conv.code);
             i = i + 1;
@@ -3891,7 +3934,7 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
     let mut cmp0: str = "";
     let mut cmp1: str = "";
     if kind0 == 2 {
-        cmp0 = cg_c_str_literal(node0.sval) + "[0]";
+        cmp0 = cg_c_str_literal(node0.sval, node0.has_nul) + "[0]";
     } else {
         let bout: CGExpr = cg_gen_expr(g, node0.kids[0]);
         g = bout.g;
@@ -3905,7 +3948,7 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
         cmp0 = ts + "[" + ti + "]";
     }
     if kind1 == 2 {
-        cmp1 = cg_c_str_literal(node1.sval) + "[0]";
+        cmp1 = cg_c_str_literal(node1.sval, node1.has_nul) + "[0]";
     } else {
         let bout: CGExpr = cg_gen_expr(g, node1.kids[0]);
         g = bout.g;
@@ -4050,28 +4093,18 @@ fn cg_gen_method_call(g0: HCodegen, e: Node) -> CGExpr {
     return cg_gen_call(g, call);
 }
 
-// BinOp (codegen.py:3879): str +/==/!=, int checked arithmetic
-// (4f: eliminated when _binop_safe proves it, else the checked
-// helper, with the per-statement _check_cache dedup), shifts,
-// then the plain fall-through. The str-index comparison
-// (_str_index_cmp, s[i] == "x") is deferred: no Index in 4a.
-fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
+// cg_binop_combine: the per-node combination step of
+// cg_gen_binop, factored out so a flattened left spine can apply
+// it once per spine node with already-generated operand code.
+// Byte-identical to the old inline code: same lt/rt derivation
+// from e.kids, same cg_binop_safe call on the actual kid NODES,
+// same _check_cache keys (built from op + left/right code
+// strings), same fixed-checked binop (fx temps allocated in the
+// same innermost-first order). The str-index special case is NOT
+// here: it generates the kids itself, so the spine driver in
+// cg_gen_binop handles it for the innermost node only.
+fn cg_binop_combine(g0: HCodegen, e: Node, left: str, right: str) -> CGExpr {
     let mut g: HCodegen = g0;
-    // _str_index_cmp is tried BEFORE the sides are generated
-    // (it generates them itself, once each, into temps).
-    if (e.name == "==" || e.name == "!=") && cg_expr_type(g, e.kids[0]) == "str" {
-        let spec: CGExpr = cg_str_index_cmp(g, e);
-        g = spec.g;
-        if spec.code != "" {
-            return spec;
-        }
-    }
-    let lout: CGExpr = cg_gen_expr(g, e.kids[0]);
-    g = lout.g;
-    let rout: CGExpr = cg_gen_expr(g, e.kids[1]);
-    g = rout.g;
-    let left: str = lout.code;
-    let right: str = rout.code;
     let lt: str = cg_expr_type(g, e.kids[0]);
     let rt: str = cg_expr_type(g, e.kids[1]);
     if e.name == "+" && lt == "str" {
@@ -4132,6 +4165,87 @@ fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
         }
     }
     return CGExpr { g: g, code: "(" + left + " " + e.name + " " + right + ")" };
+}
+
+// BinOp (codegen.py:3879): str +/==/!=, int checked arithmetic
+// (4f: eliminated when _binop_safe proves it, else the checked
+// helper, with the per-statement _check_cache dedup), shifts,
+// then the plain fall-through. The str-index comparison
+// (_str_index_cmp, s[i] == "x") is deferred: no Index in 4a.
+//
+// BOOTSTRAP FIX (11 Nov 2026): a left-deep spine of the same
+// operator (e.g. a 27-term || chain) used to recurse cg_gen_binop
+// <-> cg_gen_expr ~2 frames per level with multi-KB HCodegen /
+// CGExpr structs by value, exhausting the 8MB C stack at ~24
+// levels (ASan: stack-overflow in cg_gen_binop). The spine is now
+// walked iteratively and folded innermost-first; recursion depth
+// is bounded by operand depth, not chain length. Spine length 1
+// takes the exact old path below.
+fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
+    let mut g: HCodegen = g0;
+    let mut spine: [Node] = [];
+    let mut cur: Node = e;
+    while cur.kind == 40 && cur.name == e.name {
+        push(spine, cur);
+        cur = cur.kids[0];
+    }
+    if len(spine) == 1 {
+        // No chain: the exact old path, unchanged.
+        // _str_index_cmp is tried BEFORE the sides are generated
+        // (it generates them itself, once each, into temps).
+        if (e.name == "==" || e.name == "!=") && cg_expr_type(g, e.kids[0]) == "str" {
+            let spec: CGExpr = cg_str_index_cmp(g, e);
+            g = spec.g;
+            if spec.code != "" {
+                return spec;
+            }
+        }
+        let lout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = lout.g;
+        let rout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = rout.g;
+        return cg_binop_combine(g, e, lout.code, rout.code);
+    }
+    // Chain: innermost spine node first. Only it can take the
+    // str-index path (every higher spine node's left kid is a
+    // BinOp, never an Index or a literal, so _str_index_cmp
+    // returns "" there — exactly as the recursion would find).
+    let inner: Node = spine[len(spine) - 1];
+    let mut acc: str = "";
+    if (inner.name == "==" || inner.name == "!=") && cg_expr_type(g, inner.kids[0]) == "str" {
+        let spec: CGExpr = cg_str_index_cmp(g, inner);
+        g = spec.g;
+        if spec.code != "" {
+            acc = spec.code;
+        }
+    }
+    if acc == "" {
+        let lout: CGExpr = cg_gen_expr(g, inner.kids[0]);
+        g = lout.g;
+        let rout: CGExpr = cg_gen_expr(g, inner.kids[1]);
+        g = rout.g;
+        let comb: CGExpr = cg_binop_combine(g, inner, lout.code, rout.code);
+        g = comb.g;
+        acc = comb.code;
+    }
+    // Fold the remaining spine nodes innermost-first:
+    // spine[len-2] is the next node out, spine[0] the top.
+    // Each step generates only the right operand (shallow) and
+    // combines it with the accumulated left code, so the fold
+    // reproduces Python's nested parens "((a op b) op c)"
+    // byte-identically, with the same per-node check-elimination
+    // and _check_cache order as the recursion.
+    let mut i: int = len(spine) - 2;
+    while i >= 0 {
+        let node: Node = spine[i];
+        let rout: CGExpr = cg_gen_expr(g, node.kids[1]);
+        g = rout.g;
+        let comb: CGExpr = cg_binop_combine(g, node, acc, rout.code);
+        g = comb.g;
+        acc = comb.code;
+        i = i - 1;
+    }
+    return CGExpr { g: g, code: acc };
 }
 
 // Call (codegen.py:4063): builtins in Python order, then enum
@@ -4555,7 +4669,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
             let kv: [str] = infer_split_param(params[i]);
             if len(kv) >= 2 {
                 let pt: str = kv[1];
-                let conv: CGExpr = cg_convert_owned(g, code, cg_expr_type(g, a), pt, a);
+                let conv: CGExpr = cg_convert_owned(g, code, cg_expr_type(g, a), pt, a, false);
                 g = conv.g;
                 code = conv.code;
             }
@@ -5200,42 +5314,44 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         // after the if, the hull of both arms' facts — or only the
         // surviving arm's when the other always exits. Lets bound
         // inside an arm never leak into the join.
-        let pre: FactSnap = cg_facts_snap(g);
-        let cout: CGExpr = cg_gen_expr(g, st.kids[0]);
-        g = cout.g;
-        g = cg_emit(g, "if (" + cout.code + ") {");
-        g.indent = g.indent + 1;
-        g = cg_push_owned_frame(g);
-        g = cg_push_defer_frame(g);
-        g.branch_depth = g.branch_depth + 1;
-        g = cg_apply_cond_facts(g, st.kids[0], true);
-        let then_start: int = len(g.let_names);
-        push(g.let_starts, then_start);
-        g = cg_gen_block(g, st.kids[1], ret_type);
-        let then_snap: FactSnap = cg_facts_filter_lets(cg_facts_snap(g), g.let_names, then_start);
-        let then_exits: bool = cg_branch_exits(st.kids[1]);
-        g.let_starts = cg_trunc_int(g.let_starts, len(g.let_starts) - 1);
-        g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
-        g = cg_pop_defer_frame(g);
-        g = cg_emit_free_frame(g);
-        g = cg_pop_owned_frame(g);
-        g.branch_depth = g.branch_depth - 1;
-        g.indent = g.indent - 1;
-        g = cg_facts_restore(g, pre);
-        g = cg_apply_cond_facts(g, st.kids[0], false);
-        let mut else_snap: FactSnap = cg_facts_snap(g);
-        let mut else_exits: bool = false;
-        if len(st.kids) == 3 {
-            g = cg_emit(g, "} else {");
+        // Site 2 (iterative else-if): the parser represents
+        // `else if` as an else Block holding exactly one If, and
+        // the old code recursed cg_gen_stmt per chain level with
+        // a ~713KB frame, overflowing the 8MB stack at ~10-11
+        // nested levels. This loop descends the chain instead,
+        // leaving each level's else frame open, and unwinds
+        // bottom-up. Emission order is identical to the
+        // recursion: the inner If's closing `}` comes BEFORE its
+        // enclosing else frame's defer/free lines, and each
+        // level's `}` comes AFTER its else-frame cleanup. The
+        // next level's condition is evaluated AFTER pushing the
+        // enclosing else frame, as the recursion did (a
+        // condition may register temps in the open frame).
+        // let_names is never truncated, only the let_starts
+        // marker is popped, so a saved else_start stays valid
+        // for cg_facts_filter_lets at unwind time.
+        let mut cur: Node = st;
+        let mut chain_then_snaps: [FactSnap] = [];
+        let mut chain_then_exits: [bool] = [];
+        let mut chain_else_starts: [int] = [];
+        let mut chain_else_blocks: [Node] = [];
+        let mut chain_done: bool = false;
+        while !chain_done {
+            g = cg_cache_clear(g);
+            let pre: FactSnap = cg_facts_snap(g);
+            let cout: CGExpr = cg_gen_expr(g, cur.kids[0]);
+            g = cout.g;
+            g = cg_emit(g, "if (" + cout.code + ") {");
             g.indent = g.indent + 1;
             g = cg_push_owned_frame(g);
             g = cg_push_defer_frame(g);
             g.branch_depth = g.branch_depth + 1;
-            let else_start: int = len(g.let_names);
-            push(g.let_starts, else_start);
-            g = cg_gen_block(g, st.kids[2], ret_type);
-            else_snap = cg_facts_filter_lets(cg_facts_snap(g), g.let_names, else_start);
-            else_exits = cg_branch_exits(st.kids[2]);
+            g = cg_apply_cond_facts(g, cur.kids[0], true);
+            let then_start: int = len(g.let_names);
+            push(g.let_starts, then_start);
+            g = cg_gen_block(g, cur.kids[1], ret_type);
+            let then_snap: FactSnap = cg_facts_filter_lets(cg_facts_snap(g), g.let_names, then_start);
+            let then_exits: bool = cg_branch_exits(cur.kids[1]);
             g.let_starts = cg_trunc_int(g.let_starts, len(g.let_starts) - 1);
             g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
             g = cg_pop_defer_frame(g);
@@ -5243,17 +5359,98 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_pop_owned_frame(g);
             g.branch_depth = g.branch_depth - 1;
             g.indent = g.indent - 1;
+            g = cg_facts_restore(g, pre);
+            g = cg_apply_cond_facts(g, cur.kids[0], false);
+            let mut else_snap: FactSnap = cg_facts_snap(g);
+            let mut else_exits: bool = false;
+            if len(cur.kids) == 3 {
+                let els: Node = cur.kids[2];
+                if len(els.kids) == 1 && els.kids[0].kind == 14 {
+                    push(chain_then_snaps, then_snap);
+                    push(chain_then_exits, then_exits);
+                    g = cg_emit(g, "} else {");
+                    g.indent = g.indent + 1;
+                    g = cg_push_owned_frame(g);
+                    g = cg_push_defer_frame(g);
+                    g.branch_depth = g.branch_depth + 1;
+                    let else_start: int = len(g.let_names);
+                    push(chain_else_starts, else_start);
+                    push(g.let_starts, else_start);
+                    push(chain_else_blocks, els);
+                    cur = els.kids[0];
+                } else {
+                    g = cg_emit(g, "} else {");
+                    g.indent = g.indent + 1;
+                    g = cg_push_owned_frame(g);
+                    g = cg_push_defer_frame(g);
+                    g.branch_depth = g.branch_depth + 1;
+                    let else_start: int = len(g.let_names);
+                    push(g.let_starts, else_start);
+                    g = cg_gen_block(g, els, ret_type);
+                    else_snap = cg_facts_filter_lets(cg_facts_snap(g), g.let_names, else_start);
+                    else_exits = cg_branch_exits(els);
+                    g.let_starts = cg_trunc_int(g.let_starts, len(g.let_starts) - 1);
+                    g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
+                    g = cg_pop_defer_frame(g);
+                    g = cg_emit_free_frame(g);
+                    g = cg_pop_owned_frame(g);
+                    g.branch_depth = g.branch_depth - 1;
+                    g.indent = g.indent - 1;
+                    if then_exits && else_exits {
+                        g = cg_facts_clear(g);
+                    } else if then_exits {
+                        g = cg_facts_restore(g, else_snap);
+                    } else if else_exits {
+                        g = cg_facts_restore(g, then_snap);
+                    } else {
+                        g = cg_facts_restore(g, cg_facts_hull(then_snap, else_snap));
+                    }
+                    g = cg_emit(g, "}");
+                    chain_done = true;
+                }
+            } else {
+                if then_exits && else_exits {
+                    g = cg_facts_clear(g);
+                } else if then_exits {
+                    g = cg_facts_restore(g, else_snap);
+                } else if else_exits {
+                    g = cg_facts_restore(g, then_snap);
+                } else {
+                    g = cg_facts_restore(g, cg_facts_hull(then_snap, else_snap));
+                }
+                g = cg_emit(g, "}");
+                chain_done = true;
+            }
         }
-        if then_exits && else_exits {
-            g = cg_facts_clear(g);
-        } else if then_exits {
-            g = cg_facts_restore(g, else_snap);
-        } else if else_exits {
-            g = cg_facts_restore(g, then_snap);
-        } else {
-            g = cg_facts_restore(g, cg_facts_hull(then_snap, else_snap));
+        while len(chain_then_snaps) > 0 {
+            let lvl_then_snap: FactSnap = chain_then_snaps[len(chain_then_snaps) - 1];
+            let lvl_then_exits: bool = chain_then_exits[len(chain_then_exits) - 1];
+            let lvl_else_start: int = chain_else_starts[len(chain_else_starts) - 1];
+            let lvl_else_blk: Node = chain_else_blocks[len(chain_else_blocks) - 1];
+            chain_then_snaps = cg_trunc_snap(chain_then_snaps, len(chain_then_snaps) - 1);
+            chain_then_exits = cg_trunc_bool(chain_then_exits, len(chain_then_exits) - 1);
+            chain_else_starts = cg_trunc_int(chain_else_starts, len(chain_else_starts) - 1);
+            chain_else_blocks = cg_trunc_node(chain_else_blocks, len(chain_else_blocks) - 1);
+            let lvl_else_snap: FactSnap = cg_facts_filter_lets(cg_facts_snap(g), g.let_names, lvl_else_start);
+            let lvl_else_exits: bool = cg_branch_exits(lvl_else_blk);
+            g.let_starts = cg_trunc_int(g.let_starts, len(g.let_starts) - 1);
+            g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
+            g = cg_pop_defer_frame(g);
+            g = cg_emit_free_frame(g);
+            g = cg_pop_owned_frame(g);
+            g.branch_depth = g.branch_depth - 1;
+            g.indent = g.indent - 1;
+            if lvl_then_exits && lvl_else_exits {
+                g = cg_facts_clear(g);
+            } else if lvl_then_exits {
+                g = cg_facts_restore(g, lvl_else_snap);
+            } else if lvl_else_exits {
+                g = cg_facts_restore(g, lvl_then_snap);
+            } else {
+                g = cg_facts_restore(g, cg_facts_hull(lvl_then_snap, lvl_else_snap));
+            }
+            g = cg_emit(g, "}");
         }
-        g = cg_emit(g, "}");
         return g;
     }
     if st.kind == 18 || st.kind == 19 {
@@ -6583,6 +6780,9 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
         if n.kind == 2 && !n.bval {
             let sp: [str] = split_tparams(n.name);
             if sp[1] == "" {
+                // Generic-arg types are looked up under
+                // "fn:line:col" keys (bootstrap fix).
+                g.current_fn = n.name;
                 g = cg_collect_inst_walk(g, prog, n.kids[len(n.kids) - 1]);
             }
         }
@@ -6597,6 +6797,7 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
                 let m: Node = n.kids[j];
                 let msp: [str] = split_tparams(m.name);
                 if msp[1] == "" {
+                    g.current_fn = n.name + "__" + m.name;
                     g = cg_collect_inst_walk(g, prog, m.kids[len(m.kids) - 1]);
                 }
                 j = j + 1;

@@ -794,6 +794,11 @@ class WasmGen:
                 if e.name == "fail":
                     return (self.gen_expr(e.args[0])
                             + call_fn(self.helper_index["out_str"]) + UNREACHABLE)
+                if e.name in ("fail_compile", "eprintln"):
+                    # Slice 5 driver builtins write to stderr; WASM
+                    # has no stderr in v1.
+                    raise ForgeError(f"wasm: {e.name}() writes to stderr, "
+                                     f"which WASM does not expose")
                 if e.name == "assert":
                     out = bytearray()
                     out += self.gen_expr(e.args[0]) + b"\x45"  # i32.eqz
@@ -962,6 +967,10 @@ class WasmGen:
                 raise ForgeError(f"wasm: len() of {t} is not supported")
             if expr.name in ("print", "println", "push", "fail", "assert"):
                 raise ForgeError(f"wasm: {expr.name}() is statement-only")
+            if expr.name == "run_command":
+                # Slice 5 driver builtin: needs a shell; WASM has none.
+                raise ForgeError("wasm: run_command() needs a shell, "
+                                 "which WASM does not expose")
             if expr.name in ("peek32", "poke32"):
                 raise ForgeError(f"wasm: {expr.name}() needs raw memory addresses, "
                                  f"which WASM does not expose")

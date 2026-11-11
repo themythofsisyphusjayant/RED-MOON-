@@ -1,0 +1,9 @@
+// Bootstrap wrapper: compile selfhost_lex.fg as an imported module
+// plus a trivial main, so both compilers see a complete program.
+// (The hosted sources are libraries with no fn main(); Python's
+// `forge.py emit` requires main(), so the wrapper supplies it.)
+import "selfhost_lex.fg";
+
+fn main() -> int {
+    return 0;
+}

@@ -973,6 +973,10 @@ class RVGen:
                 self.emit("    li a0, 1")
                 self.emit_halt()
                 return
+            if isinstance(call, A.Call) and call.name in ("fail_compile", "eprintln"):
+                # Slice 5 driver builtins write to stderr; big32 has
+                # no OS/stderr in v1.
+                raise ForgeError(f"builtin {call.name}() is not supported on big32 (v1)")
             if isinstance(call, A.Call) and call.name == "push":
                 raise ForgeError("push (dynamic growth) is not supported on big32 (v1)")
             r = self.gen_expr(stmt.expr)
@@ -1353,7 +1357,8 @@ class RVGen:
         if name in ("sqrt", "exp", "log", "pow", "clock_micros", "read_file",
                     "read_line",
                     "write_file", "args", "parse_int", "split", "join",
-                    "substr", "trim", "starts_with", "ends_with", "http_get"):
+                    "substr", "trim", "starts_with", "ends_with", "http_get",
+                    "run_command"):
             raise ForgeError(f"builtin {name}() is not supported on big32 (v1)")
         if name == "peek32":
             r = self.gen_expr(expr.args[0])

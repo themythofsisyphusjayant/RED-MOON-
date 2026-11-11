@@ -55,6 +55,9 @@ HEADER = r"""#include <stdio.h>
 #include <openssl/err.h>
 #endif
 #include <time.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 static void forge_free_str(char *p);
 static void forge_fail(const char *msg);
@@ -515,6 +518,20 @@ static long long forge_parse_int(const char *s) {
     long long v = strtoll(s, &end, 10);
     if (end == s || *end != '\0') forge_fail("parse_int: not an integer");
     return v;
+}
+
+// Slice 5 driver builtin: run a shell command, return its exit code
+// (0-255), or -1 if system() fails or the child dies by signal.
+// POSIX body; the MinGW fallback returns system()'s status directly.
+static int forge_run_command(const char *cmd) {
+#ifndef _WIN32
+    int rc = system(cmd);
+    if (rc == -1) return -1;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    return -1;
+#else
+    return system(cmd);
+#endif
 }
 
 static ForgeStrArray forge_split(const char *s, const char *sep) {
@@ -2572,7 +2589,7 @@ class Codegen:
     def _branch_exits(self, block):
         """True if a block's last statement always leaves it.
 
-        Return and fail() exit the function; a bare break exits the
+        Return and fail()/fail_compile() exit the function; a bare break exits the
         enclosing loop, so following code in the same iteration is
         skipped. Anything else (including a nested if) may fall
         through, so it does not count."""
@@ -2583,7 +2600,7 @@ class Codegen:
         if isinstance(last, (A.Return, A.Break, A.Continue)):
             return True
         if (isinstance(last, A.ExprStmt) and isinstance(last.expr, A.Call)
-                and last.expr.name == "fail"):
+                and last.expr.name in ("fail", "fail_compile")):
             return True
         return False
 
@@ -3524,6 +3541,16 @@ class Codegen:
                 self.emit(f'fprintf(stderr, "qasida: %s\\n", {self.gen_expr(call.args[0])});')
                 self.emit("exit(1);")
                 return
+            if isinstance(call, A.Call) and call.name == "fail_compile":
+                # Slice 5 driver builtin: compile-time error, with
+                # the CLI's "qasida: error: " prefix.
+                self.emit(f'fprintf(stderr, "qasida: error: %s\\n", {self.gen_expr(call.args[0])});')
+                self.emit("exit(1);")
+                return
+            if isinstance(call, A.Call) and call.name == "eprintln":
+                # Slice 5 driver builtin: stderr line, no exit.
+                self.emit(f'fprintf(stderr, "%s\\n", {self.gen_expr(call.args[0])});')
+                return
             if isinstance(call, A.Call) and call.name == "pin":
                 # Pinning is compile-time only (Top-500 #34): the
                 # checker enforces immovability, so there is no
@@ -4189,6 +4216,8 @@ class Codegen:
                 return f"forge_parse_float({self.gen_expr(expr.args[0])})"
             if expr.name == "parse_int":
                 return f"forge_parse_int({self.gen_expr(expr.args[0])})"
+            if expr.name == "run_command":
+                return f"forge_run_command({self.gen_expr(expr.args[0])})"
             if expr.name == "split":
                 return (f"forge_split({self.gen_expr(expr.args[0])}, "
                         f"{self.gen_expr(expr.args[1])})")

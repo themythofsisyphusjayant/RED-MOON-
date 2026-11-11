@@ -1,0 +1,7 @@
+// Bootstrap wrapper: compile selfhost_parse.fg as an imported module
+// plus a trivial main, so both compilers see a complete program.
+import "selfhost_parse.fg";
+
+fn main() -> int {
+    return 0;
+}

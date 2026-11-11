@@ -272,36 +272,75 @@ bootstrap, not the destination. Self-hosting removes it.
    compiler, use the hosted compiler to compile itself, and
    compare outputs. When the hosted compiler can compile
    itself and produce identical binaries, Python is gone.
-   - CC-INVOCATION DECISION (10 Nov 2026, Jayant's "Do
-     whatever you want" — his discretion, no stop-and-ask):
-     the hosted driver invokes cc itself via a NEW builtin,
-     `run_command(cmd: str) -> int` (C system(), returns the
-     command's exit code, -1 if it could not run or died by
-     signal; native-only, rejected in freestanding/big32/WASM).
-     Emit-only + shell-compiles was rejected: it cannot match
-     Python's `run`/`build` behaviour (exit codes, cc-failure
-     text) and would leave the driver half a CLI. Two more
-     builtins ride with it because error parity needs them:
-     `fail_compile(msg: str)` (statement; stderr
-     "qasida: error: <msg>", exit 1 — the hosted
-     lexer/parser/checker swap their fail() sites to it, since
-     fail() prints "qasida: runtime error: ..." and cannot
-     match the CLI's "qasida: error: ..." prefix) and
-     `eprintln(msg: str)` (statement; msg + newline to stderr,
-     no exit — for argparse-style usage errors, exit 2, and cc
-     warnings on successful builds). All three need the
-     Python-side (checker/infer/codegen/header) AND the
-     hosted-side (checker/infer/codegen) implementations,
-     verified by byte-compare like everything else. Gates:
-     all three on the freestanding blocklist + big32/WASM
-     rejection, same as other OS builtins. Driver scope:
-     check, emit, run, build (native + --freestanding +
-     --mode + -o + --keep-c) + --version; deferred: fmt, doc,
-     lsp, repl, pkg, test, stack, emit-big32, emit-cuda,
-     emit-wasm, --debug, --target big32/wasm (each reported
-     as deferred, none half-implemented). Temp files for
-     run/build use clock_micros() names under /tmp (no
-     tempdir builtin exists).
+   - SLICE 5 DONE 11 Nov 2026 (~01:57 IST): hosted driver
+     `examples/selfhost_cli.fg` (865 lines) — check, emit, run,
+     build (native + --freestanding + --mode + -o + --keep-c) +
+     --version + -h/--help (15 argparse help texts, byte-exact).
+     Three new builtins (run_command / fail_compile / eprintln)
+     in Python + hosted sides; hosted lexer/parser/checker
+     error sites converted to fail_at (212 sites, L:C: prefixes
+     mirroring errors.py). CLI parity matrix 68/68 (61 raw PASS,
+     0 FAIL, 0 PASS-NORM, 7 EXPECTED = pinned deferred items +
+     emit --mode fast == safe emit). Bootstrap proof 13/13
+     byte-match (v01–v12 + v92 freestanding). Full corpus
+     98/98 + slice-3 regression 62/62 against the post-builtin
+     codegen. Deferred (rejected with an explicit message):
+     fmt, doc, lsp, repl, pkg, test, stack, emit-big32,
+     emit-cuda, emit-wasm, --target big32/wasm, --debug,
+     --shared, --wit. KNOWN DIVERGENCES (5 argparse corners,
+     out of scope — replicating argparse's deferred-extras
+     dispatch needs a call): `-V extra`, `--bogus` alone,
+     `-V check`, `check --version`, `stack --limit --help`.
+     FIX-1 caveat: run-path cc-stderr removal verified by
+     source + check only (no matrix case — run's cc has no
+     -Wall so stderr is empty on success anyway).
+   - SITE 2 FIX DONE 11 Nov 2026 (~21:30 IST): hosted codegen
+     segfaulted on nested else-if chains (cg_gen_stmt recursed
+     per chain level with a ~713KB frame; ~10-11 levels
+     overflowed the 8MB stack). Fixed iteratively in
+     `examples/selfhost_codegen.fg` only (6,689 -> 6,782 lines):
+     the kind-14 branch now loops down the chain and unwinds
+     bottom-up with byte-identical emission and facts/frame
+     discipline. Verified: nested_elseif_6 rc=0 byte-identical
+     to Python; full corpus 98/98; regression 62/62; CLI parity
+     68/68. Bootstrap emit now 1/7 PASS (header) with lex+parse
+     emitting instead of segfaulting, but byte-differing from
+     Python on pre-existing hosted infer/expr divergences, and
+     check/infer/codegen/cli still blocked by pre-existing
+     hosted lex/check limits (notably `\0` unsupported in the
+     hosted lexer at selfhost_codegen.fg:1010). See stage log.
+   - BOOTSTRAP DONE 11 Nov 2026 (~23:45 IST): hosted compiler
+     compiles itself. Emit 7/7 byte-identical to Python
+     (lex 76,817 B; parse 648,260 B; check 2,196,065 B;
+     infer 2,795,595 B; header 85,437 B; codegen 11,982,139 B;
+     cli 12,115,852 B). Fixes: (1) NUL escape via sentinel
+     0x01 + per-node `has_nul` flag channel (LexOut -> HParser
+     -> Node; `cg_c_str_literal(v, has_nul)` maps sentinel to
+     the NUL escape only when flagged); new corpus file
+     v97_nul_escape.fg. (2) Sites 2+3 shared one root cause:
+     infer keys were bare `line:col` with last-wins lookup —
+     48 colliding pairs across functions; fixed with
+     function-name-qualified keys, plus `cg_convert_owned`
+     fresh-`str` handling made per-site (unconditional for
+     TupleLit/StructLit, fresh-conditional for user-call
+     args). (3) Site 4, found by the emit run: import-merge
+     order — hosted `load_merged` was breadth-first, Python's
+     `load_program` is depth-first; fixed with a two-phase
+     loader (`collect_imports` -> flat DFS spelling list ->
+     concatenate kids). Full bar against the final codegen:
+     corpus 99/99, slice-3 regression 62/62, CLI parity
+     68/68 (61 PASS + 7 EXPECTED). Second generation proven
+     14/14: cc-compiled `hosted_cli.c` -> gen2 binary, gen2
+     emit == Python emit for v01–v12 + v92 freestanding,
+     v12 build+run through gen2 identical stdout rc=0.
+     Known gaps (not blocking): hosted import dedup is by
+     spelling vs Python's by realpath (circular imports would
+     duplicate the main file's funcs); a raw 0x01 byte pasted
+     into source would be miscompiled; `selfhost_mini.fg`
+     keeps its own old lexer (still fails on NUL, not in the
+     bootstrap path). Nothing pushed to GitHub;
+     `forge_lang/` untouched. Python stays the reference and
+     the fallback until the switch-over decision is made.
 
 ## Rules
 - Each slice is verified against the Python compiler before
