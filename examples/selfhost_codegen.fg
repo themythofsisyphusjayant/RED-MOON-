@@ -101,8 +101,16 @@ struct HCodegen {
     // 1 conditional.
     defer_conds: [bool];
     move_cond: int;
-    type_keys: [str];
-    type_vals: [str];
+    // Infer type table (speed step 2): the hash map built by
+    // run_infer, copied here read-only. map_keys holds the integer
+    // node id or -1 for an empty bucket; map_seq the
+    // first-insertion sequence (the collect pass replays insertion
+    // order from it); map_cap is a power of two.
+    map_keys: [int];
+    map_vals: [str];
+    map_seq: [int];
+    map_cap: int;
+    map_len: int;
     owned_names: [str];
     owned_types: [str];
     owned_marks: [int];
@@ -150,7 +158,10 @@ struct HCodegen {
     inst_btypes: [str];
     inst_busy: [str];
     spawn_counter: int;
-    template_keys: [str];
+    // Index of current_fn in func_names (speed step 2; -2 = unset
+    // or a mangled instantiation name: lookups miss, exactly like
+    // the old unmatched "fn:line:col" key).
+    current_fn_idx: int;
 }
 
 struct CGExpr {
@@ -159,7 +170,22 @@ struct CGExpr {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    return HCodegen { lines: [], indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, type_keys: inf.type_keys, type_vals: inf.type_vals, template_keys: inf.template_keys, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false };
+    return HCodegen { lines: [], indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2 };
+}
+
+// Index of a function name in func_names, or -2 when absent (a
+// mangled instantiation name, or "" outside any function). The
+// list is built once by cg_build_tables, in the same order as
+// infer's fn_names, so shared names share indices.
+fn cg_fn_index(g: HCodegen, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(g.func_names) {
+        if g.func_names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -2;
 }
 
 fn cg_trunc_node(a0: [Node], n: int) -> [Node] {
@@ -237,15 +263,16 @@ fn cg_expr_type(g: HCodegen, n: Node) -> str {
 
 fn cg_expr_type_raw(g: HCodegen, n: Node) -> str {
     // Inside an instantiation body (subst non-empty), template
-    // entries (prefixed "T:") win over concrete entries sharing
-    // the line:col key (4d v32 fix).
+    // entries win over concrete entries sharing the line:col key
+    // (4d v32 fix). Template keys are the bare line:col encoding
+    // (fn_idx -1); concrete keys use g.current_fn_idx.
     if len(g.subst_names) > 0 {
-        let t: str = infer_table_get(g.type_keys, g.type_vals, "T:" + infer_key(n, ""), "");
+        let t: str = infer_map_get(g.map_keys, g.map_vals, g.map_cap, infer_key_int(-1, n.line, n.col), "");
         if t != "" {
             return t;
         }
     }
-    let base: str = infer_table_get(g.type_keys, g.type_vals, infer_key(n, g.current_fn), "int");
+    let base: str = infer_map_get(g.map_keys, g.map_vals, g.map_cap, infer_key_int(g.current_fn_idx, n.line, n.col), "int");
     // ArrayLit (29): the infer table records the base name for
     // generic element types, so rebuild from the children's
     // computed types — except a sized annotation, which the
@@ -448,7 +475,7 @@ fn cg_enum_concrete_call(g: HCodegen, e: Node) -> str {
     // runs — harmless, the type is registered from the infer
     // table's values instead.
     if len(g.subst_names) == 0 {
-        let it: str = infer_table_get(g.type_keys, g.type_vals, infer_key(e, g.current_fn), "");
+        let it: str = infer_map_get(g.map_keys, g.map_vals, g.map_cap, infer_key_int(g.current_fn_idx, e.line, e.col), "");
         if it != "" && find_lt(it) >= 0 && len(split(it, "?")) == 1 {
             return it;
         }
@@ -2772,9 +2799,11 @@ fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
         if sp[1] != "" {
             return g;
         }
-        // Type lookups below are keyed "fn:line:col" (bootstrap
-        // fix), so the walk must know whose body it is in.
+        // Type lookups below are keyed by integer node id
+        // (bootstrap fix), so the walk must know whose body it is
+        // in.
         g.current_fn = node.name;
+        g.current_fn_idx = cg_fn_index(g, node.name);
     }
     if node.kind == 31 {
         let conc: str = cg_structlit_concrete(g, node);
@@ -2829,6 +2858,7 @@ fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
             // loses nothing.
             let m: Node = node.kids[i];
             g.current_fn = node.name + "__" + m.name;
+            g.current_fn_idx = cg_fn_index(g, node.name + "__" + m.name);
             let mut k: int = 0;
             while k < len(m.kids) {
                 g = cg_collect_walk(g, m.kids[k]);
@@ -2869,12 +2899,31 @@ fn cg_collect(g0: HCodegen, prog: Node) -> HCodegen {
         }
         i = i + 1;
     }
+    // Replay the infer table in first-insertion order (typedef
+    // order must match Python's): order[seq] = bucket, then
+    // collect each non-template value once. Template-body entries
+    // (4d) are not uses: Python only instantiates types actually
+    // used by a concrete body. The order array is a fresh local,
+    // so its pushes and index writes are in place, never
+    // copy-on-write.
+    let mut ord: [int] = [];
+    let mut oq: int = 0;
+    while oq < g.map_len {
+        push(ord, -1);
+        oq = oq + 1;
+    }
+    let mut ob: int = 0;
+    while ob < len(g.map_keys) {
+        if g.map_keys[ob] != -1 {
+            ord[g.map_seq[ob]] = ob;
+        }
+        ob = ob + 1;
+    }
     i = 0;
-    while i < len(g.type_vals) {
-        // Template-body entries (4d) are not uses: Python only
-        // instantiates types actually used by a concrete body.
-        if !cg_str_in(g.type_keys[i], g.template_keys) {
-            g = cg_collect_type(g, g.type_vals[i]);
+    while i < len(ord) {
+        let kk: int = g.map_keys[ord[i]];
+        if !infer_key_is_template(kk) {
+            g = cg_collect_type(g, g.map_vals[ord[i]]);
         }
         i = i + 1;
     }
@@ -5979,6 +6028,7 @@ fn cg_gen_func(g0: HCodegen, fn_node: Node) -> HCodegen {
 fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     let mut g: HCodegen = g0;
     g.current_fn = fname;
+    g.current_fn_idx = cg_fn_index(g, fname);
     g.current_ret = cg_subst(g, fn_node.sval);
     g.moved_fields = cg_trunc_str(g.moved_fields, 0);
     if ends_with(fname, "__drop") {
@@ -6068,6 +6118,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     g = cg_emit(g, "}");
     push(g.lines, "");
     g.current_fn = "";
+    g.current_fn_idx = -2;
     g.drop_receiver = "";
     return g;
 }
@@ -6858,9 +6909,10 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
         if n.kind == 2 && !n.bval {
             let sp: [str] = split_tparams(n.name);
             if sp[1] == "" {
-                // Generic-arg types are looked up under
-                // "fn:line:col" keys (bootstrap fix).
+                // Generic-arg types are looked up under integer
+                // node-id keys (bootstrap fix).
                 g.current_fn = n.name;
+                g.current_fn_idx = cg_fn_index(g, n.name);
                 g = cg_collect_inst_walk(g, prog, n.kids[len(n.kids) - 1]);
             }
         }
@@ -6876,6 +6928,7 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
                 let msp: [str] = split_tparams(m.name);
                 if msp[1] == "" {
                     g.current_fn = n.name + "__" + m.name;
+                    g.current_fn_idx = cg_fn_index(g, n.name + "__" + m.name);
                     g = cg_collect_inst_walk(g, prog, m.kids[len(m.kids) - 1]);
                 }
                 j = j + 1;

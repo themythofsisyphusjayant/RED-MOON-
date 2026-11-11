@@ -493,14 +493,39 @@ bootstrap, not the destination. Self-hosting removes it.
      (forge_lang/bin/qasida-hosted, same bytes as
      bin/qasida-hosted) and the installed command dispatches
      through forge_lang/launcher.py (73/73 argv shapes agree
-     with forge.py). Release steps after this entry: push the
-     tree, cut tag v2.1.0, release.yml publishes to PyPI
-     (qasida 2.1.0) and creates GitHub Release v2.1.0 — verify
-     both before calling the release done. NOT in
-     this release: the speed optimization program (queued
+     with forge.py). Release DONE the same day: tree pushed as
+     commit de3db0e7356e8c33873a6bcb097ca3c8af17379a (PUSH
+     VERIFIED, 9 key files read back by blob SHA); tag v2.1.0
+     cut at that commit; release.yml run 43041812093 completed
+     SUCCESS (Build, Publish to PyPI, Create GitHub Release all
+     green); PyPI qasida 2.1.0 verified by fresh-venv install
+     (`qasida --version` -> 2.1.0, test program -> 88 via the
+     hosted compiler, installed binary md5 matches the release
+     binary); GitHub Release v2.1.0 created (id 441825540).
+     NOT in this release: the speed optimization program (queued
      after), and the hosted-vs-Python divergence that hosted
      `check` accepts main-less library files while Python
      rejects them (follow-up, not smuggled in).
+
+## Speed program (STARTED 11 Nov 2026, Jayant: "Yes start the speed program")
+- Goal: "compiling feels instant" (sub-second small programs). NOT matching GCC/Clang.
+- Baseline (2.1.0, median of 3): startup 0.002s vs 0.115s Python; small 0.032s vs
+  0.115s; corpus 3.9s vs 11.3s. Large: 255-line 3.824s vs 0.366s (10.4x);
+  checker 80.1s vs 1.79s (44.8x); codegen 426.9s vs 5.23s (81.6x); hosted
+  check peaked ~2.5GB RSS. Full table: blackmoon-iso/release_2.1.0/benchmark_results.md.
+- Step 1 PROFILE DONE 11 Nov ~21:33 IST (report: blackmoon-iso/speed/profile_report.md):
+  infer 36–61% of total, codegen 30–59%; hotspots forge_copy_str 809M calls
+  (by-value struct passing), infer_table_get ~1e9 string compares ≈ 30s,
+  codegen linear scans. MapStrInt CLEARED (zero uses); "line:col" keys CONFIRMED;
+  checker snapshots NOT the problem (1–3%); double lex+parse small (4–7%);
+  incremental DEFERRED. Profile-driven order: (1) infer-table hash map +
+  integer node-ID keys; (2) no-copy structs; (3) hash-index codegen tables;
+  (4) parse each import once; (5) checker snapshots last; (6) incremental deferred.
+  Estimate (1)+(2)+(3): codegen-wrap ~390s → ~100–150s, check-wrap ~70s → ~25–35s.
+- Step 2 IN FLIGHT: infer-table hash map + integer node-ID keys.
+  Each step timed before/after + full re-verification (suite 168/16 identical,
+  corpus 99/99, regression 62/62, parity 68/68, bootstrap 7/7). No release
+  until Jayant says so.
 
 ## Rules
 - Each slice is verified against the Python compiler before

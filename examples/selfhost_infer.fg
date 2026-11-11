@@ -1,10 +1,26 @@
 // Hosted type-inference pass for codegen (slice 4, stage 4a).
 // Mirrors forge_lang/infer.py: runs AFTER a successful check on an
 // already-valid program, never fails, degrades to "int" / "void".
-// Output: a type table keyed by node position ("line:col" -> type
-// string), since Qasida has no object identity. The hosted codegen
+// Output: a type table keyed by INTEGER node id, held in an open-
+// addressing hash map (map_keys/map_vals/map_seq, see infer_map_*
+// below), since Qasida has no object identity. The hosted codegen
 // queries it through infer_type_of; a missing key returns "int"
 // (exactly Python's self._types.get(id(expr), "int")).
+// Key encoding (speed step 2, replaces the old "fn:line:col"
+// strings and their per-call itoa building): one int per node,
+//   concrete: (fn_idx+1) * 10^12 + line * 10^6 + col
+//   template: line * 10^6 + col            (fn_idx = -1)
+//   bare/unset (fn_idx = -2): negative, never stored, always misses.
+// fn_idx is the index of the enclosing function in fn_names /
+// func_names (same list, same order, in infer and codegen); it is
+// resolved ONCE per function into current_fn_idx, never per node.
+// The encoding is injective over (fn, line, col) for line < 10^6
+// and col < 10^6, so it preserves the old keys' collision
+// behaviour exactly (two nodes sharing fn+position still share a
+// key, last-wins). Template keys (< 10^12) can never collide with
+// concrete keys (>= 10^12); the template-mode infer_set_key
+// orphan ("T:fn:..." under the old strings) lives at key + 10^17,
+// which no lookup ever queries — same unreachability as before.
 // Stage 4a implements the full S1 walk (literals, Var, Let, BinOp
 // incl. the fixed-int literal adaptation, Call, Return, ExprStmt,
 // plus ArrayLit/TupleLit/RangeLit/UnaryOp/Index/Cast/Try/FieldAccess/
@@ -27,15 +43,31 @@ struct HInfer {
     payload_types: [str];
     trait_names: [str];
     trait_methods: [str];
-    type_keys: [str];
-    type_vals: [str];
+    // Type table (speed step 2): open-addressing hash map keyed by
+    // integer node id (see infer_key_int). map_keys holds the key
+    // or -1 for an empty bucket; map_vals the type; map_seq the
+    // first-insertion sequence (so the collect pass can replay
+    // insertion order — typedef order must match Python's).
+    // map_cap is always a power of two; load stays under 0.7.
+    // Buckets are mutated by INDEX ASSIGNMENT (in place, no
+    // copy-on-write — see forge_int_set), never by push, so a put
+    // is O(1) amortised instead of the old O(n) CoW array copy.
+    map_keys: [int];
+    map_vals: [str];
+    map_seq: [int];
+    map_cap: int;
+    map_len: int;
     scope_names: [str];
     scope_types: [str];
     scope_marks: [int];
+    // Logical length of scope_names/scope_types (speed step 2):
+    // scopes pop by resetting this, O(1), instead of rebuilding
+    // both arrays (infer_trunc_str). Slots at [scope_len, len)
+    // are stale; declare overwrites them before pushing.
+    scope_len: int;
     current_ret: str;
     // 4d: positions walked under a generic template body, so the
     // collect pass can tell template mentions apart from uses.
-    template_keys: [str];
     in_template: bool;
     // Bootstrap: the function whose body is being walked, so type
     // keys are "fn:line:col". Bare "line:col" keys collide across
@@ -43,17 +75,32 @@ struct HInfer {
     // table_get is last-wins, so the later file's type shadowed
     // the earlier one's — e.g. parse's p.kinds read as [str]).
     current_fn: str;
+    // Index of current_fn in fn_names (speed step 2; -2 = unset,
+    // so lookups miss exactly like the old bare "line:col" key).
+    current_fn_idx: int;
     // Empty array literals whose element type is not yet known
     // (the infer pass's mirror of the checker's unresolved list):
     // a let with an empty ArrayLit init and no annotation records
     // its name and the literal node's infer key here; a later
     // constraining use resolves it to a concrete array type.
     unres_names: [str];
-    unres_keys: [str];
+    unres_keys: [int];
 }
 
 fn infer_new() -> HInfer {
-    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false, current_fn: "", unres_names: [], unres_keys: [] };
+    // Pre-fill the map buckets (cap 1024, power of two); -1 marks
+    // an empty bucket, since every stored key is >= 0.
+    let mut mk: [int] = [];
+    let mut mv: [str] = [];
+    let mut ms: [int] = [];
+    let mut i: int = 0;
+    while i < 1024 {
+        push(mk, -1);
+        push(mv, "");
+        push(ms, -1);
+        i = i + 1;
+    }
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], map_keys: mk, map_vals: mv, map_seq: ms, map_cap: 1024, map_len: 0, scope_names: [], scope_types: [], scope_marks: [], scope_len: 0, current_ret: "void", in_template: false, current_fn: "", current_fn_idx: -2, unres_names: [], unres_keys: [] };
 }
 
 // First index of needle in hay (needle may be multi-char), or -1.
@@ -75,7 +122,8 @@ fn infer_find_str(hay: str, needle: str) -> int {
 
 // Linear scan of parallel key/value arrays; last match wins so a
 // re-walked node (move / weak_upgrade double-walk) keeps its latest
-// type. Missing key returns the default.
+// type. Missing key returns the default. Only the small payload
+// table still uses this (the type table is the hash map below).
 fn infer_table_get(keys: [str], vals: [str], k: str, dflt: str) -> str {
     let mut out: str = dflt;
     let mut i: int = 0;
@@ -120,56 +168,166 @@ fn infer_trunc_int(a0: [int], n: int) -> [int] {
     return out;
 }
 
-// "line:col" key for a node (own itoa via the checker: int_to_str
-// is stdlib, not a builtin). With a function name it is the
-// collision-proof "fn:line:col" key; "" keeps the bare form for
-// template ("T:") keys, which are already prefixed.
-fn infer_key(n: Node, fname: str) -> str {
-    if fname == "" {
-        return itoa(n.line) + ":" + itoa(n.col);
-    }
-    return fname + ":" + itoa(n.line) + ":" + itoa(n.col);
+// ---- Integer node-id keys + hash map (speed step 2) ----
+// Replaces the old "fn:line:col" strings (built per call with
+// itoa) and the full linear scan in infer_table_get (~1e9 string
+// compares on the check-wrap case). Key layout, all non-negative
+// for stored keys (fn_idx -2 gives a negative key: never stored,
+// always misses):
+//   (fn_idx + 1) * 10^12 + line * 10^6 + col
+// fn_idx -1 is the template key (line * 10^6 + col); fn_idx >= 0
+// is concrete. Requires line < 10^6 and col < 10^6 (source lines
+// are far shorter) and fn_idx + 1 < 10^5 (a few hundred functions
+// in the largest case), so concrete keys stay below 10^17.
+fn infer_key_int(fn_idx: int, line: int, col: int) -> int {
+    return (fn_idx + 1) * 1000000000000 + line * 1000000 + col;
 }
 
-// Record a node's type. Append-only: duplicate keys cannot occur
+// True for keys the collect pass must skip: template entries
+// (< 10^12) and the template-mode infer_set_key orphans
+// (>= 10^17) — exactly the old template_keys membership test,
+// O(1) instead of a linear scan per entry.
+fn infer_key_is_template(k: int) -> bool {
+    return k < 1000000000000 || k >= 100000000000000000;
+}
+
+// Index of a function name in fn_names, or -2 when absent (a
+// mangled instantiation name, or "" outside any function): its
+// lookups miss, exactly like the old unmatched "fn:line:col" key.
+fn infer_fn_index(h: HInfer, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(h.fn_names) {
+        if h.fn_names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -2;
+}
+
+// Xor-shift mix (no multiply: keys reach ~10^15, so a Knuth
+// multiply would overflow int64). Keys are >= 0, so the result
+// stays >= 0 and bucket = hash & (cap - 1) is valid.
+fn infer_map_hash(k: int) -> int {
+    let mut x: int = k;
+    x = x ^ (x >> 32);
+    x = x ^ (x >> 16);
+    x = x ^ (x >> 8);
+    return x;
+}
+
+// Value for key k, or dflt when absent. Negative keys miss.
+fn infer_map_get(keys: [int], vals: [str], cap: int, k: int, dflt: str) -> str {
+    if k < 0 || cap == 0 {
+        return dflt;
+    }
+    let mut i: int = infer_map_hash(k) & (cap - 1);
+    while keys[i] != -1 {
+        if keys[i] == k {
+            return vals[i];
+        }
+        i = (i + 1) & (cap - 1);
+    }
+    return dflt;
+}
+
+// Double the buckets and rehash (load stays under 0.7). The new
+// arrays are fresh (refcount 1), so building them with push and
+// index assignment is in place; the old arrays are released when
+// the caller's stale copy is reassigned.
+fn infer_map_grow(h0: HInfer) -> HInfer {
+    let mut h: HInfer = h0;
+    let ncap: int = h.map_cap * 2;
+    let mut nk: [int] = [];
+    let mut nv: [str] = [];
+    let mut ns: [int] = [];
+    let mut i: int = 0;
+    while i < ncap {
+        push(nk, -1);
+        push(nv, "");
+        push(ns, -1);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < h.map_cap {
+        if h.map_keys[j] != -1 {
+            let k: int = h.map_keys[j];
+            let mut b: int = infer_map_hash(k) & (ncap - 1);
+            while nk[b] != -1 {
+                b = (b + 1) & (ncap - 1);
+            }
+            nk[b] = k;
+            nv[b] = h.map_vals[j];
+            ns[b] = h.map_seq[j];
+        }
+        j = j + 1;
+    }
+    h.map_keys = nk;
+    h.map_vals = nv;
+    h.map_seq = ns;
+    h.map_cap = ncap;
+    return h;
+}
+
+// Insert or overwrite (last-wins, like the old append + full-scan
+// get). First insertion records the insertion sequence so the
+// collect pass can replay insertion order. Buckets are written by
+// index assignment — in place on the shared buffer, no
+// copy-on-write — which is observably identical here because the
+// infer walk always threads h sequentially (h = f(h, ...)) and
+// never reuses a pre-call copy after a put.
+fn infer_map_put(h0: HInfer, k: int, v: str) -> HInfer {
+    let mut h: HInfer = h0;
+    if (h.map_len + 1) * 10 > h.map_cap * 7 {
+        h = infer_map_grow(h);
+    }
+    let mut i: int = infer_map_hash(k) & (h.map_cap - 1);
+    while h.map_keys[i] != -1 && h.map_keys[i] != k {
+        i = (i + 1) & (h.map_cap - 1);
+    }
+    if h.map_keys[i] == -1 {
+        h.map_seq[i] = h.map_len;
+        h.map_len = h.map_len + 1;
+    }
+    h.map_keys[i] = k;
+    h.map_vals[i] = v;
+    return h;
+}
+
+// Record a node's type. Last-wins: duplicate keys cannot occur
 // for distinct nodes, and re-walks set the same type again.
 fn infer_set(h0: HInfer, n: Node, t: str) -> HInfer {
     let mut h: HInfer = h0;
-    // Template-walk entries live under a "T:"-prefixed key (4d fix
+    // Template-walk entries live under a template key (4d fix
     // for the v32 regression): infer keys are line:col only, and
     // merged imports keep per-file positions, so a template node
     // can share a key with a concrete node in another file
     // (opt_some's `v` at 15:42 vs v32's literal `0` at 15:42).
     // An unprefixed template entry recorded last would shadow the
     // concrete type ("T" over "int") and corrupt codegen.
-    // Prefixed keys can never collide with concrete keys.
+    // Template keys (< 10^12) can never collide with concrete keys.
     if h.in_template {
-        push(h.type_keys, "T:" + infer_key(n, ""));
-        push(h.type_vals, t);
-        push(h.template_keys, "T:" + infer_key(n, ""));
-    } else {
-        push(h.type_keys, infer_key(n, h.current_fn));
-        push(h.type_vals, t);
+        return infer_map_put(h, infer_key_int(-1, n.line, n.col), t);
     }
-    return h;
+    return infer_map_put(h, infer_key_int(h.current_fn_idx, n.line, n.col), t);
 }
 
 // The inferred type of a node; missing key -> "int".
 fn infer_type_of(h: HInfer, n: Node) -> str {
-    // Inside a template walk, template entries (prefixed "T:")
-    // win over any concrete entry sharing the line:col key.
+    // Inside a template walk, template entries win over any
+    // concrete entry sharing the line:col key.
     if h.in_template {
-        let t: str = infer_table_get(h.type_keys, h.type_vals, "T:" + infer_key(n, ""), "");
+        let t: str = infer_map_get(h.map_keys, h.map_vals, h.map_cap, infer_key_int(-1, n.line, n.col), "");
         if t != "" {
             return t;
         }
     }
-    return infer_table_get(h.type_keys, h.type_vals, infer_key(n, h.current_fn), "int");
+    return infer_map_get(h.map_keys, h.map_vals, h.map_cap, infer_key_int(h.current_fn_idx, n.line, n.col), "int");
 }
 
 fn infer_push_scope(h0: HInfer) -> HInfer {
     let mut h: HInfer = h0;
-    push(h.scope_marks, len(h.scope_names));
+    push(h.scope_marks, h.scope_len);
     return h;
 }
 
@@ -177,24 +335,34 @@ fn infer_pop_scope(h0: HInfer) -> HInfer {
     let mut h: HInfer = h0;
     let mark: int = h.scope_marks[len(h.scope_marks) - 1];
     h.scope_marks = infer_trunc_int(h.scope_marks, len(h.scope_marks) - 1);
-    h.scope_names = infer_trunc_str(h.scope_names, mark);
-    h.scope_types = infer_trunc_str(h.scope_types, mark);
+    // O(1) pop: the names/types arrays keep their stale slots and
+    // the logical length drops back to the mark (declare
+    // overwrites stale slots before it ever pushes).
+    h.scope_len = mark;
     return h;
 }
 
-// Bind name -> t in the innermost scope. Append-only: lookup scans
-// from the end, so a redeclare in the same scope shadows correctly
-// and both entries vanish when the scope pops.
+// Bind name -> t in the innermost scope. Append-only while the
+// scope grows; after a pop, declare overwrites the stale slots
+// left behind, so the arrays never rebuild. Lookup scans only
+// the live prefix [0, scope_len), so a redeclare in the same
+// scope shadows correctly and both entries vanish on pop.
 fn infer_declare(h0: HInfer, name: str, t: str) -> HInfer {
     let mut h: HInfer = h0;
-    push(h.scope_names, name);
-    push(h.scope_types, t);
+    if len(h.scope_names) > h.scope_len {
+        h.scope_names[h.scope_len] = name;
+        h.scope_types[h.scope_len] = t;
+    } else {
+        push(h.scope_names, name);
+        push(h.scope_types, t);
+    }
+    h.scope_len = h.scope_len + 1;
     return h;
 }
 
 // Innermost scope outward, then enum-variant name, else "int".
 fn infer_lookup(h: HInfer, name: str) -> str {
-    let mut i: int = len(h.scope_names) - 1;
+    let mut i: int = h.scope_len - 1;
     while i >= 0 {
         if h.scope_names[i] == name {
             return h.scope_types[i];
@@ -210,17 +378,18 @@ fn infer_lookup(h: HInfer, name: str) -> str {
 
 // Set a node's type by its infer key (last-wins in the table,
 // so this overrides the "[?]" the literal node got at its let).
-fn infer_set_key(h0: HInfer, key: str, t: str) -> HInfer {
+// In a template walk the old code stored under "T:" + key, a key
+// no lookup ever queries (the template lookup uses the bare
+// line:col key, the concrete lookup the unprefixed key); the int
+// form preserves that unreachability exactly by storing at
+// key + 10^17, which is outside both the template (< 10^12) and
+// the concrete (< 10^17) ranges.
+fn infer_set_key(h0: HInfer, key: int, t: str) -> HInfer {
     let mut h: HInfer = h0;
     if h.in_template {
-        push(h.type_keys, "T:" + key);
-        push(h.type_vals, t);
-        push(h.template_keys, "T:" + key);
-    } else {
-        push(h.type_keys, key);
-        push(h.type_vals, t);
+        return infer_map_put(h, key + 100000000000000000, t);
     }
-    return h;
+    return infer_map_put(h, key, t);
 }
 
 // Concrete array type: starts with "[", ends with "]", and holds
@@ -273,7 +442,7 @@ fn infer_resolve_empty(h0: HInfer, name: str, concrete: str) -> HInfer {
     h = infer_set_key(h, h.unres_keys[idx], concrete);
     h = infer_declare(h, name, concrete);
     let mut nn: [str] = [];
-    let mut nk: [str] = [];
+    let mut nk: [int] = [];
     let mut k: int = 0;
     while k < len(h.unres_names) {
         if k != idx {
@@ -779,7 +948,7 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
             // Empty literal, no annotation: its element type is
             // unresolved until a constraining use resolves it.
             push(h.unres_names, st.name);
-            push(h.unres_keys, infer_key(init, h.current_fn));
+            push(h.unres_keys, infer_key_int(h.current_fn_idx, init.line, init.col));
         }
         if st.sval != "" && init.kind == 34 {
             // An annotated let constrains an unresolved array
@@ -1454,7 +1623,8 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
 }
 
 // Entry point: build the tables, walk every non-extern,
-// non-generic function body. type_keys/type_vals are the output.
+// non-generic function body. The map (map_keys/map_vals/map_seq)
+// is the output.
 fn run_infer(prog: Node) -> HInfer {
     let mut p: Node = expand_aliases_prog(prog);
     let mut h: HInfer = infer_new();
@@ -1467,9 +1637,9 @@ fn run_infer(prog: Node) -> HInfer {
             // are walked too (4d): their body types carry type
             // params (T, [T]); codegen substitutes per instantiation
             // at lookup time. Positions walked under a template are
-            // recorded in template_keys so the collect pass does not
-            // register their types as used (Python only instantiates
-            // types actually used by a concrete body).
+            // recorded under template keys, so the collect pass
+            // does not register their types as used (Python only
+            // instantiates types actually used by a concrete body).
             if !n.bval {
                 let sp: [str] = split_tparams(n.name);
                 if sp[1] != "" {
@@ -1477,11 +1647,11 @@ fn run_infer(prog: Node) -> HInfer {
                 }
                 h.current_ret = n.sval;
                 h.current_fn = n.name;
-                h.scope_names = infer_trunc_str(h.scope_names, 0);
-                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.current_fn_idx = infer_fn_index(h, n.name);
+                h.scope_len = 0;
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 h.unres_names = infer_trunc_str(h.unres_names, 0);
-                h.unres_keys = infer_trunc_str(h.unres_keys, 0);
+                h.unres_keys = infer_trunc_int(h.unres_keys, 0);
                 h = infer_push_scope(h);
                 let mut j: int = 0;
                 while j < len(n.kids) {
@@ -1493,8 +1663,7 @@ fn run_infer(prog: Node) -> HInfer {
                 }
                 let body: Node = n.kids[len(n.kids) - 1];
                 h = infer_walk_block(h, body);
-                h.scope_names = infer_trunc_str(h.scope_names, 0);
-                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_len = 0;
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 h.in_template = false;
             }
@@ -1510,11 +1679,11 @@ fn run_infer(prog: Node) -> HInfer {
                 // Struct__method name (codegen cg_gen_func_named),
                 // so their type keys use that name too.
                 h.current_fn = n.name + "__" + m.name;
-                h.scope_names = infer_trunc_str(h.scope_names, 0);
-                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.current_fn_idx = infer_fn_index(h, n.name + "__" + m.name);
+                h.scope_len = 0;
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 h.unres_names = infer_trunc_str(h.unres_names, 0);
-                h.unres_keys = infer_trunc_str(h.unres_keys, 0);
+                h.unres_keys = infer_trunc_int(h.unres_keys, 0);
                 h = infer_push_scope(h);
                 let mut k: int = 0;
                 while k < len(m.kids) {
@@ -1526,8 +1695,7 @@ fn run_infer(prog: Node) -> HInfer {
                 }
                 let body: Node = m.kids[len(m.kids) - 1];
                 h = infer_walk_block(h, body);
-                h.scope_names = infer_trunc_str(h.scope_names, 0);
-                h.scope_types = infer_trunc_str(h.scope_types, 0);
+                h.scope_len = 0;
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 j = j + 1;
             }

@@ -26,6 +26,13 @@ docs/TOP_500_FEATURES.md be added to Qasida.
 - PARTIAL: 66 (thin versions to complete)
 - GAP: 396 (missing)
 - To build: 462
+- Correction 11 Nov 2026 (count reconciliation, verified against the
+  pushed catalog at 7707d172 / be8b464 / de3db0e7): the starting
+  PARTIAL/GAP split above was miscounted — true starting counts are
+  HAVE 38, PARTIAL 69, GAP 393, to build 462. The batch log's
+  "Counts after" lines below keep their contemporary (tally) numbers;
+  the corrected running totals are in the reconciliation entry after
+  #40.
 
 ## Batch log
 - Batch 1 (31 Oct 2026): #15 binary/octal literals + digit
@@ -667,3 +674,32 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   SPENT — further pushes need Jayant's fresh word. Next in
   priority: #42 error wrapping with context (#41 is already
   HAVE).
+
+- Count reconciliation (11 Nov 2026, pipeline run — docs only, no
+  compiler change, no suite run: the compiler speed program was
+  profiling wall-clock timings in the same window, so no compiler
+  work was done this run). The catalog entry lines are the source of
+  truth; the tally had drifted from them. True counts now: HAVE 71,
+  PARTIAL 62, GAP 367, to build 429. Three causes, each verified
+  against the pushed catalog at 7707d172 (1 Nov), be8b464 (5 Nov)
+  and de3db0e7 (11 Nov, current main) — all three snapshots
+  reproduce exactly from the corrected start below:
+  (1) the 31 Oct starting counts miscounted the PARTIAL/GAP split
+  (recorded PARTIAL 66 / GAP 396; true PARTIAL 69 / GAP 393; HAVE
+  38 and to-build 462 were right);
+  (2) #30 lifetime-ordered placement was already tagged [HAVE] in
+  the 31 Oct catalog ("Already borrowed as the kernel allocator;
+  promote it to an allocator API"), so batch 24 promoted it to a
+  stdlib API without moving the counts — the tally counted it as a
+  new GAP-to-HAVE;
+  (3) #39 was [PARTIAL] before its batch ("The freestanding flag
+  exists; enforce the rule at compile time"), so its landing was
+  PARTIAL-to-HAVE, not GAP-to-HAVE. Corrected running totals: after
+  batch 20, HAVE 61 / PARTIAL 61 / GAP 378; after batch 27, HAVE 64
+  / PARTIAL 63 / GAP 373; after #40, HAVE 71 / PARTIAL 62 / GAP 367.
+  (#27 is NOT an error: its [HAVE] tag at 7707d172 came with batch
+  21's own edit, and counting it GAP-to-HAVE reproduces the
+  snapshots exactly.) The drift flag is closed; quote HAVE 71,
+  PARTIAL 62, GAP 367. Next in priority: #42 error wrapping with
+  context — BLOCKED on Jayant's pick (new syntax vs helper function
+  vs Result method).
