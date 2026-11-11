@@ -1,0 +1,4 @@
+# Qasida source files (.fg) — GitHub's Linguist doesn't recognise .fg,
+# so it was invisible in the language breakdown (Python showed 97.1%).
+# Map .fg to Go, the closest syntax, until Qasida is added to Linguist.
+*.fg linguist-language=Go
