@@ -49,6 +49,12 @@ import "selfhost_codegen_header.fg";
 
 struct HCodegen {
     lines: [str];
+    // Logical length of lines (speed step 3): lines is pre-grown
+    // to capacity and appended by INDEX ASSIGNMENT (in place, no
+    // copy-on-write — see cg_emit_raw), never by push. Slots at
+    // [lines_len, len) hold "" placeholders; cg_generate joins
+    // only the first lines_len entries.
+    lines_len: int;
     indent: int;
     current_fn: str;
     current_ret: str;
@@ -170,7 +176,7 @@ struct CGExpr {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    return HCodegen { lines: [], indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2 };
+    return HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2 };
 }
 
 // Index of a function name in func_names, or -2 when absent (a
@@ -616,13 +622,56 @@ fn cg_indent_str(n: int) -> str {
     return out;
 }
 
+// Speed step 3: lines is a pre-grown buffer appended by index
+// assignment (see cg_emit_raw). push() on a shared [str] array is
+// copy-on-write — it strdups every element already in the array —
+// so pushing one line per cg_emit call made emission quadratic:
+// on the check-wrap case ~22k lines cost ~246M strdups inside
+// forge_str_push (97% of all forge_copy_str calls, gprof). Index
+// assignment writes in place (forge_str_set, one strdup of the
+// new line only), so emission is linear. Growth doubles capacity
+// and copies elements once per grow (fresh copies via a[i] reads),
+// O(N) total.
+fn cg_lines_grow(a0: [str], n: int) -> [str] {
+    let mut cap: int = len(a0);
+    if cap == 0 {
+        cap = 1024;
+    } else {
+        cap = cap * 2;
+    }
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, a0[i]);
+        i = i + 1;
+    }
+    while i < cap {
+        push(out, "");
+        i = i + 1;
+    }
+    return out;
+}
+
+// Raw line append: no indent, no empty-line special case — the
+// caller supplies the exact line. Grows lines (doubling) when the
+// logical length reaches capacity, then writes in place.
+fn cg_emit_raw(g0: HCodegen, text: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    if g.lines_len >= len(g.lines) {
+        g.lines = cg_lines_grow(g.lines, g.lines_len);
+    }
+    g.lines[g.lines_len] = text;
+    g.lines_len = g.lines_len + 1;
+    return g;
+}
+
 // emit(): one indented C line, or "" for an empty line.
 fn cg_emit(g0: HCodegen, text: str) -> HCodegen {
     let mut g: HCodegen = g0;
     if text == "" {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     } else {
-        push(g.lines, cg_indent_str(g.indent) + text);
+        g = cg_emit_raw(g, cg_indent_str(g.indent) + text);
     }
     return g;
 }
@@ -6116,7 +6165,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     }
     g.indent = g.indent - 1;
     g = cg_emit(g, "}");
-    push(g.lines, "");
+    g = cg_emit_raw(g, "");
     g.current_fn = "";
     g.current_fn_idx = -2;
     g.drop_receiver = "";
@@ -6128,9 +6177,9 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
 fn cg_generate(g0: HCodegen, prog: Node) -> str {
     let mut g: HCodegen = g0;
     if g.freestanding {
-        push(g.lines, cg_freestanding_header());
+        g = cg_emit_raw(g, cg_freestanding_header());
     } else {
-        push(g.lines, cg_header());
+        g = cg_emit_raw(g, cg_header());
     }
     // Enums: non-payload enums as C enums, in program order.
     let mut i: int = 0;
@@ -6186,7 +6235,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         ei = ei + 1;
     }
     if len(g.enum_names) > 0 {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Struct forward decls (concrete only).
     i = 0;
@@ -6225,11 +6274,11 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         ui = ui + 1;
     }
     if len(unions) > 0 {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Ranges: emitted unconditionally.
     g = cg_emit(g, "typedef struct { long long start; long long end; } ForgeRange;");
-    push(g.lines, "");
+    g = cg_emit_raw(g, "");
     // Tuple + opaque forward typedefs.
     let tuples: [str] = cg_sorted_mode(g.tuple_types, 1);
     if g.freestanding {
@@ -6283,7 +6332,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         ni = ni + 1;
     }
     if has_structs || len(nested) > 0 {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Composite bodies (structs, tuples, opaques) in dependency
     // order: a value field needs its type complete.
@@ -6428,7 +6477,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         remaining = nxt;
     }
     if emitted_any {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Per-struct array helpers: free / get / set / get_fast /
     // set_fast / push. Skipped in freestanding mode: arrays
@@ -6524,7 +6573,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         i = i + 1;
     }
     if has_structs {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Function forward decls: top-level functions first (the
     // checker appends impl methods after them), then impl
@@ -6571,7 +6620,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         }
         i = i + 1;
     }
-    push(g.lines, "");
+    g = cg_emit_raw(g, "");
     // Opaque copy/free helpers, one per trait with implementations.
     oi = 0;
     while oi < len(opaque_traits) {
@@ -6611,7 +6660,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         oi = oi + 1;
     }
     if len(opaque_traits) > 0 {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Thread wrappers for every spawned function.
     let mut wi: int = 0;
@@ -6627,7 +6676,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         wi = wi + 1;
     }
     if len(g.spawn_names) > 0 {
-        push(g.lines, "");
+        g = cg_emit_raw(g, "");
     }
     // Function bodies: top-level functions first, then impl
     // methods under their mangled names.
@@ -6692,7 +6741,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
             g = cg_emit(g, "}");
         }
     }
-    return join(g.lines, "\n");
+    return join(cg_trunc_str(g.lines, g.lines_len), "\n");
 }
 
 // ---- generic instantiations (4d) ----
