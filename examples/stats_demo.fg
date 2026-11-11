@@ -1,0 +1,15 @@
+// Plain stats demo — daily-ten 11 Nov 2026 (library track).
+// Verifies sum/min/max/variance/stddev/median from stats.fg
+// (the plain-function stats module, distinct from statistics.fg)
+// on [1,2,2,3,4,5,5,5,6]; reference values are float32.
+import "stats.fg";
+
+fn main() {
+    let xs: [float] = [1.0, 2.0, 2.0, 3.0, 4.0, 5.0, 5.0, 5.0, 6.0];
+    println(sum_float(xs));
+    println(min_float(xs));
+    println(max_float(xs));
+    println(variance(xs));
+    println(stddev(xs));
+    println(median(xs));
+}

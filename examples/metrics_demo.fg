@@ -1,0 +1,28 @@
+// Evaluation metrics demo — daily-ten 11 Nov 2026 (library track).
+// Verifies accuracy, confusion matrix, per-class precision/recall/F1,
+// MSE, MAE, R-squared and perplexity against float32 reference values.
+import "metrics.fg";
+
+fn main() {
+    let pred: [int] = [1, 0, 1, 1, 0];
+    let labels: [int] = [1, 0, 0, 1, 0];
+    println(accuracy(pred, labels));
+    let cm: [int] = confusion(pred, labels, 2);
+    println(cm[0]);
+    println(cm[1]);
+    println(cm[2]);
+    println(cm[3]);
+    let p: [float] = prf(cm, 2);
+    println(p[0]);
+    println(p[1]);
+    println(p[2]);
+    println(p[3]);
+    println(p[4]);
+    println(p[5]);
+    let pf: [float] = [1.0, 2.0, 3.0];
+    let actual: [float] = [1.0, 2.0, 4.0];
+    println(mse(pf, actual));
+    println(mae(pf, actual));
+    println(r2(pf, actual));
+    println(perplexity(1.0));
+}

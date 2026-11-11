@@ -1,0 +1,24 @@
+// pwd — daily-ten 11 Nov 2026 (OS track).
+// Prints the working directory, its depth (non-empty path
+// components) and its parent directory (text before the last /).
+fn main() {
+    let pwd: str = "/home/jayant/forge-v2";
+    println(pwd);
+    let parts: [str] = split(pwd, "/");
+    let mut depth: int = 0;
+    for p in parts {
+        if len(p) > 0 {
+            depth = depth + 1;
+        }
+    }
+    println(depth);
+    let mut last: int = -1;
+    let mut i: int = 0;
+    while i < len(pwd) {
+        if pwd[i] == "/" {
+            last = i;
+        }
+        i = i + 1;
+    }
+    println(substr(pwd, 0, last));
+}

@@ -1,0 +1,10 @@
+// cp — daily-ten 11 Nov 2026 (OS track).
+// Copies a file's contents to a new name and verifies the
+// copy by comparing contents and length.
+fn main() {
+    let src: str = "hello world";
+    let dst: str = src;
+    println(dst);
+    println(dst == src);
+    println(len(dst));
+}

@@ -436,6 +436,23 @@ fn cg_structlit_concrete(g: HCodegen, e: Node) -> str {
 // name for plain enums, "Base<a, b>" for generic enums, unified
 // from the payload argument (mirrors enum_concrete_info).
 fn cg_enum_concrete_call(g: HCodegen, e: Node) -> str {
+    // The infer pass fills a variant's concrete type from its
+    // constraining use (annotated let, call arg, return); when it
+    // did, that type wins — payload unification alone cannot see
+    // it (a bare variant has no payload; a multi-param enum may
+    // leave params unconstrained). Only a concrete (no "?")
+    // generic type in a concrete function (no template
+    // substitution) qualifies; anything else falls through to
+    // payload unification below. During the collect pass
+    // current_fn is unset, so the lookup misses and the fallback
+    // runs — harmless, the type is registered from the infer
+    // table's values instead.
+    if len(g.subst_names) == 0 {
+        let it: str = infer_table_get(g.type_keys, g.type_vals, infer_key(e, g.current_fn), "");
+        if it != "" && find_lt(it) >= 0 && len(split(it, "?")) == 1 {
+            return it;
+        }
+    }
     let v: [str] = cg_variant_lookup(g, e.name);
     let ename: str = v[1];
     let tps: str = cg_enum_tparams(g, ename);
@@ -2727,6 +2744,29 @@ fn cg_collect_type(g0: HCodegen, t: str) -> HCodegen {
 // instantiates types actually used).
 fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
     let mut g: HCodegen = g0;
+    // BinOp spine: walk iteratively, innermost-first (a chain
+    // of N terms recursed N deep at ~34KB/frame, overflowing
+    // the 8MB C stack at ~200 terms). The visit order is exactly
+    // the recursion's: leftmost operand, then each right operand
+    // innermost-first. BinOp nodes carry no per-node work (the
+    // kind branches below are 2/31/35/39/10/21), so only the
+    // operands are walked; a right operand that is itself a
+    // chain re-enters this branch and flattens too.
+    if node.kind == 40 {
+        let mut spine: [Node] = [];
+        let mut cur: Node = node;
+        while cur.kind == 40 {
+            push(spine, cur);
+            cur = cur.kids[0];
+        }
+        g = cg_collect_walk(g, cur);
+        let mut i: int = len(spine) - 1;
+        while i >= 0 {
+            g = cg_collect_walk(g, spine[i].kids[1]);
+            i = i - 1;
+        }
+        return g;
+    }
     if node.kind == 2 {
         let sp: [str] = split_tparams(node.name);
         if sp[1] != "" {
@@ -3432,6 +3472,16 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         }
     }
     if e.kind == 25 {
+        // Int literal: Python emits the decimal value + "LL".
+        // A base-10 literal above i64 max saturates its ival, so
+        // emit the true decimal text for those (the C literal
+        // then has the same value Python emits); anything else
+        // emits the ival (exact, and octal-safe: a source "010"
+        // means decimal 10, while C "010" would mean octal 8).
+        let digs: str = int_lit_digits(e);
+        if digs != "" && !dec_le(digs, "9223372036854775807") {
+            return CGExpr { g: g, code: digs + "LL" };
+        }
         return CGExpr { g: g, code: itoa(e.ival) + "LL" };
     }
     if e.kind == 26 {
@@ -5549,7 +5599,15 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_facts_clear(g);
             return g;
         }
-        let et: str = elem_type(at);
+        // A readonly view iterates like the array it views: the
+        // element type comes from the inner array (the checker
+        // unwraps the same way; codegen must too, or elem_type
+        // fails on the readonly spelling).
+        let mut at2: str = at;
+        if is_readonly(at2) {
+            at2 = cg_readonly_inner(at2);
+        }
+        let et: str = elem_type(at2);
         push(g.local_names, st.name);
         push(g.local_types, et);
         let n: int = g.arr_counter;
@@ -6750,6 +6808,26 @@ fn cg_register_inst(g0: HCodegen, prog: Node, base: str, b: CGBind) -> HCodegen 
 // arguments before instantiating the callee).
 fn cg_collect_inst_walk(g0: HCodegen, prog: Node, node: Node) -> HCodegen {
     let mut g: HCodegen = g0;
+    // BinOp spine: walk iteratively, innermost-first (same stack
+    // reason as cg_collect_walk: ~18KB/frame over a chain of N
+    // terms). Visit order matches the recursion (leftmost
+    // operand, then each right operand innermost-first); spine
+    // nodes carry no own work (only kind-35 calls register).
+    if node.kind == 40 {
+        let mut spine: [Node] = [];
+        let mut cur: Node = node;
+        while cur.kind == 40 {
+            push(spine, cur);
+            cur = cur.kids[0];
+        }
+        g = cg_collect_inst_walk(g, prog, cur);
+        let mut i: int = len(spine) - 1;
+        while i >= 0 {
+            g = cg_collect_inst_walk(g, prog, spine[i].kids[1]);
+            i = i - 1;
+        }
+        return g;
+    }
     let mut i: int = 0;
     while i < len(node.kids) {
         g = cg_collect_inst_walk(g, prog, node.kids[i]);
@@ -6810,10 +6888,11 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
 
 // Entry point: infer + generate, mode safe.
 fn codegen_program(prog: Node, inf: HInfer, freestanding: bool) -> str {
+    let mut p: Node = expand_aliases_prog(prog);
     let mut g: HCodegen = cg_new(inf);
     g.freestanding = freestanding;
-    g = cg_build_tables(g, prog);
-    g = cg_collect_instantiations(g, prog);
-    g = cg_collect(g, prog);
-    return cg_generate(g, prog);
+    g = cg_build_tables(g, p);
+    g = cg_collect_instantiations(g, p);
+    g = cg_collect(g, p);
+    return cg_generate(g, p);
 }

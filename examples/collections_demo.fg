@@ -1,0 +1,30 @@
+// Small collections demo — daily-ten 11 Nov 2026 (library track).
+// Verifies IntStack push/pop/top/len, IntSet dedup add/has/len,
+// and StrSet add/has — all return-new-value wrappers, so every
+// mutating call is reassigned.
+import "collections.fg";
+
+fn main() {
+    let mut st: IntStack = stack_new();
+    st = stack_push(st, 10);
+    st = stack_push(st, 20);
+    st = stack_push(st, 30);
+    println(stack_len(st));
+    println(stack_top(st));
+    st = stack_pop(st);
+    println(stack_top(st));
+    println(stack_len(st));
+    let mut s: IntSet = set_new();
+    s = set_add(s, 5);
+    s = set_add(s, 7);
+    s = set_add(s, 5);
+    println(set_len(s));
+    println(set_has(s, 7));
+    println(set_has(s, 9));
+    let mut ss: StrSet = strset_new();
+    ss = strset_add(ss, "qasida");
+    ss = strset_add(ss, "forge");
+    ss = strset_add(ss, "qasida");
+    println(strset_has(ss, "forge"));
+    println(len(ss.items));
+}

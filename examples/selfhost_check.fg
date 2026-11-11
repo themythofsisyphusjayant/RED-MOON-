@@ -34,12 +34,34 @@ struct HChecker {
     var_pinned: [bool];
     // Field paths moved by move(p.field), e.g. "p.x".
     moved_fields: [str];
+    // Field path being written by a FieldAssign (Python:
+    // _moved_field_target) — the moved-field check must not
+    // fire on the target path itself while it is being revived.
+    moved_field_target: str;
+    // Empty array literals whose element type is not yet known
+    // (Python: checker's self.unresolved). A let with an empty
+    // ArrayLit init and no annotation records its name here; a
+    // later constraining use resolves it to a concrete array type.
+    // Anything still unresolved when the function ends is an error.
+    unres_names: [str];
+    unres_lines: [int];
+    unres_cols: [int];
+    // Enclosing for loops' iterables (Python: _for_iterables):
+    // parallel roots (root variable name), paths (full field path
+    // or "" for the bare variable), scopes (declaration index of
+    // the root variable). Moving an iterable inside its own loop
+    // frees the buffer the loop is reading.
+    for_iter_roots: [str];
+    for_iter_paths: [str];
+    for_iter_scopes: [int];
     struct_names: [str];
     struct_fields: [str];
     // Enums: name -> variants encoded "Variant:payload~Variant:payload"
     // (payload "" when the variant carries no value).
     enum_names: [str];
     enum_variants: [str];
+    // Type params per enum ("T~E" or ""), parallel to enum_names.
+    enum_tparams: [str];
     // Methods: struct name -> "method:params->ret" entries, where
     // params are the "~"-joined types AFTER the receiver.
     method_structs: [str];
@@ -50,6 +72,12 @@ struct HChecker {
     // Traits: trait name -> "method:params->ret" entries.
     trait_names: [str];
     trait_sigs: [str];
+    // Newtypes (v1 #11): name -> underlying type, parallel arrays.
+    // A newtype is its own type, never equal to its underlying
+    // type; values cross only via explicit casts, both directions,
+    // to the newtype's own underlying type (chains resolve).
+    nt_names: [str];
+    nt_targets: [str];
     // Variant name -> enum name, for bare variant use (Red, not Color::Red).
     variant_names: [str];
     variant_enums: [str];
@@ -57,6 +85,10 @@ struct HChecker {
     struct_tparams: [str];
     func_names: [str];
     func_sigs: [str];
+    // Parameter NAMES per function ("a~b" or ""), parallel to
+    // func_names — Python's call-argument errors name the
+    // parameter ("argument 'key' of 'say' must be str, got int").
+    func_pnames: [str];
     // Type params per function ("T~E" or ""), parallel to func_names.
     func_tparams: [str];
     ret_type: str;
@@ -70,6 +102,11 @@ struct HChecker {
     // checking a read-only observation (len, for-iteration).
     pinned_base_depth: int;
     pinned_observe: int;
+    // Field-base depth (Python: _in_field_base): >0 while
+    // checking a FieldAccess base. Only a FieldAccess raises
+    // it (an Index does not) — the moved-field descendant
+    // check fires only at the outermost access.
+    field_base_depth: int;
     // Root variable being written in place (field/index assign).
     pinned_write_root: str;
     // Freestanding mode (Top-500 #39 / slice 4g): no heap,
@@ -84,7 +121,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], func_names: [], func_sigs: [], func_tparams: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, pinned_write_root: "", freestanding: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", freestanding: false };
 }
 
 // C keywords that are not Qasida keywords: user names colliding
@@ -149,15 +186,90 @@ fn int_literal_value(expr: Node) -> [int] {
     return [];
 }
 
-// True when expr is an integer literal whose value fits the
-// expected fixed-width type (Python checker's accepts()
+// Decimal digits of a base-10 integer literal node ("_" and
+// leading zeros stripped), or "" when the node is not a plain
+// base-10 IntLit. A unary-minus node yields its inner literal's
+// digits (the caller handles the sign). Needed because u64 values
+// above i64 max cannot live in an int: parse_int_lit saturates
+// them, and only the text carries the true magnitude.
+fn int_lit_digits(expr: Node) -> str {
+    let mut n: Node = expr;
+    if n.kind == 41 && n.name == "-" && len(n.kids) == 1 {
+        n = n.kids[0];
+    }
+    if n.kind != 25 {
+        return "";
+    }
+    let t: str = n.sval;
+    if len(t) >= 2 && substr(t, 0, 1) == "0" {
+        let p: str = substr(t, 1, 1);
+        if p == "x" || p == "X" || p == "b" || p == "B" || p == "o" || p == "O" {
+            return "";
+        }
+    }
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(t) {
+        let c: str = substr(t, i, 1);
+        if c != "_" {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    // Strip leading zeros ("0" stays "0").
+    let mut j: int = 0;
+    while j + 1 < len(out) && substr(out, j, 1) == "0" {
+        j = j + 1;
+    }
+    return substr(out, j, len(out) - j);
+}
+
+// True when the decimal digit string a is <= b (both without
+// leading zeros): shorter is smaller, else lexicographic.
+fn dec_le(a: str, b: str) -> bool {
+    if len(a) < len(b) {
+        return true;
+    }
+    if len(a) > len(b) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(a) {
+        let da: int = digit_val(substr(a, i, 1));
+        let db: int = digit_val(substr(b, i, 1));
+        if da < db {
+            return true;
+        }
+        if da > db {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// True when an integer literal node's value fits the expected
+// fixed-width type (Python checker's accepts()
 // literal adaptation: an int literal adapts to i8..u64 when it
 // fits; a general int expression does not adapt). u64's max
-// (2^64-1) is unrepresentable in int64, but every non-negative
-// int64 literal fits it, so only the lower bound is checked.
+// (2^64-1) is unrepresentable in int64, so a u64 check on a
+// literal uses the decimal text (int_lit_digits) instead of
+// the saturated ival; every other fixed type fits in int64,
+// so the ival check is exact there (a saturated literal is
+// above every one of their maxima).
 fn literal_fits_fixed(expr: Node, want: str) -> bool {
     if !is_fixed_int(want) {
         return false;
+    }
+    if want == "u64" {
+        let digs: str = int_lit_digits(expr);
+        if digs != "" {
+            if expr.kind == 41 {
+                // A negated literal is negative: never fits u64.
+                return false;
+            }
+            return dec_le(digs, "18446744073709551615");
+        }
     }
     let v: [int] = int_literal_value(expr);
     if len(v) == 0 {
@@ -479,7 +591,7 @@ fn type_matches(got: str, want: str) -> bool {
     if got == want {
         return true;
     }
-    if got == "[?]" && is_array(want) {
+    if got == "[?]" && is_array(want) && !is_sized_array(want) {
         return true;
     }
     if want == "[?]" && is_array(got) {
@@ -500,6 +612,20 @@ fn type_matches(got: str, want: str) -> bool {
     return false;
 }
 
+// A conversion hint for int/float mismatches, or "".
+// (Python checker.py cast_hint; appended to type-mismatch
+// errors at Let, Assign, FieldAssign, IndexAssign, Return
+// and call-argument sites.)
+fn cast_hint(got: str, want: str) -> str {
+    if got == "int" && want == "float" {
+        return "; convert the value with 'value as float'";
+    }
+    if got == "float" && want == "int" {
+        return "; convert the value with 'value as int' (truncates)";
+    }
+    return "";
+}
+
 // Does the struct implement the trait?
 fn implements_trait(c: HChecker, sname: str, tname: str) -> bool {
     let mut i: int = 0;
@@ -512,11 +638,17 @@ fn implements_trait(c: HChecker, sname: str, tname: str) -> bool {
     return false;
 }
 
-// Value acceptance: exact match, union member for its union, or
-// a struct implementing the trait of an opaque type. (The
-// Python checker's accepts().)
+// Value acceptance: exact match, union member for its union, a
+// `never` value for anything (it never produces a value), a
+// mutable array for a readonly view of the same array, an
+// empty-literal hole in an array/tuple position, or a struct
+// implementing the trait of an opaque type. (The Python
+// checker's accepts().)
 fn accepts(c: HChecker, got: str, want: str) -> bool {
     if type_matches(got, want) {
+        return true;
+    }
+    if got == "never" {
         return true;
     }
     if starts_with(want, "opaque ") {
@@ -525,7 +657,162 @@ fn accepts(c: HChecker, got: str, want: str) -> bool {
             return true;
         }
     }
+    if is_readonly(want) {
+        // A mutable array coerces to a readonly view of the
+        // same array; a view never coerces back.
+        return got == want || got == readonly_inner(want);
+    }
+    if got != "?" && matches_up_to_unknown(got, want) {
+        return true;
+    }
     return false;
+}
+
+// Value type matches expected where empty literals leave holes:
+// "[?]" matches any dynamic array type, nested ("[[?]]" is a
+// valid "[[int]]" but not a valid "[[int; 2]]"); a bare "?"
+// never matches (generic placeholders are untouched).
+// (Python checker.py matches_up_to_unknown.)
+fn matches_up_to_unknown(value: str, expected: str) -> bool {
+    if value == expected {
+        return true;
+    }
+    if is_array(value) && is_array(expected) {
+        if is_sized_array(value) || is_sized_array(expected) {
+            return false;
+        }
+        return matches_up_to_unknown(substr(value, 1, len(value) - 2), substr(expected, 1, len(expected) - 2));
+    }
+    if is_tuple(value) && is_tuple(expected) {
+        let ve: [str] = tuple_elems(value);
+        let ee: [str] = tuple_elems(expected);
+        if len(ve) != len(ee) {
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(ve) {
+            if !matches_up_to_unknown(ve[i], ee[i]) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    if value == "?" {
+        return true;
+    }
+    return false;
+}
+
+// Specific error when an integer literal does not fit an
+// expected fixed type, or "" (the caller falls back to its
+// generic mismatch message). (Python _literal_fit_msg.)
+fn literal_fit_msg(expr: Node, expected: str) -> str {
+    if is_fixed_int(expected) {
+        let v: [int] = int_literal_value(expr);
+        if len(v) == 1 && !literal_fits_fixed(expr, expected) {
+            // A literal above i64 max saturates its ival: print
+            // the true decimal text instead of the saturated
+            // value (and a leading "-" for a negated literal).
+            let digs: str = int_lit_digits(expr);
+            if digs != "" && !dec_le(digs, "9223372036854775807") {
+                if expr.kind == 41 {
+                    return "integer literal -" + digs + " does not fit in " + expected;
+                }
+                return "integer literal " + digs + " does not fit in " + expected;
+            }
+            return "integer literal " + itoa(v[0]) + " does not fit in " + expected;
+        }
+    }
+    return "";
+}
+
+// Longest common contiguous block of a and b inside the given
+// ranges, as [i, j, length] (first longest wins — mirrors
+// difflib's find_longest_match).
+fn longest_match(a: str, b: str, alo: int, ahi: int, blo: int, bhi: int) -> [int] {
+    let mut bi: int = alo;
+    let mut bj: int = blo;
+    let mut bl: int = 0;
+    let mut i: int = alo;
+    while i < ahi {
+        let mut j: int = blo;
+        while j < bhi {
+            let mut k: int = 0;
+            while i + k < ahi && j + k < bhi && substr(a, i + k, 1) == substr(b, j + k, 1) {
+                k = k + 1;
+            }
+            if k > bl {
+                bi = i;
+                bj = j;
+                bl = k;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return [bi, bj, bl];
+}
+
+// Total length of the matching blocks of a and b (difflib
+// SequenceMatcher, recursive over the longest block).
+fn match_len(a: str, b: str, alo: int, ahi: int, blo: int, bhi: int) -> int {
+    let m: [int] = longest_match(a, b, alo, ahi, blo, bhi);
+    if m[2] == 0 {
+        return 0;
+    }
+    let mut total: int = m[2];
+    total = total + match_len(a, b, alo, m[0], blo, m[1]);
+    total = total + match_len(a, b, m[0] + m[2], ahi, m[1] + m[2], bhi);
+    return total;
+}
+
+// difflib SequenceMatcher.ratio() of two strings.
+fn seq_ratio(a: str, b: str) -> float {
+    let n: int = len(a) + len(b);
+    if n == 0 {
+        return 1.0;
+    }
+    let m: int = match_len(a, b, 0, len(a), 0, len(b));
+    return (2.0 * (m as float)) / (n as float);
+}
+
+// A "Did you mean ...?" suffix, or "" when nothing is close.
+// (Python checker.py suggest: difflib.get_close_matches with
+// cutoff 0.6, best match wins.)
+fn suggest(name: str, candidates: [str]) -> str {
+    let mut best: str = "";
+    let mut best_score: float = 0.0;
+    let mut i: int = 0;
+    while i < len(candidates) {
+        let s: float = seq_ratio(name, candidates[i]);
+        if s >= 0.6 && s > best_score {
+            best_score = s;
+            best = candidates[i];
+        }
+        i = i + 1;
+    }
+    if best == "" {
+        return "";
+    }
+    return ". Did you mean '" + best + "'?";
+}
+
+// All builtin function names (Python checker.py BUILTINS), as
+// suggestion candidates for undefined functions.
+fn builtin_names() -> [str] {
+    return ["print", "println", "push", "pin", "fail", "assert", "poke32", "mmap_set", "mmap_close", "mmap_set32", "csr_write", "csr_set", "csr_clear", "fail_compile", "eprintln", "len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "read_file", "read_line", "write_file", "read_bytes", "write_bytes", "file_exists", "args", "parse_int", "parse_float", "run_command", "try_alloc", "split", "join", "substr", "trim", "starts_with", "ends_with", "http_get", "http_listen", "http_accept", "http_read_request", "http_respond", "http_respond_status", "http_close", "alloc_count", "free_count", "parallel_dot", "parallel_matmul", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "weak_upgrade", "move", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3"];
+}
+
+// Statement-only builtins (Python checker.py STMT_BUILTINS):
+// using one as a value is an error, and using an expression
+// builtin as a statement is an error (the other direction).
+fn is_stmt_builtin(name: str) -> bool {
+    return name == "print" || name == "println" || name == "push" || name == "pin" || name == "fail" || name == "assert" || name == "poke32" || name == "mmap_set" || name == "mmap_close" || name == "mmap_set32" || name == "csr_write" || name == "csr_set" || name == "csr_clear" || name == "fail_compile" || name == "eprintln";
+}
+
+fn is_expr_builtin(name: str) -> bool {
+    return name == "len" || name == "range" || name == "clock_micros" || name == "sqrt" || name == "exp" || name == "log" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -797,6 +1084,168 @@ fn generic_base(t: str) -> str {
 
 // ---------- environment ----------
 
+// Raw type of a binding, with no moved/pinned/undefined
+// failure: "" when undeclared. IndexAssign's variable base
+// needs this — Python types stmt.base.base by lookup alone
+// (no moved-field or pinned check on an in-place index write),
+// so env_lookup's whole-value checks would reject programs
+// Python accepts (e.g. a[0] = 1 after move(a.f)).
+fn env_type_raw(c: HChecker, name: str) -> str {
+    let mut i: int = len(c.var_names) - 1;
+    while i >= 0 {
+        if c.var_names[i] == name {
+            return c.var_types[i];
+        }
+        i = i - 1;
+    }
+    return "";
+}
+
+// First moved field under a path (moved field starting with
+// path + "."). Python sorts and takes the first; the hosted
+// checker has no string ordering, so this takes the first in
+// insertion order — identical whenever a single field under
+// the path moved, which is every case the suite exercises.
+fn moved_field_under(c: HChecker, path: str) -> str {
+    let mut i: int = 0;
+    while i < len(c.moved_fields) {
+        let p: str = c.moved_fields[i];
+        if starts_with(p, path + ".") {
+            return p;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Whether a name is in an array of names.
+fn str_in_arr(name: str, arr: [str]) -> bool {
+    let mut i: int = 0;
+    while i < len(arr) {
+        if arr[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True when moving (root, path) would break an enclosing for
+// loop iterating over it (Python: _for_iterable_conflict).
+// The move target overlaps the iterable when it is the same
+// path, or one contains the other; an empty iterable path
+// (an Index iterable, whose path is None in Python) conflicts
+// with any move of its root.
+fn move_breaks_for(c: HChecker, root: str, path: str) -> bool {
+    if root == "" || path == "" {
+        return false;
+    }
+    let scope: int = env_decl_index(c, root);
+    let mut i: int = 0;
+    while i < len(c.for_iter_roots) {
+        if c.for_iter_roots[i] == root && c.for_iter_scopes[i] == scope {
+            let ip: str = c.for_iter_paths[i];
+            if ip == "" || ip == path || starts_with(ip, path + ".") || starts_with(path, ip + ".") {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Index of the innermost declaration of a variable (-1 if none).
+// Used as the "scope id" for for-iterable tracking (Python
+// compares the scope id of the iterable's root with the scope
+// the move happens in; two declarations of the same name in
+// different scopes are different variables).
+fn env_decl_index(c: HChecker, name: str) -> int {
+    let mut i: int = len(c.var_names) - 1;
+    while i >= 0 {
+        if c.var_names[i] == name {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+// Concrete array type: starts with "[", ends with "]", and holds
+// no "?" anywhere (Python's _resolve_empty condition).
+fn is_concrete_array(t: str) -> bool {
+    if len(t) < 2 {
+        return false;
+    }
+    if substr(t, 0, 1) != "[" || substr(t, len(t) - 1, 1) != "]" {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(t) {
+        if substr(t, i, 1) == "?" {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Resolve an unresolved empty array variable to a concrete array
+// type (Python's _resolve_empty). Only fires when the variable's
+// current type is exactly "[?]" and the concrete type is a
+// concrete array; rewrites the scope entry and drops the name
+// from the unresolved list. ok is true when it resolved.
+struct ResOut {
+    c: HChecker;
+    ok: bool;
+}
+
+fn try_resolve_empty(c0: HChecker, name: str, concrete: str) -> ResOut {
+    let mut c: HChecker = c0;
+    if !is_concrete_array(concrete) {
+        return ResOut { c: c, ok: false };
+    }
+    // Only a let that recorded an unresolved empty literal can be
+    // resolved (Python: the name must be in self.unresolved).
+    // A variable that merely HOLDS "[?]" (e.g. let y = x) is not
+    // in the list and stays unresolved.
+    let mut found: bool = false;
+    let mut j: int = 0;
+    while j < len(c.unres_names) {
+        if c.unres_names[j] == name {
+            found = true;
+        }
+        j = j + 1;
+    }
+    if !found {
+        return ResOut { c: c, ok: false };
+    }
+    let mut i: int = len(c.var_names) - 1;
+    while i >= 0 {
+        if c.var_names[i] == name && c.var_types[i] == "[?]" {
+            c.var_types[i] = concrete;
+            // Drop from the unresolved list.
+            let mut k: int = 0;
+            let mut nu: [str] = [];
+            let mut nl: [int] = [];
+            let mut nc: [int] = [];
+            while k < len(c.unres_names) {
+                if c.unres_names[k] != name {
+                    push(nu, c.unres_names[k]);
+                    push(nl, c.unres_lines[k]);
+                    push(nc, c.unres_cols[k]);
+                }
+                k = k + 1;
+            }
+            c.unres_names = nu;
+            c.unres_lines = nl;
+            c.unres_cols = nc;
+            return ResOut { c: c, ok: true };
+        }
+        i = i - 1;
+    }
+    return ResOut { c: c, ok: false };
+}
+
 fn env_lookup(c: HChecker, name: str, line: int, col: int) -> str {
     let mut i: int = len(c.var_names) - 1;
     while i >= 0 {
@@ -824,8 +1273,26 @@ fn env_lookup(c: HChecker, name: str, line: int, col: int) -> str {
         }
         i = i - 1;
     }
-    fail_at(line, col, "undefined variable '" + name + "'");
+    fail_at(line, col, "undefined variable '" + name + "'" + suggest(name, var_candidates(c)));
     return "";
+}
+
+// Suggestion candidates for an undefined variable: every
+// visible variable name plus every enum variant name
+// (Python checker.py lookup).
+fn var_candidates(c: HChecker) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(c.var_names) {
+        push(out, c.var_names[i]);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(c.variant_names) {
+        push(out, c.variant_names[j]);
+        j = j + 1;
+    }
+    return out;
 }
 
 // Is the named variable currently pinned?
@@ -952,6 +1419,74 @@ fn trunc_bool(a: [bool], n: int) -> [bool] {
     return out;
 }
 
+// Truncate an [int] to its first n elements.
+fn trunc_int(a: [int], n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n && i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Full copies (new heap arrays, not aliases).
+fn copy_str(a: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn copy_bool(a: [bool]) -> [bool] {
+    let mut out: [bool] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn copy_int(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Deep-copy the per-branch mutable state. HChecker assignment
+// shares the heap arrays, so a snapshot taken by plain assignment
+// is corrupted by in-place writes in the branch (env_mark_moved
+// writes an element; push may append in place) — the else arm
+// would then see the then arm's moves, and the join would read a
+// corrupted `before`. The tables (structs/enums/funcs) are
+// append-only during collect_defs and never written during body
+// checking, so they stay shared.
+fn checker_snapshot(c0: HChecker) -> HChecker {
+    let mut c: HChecker = c0;
+    c.var_names = copy_str(c.var_names);
+    c.var_types = copy_str(c.var_types);
+    c.var_moved = copy_bool(c.var_moved);
+    c.var_mut = copy_bool(c.var_mut);
+    c.var_pinned = copy_bool(c.var_pinned);
+    c.moved_fields = copy_str(c.moved_fields);
+    c.unres_names = copy_str(c.unres_names);
+    c.unres_lines = copy_int(c.unres_lines);
+    c.unres_cols = copy_int(c.unres_cols);
+    c.for_iter_roots = copy_str(c.for_iter_roots);
+    c.for_iter_paths = copy_str(c.for_iter_paths);
+    c.for_iter_scopes = copy_int(c.for_iter_scopes);
+    c.loop_vars = copy_str(c.loop_vars);
+    return c;
+}
+
 // Drop all bindings added after `mark` (scope exit).
 fn env_restore(c0: HChecker, mark: int) -> HChecker {
     let mut c: HChecker = c0;
@@ -1034,6 +1569,30 @@ fn func_sig(c: HChecker, name: str) -> str {
             return c.func_sigs[i];
         }
         i = i + 1;
+    }
+    return "";
+}
+
+// Parameter names of a function ("~"-joined), or [] if unknown.
+fn func_param_names(c: HChecker, name: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(c.func_names) {
+        if c.func_names[i] == name {
+            if c.func_pnames[i] == "" {
+                return [];
+            }
+            return split(c.func_pnames[i], "~");
+        }
+        i = i + 1;
+    }
+    return [];
+}
+
+// Name of a function's j-th parameter, or "" when unknown.
+fn param_name(c: HChecker, fname: str, j: int) -> str {
+    let names: [str] = func_param_names(c, fname);
+    if j >= 0 && j < len(names) {
+        return names[j];
     }
     return "";
 }
@@ -1129,6 +1688,24 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             }
             push(c.enum_names, ename);
             push(c.enum_variants, enc);
+            push(c.enum_tparams, sp[1]);
+            // Validate payload types (Python collect_enums): each
+            // payload must name a real value type, with the
+            // enum's own type params allowed. The enum itself is
+            // already recorded above, so a payload naming it is
+            // valid (as in Python, which records first too).
+            let mut tp: [str] = [];
+            if sp[1] != "" {
+                tp = split(sp[1], "~");
+            }
+            let mut jv: int = 0;
+            while jv < len(n.kids) {
+                let v: Node = n.kids[jv];
+                if v.sval != "" && !hc_valid_type(c, v.sval, tp) {
+                    fail_at(n.line, n.col, "unknown payload type '" + v.sval + "' for variant '" + v.name + "'");
+                }
+                jv = jv + 1;
+            }
             let mut j2: int = 0;
             while j2 < len(n.kids) {
                 push(c.variant_names, n.kids[j2].name);
@@ -1231,25 +1808,198 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
             // FuncDef: name, sval = return type, kids are Param
             // nodes (kind 43) then the body Block.
             let mut params: str = "";
+            let mut pnames: str = "";
             let mut j: int = 0;
             while j < len(n.kids) {
                 let k: Node = n.kids[j];
                 if k.kind == 43 {
                     if params == "" {
                         params = k.sval;
+                        pnames = k.name;
                     } else {
                         params = params + "~" + k.sval;
+                        pnames = pnames + "~" + k.name;
                     }
                 }
                 j = j + 1;
             }
             push(c.func_names, fname);
             push(c.func_sigs, params + "->" + n.sval);
+            push(c.func_pnames, pnames);
             push(c.func_tparams, sp[1]);
         }
         i = i + 1;
     }
+    // Newtypes (v1 #11, Python collect_newtypes): a second pass,
+    // so collisions are caught regardless of source order. The
+    // targets arrive alias-expanded (expand_aliases_prog runs
+    // before collect_defs), and chains are allowed (newtype B = A
+    // where A is itself a newtype).
+    let mut anames: [str] = [];
+    let mut gnames: [str] = [];
+    let mut gkinds: [str] = [];
+    let mut ai: int = 0;
+    while ai < len(prog.kids) {
+        let d: Node = prog.kids[ai];
+        if d.kind == 7 {
+            push(anames, d.name);
+        }
+        if d.kind == 3 || d.kind == 4 {
+            let sp: [str] = split_tparams(d.name);
+            if sp[1] != "" {
+                push(gnames, sp[0]);
+                if d.kind == 3 {
+                    push(gkinds, "struct");
+                } else {
+                    push(gkinds, "enum");
+                }
+            }
+        }
+        ai = ai + 1;
+    }
+    let mut ni: int = 0;
+    while ni < len(prog.kids) {
+        let d: Node = prog.kids[ni];
+        if d.kind == 8 {
+            if alias_lookup_idx(c.nt_names, d.name) >= 0 {
+                fail_at(d.line, d.col, "duplicate newtype '" + d.name + "'");
+            }
+            if alias_is_scalar(d.name) {
+                fail_at(d.line, d.col, "newtype '" + d.name + "' collides with the built-in type '" + d.name + "'");
+            }
+            if str_in_arr(d.name, c.struct_names) || str_in_arr(d.name, c.enum_names) || str_in_arr(d.name, anames) {
+                fail_at(d.line, d.col, "newtype '" + d.name + "' collides with an existing type of the same name");
+            }
+            let gi: int = alias_lookup_idx(gnames, d.sval);
+            if gi >= 0 {
+                fail_at(d.line, d.col, "newtype '" + d.name + "' cannot target generic " + gkinds[gi] + " '" + d.sval + "' without type arguments; write " + d.sval + "<...>");
+            }
+            push(c.nt_names, d.name);
+            push(c.nt_targets, d.sval);
+        }
+        ni = ni + 1;
+    }
+    // Every newtype target must name a real type (chains resolve
+    // through other newtypes, so the full name list is used).
+    let mut vi: int = 0;
+    while vi < len(c.nt_names) {
+        if !alias_valid_type(c.nt_targets[vi], c.struct_names, c.enum_names, c.nt_names) {
+            // The failing decl's position: rescan for its line/col.
+            let mut li: int = 0;
+            let mut ln: int = 0;
+            let mut cl: int = 0;
+            while li < len(prog.kids) {
+                let d: Node = prog.kids[li];
+                if d.kind == 8 && d.name == c.nt_names[vi] {
+                    ln = d.line;
+                    cl = d.col;
+                }
+                li = li + 1;
+            }
+            fail_at(ln, cl, "newtype '" + c.nt_names[vi] + "' targets unknown type '" + c.nt_targets[vi] + "'");
+        }
+        vi = vi + 1;
+    }
+    // Struct field types, validated now that all struct/enum/
+    // newtype names are known (Python collect_structs): each
+    // field is checked against the struct's own type params.
+    // Opaque fields are rejected outright in v1.
+    let mut si2: int = 0;
+    while si2 < len(prog.kids) {
+        let d: Node = prog.kids[si2];
+        if d.kind == 3 {
+            let sp: [str] = split_tparams(d.name);
+            let mut tp: [str] = [];
+            if sp[1] != "" {
+                tp = split(sp[1], "~");
+            }
+            let mut fi: int = 0;
+            while fi < len(d.kids) {
+                let f: Node = d.kids[fi];
+                if f.kind == 44 {
+                    if !hc_valid_type(c, f.sval, tp) {
+                        fail_at(d.line, d.col, "unknown field type '" + f.sval + "' in struct '" + sp[0] + "'");
+                    }
+                    if is_opaque_type(f.sval) {
+                        fail_at(d.line, d.col, "opaque struct fields are not supported in v1; struct '" + sp[0] + "' field '" + f.name + "' cannot be opaque");
+                    }
+                }
+                fi = fi + 1;
+            }
+        }
+        si2 = si2 + 1;
+    }
+    // Trait completeness (Python: an impl of a trait must supply
+    // every trait method with a matching signature): for each
+    // impl-with-trait, for each trait method in declaration order,
+    // missing first, then signature mismatch (the impl method's
+    // encoded sig already excludes the receiver, like the
+    // trait's, so the comparison is a plain string equality).
+    let mut ii: int = 0;
+    while ii < len(prog.kids) {
+        let d: Node = prog.kids[ii];
+        if d.kind == 6 && d.sval != "" {
+            let sname: str = d.name;
+            let tname: str = d.sval;
+            let mut ti: int = 0;
+            while ti < len(c.trait_names) {
+                if c.trait_names[ti] == tname {
+                    let parts: [str] = split(c.trait_sigs[ti], ":");
+                    if len(parts) == 2 {
+                        let mname: str = parts[0];
+                        let tsig: str = parts[1];
+                        let isig: str = method_sig(c, sname, mname);
+                        if isig == "" {
+                            fail_at(d.line, d.col, "impl of trait '" + tname + "' for '" + sname + "' is missing method '" + mname + "'");
+                        }
+                        if isig != tsig {
+                            // The mismatching method's position.
+                            let mut ml: int = d.line;
+                            let mut mc: int = d.col;
+                            let mut mi: int = 0;
+                            while mi < len(d.kids) {
+                                if d.kids[mi].name == mname {
+                                    ml = d.kids[mi].line;
+                                    mc = d.kids[mi].col;
+                                }
+                                mi = mi + 1;
+                            }
+                            fail_at(ml, mc, "method '" + mname + "' in impl of trait '" + tname + "' for '" + sname + "' does not match the trait signature");
+                        }
+                    }
+                }
+                ti = ti + 1;
+            }
+        }
+        ii = ii + 1;
+    }
     return c;
+}
+
+// Resolve a newtype chain to its ultimate underlying type
+// (Python's underlying_newtype); a cycle returns the name it
+// stalls on rather than looping forever.
+fn underlying_newtype(c: HChecker, t: str) -> str {
+    let mut cur: str = t;
+    let mut seen: str = "";
+    let mut guard: int = 0;
+    while guard < 100 {
+        let idx: int = alias_lookup_idx(c.nt_names, cur);
+        if idx < 0 {
+            return cur;
+        }
+        if str_in_split(seen, cur) {
+            return cur;
+        }
+        if seen == "" {
+            seen = cur;
+        } else {
+            seen = seen + "~" + cur;
+        }
+        cur = c.nt_targets[idx];
+        guard = guard + 1;
+    }
+    return cur;
 }
 
 // "params->ret" for a method on a struct, or "" if none.
@@ -1365,6 +2115,43 @@ fn enum_variant_names(c: HChecker, ename: str) -> [str] {
     return [];
 }
 
+// Type params of an enum ("T~E" or ""), or "" if unknown.
+fn enum_tparams(c: HChecker, ename: str) -> str {
+    let mut i: int = 0;
+    while i < len(c.enum_names) {
+        if c.enum_names[i] == ename {
+            return c.enum_tparams[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Fill a generic-enum placeholder from the expected type (Python's
+// fill_placeholder): when the provided type is the same generic base
+// with a "?" param and the expected type is the same base with
+// concrete params, the expected type wins; otherwise the provided
+// type stands. Used where a None() / Some(42) value meets an
+// annotation, a return type, or a parameter type.
+fn fill_placeholder(provided: str, expected: str) -> str {
+    let pb: str = generic_base(provided);
+    let eb: str = generic_base(expected);
+    if pb == eb && pb != provided {
+        let pa: [str] = generic_args(provided);
+        let ea: [str] = generic_args(expected);
+        if len(pa) > 0 && len(pa) == len(ea) {
+            let mut i: int = 0;
+            while i < len(pa) {
+                if pa[i] == "?" {
+                    return expected;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return provided;
+}
+
 // Enum name for a bare variant (Red -> Color), or "".
 fn enum_of_variant(c: HChecker, variant: str) -> str {
     let mut i: int = 0;
@@ -1466,9 +2253,30 @@ fn check_method_call(c0: HChecker, n: Node) -> COut {
     }
     let sig: str = method_sig(c, rt, n.name);
     if sig == "" {
+        // Python: a receiver type with no methods at all (a
+        // non-struct, or a struct with no impl block) gets the
+        // "no methods" message; a struct WITH methods gets the
+        // per-method message (checker.py method-call dispatch).
+        if !struct_has_any_method(c, rt) {
+            fail_at(n.line, n.col, "no methods on type '" + rt + "' (trait methods need a struct with an impl block)");
+        }
         fail_at(n.line, n.col, "struct '" + rt + "' has no method '" + n.name + "'");
     }
     return check_sig_args(c, n, sig);
+}
+
+// Whether any impl block defines a method on this struct
+// (a receiver with no methods at all gets the "no methods on
+// type" message, not the per-method one).
+fn struct_has_any_method(c: HChecker, sname: str) -> bool {
+    let mut i: int = 0;
+    while i < len(c.method_structs) {
+        if c.method_structs[i] == sname {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // Check a call's args against an encoded "params->ret" sig
@@ -1596,12 +2404,12 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         c = b.c;
         c.pinned_base_depth = c.pinned_base_depth - 1;
         if !is_tuple(b.typ) {
-            fail_at(n.line, n.col, "tuple index ." + n.name + " needs a tuple value, got " + b.typ);
+            fail_at(n.line, n.col, "tuple index ." + itoa(n.ival) + " needs a tuple value, got " + b.typ);
         }
         let elems: [str] = tuple_elems(b.typ);
         let idx: int = n.ival;
         if idx < 0 || idx >= len(elems) {
-            fail_at(n.line, n.col, "tuple index out of range");
+            fail_at(n.line, n.col, "tuple index ." + itoa(n.ival) + " out of range");
         }
         if outermost && c.pinned_observe == 0 {
             let root: str = access_root(n);
@@ -1624,15 +2432,34 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
     }
     if n.kind == 32 {
         // FieldAccess: base must be a struct with this field.
+        // Moved-field checks first (Python checker.py:2211):
+        // the exact check fires at any depth, the descendant
+        // check only at the outermost access (a deeper access
+        // is a sibling-field read, decided by its own exact
+        // check). Neither fires on the FieldAssign target path
+        // itself (moved_field_target), which the assignment
+        // revives.
+        let path: str = field_path(n);
+        if path != "" && str_in_arr(path, c.moved_fields) && path != c.moved_field_target {
+            fail_at(n.line, n.col, "use of moved value '" + path + "'");
+        }
+        if path != "" && c.field_base_depth == 0 && path != c.moved_field_target {
+            let mf: str = moved_field_under(c, path);
+            if mf != "" {
+                fail_at(n.line, n.col, "use of value '" + path + "' with moved field '" + mf + "'");
+            }
+        }
         // The base is checked with pinned_base_depth raised so a
         // pinned root is not rejected here; the outermost access
         // decides (an owned leaf is a copy, a scalar leaf is a read).
         // Generic structs substitute their type args into the field type.
         let outermost: bool = c.pinned_base_depth == 0;
         c.pinned_base_depth = c.pinned_base_depth + 1;
+        c.field_base_depth = c.field_base_depth + 1;
         let b: COut = check_expr(c, n.kids[0]);
         c = b.c;
         c.pinned_base_depth = c.pinned_base_depth - 1;
+        c.field_base_depth = c.field_base_depth - 1;
         let base: str = generic_base(b.typ);
         let ft0: str = struct_field_type(c, base, n.name, n.line, n.col);
         let mut ft: str = ft0;
@@ -1675,26 +2502,32 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             }
             return COut { c: c, typ: "str" };
         }
-        if !is_array(b.typ) {
+        if !is_array(b.typ) && !is_readonly(b.typ) {
             fail_at(n.line, n.col, "cannot index non-array value of type " + b.typ);
+        }
+        // A readonly view indexes like the array inside it
+        // (Python: readonly arrays are iterables/indexable).
+        let mut bt: str = b.typ;
+        if is_readonly(bt) {
+            bt = readonly_inner(bt);
         }
         if ix.typ != "int" {
             fail_at(n.line, n.col, "array index must be int, got " + ix.typ);
         }
         if outermost && c.pinned_observe == 0 {
             let root: str = access_root(n);
-            if root != "" && is_pinned(c, root) && c.pinned_write_root != root && is_owned_type(c, elem_type(b.typ)) {
+            if root != "" && is_pinned(c, root) && c.pinned_write_root != root && is_owned_type(c, elem_type(bt)) {
                 fail_at(n.line, n.col, "use of pinned value '" + root + "' (pin forbids moving or copying it; change it in place through its fields or indexes)");
             }
         }
-        return COut { c: c, typ: elem_type(b.typ) };
+        return COut { c: c, typ: elem_type(bt) };
     }
     if n.kind == 41 {
         // UnaryOp: name is the operator ("-", "!", "~").
         let o: COut = check_expr(c, n.kids[0]);
         c = o.c;
         if n.name == "-" {
-            if o.typ == "int" || o.typ == "float" {
+            if o.typ == "int" || o.typ == "float" || is_fixed_int(o.typ) {
                 return COut { c: c, typ: o.typ };
             }
             fail_at(n.line, n.col, "unary - needs a number, got " + o.typ);
@@ -1706,27 +2539,31 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             fail_at(n.line, n.col, "unary ! needs a bool, got " + o.typ);
         }
         if n.name == "~" {
-            if o.typ == "int" {
-                return COut { c: c, typ: "int" };
+            if o.typ == "int" || is_fixed_int(o.typ) {
+                return COut { c: c, typ: o.typ };
             }
             fail_at(n.line, n.col, "unary ~ needs an int, got " + o.typ);
         }
         fail_at(n.line, n.col, "unknown unary operator '" + n.name + "'");
     }
     if n.kind == 39 {
-        // Cast: "as" — target type is in sval.
+        // Cast: "as" — target type is in sval. The target must
+        // name a real value type first (Python checker.py:2299).
         let o: COut = check_expr(c, n.kids[0]);
         c = o.c;
         let tgt: str = n.sval;
-        if o.typ == tgt {
-            fail_at(n.line, n.col, "identity cast to " + tgt + " is not allowed");
+        if !hc_valid_type(c, tgt, []) || tgt == "void" {
+            fail_at(n.line, n.col, "unknown cast target '" + tgt + "'");
         }
         if (o.typ == "int" && tgt == "float") || (o.typ == "float" && tgt == "int") {
             return COut { c: c, typ: tgt };
         }
         // Casts between int types (int counts as i64): widening
         // is free, narrowing is range-checked at runtime.
-        if is_int_type(o.typ) && is_int_type(tgt) {
+        // Identity casts stay rejected (t != tgt): deleting the
+        // old separate "identity cast" branch makes identity fall
+        // through to Python's general "cannot cast X to X".
+        if is_int_type(o.typ) && is_int_type(tgt) && o.typ != tgt {
             return COut { c: c, typ: tgt };
         }
         // Fixed-width integers convert to and from float like
@@ -1747,6 +2584,16 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
                 }
                 mi = mi + 1;
             }
+        }
+        // Newtype crossings, both directions, to the newtype's
+        // own underlying type only (chains resolve: B = A = int
+        // allows B <-> int and A <-> int; B <-> A needs two
+        // casts, via int).
+        if alias_lookup_idx(c.nt_names, o.typ) >= 0 && underlying_newtype(c, o.typ) == tgt {
+            return COut { c: c, typ: tgt };
+        }
+        if alias_lookup_idx(c.nt_names, tgt) >= 0 && underlying_newtype(c, tgt) == o.typ {
+            return COut { c: c, typ: tgt };
         }
         fail_at(n.line, n.col, "cannot cast " + o.typ + " to " + tgt);
     }
@@ -1815,15 +2662,25 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             let v: COut = check_expr(c, f.kids[0]);
             c = v.c;
             let want: str = struct_field_type(c, sname, f.name, n.line, n.col);
+            // An unresolved array stored into a concretely typed
+            // field resolves it to the field's type.
+            let mut vt: str = v.typ;
+            if f.kids[0].kind == 34 {
+                let rr: ResOut = try_resolve_empty(c, f.kids[0].name, want);
+                c = rr.c;
+                if rr.ok {
+                    vt = want;
+                }
+            }
             if tps0 != "" {
-                let u: UOut = unify(want, v.typ, bnames, btypes);
+                let u: UOut = unify(want, vt, bnames, btypes);
                 if !u.ok {
-                    fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
+                    fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + vt);
                 }
                 bnames = u.names;
                 btypes = u.types;
-            } else if !type_matches(v.typ, want) && !sized_literal_ok(c, f.kids[0], want) && !literal_fits_fixed(f.kids[0], want) {
-                fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + v.typ);
+            } else if !accepts(c, vt, want) && !sized_literal_ok(c, f.kids[0], want) && !literal_fits_fixed(f.kids[0], want) {
+                fail_at(n.line, n.col, "field '" + f.name + "' of struct '" + sname + "' needs " + want + ", got " + vt);
             }
             i = i + 1;
         }
@@ -1873,19 +2730,52 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
     return COut { c: c, typ: "?" };
 }
 
+// "Ven" + "<" + args joined with ", " + ">".
+fn concrete_enum(ven: str, args: [str]) -> str {
+    let mut out: str = ven + "<";
+    let mut i: int = 0;
+    while i < len(args) {
+        if i > 0 {
+            out = out + ", ";
+        }
+        out = out + args[i];
+        i = i + 1;
+    }
+    return out + ">";
+}
+
 fn check_call(c0: HChecker, n: Node) -> COut {
     let mut c: HChecker = c0;
+    // Statement-only builtins are not values (Python check_call
+    // checks STMT_BUILTINS first, before anything else).
+    if is_stmt_builtin(n.name) {
+        fail_at(n.line, n.col, "'" + n.name + "' can only be used as a statement, not as a value");
+    }
     if c.freestanding && is_fs_blocked_builtin(n.name) {
         fail_at(n.line, n.col, "'" + n.name + "' needs the hosted runtime (not in freestanding v1)");
     }
     // Enum variant construction: Some(5) builds a value of the
-    // enum, with the payload type checked.
+    // enum, with the payload type checked. A generic enum's
+    // variant infers its type args from the payload (Python
+    // checker.py:2395): Some(42) over OptionE<T> is OptionE<int>,
+    // and a payload-less variant of a generic enum is Ven<?>.
     let ven: str = enum_of_variant(c, n.name);
     if ven != "" {
         let payload: str = enum_payload(c, ven, n.name, n.line, n.col);
+        let tps: str = enum_tparams(c, ven);
         if payload == "" {
             if len(n.kids) != 0 {
                 fail_at(n.line, n.col, "variant '" + n.name + "' takes no payload");
+            }
+            if tps != "" {
+                let names: [str] = split(tps, "~");
+                let mut qs: [str] = [];
+                let mut q: int = 0;
+                while q < len(names) {
+                    push(qs, "?");
+                    q = q + 1;
+                }
+                return COut { c: c, typ: concrete_enum(ven, qs) };
             }
             return COut { c: c, typ: ven };
         }
@@ -1894,10 +2784,25 @@ fn check_call(c0: HChecker, n: Node) -> COut {
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
-        if !accepts(c, a.typ, payload) {
-            fail_at(n.line, n.col, "variant '" + n.name + "' payload must be " + payload + ", got " + a.typ);
+        if tps == "" {
+            if a.typ != payload {
+                fail_at(n.line, n.col, "variant '" + n.name + "' payload must be " + payload + ", got " + a.typ);
+            }
+            return COut { c: c, typ: ven };
         }
-        return COut { c: c, typ: ven };
+        let names: [str] = split(tps, "~");
+        let mut bnames: [str] = names;
+        let mut btypes: [str] = [];
+        let mut q2: int = 0;
+        while q2 < len(names) {
+            push(btypes, "?");
+            q2 = q2 + 1;
+        }
+        let u: UOut = unify(payload, a.typ, bnames, btypes);
+        if !u.ok {
+            fail_at(n.line, n.col, "variant '" + n.name + "' payload must match " + payload + ", got " + a.typ);
+        }
+        return COut { c: c, typ: concrete_enum(ven, u.types) };
     }
     let sig: str = func_sig(c, n.name);
     if sig == "" {
@@ -1940,17 +2845,35 @@ fn check_call(c0: HChecker, n: Node) -> COut {
     }
     let mut j: int = 0;
     while j < len(n.kids) {
-        let a: COut = check_expr(c, n.kids[j]);
+        let mut a: COut = check_expr(c, n.kids[j]);
         c = a.c;
         if tps != "" {
             let u: UOut = unify(want[j], a.typ, bnames, btypes);
             if !u.ok {
-                fail_at(n.line, n.col, "argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
+                let pn: str = param_name(c, n.name, j);
+                fail_at(n.line, n.col, "argument '" + pn + "' of '" + n.name + "' must match " + want[j] + ", got " + a.typ);
             }
             bnames = u.names;
             btypes = u.types;
-        } else if !accepts(c, a.typ, want[j]) && !sized_literal_ok(c, n.kids[j], want[j]) && !literal_fits_fixed(n.kids[j], want[j]) {
-            fail_at(n.line, n.col, "argument " + itoa(j + 1) + " of '" + n.name + "' needs " + want[j] + ", got " + a.typ);
+        } else {
+            // An unresolved array argument resolves to the
+            // parameter type.
+            if n.kids[j].kind == 34 {
+                let rr: ResOut = try_resolve_empty(c, n.kids[j].name, want[j]);
+                c = rr.c;
+                if rr.ok {
+                    a.typ = want[j];
+                }
+            }
+            a.typ = fill_placeholder(a.typ, want[j]);
+            if !accepts(c, a.typ, want[j]) && !sized_literal_ok(c, n.kids[j], want[j]) && !literal_fits_fixed(n.kids[j], want[j]) {
+                let pn: str = param_name(c, n.name, j);
+                let fit_msg: str = literal_fit_msg(n.kids[j], want[j]);
+                if fit_msg != "" {
+                    fail_at(n.line, n.col, fit_msg);
+                }
+                fail_at(n.line, n.col, "argument '" + pn + "' of '" + n.name + "' must be " + want[j] + ", got " + a.typ + cast_hint(a.typ, want[j]));
+            }
         }
         j = j + 1;
     }
@@ -1979,22 +2902,67 @@ fn expect_args(c0: HChecker, n: Node, want: [str]) -> HChecker {
     return c;
 }
 
+// Check a builtin call's args against expected types, failing
+// with ONE message when the arity or any type is wrong (Python's
+// one-message builtins: range, sqrt/exp/log, abs, wrapping_neg,
+// file_exists, read_file, read_bytes, parse_int, parse_float,
+// peek32, trim, parallel_dot, parallel_matmul, http_*,
+// mmap_open). Python compares arg types with plain != (no
+// accepts() coercion) for builtins.
+fn expect_builtin_msg(c0: HChecker, n: Node, want: [str], msg: str) -> HChecker {
+    let mut c: HChecker = c0;
+    if len(n.kids) != len(want) {
+        fail_at(n.line, n.col, msg);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let a: COut = check_expr(c, n.kids[i]);
+        c = a.c;
+        if a.typ != want[i] {
+            fail_at(n.line, n.col, msg);
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// Same, but arity and type failures have different messages
+// (Python's two-message builtins: pow, wrapping_add/sub/mul,
+// ecall, ecall3, write_file, split, starts_with/ends_with,
+// mmap_get, mmap_grow, mmap_get32).
+fn expect_builtin_msgs(c0: HChecker, n: Node, want: [str], arity_msg: str, type_msg: str) -> HChecker {
+    let mut c: HChecker = c0;
+    if len(n.kids) != len(want) {
+        fail_at(n.line, n.col, arity_msg);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let a: COut = check_expr(c, n.kids[i]);
+        c = a.c;
+        if a.typ != want[i] {
+            fail_at(n.line, n.col, type_msg);
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
 fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     let mut c: HChecker = c0;
     // A small set of builtins with known signatures.
     if n.name == "len" {
         if len(n.kids) != 1 {
-            fail_at(n.line, n.col, "len takes 1 argument");
+            fail_at(n.line, n.col, "len() takes exactly one argument");
         }
         // Read-only observation: a pinned value may be measured.
         c.pinned_observe = c.pinned_observe + 1;
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         c.pinned_observe = c.pinned_observe - 1;
-        if is_array(a.typ) || a.typ == "str" {
+        if is_array(a.typ) || is_readonly(a.typ) || a.typ == "str" {
             return COut { c: c, typ: "int" };
         }
-        fail_at(n.line, n.col, "len needs an array or string, got " + a.typ);
+        fail_at(n.line, n.col, "len() needs a str or array, got " + a.typ);
     }
     if n.name == "move" {
         // move(x) transfers ownership; move(p.field) transfers a field.
@@ -2019,6 +2987,9 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
             }
             let t: COut = check_expr(c, arg);
             c = t.c;
+            if move_breaks_for(c, arg.name, arg.name) {
+                fail_at(n.line, n.col, "cannot move '" + arg.name + "' (it is the iterable of an enclosing for loop; moving it frees the buffer the loop is reading)");
+            }
             if !is_owned_type(c, t.typ) {
                 fail_at(n.line, n.col, "move needs an owned value (array, str, struct, tuple), got " + t.typ);
             }
@@ -2039,6 +3010,9 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         }
         let t: COut = check_expr(c, arg);
         c = t.c;
+        if move_breaks_for(c, root, path) {
+            fail_at(n.line, n.col, "cannot move '" + path + "' (it is the iterable of an enclosing for loop; moving it frees the buffer the loop is reading)");
+        }
         if !is_owned_type(c, t.typ) {
             fail_at(n.line, n.col, "move needs an owned value (array, str, struct, tuple), got " + t.typ);
         }
@@ -2117,85 +3091,71 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     }
     if n.name == "args" {
         if len(n.kids) != 0 {
-            fail_at(n.line, n.col, "args takes no arguments");
+            fail_at(n.line, n.col, "args() takes no arguments");
         }
         return COut { c: c, typ: "[str]" };
     }
     if n.name == "parse_int" {
-        if len(n.kids) != 1 {
-            fail_at(n.line, n.col, "parse_int takes 1 argument");
-        }
-        let a: COut = check_expr(c, n.kids[0]);
-        c = a.c;
-        if a.typ != "str" {
-            fail_at(n.line, n.col, "parse_int needs a string, got " + a.typ);
-        }
+        c = expect_builtin_msg(c, n, ["str"], "parse_int() takes exactly one str argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "run_command" {
         if len(n.kids) != 1 {
-            fail_at(n.line, n.col, "run_command takes 1 argument");
+            fail_at(n.line, n.col, "run_command() takes exactly one str argument");
         }
         let a: COut = check_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
-            fail_at(n.line, n.col, "run_command needs a string, got " + a.typ);
+            fail_at(n.line, n.col, "run_command() takes exactly one str argument");
         }
         return COut { c: c, typ: "int" };
     }
     if n.name == "parse_float" {
-        if len(n.kids) != 1 {
-            fail_at(n.line, n.col, "parse_float takes 1 argument");
-        }
-        let a: COut = check_expr(c, n.kids[0]);
-        c = a.c;
-        if a.typ != "str" {
-            fail_at(n.line, n.col, "parse_float needs a string, got " + a.typ);
-        }
+        c = expect_builtin_msg(c, n, ["str"], "parse_float() takes exactly one str argument");
         return COut { c: c, typ: "float" };
     }
     if n.name == "range" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "range() takes exactly one int argument");
         return COut { c: c, typ: "[int]" };
     }
     if n.name == "clock_micros" {
-        c = expect_args(c, n, []);
+        c = expect_builtin_msg(c, n, [], "clock_micros() takes no arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "sqrt" || n.name == "exp" || n.name == "log" {
-        c = expect_args(c, n, ["float"]);
+        c = expect_builtin_msg(c, n, ["float"], n.name + "() takes exactly one float argument");
         return COut { c: c, typ: "float" };
     }
     if n.name == "pow" {
-        c = expect_args(c, n, ["float", "float"]);
+        c = expect_builtin_msgs(c, n, ["float", "float"], "pow() takes exactly two arguments", "pow() takes float arguments");
         return COut { c: c, typ: "float" };
     }
     if n.name == "abs" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "abs() takes exactly one int argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "wrapping_add" || n.name == "wrapping_sub" || n.name == "wrapping_mul" {
-        c = expect_args(c, n, ["int", "int"]);
+        c = expect_builtin_msgs(c, n, ["int", "int"], n.name + "() takes exactly two arguments", n.name + "() takes int arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "wrapping_neg" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "wrapping_neg() takes exactly one int argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "file_exists" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "file_exists() takes exactly one str argument");
         return COut { c: c, typ: "bool" };
     }
     if n.name == "read_file" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "read_file() takes exactly one str argument");
         return COut { c: c, typ: "str" };
     }
     if n.name == "read_line" {
-        c = expect_args(c, n, []);
+        c = expect_builtin_msg(c, n, [], "read_line() takes no arguments");
         return COut { c: c, typ: "str" };
     }
     if n.name == "peek32" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "peek32() takes exactly one int argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "csr_read" {
@@ -2208,43 +3168,84 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         return COut { c: c, typ: "int" };
     }
     if n.name == "ecall" {
-        c = expect_args(c, n, ["int", "int"]);
+        c = expect_builtin_msgs(c, n, ["int", "int"], "ecall() takes exactly two arguments (extension id, argument)", "ecall() takes int arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "ecall3" {
-        c = expect_args(c, n, ["int", "int", "int"]);
+        c = expect_builtin_msgs(c, n, ["int", "int", "int"], "ecall3() takes exactly three arguments (extension id, argument 0, argument 1)", "ecall3() takes int arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "write_file" {
-        c = expect_args(c, n, ["str", "str"]);
+        c = expect_builtin_msgs(c, n, ["str", "str"], "write_file() takes exactly two arguments", "write_file() takes str arguments");
         return COut { c: c, typ: "bool" };
     }
     if n.name == "read_bytes" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "read_bytes() takes exactly one str argument");
         return COut { c: c, typ: "[int]" };
     }
     if n.name == "write_bytes" {
-        c = expect_args(c, n, ["str", "[int]"]);
+        if len(n.kids) != 2 {
+            fail_at(n.line, n.col, "write_bytes() takes exactly two arguments");
+        }
+        let a0: COut = check_expr(c, n.kids[0]);
+        c = a0.c;
+        if a0.typ != "str" {
+            fail_at(n.line, n.col, "write_bytes() takes a str path");
+        }
+        let a1: COut = check_expr(c, n.kids[1]);
+        c = a1.c;
+        if a1.typ != "[int]" {
+            fail_at(n.line, n.col, "write_bytes() takes [int] data");
+        }
         return COut { c: c, typ: "bool" };
     }
     if n.name == "split" {
-        c = expect_args(c, n, ["str", "str"]);
+        c = expect_builtin_msgs(c, n, ["str", "str"], "split() takes exactly two arguments", "split() takes str arguments");
         return COut { c: c, typ: "[str]" };
     }
     if n.name == "join" {
-        c = expect_args(c, n, ["[str]", "str"]);
+        if len(n.kids) != 2 {
+            fail_at(n.line, n.col, "join() takes exactly two arguments");
+        }
+        let a0: COut = check_expr(c, n.kids[0]);
+        c = a0.c;
+        if a0.typ != "[str]" {
+            fail_at(n.line, n.col, "join() takes a [str] as its first argument");
+        }
+        let a1: COut = check_expr(c, n.kids[1]);
+        c = a1.c;
+        if a1.typ != "str" {
+            fail_at(n.line, n.col, "join() takes a str separator");
+        }
         return COut { c: c, typ: "str" };
     }
     if n.name == "substr" {
-        c = expect_args(c, n, ["str", "int", "int"]);
+        if len(n.kids) != 3 {
+            fail_at(n.line, n.col, "substr() takes exactly three arguments");
+        }
+        let a0: COut = check_expr(c, n.kids[0]);
+        c = a0.c;
+        if a0.typ != "str" {
+            fail_at(n.line, n.col, "substr() takes a str as its first argument");
+        }
+        let a1: COut = check_expr(c, n.kids[1]);
+        c = a1.c;
+        if a1.typ != "int" {
+            fail_at(n.line, n.col, "substr() takes int start and length");
+        }
+        let a2: COut = check_expr(c, n.kids[2]);
+        c = a2.c;
+        if a2.typ != "int" {
+            fail_at(n.line, n.col, "substr() takes int start and length");
+        }
         return COut { c: c, typ: "str" };
     }
     if n.name == "trim" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "trim() takes exactly one str argument");
         return COut { c: c, typ: "str" };
     }
     if n.name == "starts_with" || n.name == "ends_with" {
-        c = expect_args(c, n, ["str", "str"]);
+        c = expect_builtin_msgs(c, n, ["str", "str"], n.name + "() takes exactly two arguments", n.name + "() takes str arguments");
         return COut { c: c, typ: "bool" };
     }
     if n.name == "refcount" {
@@ -2261,58 +3262,92 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         return COut { c: c, typ: "int" };
     }
     if n.name == "weak_new" {
-        c = expect_args(c, n, ["[int]"]);
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "weak_new() takes exactly one argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "[int]" {
+            fail_at(n.line, n.col, "weak_new() needs an [int] array in v1, got " + a.typ);
+        }
         return COut { c: c, typ: "int" };
     }
     if n.name == "weak_upgrade" {
-        c = expect_args(c, n, ["int"]);
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "weak_upgrade() takes exactly one argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "int" {
+            fail_at(n.line, n.col, "weak_upgrade() takes a weak id (int)");
+        }
         return COut { c: c, typ: "(bool, [int])" };
     }
     if n.name == "alloc_count" || n.name == "free_count" || n.name == "arr_alloc_count" || n.name == "arr_free_count" {
-        c = expect_args(c, n, []);
+        c = expect_builtin_msg(c, n, [], n.name + "() takes no arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "parallel_dot" {
-        c = expect_args(c, n, ["[float]", "[float]"]);
+        c = expect_builtin_msg(c, n, ["[float]", "[float]"], "parallel_dot() takes two [float] arguments");
         return COut { c: c, typ: "float" };
     }
     if n.name == "parallel_matmul" {
-        c = expect_args(c, n, ["[float]", "[float]", "int"]);
+        c = expect_builtin_msg(c, n, ["[float]", "[float]", "int"], "parallel_matmul() takes [float], [float], int");
         return COut { c: c, typ: "[float]" };
     }
     if n.name == "mmap_open" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "mmap_open() takes a file path (str)");
         return COut { c: c, typ: "int" };
     }
-    if n.name == "mmap_get" || n.name == "mmap_grow" || n.name == "mmap_get32" {
-        c = expect_args(c, n, ["int", "int"]);
+    if n.name == "mmap_get" {
+        c = expect_builtin_msgs(c, n, ["int", "int"], "mmap_get() takes a mapping id and an index", "mmap_get() arguments must be int");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "mmap_grow" {
+        c = expect_builtin_msgs(c, n, ["int", "int"], "mmap_grow() takes a mapping id and a new size", "mmap_grow() arguments must be int");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "mmap_get32" {
+        c = expect_builtin_msgs(c, n, ["int", "int"], "mmap_get32() takes a mapping id and a byte offset", "mmap_get32() arguments must be int");
         return COut { c: c, typ: "int" };
     }
     if n.name == "http_get" {
-        c = expect_args(c, n, ["str"]);
+        c = expect_builtin_msg(c, n, ["str"], "http_get() takes exactly one str URL argument");
         return COut { c: c, typ: "str" };
     }
     if n.name == "http_listen" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "http_listen() takes exactly one int port argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "http_accept" || n.name == "http_close" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], n.name + "() takes exactly one int fd argument");
         return COut { c: c, typ: "int" };
     }
     if n.name == "http_read_request" {
-        c = expect_args(c, n, ["int"]);
+        c = expect_builtin_msg(c, n, ["int"], "http_read_request() takes exactly one int client fd argument");
         return COut { c: c, typ: "str" };
     }
     if n.name == "http_respond" {
-        c = expect_args(c, n, ["int", "str"]);
+        c = expect_builtin_msg(c, n, ["int", "str"], "http_respond() takes (int client fd, str body)");
         return COut { c: c, typ: "int" };
     }
     if n.name == "http_respond_status" {
-        c = expect_args(c, n, ["int", "int", "str"]);
+        c = expect_builtin_msg(c, n, ["int", "int", "str"], "http_respond_status() takes (int client fd, int status, str body)");
         return COut { c: c, typ: "int" };
     }
-    fail_at(n.line, n.col, "undefined function '" + n.name + "'");
+    let mut fn_cands: [str] = [];
+    let mut fi: int = 0;
+    while fi < len(c.func_names) {
+        push(fn_cands, c.func_names[fi]);
+        fi = fi + 1;
+    }
+    let blts: [str] = builtin_names();
+    let mut bi: int = 0;
+    while bi < len(blts) {
+        push(fn_cands, blts[bi]);
+        bi = bi + 1;
+    }
+    fail_at(n.line, n.col, "undefined function '" + n.name + "'" + suggest(n.name, fn_cands));
     return COut { c: c, typ: "?" };
 }
 
@@ -2357,69 +3392,124 @@ fn binop_adapt(op: str, lt: str, rt: str, left: Node, right: Node) -> str {
     return "";
 }
 
-fn check_binop(c0: HChecker, n: Node) -> COut {
+// Combine one already-checked BinOp pair into its result type
+// (the old check_binop body below the two check_expr calls).
+// Pure in the operand TYPES: lt/rt are the checked types, ln/rn
+// the operand nodes (for the literal-fit adaptation), line/col
+// the BinOp node's position for errors.
+fn binop_combine(c0: HChecker, op: str, lt: str, rt: str, ln: Node, rn: Node, line: int, col: int) -> COut {
     let mut c: HChecker = c0;
-    let op: str = n.name;
-    let l: COut = check_expr(c, n.kids[0]);
-    c = l.c;
-    let r: COut = check_expr(c, n.kids[1]);
-    c = r.c;
-    let adapted: str = binop_adapt(op, l.typ, r.typ, n.kids[0], n.kids[1]);
+    let adapted: str = binop_adapt(op, lt, rt, ln, rn);
     if adapted != "" {
         return COut { c: c, typ: adapted };
     }
     // Arithmetic: int/float (mixed int+float promotes to float
     // only via explicit cast in Qasida, so both must match).
     if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
-        if op == "+" && l.typ == "str" && r.typ == "str" {
+        if op == "+" && lt == "str" && rt == "str" {
             return COut { c: c, typ: "str" };
         }
-        if (l.typ == "int" && r.typ == "int") {
+        if (lt == "int" && rt == "int") {
             return COut { c: c, typ: "int" };
         }
-        if (l.typ == "float" && r.typ == "float") {
+        if (lt == "float" && rt == "float") {
             return COut { c: c, typ: "float" };
         }
-        if l.typ == r.typ && is_fixed_int(l.typ) {
-            return COut { c: c, typ: l.typ };
+        if lt == rt && is_fixed_int(lt) {
+            return COut { c: c, typ: lt };
         }
-        fail_at(n.line, n.col, "operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
+        fail_at(line, col, "operator '" + op + "' needs matching int or float operands (or str + str), got " + lt + " and " + rt);
     }
-    // Comparison: same-type operands, result bool.
+    // Comparison: Python allows ==/!= only for the same scalar
+    // (int/float/bool/str), the same fixed int, the same enum, or
+    // the same newtype over a comparable underlying type
+    // (checker.py:2888-2900). Structs, arrays, tuples and unions
+    // are NOT comparable (the old hosted check accepted any same
+    // type, which let union equality through).
     if op == "==" || op == "!=" {
-        if l.typ == r.typ || type_matches(l.typ, r.typ) || type_matches(r.typ, l.typ) {
+        if lt == rt && (lt == "int" || lt == "float" || lt == "bool" || lt == "str" || is_fixed_int(lt) || str_in_arr(lt, c.enum_names)) {
             return COut { c: c, typ: "bool" };
         }
-        fail_at(n.line, n.col, "operator '" + op + "' needs matching types, got " + l.typ + " and " + r.typ);
+        if lt == rt && str_in_arr(lt, c.nt_names) {
+            let under: str = underlying_newtype(c, lt);
+            if under == "int" || under == "float" || under == "bool" || under == "str" || str_in_arr(under, c.enum_names) {
+                return COut { c: c, typ: "bool" };
+            }
+        }
+        fail_at(line, col, "operator '" + op + "' needs matching int, float, bool, str or enum operands, got " + lt + " and " + rt);
     }
     if op == "<" || op == "<=" || op == ">" || op == ">=" {
-        if (l.typ == "int" && r.typ == "int") || (l.typ == "float" && r.typ == "float") || (l.typ == r.typ && is_fixed_int(l.typ)) {
+        if (lt == "int" && rt == "int") || (lt == "float" && rt == "float") || (lt == rt && is_fixed_int(lt)) {
             return COut { c: c, typ: "bool" };
         }
-        fail_at(n.line, n.col, "operator '" + op + "' needs matching numbers, got " + l.typ + " and " + r.typ);
+        fail_at(line, col, "operator '" + op + "' needs matching int or float operands, got " + lt + " and " + rt);
     }
     // Bitwise / shifts: ints.
     if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" {
-        if l.typ == "int" && r.typ == "int" {
+        if lt == "int" && rt == "int" {
             return COut { c: c, typ: "int" };
         }
-        if (op == "&" || op == "|" || op == "^") && l.typ == r.typ && is_fixed_int(l.typ) {
-            return COut { c: c, typ: l.typ };
+        if (op == "&" || op == "|" || op == "^") && lt == rt && is_fixed_int(lt) {
+            return COut { c: c, typ: lt };
         }
-        if (op == "<<" || op == ">>") && is_fixed_int(l.typ) && (r.typ == "int" || r.typ == l.typ) {
-            return COut { c: c, typ: l.typ };
+        if (op == "<<" || op == ">>") && is_fixed_int(lt) && (rt == "int" || rt == lt) {
+            return COut { c: c, typ: lt };
         }
-        fail_at(n.line, n.col, "operator '" + op + "' needs ints, got " + l.typ + " and " + r.typ);
+        fail_at(line, col, "operator '" + op + "' needs ints, got " + lt + " and " + rt);
     }
     // Logic: bools.
     if op == "&&" || op == "||" {
-        if l.typ == "bool" && r.typ == "bool" {
+        if lt == "bool" && rt == "bool" {
             return COut { c: c, typ: "bool" };
         }
-        fail_at(n.line, n.col, "operator '" + op + "' needs bools, got " + l.typ + " and " + r.typ);
+        fail_at(line, col, "operator '" + op + "' needs bools, got " + lt + " and " + rt);
     }
-    fail_at(n.line, n.col, "unknown binary operator '" + op + "'");
+    fail_at(line, col, "unknown binary operator '" + op + "'");
     return COut { c: c, typ: "?" };
+}
+
+fn check_binop(c0: HChecker, n: Node) -> COut {
+    let mut c: HChecker = c0;
+    // Flatten a left-nested BinOp spine into an iterative loop.
+    // A chain of N terms recursed N deep through check_expr /
+    // check_expr_inner (~86KB/frame) + check_binop (~29KB),
+    // overflowing the 8MB C stack at ~65 terms (the big-frame
+    // program's 300-term return). The flattened walk checks
+    // operands left-to-right and combines pairwise with the same
+    // rules, nodes and positions as the recursion did: pair i
+    // combines the accumulated type with the i-th right operand
+    // at the i-th spine node's position, with the i-th spine
+    // node's left child as the literal-fit left node. Spine
+    // entries are collected outermost-first, so the fold runs
+    // from the last entry back to the first. Recursion depth is
+    // now bounded by operand depth, not chain length.
+    let mut spine_ops: [str] = [];
+    let mut spine_rights: [Node] = [];
+    let mut spine_lefts: [Node] = [];
+    let mut spine_lines: [int] = [];
+    let mut spine_cols: [int] = [];
+    let mut cur: Node = n;
+    while cur.kind == 40 {
+        push(spine_ops, cur.name);
+        push(spine_rights, cur.kids[1]);
+        push(spine_lefts, cur.kids[0]);
+        push(spine_lines, cur.line);
+        push(spine_cols, cur.col);
+        cur = cur.kids[0];
+    }
+    let first: COut = check_expr(c, cur);
+    c = first.c;
+    let mut lt: str = first.typ;
+    let mut i: int = len(spine_ops) - 1;
+    while i >= 0 {
+        let r: COut = check_expr(c, spine_rights[i]);
+        c = r.c;
+        let b: COut = binop_combine(c, spine_ops[i], lt, r.typ, spine_lefts[i], spine_rights[i], spine_lines[i], spine_cols[i]);
+        c = b.c;
+        lt = b.typ;
+        i = i - 1;
+    }
+    return COut { c: c, typ: lt };
 }
 
 // ---------- statement checker ----------
@@ -2430,7 +3520,10 @@ fn check_binop(c0: HChecker, n: Node) -> COut {
 // out of scope after the join and must not poison a later
 // redeclaration, so only names visible in `before` are joined.
 fn join_moved(before: HChecker, results: [HChecker]) -> HChecker {
-    let mut c: HChecker = before;
+    // Snapshot: this function writes var_moved/var_pinned in
+    // place, which would corrupt the caller's `before` (shared
+    // arrays) if it were used directly.
+    let mut c: HChecker = checker_snapshot(before);
     let mut i: int = 0;
     while i < len(c.var_names) {
         let mut r: int = 0;
@@ -2538,6 +3631,11 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
         if !is_owned_type(c, t) {
             fail_at(n.line, n.col, "pin needs an owned value (array, str, struct, tuple), got " + t);
         }
+        // A struct with a drop method cannot be pinned: pinning
+        // forbids moving, and drop runs on move-out.
+        if has_method(c, t, "drop") {
+            fail_at(n.line, n.col, "cannot pin a value of struct '" + t + "' with a drop method");
+        }
         return env_set_pinned(c, arg.name);
     }
     if n.name == "assert" {
@@ -2633,18 +3731,31 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
             c = b.c;
             vt = b.typ;
         }
+        // A readonly view is rejected with its own message, not
+        // the generic "needs an array" one (Python checks the
+        // readonly case before the array case is reached, since
+        // elem_type unwraps readonly).
+        if is_readonly(vt) {
+            fail_at(n.line, n.col, "cannot push to a readonly view " + vt);
+        }
         if !is_array(vt) {
             fail_at(n.line, n.col, "push() needs an array, got " + vt);
         }
         if is_sized_array(vt) {
             fail_at(n.line, n.col, "cannot push to a sized array " + vt + " (its length is fixed)");
         }
-        if is_readonly(vt) {
-            fail_at(n.line, n.col, "cannot push to a readonly view " + vt);
-        }
         let v: COut = check_expr(c, n.kids[1]);
         c = v.c;
-        if !accepts(c, v.typ, elem_type(vt)) {
+        // Pushing a concrete value into an unresolved array
+        // resolves it to an array of that value's type.
+        if tgt.kind == 34 {
+            let rr: ResOut = try_resolve_empty(c, tgt.name, "[" + v.typ + "]");
+            c = rr.c;
+            if rr.ok {
+                vt = "[" + v.typ + "]";
+            }
+        }
+        if v.typ != elem_type(vt) {
             fail_at(n.line, n.col, "push() value must be " + elem_type(vt) + ", got " + v.typ);
         }
         return c;
@@ -2733,13 +3844,68 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         }
         let init: COut = check_expr(c, n.kids[0]);
         c = init.c;
-        if init.typ == "void" && n.sval == "" {
+        if init.typ == "void" {
+            // Python checker's void-let messages (checker.py:1260):
+            // a call or method call names the function; any other
+            // void value gets the bare message.
+            if n.kids[0].kind == 35 {
+                fail_at(n.line, n.col, "function '" + n.kids[0].name + "' returns void and has no value to bind; call it as a statement instead");
+            }
+            if n.kids[0].kind == 33 {
+                fail_at(n.line, n.col, "method '" + n.kids[0].name + "' returns void and has no value to bind; call it as a statement instead");
+            }
             fail_at(n.line, n.col, "void has no value to bind");
         }
         let mut t: str = init.typ;
+        if len(split(t, "?")) == 1 && !hc_valid_type(c, t, []) {
+            // A value whose type is not a valid value type (a
+            // tuple containing void, or a bad union) cannot be
+            // bound either (Python checker.py:1272).
+            fail_at(n.line, n.col, "type '" + t + "' contains void, which has no value");
+        }
+        if n.sval == "" && n.kids[0].kind == 29 && len(n.kids[0].kids) == 0 {
+            // Empty literal, no annotation: its element type is
+            // unresolved until a constraining use resolves it
+            // (or check_func reports it at the end of the body).
+            push(c.unres_names, n.name);
+            push(c.unres_lines, n.line);
+            push(c.unres_cols, n.col);
+        }
         if n.sval != "" {
+            // An annotated let constrains an unresolved array
+            // value to the annotation's type.
+            if n.kids[0].kind == 34 {
+                let r: ResOut = try_resolve_empty(c, n.kids[0].name, n.sval);
+                c = r.c;
+                if r.ok {
+                    t = n.sval;
+                }
+            }
+            // A generic-enum placeholder fills from the
+            // annotation (None() over OptionE<T> is OptionE<int>
+            // here); a bare variant of a generic enum takes the
+            // annotation's type the same way.
+            let filled: str = fill_placeholder(t, n.sval);
+            if filled != t {
+                t = filled;
+            } else if n.kids[0].kind == 34 {
+                let ven2: str = enum_of_variant(c, n.kids[0].name);
+                if ven2 != "" && generic_base(n.sval) == ven2 && generic_base(n.sval) != n.sval {
+                    t = n.sval;
+                }
+            }
+            // The annotation itself must name a real value type
+            // (Python checker.py:1281): a duplicate-member union
+            // or an unknown type is rejected here.
+            if !hc_valid_type(c, n.sval, []) || n.sval == "void" {
+                fail_at(n.line, n.col, "unknown type '" + n.sval + "'" + suggest(n.sval, type_name_cands(c)));
+            }
             if !accepts(c, t, n.sval) && !sized_literal_ok(c, n.kids[0], n.sval) && !literal_fits_fixed(n.kids[0], n.sval) {
-                fail_at(n.line, n.col, "variable '" + n.name + "' is declared " + n.sval + " but initialised with " + t);
+                let fit_msg: str = literal_fit_msg(n.kids[0], n.sval);
+                if fit_msg != "" {
+                    fail_at(n.line, n.col, fit_msg);
+                }
+                fail_at(n.line, n.col, "variable '" + n.name + "' is declared " + n.sval + " but initialised with " + t + cast_hint(t, n.sval));
             }
             t = n.sval;
         }
@@ -2757,69 +3923,166 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         }
         let val: COut = check_expr(c, n.kids[0]);
         c = val.c;
-        let want: str = env_lookup(c, n.name, n.line, n.col);
+        // Assigning a fresh value revives a moved variable, so the
+        // type read must not fail on moved (Python's lookup does
+        // not fail on moved either).
+        let mut want: str = env_type_raw(c, n.name);
+        if want == "" {
+            fail_at(n.line, n.col, "undefined variable '" + n.name + "'");
+        }
+        // Assigning a concrete value to an unresolved empty array
+        // resolves it to the value's type.
+        let rr: ResOut = try_resolve_empty(c, n.name, val.typ);
+        c = rr.c;
+        if rr.ok {
+            want = val.typ;
+        }
         if !accepts(c, val.typ, want) && !sized_literal_ok(c, n.kids[0], want) && !literal_fits_fixed(n.kids[0], want) {
-            fail_at(n.line, n.col, "cannot assign " + val.typ + " to '" + n.name + "' of type " + want);
+            let fit_msg: str = literal_fit_msg(n.kids[0], want);
+            if fit_msg != "" {
+                fail_at(n.line, n.col, fit_msg);
+            }
+            fail_at(n.line, n.col, "cannot assign " + val.typ + " to " + want + " variable '" + n.name + "'" + cast_hint(val.typ, want));
         }
         return env_revive(c, n.name);
     }
-    if n.kind == 12 || n.kind == 13 {
-        // IndexAssign / FieldAssign: the root variable must be
-        // mutable; the write is in place, so a pinned root is OK.
-        let root: str = access_root(n.kids[0]);
-        if root == "" {
-            fail_at(n.line, n.col, "assignment target must start from a variable");
-        }
-        if !env_is_mut(c, root) {
-            fail_at(n.line, n.col, "cannot assign to a field of immutable variable '" + root + "' (declare it with 'let mut')");
-        }
-        c.pinned_write_root = root;
-        let base: COut = check_expr(c, n.kids[0]);
-        c = base.c;
-        // (4e: the array-type re-check must run while
-        // pinned_write_root is still set — re-checking the base
-        // after resetting it rejects an in-place index write into
-        // a pinned array, which Python accepts. v65 does a[0] = 9
-        // on a pinned a.)
-        let mut arr_typ: str = "";
-        if n.kind == 12 {
-            // n.kids[0] is the Index node; check_expr on it returns
-            // the ELEMENT type, so the array check must use the
-            // Index's base instead. Mirrors the Python checker,
-            // which types stmt.base.base (the array being indexed).
-            // (Slice-3 gap found by 4b: no slice-3 corpus file
-            // contains an IndexAssign, so this path was never
-            // exercised before.)
-            let arr: COut = check_expr(c, n.kids[0].kids[0]);
-            c = arr.c;
-            arr_typ = arr.typ;
-        }
-        c.pinned_write_root = "";
-        let val: COut = check_expr(c, n.kids[1]);
-        c = val.c;
-        if n.kind == 12 {
-            if !is_array(arr_typ) {
-                fail_at(n.line, n.col, "cannot index-assign into non-array of type " + arr_typ);
+    if n.kind == 12 {
+        // IndexAssign (Python checker.py:1396): an in-place
+        // index write is NOT a rebinding, so mutability of the
+        // root variable is NOT required — a parameter array, or
+        // a struct field's array, can be written through
+        // (map_put/db_put do m.vals[i] = v with m a parameter;
+        // heap_init does heap[0] = 1024 with heap a parameter).
+        // The old code lumped this with FieldAssign and required
+        // the root mutable; that rejected every stdlib helper
+        // that writes through an array it was handed.
+        let idx_node: Node = n.kids[0];
+        let base_node: Node = idx_node.kids[0];
+        let mut vt: str = "";
+        let mut et: str = "";
+        if base_node.kind == 34 {
+            // Plain variable base: a moved array is a
+            // use-after-move; the type comes from a raw lookup
+            // (Python types the base by lookup alone — no
+            // moved-field or pinned check on an in-place
+            // index write).
+            if is_moved(c, base_node.name) {
+                fail_at(n.line, n.col, "use of moved value '" + base_node.name + "'");
             }
-            if !accepts(c, val.typ, elem_type(arr_typ)) {
-                fail_at(n.line, n.col, "index assignment needs " + elem_type(arr_typ) + ", got " + val.typ);
+            vt = env_type_raw(c, base_node.name);
+            if vt == "" {
+                fail_at(n.line, n.col, "undefined variable '" + base_node.name + "'");
+            }
+            if is_array(vt) {
+                et = elem_type(vt);
+            }
+        } else if base_node.kind == 32 || base_node.kind == 36 {
+            // FieldAccess (m.vals[i] = v) or chained Index
+            // (m[i][j] = v): the array type comes from checking
+            // the base expression, with the write root set so
+            // an in-place write into a pinned value is not a
+            // use of the pinned value.
+            let root: str = access_root(base_node);
+            if root == "" {
+                fail_at(n.line, n.col, "index assignment target must be a variable or a field");
+            }
+            c.pinned_write_root = root;
+            let bout: COut = check_expr(c, base_node);
+            c = bout.c;
+            c.pinned_write_root = "";
+            vt = bout.typ;
+            if is_array(vt) {
+                et = elem_type(vt);
             }
         } else {
-            if !accepts(c, val.typ, base.typ) && !sized_literal_ok(c, n.kids[1], base.typ) {
-                fail_at(n.line, n.col, "field assignment needs " + base.typ + ", got " + val.typ);
+            fail_at(n.line, n.col, "index assignment target must be a variable or a field");
+        }
+        if is_readonly(vt) {
+            fail_at(n.line, n.col, "cannot assign through a readonly view " + vt);
+        }
+        if vt == "str" {
+            fail_at(n.line, n.col, "cannot assign to a string index; strings are immutable");
+        }
+        if et == "" {
+            fail_at(n.line, n.col, "cannot index a non-array value of type " + vt);
+        }
+        let ix: COut = check_expr(c, idx_node.kids[1]);
+        c = ix.c;
+        if ix.typ != "int" {
+            fail_at(n.line, n.col, "array index must be int");
+        }
+        let val: COut = check_expr(c, n.kids[1]);
+        c = val.c;
+        // Storing a concrete element through an unresolved array
+        // resolves it to an array of that element type.
+        if base_node.kind == 34 {
+            let rr: ResOut = try_resolve_empty(c, base_node.name, "[" + val.typ + "]");
+            c = rr.c;
+            if rr.ok {
+                et = val.typ;
             }
         }
-        // Assigning a field revives it after a field move.
-        let mut kept: [str] = [];
-        let mut j: int = 0;
-        while j < len(c.moved_fields) {
-            let p: str = c.moved_fields[j];
-            if p != field_path(n.kids[0]) {
-                push(kept, p);
-            }
-            j = j + 1;
+        if val.typ != et {
+            fail_at(n.line, n.col, "cannot assign " + val.typ + " to element of type " + et + cast_hint(val.typ, et));
         }
-        c.moved_fields = kept;
+        return c;
+    }
+    if n.kind == 13 {
+        // FieldAssign (Python checker.py:1348): the OUTERMOST
+        // variable must be mutable; the field type comes from
+        // checking the target FieldAccess itself.
+        let mut node: Node = n.kids[0];
+        while node.kind == 32 {
+            node = node.kids[0];
+        }
+        if node.kind != 34 {
+            fail_at(n.line, n.col, "field assignment target must start from a variable");
+        }
+        if !env_is_mut(c, node.name) {
+            fail_at(n.line, n.col, "cannot assign to a field of immutable variable '" + node.name + "' (declare it with 'let mut')");
+        }
+        // An in-place field write is not a use of the pinned
+        // value: the struct stays put, only the field changes.
+        c.pinned_write_root = node.name;
+        // Assigning a field revives it after a field move, so the
+        // target check alone must not reject a moved field.
+        c.moved_field_target = field_path(n.kids[0]);
+        let base: COut = check_expr(c, n.kids[0]);
+        c = base.c;
+        c.pinned_write_root = "";
+        c.moved_field_target = "";
+        let val: COut = check_expr(c, n.kids[1]);
+        c = val.c;
+        // Storing an unresolved array into a concretely typed field
+        // resolves it to the field's type.
+        let mut vt2: str = val.typ;
+        if n.kids[1].kind == 34 {
+            let rr: ResOut = try_resolve_empty(c, n.kids[1].name, base.typ);
+            c = rr.c;
+            if rr.ok {
+                vt2 = base.typ;
+            }
+        }
+        if vt2 != base.typ && !sized_literal_ok(c, n.kids[1], base.typ) {
+            fail_at(n.line, n.col, "cannot assign " + vt2 + " to field of type " + base.typ + cast_hint(vt2, base.typ));
+        }
+        // Assigning a field revives it after a field move, and
+        // assigning a whole intermediate struct revives the
+        // fields under it too (replacing o.inner replaces
+        // o.inner.vals).
+        let target_path: str = field_path(n.kids[0]);
+        if target_path != "" {
+            let mut kept: [str] = [];
+            let mut j: int = 0;
+            while j < len(c.moved_fields) {
+                let p: str = c.moved_fields[j];
+                if p != target_path && !starts_with(p, target_path + ".") {
+                    push(kept, p);
+                }
+                j = j + 1;
+            }
+            c.moved_fields = kept;
+        }
         return c;
     }
     if n.kind == 14 {
@@ -2830,13 +4093,13 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if cond.typ != "bool" {
             fail_at(n.line, n.col, "if condition must be bool, got " + cond.typ);
         }
-        let before: HChecker = c;
+        let before: HChecker = checker_snapshot(c);
         let mark: int = len(c.var_names);
         c.branch_depth = c.branch_depth + 1;
         c = check_block(c, n.kids[1]);
         c.branch_depth = c.branch_depth - 1;
         let then_c: HChecker = env_restore(c, mark);
-        c = before;
+        c = checker_snapshot(before);
         let else_c: HChecker = before;
         if len(n.kids) > 2 {
             let mark2: int = len(c.var_names);
@@ -2857,7 +4120,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if cond.typ != "bool" {
             fail_at(n.line, n.col, "while condition must be bool, got " + cond.typ);
         }
-        let before: HChecker = c;
+        let before: HChecker = checker_snapshot(c);
         let mark: int = len(c.var_names);
         c.loop_depth = c.loop_depth + 1;
         c = check_block(c, n.kids[1]);
@@ -2867,23 +4130,41 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
     }
     if n.kind == 16 {
         // For: iterating a pinned array reads its elements without
-        // moving the array itself (read-only observation).
+        // moving the array itself (read-only observation). A
+        // readonly view iterates like the array it views.
         c.pinned_observe = c.pinned_observe + 1;
         let r: COut = check_expr(c, n.kids[0]);
         c = r.c;
         c.pinned_observe = c.pinned_observe - 1;
-        if r.typ != "range" && !is_array(r.typ) {
+        let mut it_typ: str = r.typ;
+        if is_readonly(it_typ) {
+            it_typ = readonly_inner(it_typ);
+        }
+        if it_typ != "range" && !is_array(it_typ) {
             fail_at(n.line, n.col, "for needs a range or array, got " + r.typ);
         }
-        let before: HChecker = c;
+        let before: HChecker = checker_snapshot(c);
         let mark: int = len(c.var_names);
         let mut vt: str = "int";
-        if is_array(r.typ) {
-            vt = elem_type(r.typ);
+        if is_array(it_typ) {
+            vt = elem_type(it_typ);
         }
         c = env_declare(c, n.name, vt);
         push(c.loop_vars, n.name);
         c.loop_depth = c.loop_depth + 1;
+        // The iterable's buffer is read again on every iteration:
+        // record it so a move of it inside the body is rejected
+        // (the moved-to binding's scope-end free would leave the
+        // next iteration reading freed memory, even if the body
+        // reassigns the variable afterwards). The join below
+        // starts from `before`, captured before this push, so
+        // the entry is gone again after the loop — no pop needed.
+        let iter_root: str = access_root(n.kids[0]);
+        if iter_root != "" {
+            push(c.for_iter_roots, iter_root);
+            push(c.for_iter_paths, field_path(n.kids[0]));
+            push(c.for_iter_scopes, env_decl_index(c, iter_root));
+        }
         c = check_block(c, n.kids[1]);
         c.loop_depth = c.loop_depth - 1;
         let body_c: HChecker = env_restore(c, mark);
@@ -2907,10 +4188,30 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             }
             return c;
         }
+        // A void function cannot return a value at all (Python
+        // checker.py:1734).
+        if c.ret_type == "void" {
+            fail_at(n.line, n.col, "void function cannot return a value; remove the value after 'return'");
+        }
         let v: COut = check_expr(c, n.kids[0]);
         c = v.c;
-        if !accepts(c, v.typ, c.ret_type) && !sized_literal_ok(c, n.kids[0], c.ret_type) && !literal_fits_fixed(n.kids[0], c.ret_type) {
-            fail_at(n.line, n.col, "return type is " + v.typ + ", function returns " + c.ret_type);
+        // Returning an unresolved array from a concretely typed
+        // function resolves it to the return type.
+        let mut vt: str = v.typ;
+        if n.kids[0].kind == 34 {
+            let rr: ResOut = try_resolve_empty(c, n.kids[0].name, c.ret_type);
+            c = rr.c;
+            if rr.ok {
+                vt = c.ret_type;
+            }
+        }
+        vt = fill_placeholder(vt, c.ret_type);
+        if !accepts(c, vt, c.ret_type) && !sized_literal_ok(c, n.kids[0], c.ret_type) && !literal_fits_fixed(n.kids[0], c.ret_type) {
+            let fit_msg: str = literal_fit_msg(n.kids[0], c.ret_type);
+            if fit_msg != "" {
+                fail_at(n.line, n.col, fit_msg);
+            }
+            fail_at(n.line, n.col, "return type is " + v.typ + ", function returns " + c.ret_type + cast_hint(v.typ, c.ret_type));
         }
         return c;
     }
@@ -2937,7 +4238,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             // binding the narrowed value; exhaustiveness is over
             // the members, or a trailing wildcard.
             let members: [str] = union_members(et.typ);
-            let before: HChecker = c;
+            let before: HChecker = checker_snapshot(c);
             let mut seen: [str] = [];
             let mut has_wildcard: bool = false;
             let mut results: [HChecker] = [];
@@ -2958,7 +4259,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                     c.branch_depth = c.branch_depth - 1;
                     let ac: HChecker = env_restore(c, mark);
                     push(results, ac);
-                    c = before;
+                    c = checker_snapshot(before);
                     a = a + 1;
                     continue;
                 }
@@ -2995,7 +4296,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 c.branch_depth = c.branch_depth - 1;
                 let ac: HChecker = env_restore(c, mark);
                 push(results, ac);
-                c = before;
+                c = checker_snapshot(before);
                 a = a + 1;
             }
             if !has_wildcard {
@@ -3026,7 +4327,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             fail_at(n.line, n.col, "match needs an enum value, got " + et.typ);
         }
         let variants: [str] = enum_variant_names(c, base);
-        let before: HChecker = c;
+        let before: HChecker = checker_snapshot(c);
         let mut seen: [str] = [];
         let mut has_wildcard: bool = false;
         let mut results: [HChecker] = [];
@@ -3047,7 +4348,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 c.branch_depth = c.branch_depth - 1;
                 let ac: HChecker = env_restore(c, mark);
                 push(results, ac);
-                c = before;
+                c = checker_snapshot(before);
                 a = a + 1;
                 continue;
             }
@@ -3075,16 +4376,26 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             }
             let mark: int = len(c.var_names);
             if arm.sval != "" {
-                // v1: the payload type is used as written (generic
-                // enum payload substitution is a known gap).
-                c = env_declare(c, arm.sval, payload);
+                // Substitute the scrutinee's concrete type args
+                // into the payload (generic enums): the binding
+                // of Some(v) over OptionE<int> is int, not T.
+                let mut bpt: str = payload;
+                let gargs: [str] = generic_args(et.typ);
+                let etps: str = enum_tparams(c, base);
+                if len(gargs) > 0 && etps != "" {
+                    let enames: [str] = split(etps, "~");
+                    if len(enames) == len(gargs) {
+                        bpt = substitute_type(payload, enames, gargs);
+                    }
+                }
+                c = env_declare(c, arm.sval, bpt);
             }
             c.branch_depth = c.branch_depth + 1;
             c = check_block(c, arm.kids[0]);
             c.branch_depth = c.branch_depth - 1;
             let ac: HChecker = env_restore(c, mark);
             push(results, ac);
-            c = before;
+            c = checker_snapshot(before);
             a = a + 1;
         }
         if !has_wildcard {
@@ -3173,6 +4484,12 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if e0.kind == 35 && (e0.name == "pin" || e0.name == "assert" || e0.name == "print" || e0.name == "println" || e0.name == "fail" || e0.name == "fail_compile" || e0.name == "eprintln" || e0.name == "push" || e0.name == "poke32" || e0.name == "mmap_set" || e0.name == "mmap_close" || e0.name == "mmap_set32" || e0.name == "csr_write" || e0.name == "csr_set" || e0.name == "csr_clear") {
             return check_stmt_builtin(c, e0);
         }
+        // An expression builtin used as a statement is an error
+        // (Python: "'run_command' is an expression, not a
+        // statement; use its value").
+        if e0.kind == 35 && is_expr_builtin(e0.name) {
+            fail_at(n.line, n.col, "'" + e0.name + "' is an expression, not a statement; use its value");
+        }
         let e: COut = check_expr(c, e0);
         return e.c;
     }
@@ -3190,11 +4507,139 @@ fn check_block(c0: HChecker, n: Node) -> HChecker {
     return c;
 }
 
+// Return type of a function ("never", "int", ...), or "" if unknown.
+fn func_ret(c: HChecker, name: str) -> str {
+    let sig: str = func_sig(c, name);
+    if sig == "" {
+        return "";
+    }
+    let parts: [str] = split(sig, "->");
+    if len(parts) != 2 {
+        return "";
+    }
+    return parts[1];
+}
+
+// True when a return statement appears anywhere under node
+// (including nested blocks and branches).
+fn node_has_return(n: Node) -> bool {
+    if n.kind == 17 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if node_has_return(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True when evaluating e necessarily diverges: it contains a
+// fail call or a call to a never function. Only the expression
+// itself is walked, never nested statement bodies (those are
+// conditional).
+fn expr_diverges(c: HChecker, e: Node) -> bool {
+    if e.kind == 35 {
+        if e.name == "fail" || e.name == "fail_compile" {
+            return true;
+        }
+        if func_ret(c, e.name) == "never" {
+            return true;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        if expr_diverges(c, e.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True when a top-level statement necessarily diverges.
+// Blocks and scopes recurse (they run unconditionally);
+// if/while/for/match count only through their conditions
+// and scrutinees (evaluated unconditionally), never their
+// bodies (control can skip those). Returns are not
+// divergers here: they are exits, handled by the return
+// rule, and are rejected outright inside never functions.
+fn stmt_diverges(c: HChecker, s: Node) -> bool {
+    if s.kind == 9 {
+        let mut i: int = 0;
+        while i < len(s.kids) {
+            if stmt_diverges(c, s.kids[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    if s.kind == 22 {
+        if len(s.kids) > 0 {
+            return stmt_diverges(c, s.kids[0]);
+        }
+        return false;
+    }
+    if s.kind == 14 || s.kind == 15 || s.kind == 16 || s.kind == 20 {
+        if len(s.kids) > 0 {
+            return expr_diverges(c, s.kids[0]);
+        }
+        return false;
+    }
+    if s.kind == 17 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(s.kids) {
+        if expr_diverges(c, s.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True when a function body cannot fall off its end: some
+// top-level statement necessarily diverges.
+fn body_diverges(c: HChecker, body: Node) -> bool {
+    let mut i: int = 0;
+    while i < len(body.kids) {
+        if stmt_diverges(c, body.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
     let mut c: HChecker = c0;
     // Generic template: the body is checked only on instantiation,
     // when every type parameter is concrete.
     let sp: [str] = split_tparams(fn_node.name);
+    // Parameter and return types must name real value types
+    // (Python check_func): validated even for externs and
+    // generic templates, against the function's own type params.
+    let mut ftp: [str] = [];
+    if sp[1] != "" {
+        ftp = split(sp[1], "~");
+    }
+    let mut pi: int = 0;
+    while pi < len(fn_node.kids) {
+        let k: Node = fn_node.kids[pi];
+        if k.kind == 43 {
+            if !hc_valid_type(c, k.sval, ftp) || k.sval == "void" {
+                fail_at(fn_node.line, fn_node.col, "parameter type '" + k.sval + "' is not a value type");
+            }
+        }
+        pi = pi + 1;
+    }
+    if fn_node.sval != "void" && !hc_valid_type(c, fn_node.sval, ftp) {
+        fail_at(fn_node.line, fn_node.col, "unknown return type '" + fn_node.sval + "'" + suggest(fn_node.sval, type_name_cands(c)));
+    }
     if sp[1] != "" {
         return c;
     }
@@ -3213,33 +4658,580 @@ fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
     }
     // Extern declarations have no body to check; in
     // freestanding mode they need link-time C symbols.
+    // (mark is taken here so the extern early-return below can
+    // restore the parameters it just declared.)
+    let mark: int = len(c.var_names);
     if fn_node.bval && c.freestanding {
         let sp: [str] = split_tparams(fn_node.name);
         fail_at(fn_node.line, fn_node.col, "extern fn '" + sp[0] + "' needs link-time C symbols (not in freestanding v1)");
     }
+    if fn_node.bval {
+        // No body to check (Python check_func returns here too);
+        // without this the noreturn rule below would read the
+        // last Param node as the body and reject every extern
+        // that returns a value (ffi_demo's puts/system).
+        c = env_restore(c, mark);
+        c.ret_type = "void";
+        return c;
+    }
     c.ret_type = fn_node.sval;
     // Fresh per-function state.
     c.moved_fields = trunc_str(c.moved_fields, 0);
+    c.moved_field_target = "";
+    c.unres_names = trunc_str(c.unres_names, 0);
+    c.unres_lines = trunc_int(c.unres_lines, 0);
+    c.unres_cols = trunc_int(c.unres_cols, 0);
+    c.for_iter_roots = trunc_str(c.for_iter_roots, 0);
+    c.for_iter_paths = trunc_str(c.for_iter_paths, 0);
+    c.for_iter_scopes = trunc_int(c.for_iter_scopes, 0);
     c.loop_depth = 0;
     c.branch_depth = 0;
     c.loop_vars = trunc_str(c.loop_vars, 0);
-    let mark: int = len(c.var_names);
     c = check_block(c, body);
+    if len(c.unres_names) > 0 {
+        // An empty array literal no use in this function
+        // constrained: inference found no element type.
+        fail_at(c.unres_lines[0], c.unres_cols[0], "cannot infer the element type of an empty array literal; add an annotation, e.g. let x: [int] = []");
+    }
+    // Return rules (Python checker.py:1090): a never function
+    // must diverge and must not return; any other non-void
+    // function must end with a return (or diverge).
+    let ret: str = fn_node.sval;
+    if ret == "never" {
+        if node_has_return(body) {
+            fail_at(fn_node.line, fn_node.col, "never function '" + sp[0] + "' cannot return; its body must diverge instead");
+        }
+        if !body_diverges(c, body) {
+            fail_at(fn_node.line, fn_node.col, "never function '" + sp[0] + "' must end with a diverging statement (fail or a call to a never function); its body can fall off the end");
+        }
+    } else if ret != "void" {
+        let mut ends_return: bool = false;
+        if len(body.kids) > 0 && body.kids[len(body.kids) - 1].kind == 17 {
+            ends_return = true;
+        }
+        if !ends_return && !body_diverges(c, body) {
+            fail_at(fn_node.line, fn_node.col, "function '" + sp[0] + "' returns " + ret + " but its body does not end with a return; add a return statement of type " + ret + " at the end of the function");
+        }
+    }
     c = env_restore(c, mark);
     c.ret_type = "void";
     return c;
+}
+
+// ---------- type aliases ----------
+// Aliases are transparent shorthands: `type UserId = int` means
+// UserId IS int everywhere (Python checker.py:434-600). The hosted
+// checker cannot rewrite the AST in place (nodes are values), so
+// expansion is a tree-rebuilding pass: expand_aliases_prog builds
+// the alias table (validating duplicates, collisions, cycles and
+// unknown targets with Python's exact messages), then rebuilds the
+// program with every type spelling expanded. check_program,
+// run_infer and codegen_program each expand their own copy at
+// entry (deterministic, so all three see the same program); with
+// no aliases in the program the original node is returned
+// untouched, so the bootstrap emit stays byte-identical.
+
+fn alias_lookup_idx(names: [str], t: str) -> int {
+    let mut i: int = 0;
+    while i < len(names) {
+        if names[i] == t {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Membership in a "~"-joined list.
+fn str_in_split(joined: str, name: str) -> bool {
+    if joined == "" {
+        return false;
+    }
+    let parts: [str] = split(joined, "~");
+    let mut i: int = 0;
+    while i < len(parts) {
+        if parts[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// A built-in scalar name (Python checker.py SCALARS).
+fn alias_is_scalar(t: str) -> bool {
+    return t == "int" || t == "float" || t == "bool" || t == "str" || t == "range" || t == "i8" || t == "i16" || t == "i32" || t == "u8" || t == "u16" || t == "u32" || t == "u64" || t == "never";
+}
+
+// Resolve one alias target through the chain (Python's
+// _resolve_alias): aliases recurse, arrays recurse on the
+// element, generics recurse on the args; a cycle, or an alias
+// used with type arguments, is an error at the alias site.
+fn alias_resolve_target(names: [str], raw: [str], target: str, seen: str, line: int, col: int) -> str {
+    let idx: int = alias_lookup_idx(names, target);
+    if idx >= 0 {
+        if str_in_split(seen, target) {
+            fail_at(line, col, "cyclic type alias involving '" + target + "'");
+        }
+        return alias_resolve_target(names, raw, raw[idx], seen + "~" + target, line, col);
+    }
+    if starts_with(target, "[") && substr(target, len(target) - 1, 1) == "]" {
+        return "[" + alias_resolve_target(names, raw, substr(target, 1, len(target) - 2), seen, line, col) + "]";
+    }
+    let lt: int = find_lt(target);
+    if lt >= 0 && substr(target, len(target) - 1, 1) == ">" {
+        let base: str = substr(target, 0, lt);
+        if alias_lookup_idx(names, base) >= 0 {
+            fail_at(line, col, "type alias '" + base + "' takes no type arguments");
+        }
+        let args: [str] = generic_args(target);
+        let mut out: str = base + "<";
+        let mut i: int = 0;
+        while i < len(args) {
+            if i > 0 {
+                out = out + ", ";
+            }
+            out = out + alias_resolve_target(names, raw, args[i], seen, line, col);
+            i = i + 1;
+        }
+        return out + ">";
+    }
+    return target;
+}
+
+// Whether a resolved alias target names a real type (Python's
+// valid_type, without the current-type-params case: aliases are
+// never generic in v1).
+fn alias_valid_type(t: str, snames: [str], enames: [str], ntnames: [str]) -> bool {
+    if alias_is_scalar(t) {
+        return true;
+    }
+    if str_in_arr(t, snames) || str_in_arr(t, enames) || str_in_arr(t, ntnames) {
+        return true;
+    }
+    if is_tuple(t) {
+        let elems: [str] = tuple_elems(t);
+        let mut i: int = 0;
+        while i < len(elems) {
+            if !alias_valid_type(elems[i], snames, enames, ntnames) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return len(elems) > 0;
+    }
+    if is_readonly(t) {
+        return alias_valid_type(readonly_inner(t), snames, enames, ntnames);
+    }
+    if is_union_type(t) {
+        let members: [str] = union_members(t);
+        let mut i: int = 0;
+        while i < len(members) {
+            if !alias_valid_type(members[i], snames, enames, ntnames) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return len(members) >= 2;
+    }
+    if is_sized_array(t) {
+        let inner: str = substr(t, 1, len(t) - 2);
+        let semi: int = find_top(inner, ";");
+        return alias_valid_type(trim_spaces(substr(inner, 0, semi)), snames, enames, ntnames);
+    }
+    if starts_with(t, "[") && substr(t, len(t) - 1, 1) == "]" {
+        return alias_valid_type(substr(t, 1, len(t) - 2), snames, enames, ntnames);
+    }
+    let lt: int = find_lt(t);
+    if lt >= 0 && substr(t, len(t) - 1, 1) == ">" {
+        let base: str = substr(t, 0, lt);
+        if !str_in_arr(base, snames) && !str_in_arr(base, enames) {
+            return false;
+        }
+        let args: [str] = generic_args(t);
+        let mut i: int = 0;
+        while i < len(args) {
+            if !alias_valid_type(args[i], snames, enames, ntnames) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Expand one type spelling through the alias table (Python's
+// expand_aliases expand(): exact alias, tuple, sized array
+// (element only — the batch-12 gap), dynamic array, generic.
+fn alias_expand_type(names: [str], targets: [str], t: str, line: int, col: int) -> str {
+    let idx: int = alias_lookup_idx(names, t);
+    if idx >= 0 {
+        return targets[idx];
+    }
+    if is_tuple(t) {
+        let elems: [str] = tuple_elems(t);
+        let mut out: str = "(";
+        let mut i: int = 0;
+        while i < len(elems) {
+            if i > 0 {
+                out = out + ", ";
+            }
+            out = out + alias_expand_type(names, targets, elems[i], line, col);
+            i = i + 1;
+        }
+        return out + ")";
+    }
+    if is_sized_array(t) {
+        let inner: str = substr(t, 1, len(t) - 2);
+        let semi: int = find_top(inner, ";");
+        let elem: str = trim_spaces(substr(inner, 0, semi));
+        return "[" + alias_expand_type(names, targets, elem, line, col) + "; " + itoa(sized_len(t)) + "]";
+    }
+    if starts_with(t, "[") && substr(t, len(t) - 1, 1) == "]" {
+        return "[" + alias_expand_type(names, targets, substr(t, 1, len(t) - 2), line, col) + "]";
+    }
+    let lt: int = find_lt(t);
+    if lt >= 0 && substr(t, len(t) - 1, 1) == ">" {
+        let base: str = substr(t, 0, lt);
+        if alias_lookup_idx(names, base) >= 0 {
+            fail_at(line, col, "type alias '" + base + "' takes no type arguments");
+        }
+        let args: [str] = generic_args(t);
+        let mut out: str = base + "<";
+        let mut i: int = 0;
+        while i < len(args) {
+            if i > 0 {
+                out = out + ", ";
+            }
+            out = out + alias_expand_type(names, targets, args[i], line, col);
+            i = i + 1;
+        }
+        return out + ">";
+    }
+    return t;
+}
+
+// Rebuild one node with every type spelling expanded. Type
+// spellings live in: FuncDef ret (sval) + Param types (kind 43),
+// StructDef/EnumDef field + payload types (kind 44), NewtypeDef
+// target, Let annotation, Cast target, StructLit name (only when
+// the alias target is a bare struct name). AliasDefs themselves
+// are left as written (the table already holds their resolved
+// targets); everything else recurses into kids.
+fn expand_alias_node(n: Node, names: [str], targets: [str]) -> Node {
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        push(kids, expand_alias_node(n.kids[i], names, targets));
+        i = i + 1;
+    }
+    let mut out: Node = n;
+    out.kids = kids;
+    if n.kind == 2 || n.kind == 43 || n.kind == 44 {
+        if n.sval != "" {
+            out.sval = alias_expand_type(names, targets, n.sval, n.line, n.col);
+        }
+    }
+    if n.kind == 8 || n.kind == 39 {
+        out.sval = alias_expand_type(names, targets, n.sval, n.line, n.col);
+    }
+    if n.kind == 10 {
+        if n.sval != "" {
+            out.sval = alias_expand_type(names, targets, n.sval, n.line, n.col);
+        }
+    }
+    if n.kind == 31 {
+        let idx: int = alias_lookup_idx(names, n.name);
+        if idx >= 0 {
+            let t: str = targets[idx];
+            if find_top(t, "<") < 0 && find_top(t, "[") < 0 {
+                out.name = t;
+            }
+        }
+    }
+    return out;
+}
+
+// Build the alias table from a program's AliasDefs (validating
+// with Python's messages) and return the program with every type
+// spelling expanded; the program is returned unchanged when it
+// declares no aliases.
+fn expand_aliases_prog(prog: Node) -> Node {
+    let mut names: [str] = [];
+    let mut raw: [str] = [];
+    let mut lines: [int] = [];
+    let mut cols: [int] = [];
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let d: Node = prog.kids[i];
+        if d.kind == 7 {
+            if alias_lookup_idx(names, d.name) >= 0 {
+                fail_at(d.line, d.col, "duplicate type alias '" + d.name + "'");
+            }
+            push(names, d.name);
+            push(raw, d.sval);
+            push(lines, d.line);
+            push(cols, d.col);
+        }
+        i = i + 1;
+    }
+    if len(names) == 0 {
+        return prog;
+    }
+    // Struct/enum/newtype names, and which structs/enums are generic.
+    let mut snames: [str] = [];
+    let mut enames: [str] = [];
+    let mut ntnames: [str] = [];
+    let mut gnames: [str] = [];
+    let mut gkinds: [str] = [];
+    let mut j: int = 0;
+    while j < len(prog.kids) {
+        let d: Node = prog.kids[j];
+        if d.kind == 3 {
+            let sp: [str] = split_tparams(d.name);
+            push(snames, sp[0]);
+            if sp[1] != "" {
+                push(gnames, sp[0]);
+                push(gkinds, "struct");
+            }
+        }
+        if d.kind == 4 {
+            let sp: [str] = split_tparams(d.name);
+            push(enames, sp[0]);
+            if sp[1] != "" {
+                push(gnames, sp[0]);
+                push(gkinds, "enum");
+            }
+        }
+        if d.kind == 8 {
+            push(ntnames, d.name);
+        }
+        j = j + 1;
+    }
+    // Collisions and bare-generic targets, for every alias, before
+    // resolving any of them.
+    let mut k: int = 0;
+    while k < len(names) {
+        if alias_is_scalar(names[k]) {
+            fail_at(lines[k], cols[k], "type alias '" + names[k] + "' collides with the built-in type '" + names[k] + "'");
+        }
+        if str_in_arr(names[k], snames) || str_in_arr(names[k], enames) {
+            fail_at(lines[k], cols[k], "type alias '" + names[k] + "' collides with an existing type of the same name");
+        }
+        let gi: int = alias_lookup_idx(gnames, raw[k]);
+        if gi >= 0 {
+            fail_at(lines[k], cols[k], "type alias '" + names[k] + "' cannot target generic " + gkinds[gi] + " '" + raw[k] + "' without type arguments; write " + raw[k] + "<...>");
+        }
+        k = k + 1;
+    }
+    // Resolve the chains.
+    let mut targets: [str] = [];
+    let mut m: int = 0;
+    while m < len(names) {
+        push(targets, alias_resolve_target(names, raw, raw[m], names[m], lines[m], cols[m]));
+        m = m + 1;
+    }
+    // Every resolved target must name a real type.
+    let mut v: int = 0;
+    while v < len(names) {
+        if !alias_valid_type(targets[v], snames, enames, ntnames) {
+            fail_at(lines[v], cols[v], "type alias '" + names[v] + "' targets unknown type '" + targets[v] + "'");
+        }
+        v = v + 1;
+    }
+    return expand_alias_node(prog, names, targets);
+}
+
+// Opaque type spellings: 'opaque Trait' (a trait name with no
+// spaces, unions, generics or arrays after it). Defined here
+// (not via infer) because the check-test driver compiles
+// check.fg without infer.fg.
+fn is_opaque_type(t: str) -> bool {
+    if !starts_with(t, "opaque ") || len(t) <= 7 {
+        return false;
+    }
+    let rest: str = substr(t, 7, len(t) - 7);
+    if len(split(rest, " ")) > 1 || len(split(rest, "|")) > 1 || len(split(rest, "<")) > 1 || len(split(rest, "[")) > 1 {
+        return false;
+    }
+    return true;
+}
+
+fn opaque_trait(t: str) -> str {
+    return substr(t, 7, len(t) - 7);
+}
+
+// Whether a type spelling names a real, usable value type
+// (Python checker's valid_type): scalars, the current type
+// params, structs/enums/newtypes, unions (at least two distinct
+// scalar members), opaques (a real trait with at least one impl),
+// readonly views over plain arrays, tuples (all elements valid),
+// generics (base struct/enum, exact arity, all args valid),
+// arrays (element valid; sized arrays need a non-negative
+// integer size). "void" is never valid here.
+fn hc_valid_type(c: HChecker, t: str, tparams: [str]) -> bool {
+    if alias_is_scalar(t) {
+        return true;
+    }
+    if str_in_arr(t, tparams) {
+        return true;
+    }
+    if str_in_arr(t, c.struct_names) || str_in_arr(t, c.enum_names) || str_in_arr(t, c.nt_names) {
+        return true;
+    }
+    if is_union_type(t) {
+        let members: [str] = union_members(t);
+        if len(members) < 2 {
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(members) {
+            let m: str = members[i];
+            if m != "int" && m != "float" && m != "bool" && m != "str" {
+                return false;
+            }
+            let mut j: int = 0;
+            while j < i {
+                if members[j] == m {
+                    return false;
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    if is_opaque_type(t) {
+        let tr: str = opaque_trait(t);
+        if !str_in_arr(tr, c.trait_names) {
+            return false;
+        }
+        let mut n: int = 0;
+        let mut k: int = 0;
+        while k < len(c.impl_traits) {
+            if c.impl_traits[k] == tr {
+                n = n + 1;
+            }
+            k = k + 1;
+        }
+        return n >= 1;
+    }
+    if is_readonly(t) {
+        let inner: str = readonly_inner(t);
+        if is_readonly(inner) {
+            return false;
+        }
+        if !starts_with(inner, "[") || substr(inner, len(inner) - 1, 1) != "]" {
+            return false;
+        }
+        return hc_valid_type(c, inner, tparams);
+    }
+    if is_tuple(t) {
+        let elems: [str] = tuple_elems(t);
+        if len(elems) == 0 {
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(elems) {
+            if !hc_valid_type(c, elems[i], tparams) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    let lt: int = find_lt(t);
+    if lt >= 0 && substr(t, len(t) - 1, 1) == ">" {
+        let base: str = substr(t, 0, lt);
+        let args: [str] = generic_args(t);
+        let mut want_n: int = -1;
+        let mut si: int = 0;
+        while si < len(c.struct_names) {
+            if c.struct_names[si] == base {
+                if c.struct_tparams[si] == "" {
+                    want_n = 0;
+                } else {
+                    want_n = len(split(c.struct_tparams[si], "~"));
+                }
+            }
+            si = si + 1;
+        }
+        let mut ei: int = 0;
+        while ei < len(c.enum_names) {
+            if c.enum_names[ei] == base {
+                if c.enum_tparams[ei] == "" {
+                    want_n = 0;
+                } else {
+                    want_n = len(split(c.enum_tparams[ei], "~"));
+                }
+            }
+            ei = ei + 1;
+        }
+        if want_n < 0 || len(args) != want_n {
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(args) {
+            if !hc_valid_type(c, args[i], tparams) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    if is_sized_array(t) {
+        let inner: str = substr(t, 1, len(t) - 2);
+        let semi: int = find_top(inner, ";");
+        let size_part: str = trim_spaces(substr(inner, semi + 1, len(inner) - semi - 1));
+        // The size must be a non-negative integer literal.
+        if len(size_part) == 0 {
+            return false;
+        }
+        let mut d: int = 0;
+        while d < len(size_part) {
+            let ch: str = substr(size_part, d, 1);
+            if ch != "0" && ch != "1" && ch != "2" && ch != "3" && ch != "4" && ch != "5" && ch != "6" && ch != "7" && ch != "8" && ch != "9" {
+                return false;
+            }
+            d = d + 1;
+        }
+        return hc_valid_type(c, trim_spaces(substr(inner, 0, semi)), tparams);
+    }
+    if starts_with(t, "[") && substr(t, len(t) - 1, 1) == "]" {
+        return hc_valid_type(c, substr(t, 1, len(t) - 2), tparams);
+    }
+    return false;
+}
+
+// Type-name candidates for "Did you mean" on an unknown type
+// (Python: SCALARS + structs + enums).
+fn type_name_cands(c: HChecker) -> [str] {
+    let mut out: [str] = ["int", "float", "bool", "str", "range", "i8", "i16", "i32", "u8", "u16", "u32", "u64", "never"];
+    let mut i: int = 0;
+    while i < len(c.struct_names) {
+        push(out, c.struct_names[i]);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(c.enum_names) {
+        push(out, c.enum_names[j]);
+        j = j + 1;
+    }
+    return out;
 }
 
 // ---------- program entry ----------
 // Returns true if the program checks clean; fails otherwise.
 
 fn check_program(prog: Node, freestanding: bool) -> bool {
+    let mut p: Node = expand_aliases_prog(prog);
     let mut c: HChecker = new_checker();
     c.freestanding = freestanding;
-    c = collect_defs(c, prog);
+    c = collect_defs(c, p);
     let mut i: int = 0;
-    while i < len(prog.kids) {
-        let n: Node = prog.kids[i];
+    while i < len(p.kids) {
+        let n: Node = p.kids[i];
         if n.kind == 2 {
             // Skip extern declarations (no body to check).
             if len(n.kids) == 0 {

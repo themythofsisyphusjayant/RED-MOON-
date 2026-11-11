@@ -1,0 +1,19 @@
+// CLI parsing demo — daily-ten 11 Nov 2026 (library track, #54).
+// Verifies cli_has / cli_opt (space and = forms) / cli_opt_float /
+// cli_opt_int / cli_positional on a fixed argv. Positional counting
+// follows cli.fg's simple rule: any non--- token counts, including
+// an option's value (so "0.05" is positional 1).
+import "cli.fg";
+
+fn main() {
+    let a: [str] = ["prog", "--lr", "0.05", "--epochs=10", "train.fg"];
+    println(cli_has(a, "lr"));
+    println(cli_has(a, "batch"));
+    println(cli_opt(a, "lr", "0.01"));
+    println(cli_opt(a, "epochs", "1"));
+    println(cli_opt_float(a, "lr", 0.01));
+    println(cli_opt_int(a, "epochs", 1));
+    println(cli_positional(a, 0));
+    println(cli_positional(a, 1));
+    println(cli_positional(a, 2));
+}

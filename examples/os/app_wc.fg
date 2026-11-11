@@ -1,0 +1,31 @@
+// wc — daily-ten 11 Nov 2026 (OS track).
+// Counts lines, words and characters of a text. Words are
+// non-empty space-separated tokens per line (the strings.fg
+// word_count rule); characters include the newlines between
+// lines (2 here), so 11 + 11 + 6 + 2 = 30.
+fn count_words(s: str) -> int {
+    let lines: [str] = split(s, "\n");
+    let mut n: int = 0;
+    for line in lines {
+        let parts: [str] = split(trim(line), " ");
+        for p in parts {
+            if len(p) > 0 {
+                n = n + 1;
+            }
+        }
+    }
+    return n;
+}
+
+fn main() {
+    let text: str = "hello world\nfoo bar baz\nqasida";
+    let lines: [str] = split(text, "\n");
+    println(len(lines));
+    println(count_words(text));
+    let mut chars: int = 0;
+    for line in lines {
+        chars = chars + len(line);
+    }
+    chars = chars + len(lines) - 1;
+    println(chars);
+}

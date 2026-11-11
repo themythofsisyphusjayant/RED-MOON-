@@ -342,6 +342,124 @@ bootstrap, not the destination. Self-hosting removes it.
      `forge_lang/` untouched. Python stays the reference and
      the fallback until the switch-over decision is made.
 
+6. **Switch-over (COMPLETE — verified 11 Nov 2026)** — make the hosted
+   compiler the DEFAULT, Python kept as reference + fallback.
+   Authorized by Jayant ("start the next phase", after the bootstrap
+   push landed as commit 61e94081) under the blanket push grant.
+   No release, no PyPI publish, no new tags in this phase; `forge_lang/`
+   is NEVER edited or deleted.
+   - WHAT "DEFAULT" MEANS: `forge.py` (and `bin/qasida`, which execs
+     it) dispatches each invocation to the hosted binary when the
+     invocation is on the hosted CLI's proven surface, else to the
+     Python compiler. The hosted binary is the default COMPILE path;
+     Python remains for everything the hosted CLI does not implement
+     yet. `forge.py` decides the dispatch BEFORE importing
+     `forge_lang`, so the hosted path never imports Python.
+   - DISPATCH RULE (decided from a live probe of 60+ argv shapes,
+     Python `forge.py` vs the fresh hosted binary; probe script
+     `~/workspace/blackmoon-iso/switchover/probes/probe_argv.py`):
+     `--python` anywhere in argv (stripped first) or
+     `QASIDA_COMPILER=python` -> Python always. Otherwise hosted
+     iff the invocation is one of: `[]`, `--version`, `-V`,
+     `version`, `-h`, `--help` (bare forms); an unknown subcommand
+     alone or with --help; `check`/`emit`/`run`/`build` using only
+     hosted-supported flags (`--mode safe`, `--freestanding`,
+     `-o`/`--output`, `--keep-c`, `--target native`, `--stack-top`
+     on build — Python ignores it for native builds too — and
+     `-h`/`--help` anywhere argparse would fire it; program args
+     after the file / `--` for `run` are never inspected).
+     Everything else -> Python, in particular: any `-V`/`--version`
+     token inside a core-command argv and the five known argparse
+     corners (`-V extra`, `-V check`, `--bogus` alone,
+     `check --version`, `stack --limit --help` — all probe-verified
+     DIFFs); `--mode fast` / `--mode=fast` for emit/run/build (the
+     hosted codegen is SAFE-ONLY: fast under hosted would silently
+     change checked-arithmetic semantics — `check --mode fast`
+     stays hosted, mode does not affect checking); `build
+     --target big32|wasm`, `--debug`, `--shared`, `--wit`; the
+     deferred subcommands fmt/doc/lsp/repl/pkg/test/stack/
+     emit-big32/emit-cuda/emit-wasm (except their bare `--help`
+     forms, which are parity-proven). Temp-.c-path differences in
+     cc stderr are NORM (they differ between two Python runs too).
+   - BINARY HOME: checked-in prebuilt `bin/qasida-hosted` in the
+     tree (durable, survives reboots; `forge.py` finds it relative
+     to its own location). Trade-off: a ~9 MB Linux-x86_64 blob in
+     git; a rebuild from the hosted sources via the Python compiler
+     (`python3 forge.py --python build examples/selfhost_cli.fg -o
+     bin/qasida-hosted`) regenerates it. `QASIDA_HOSTED_BIN`
+     overrides the path; a missing binary warns on stderr and falls
+     back to Python (never silently). `QASIDA_DISPATCH_LOG=<file>`
+     appends one line per invocation (hosted|python + reason) so the
+     suite run can prove which path each invocation took.
+   - PACKAGING UNCHANGED: pyproject.toml `[project.scripts]`
+     (`qasida = forge_lang.cli:main`) is NOT touched — a pip install
+     of the published 2.0.0 still ships Python only. The switch-over
+     is the working tree's default path first. A future PyPI release
+     shipping the hosted compiler would need platform wheels
+     carrying the prebuilt (recorded here as future work, NOT done
+     in this phase).
+   - FALLBACK: `--python` / `QASIDA_COMPILER=python` runs the Python
+     compiler end-to-end. Documented here and in a `forge.py`
+     comment — NOT in `--help` text, which must stay byte-identical
+     to Python's argparse help (parity matrix).
+   - HOSTED FIX REQUIRED FIRST (found in recon, 11 Nov): sibling
+     imports. Hosted `import_source` lacks Python's
+     alongside-the-file-first lookup (`compiler.load_program` tries
+     dir(importing file), CWD, forge_lang/stdlib, stdlib), so
+     `examples/imported_demo.fg` (`import "imported_weights.fg"`,
+     exercised by run_tests.py via `run`) fails under hosted while
+     Python passes. Fix on the hosted side only
+     (`selfhost_cli.fg` + `selfhost_codegen_test.fg`, which share the
+     merge code): thread the importing file's directory through
+     `collect_imports`; the order list carries RESOLVED paths
+     (dedup still by spelling — the pinned gap is unchanged);
+     `load_merged` reads resolved paths directly. `dbg_demo.fg`'s
+     sibling import (`dbg_helper.fg`) is NOT affected: it is only
+     exercised with `--debug`, which routes to Python. Full bar
+     re-run after the fix (corpus / regression / parity / bootstrap
+     emit — the loader changed, so the bootstrap proof must be
+     re-earned).
+   - VERIFICATION BAR: per-file harness over all 184 `tests/*.py`
+     files (180 test_*.py + run_tests.py + run_big32_tests.py +
+     run_wasm_tests.py + lsp_smoke.py), hosted sweep + Python sweep,
+     per-file checkpoint JSONL, resume-safe; run_tests.py compared
+     by its internal failure list; every file classified core-only /
+     mixed (core hosted + tooling via Python fallback) / Python-only
+     internals (explicit list with reasons, never silent skips).
+     Plus corpus 99/99, regression 62/62, CLI parity 68/68
+     (--force) against the new binary, and bootstrap emit 7/7.
+   - VERIFIED 11 Nov 2026 (fix-13b binary, md5
+     `a3bfc7f94d2d5fe9085a91e4ccba63ed`): full suite 184 files —
+     **168 pass / 16 fail under hosted, IDENTICAL to the Python
+     baseline (168/16, same files, same failing cases, zero
+     hosted-only divergences)**. The 16: run_big32_tests.py + 9
+     kernel tests (iverilog not installed — environmental) + 6
+     files failing only their big32 case (never / opaques /
+     readonly / sizedarrays / sizedunif / top500_batch1). Corpus
+     **99/99**, regression **62/62**, CLI parity **68/68
+     PASS/EXPECTED**, bootstrap emit **7/7 byte-identical**, run_tests.py
+     PASS. Hosted divergences found on the way were all fixed on the
+     hosted side (batches 1–13: IndexAssign/FieldAssign split,
+     `_resolve_empty`, moved state + snapshot fix, noreturn/never,
+     generic enums, aliases, newtypes, u64 literals, readonly,
+     driver builtins + pin, builtin messages, void/union validation,
+     tuple index, traits, BinOp equality, deep-BinOp stack
+     overflow). Nothing pushed by the implementer; coordinator to
+     verify numbers and handle the push. Future work for a PyPI
+     release shipping the hosted compiler: platform wheels carrying
+     the prebuilt `bin/qasida-hosted`.
+   - KNOWN GAPS CARRIED (not blocking unless the suite hits them):
+     the five argparse corners above (by design — dispatched to
+     Python); elseif checker divergence (hosted accepts what Python
+     rejects); import dedup by spelling vs realpath; raw 0x01 byte
+     sentinel collision; selfhost_mini.fg keeps its old lexer;
+     hosted codegen safe-only (`--mode fast` stays Python).
+     FIXED during the switch-over (batches 1–13) and no longer
+     gaps: sibling-import lookup, generic-enum payload substitution,
+     newtype casts, deep-BinOp stack overflow (300-term chains now
+     run), empty-array inference, moved-state/branch joins,
+     noreturn/never rules, builtin messages, void/union validation.
+
 ## Rules
 - Each slice is verified against the Python compiler before
   the next starts. No slice is "done" on vibes.

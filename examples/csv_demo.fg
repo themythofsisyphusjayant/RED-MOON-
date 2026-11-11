@@ -1,0 +1,28 @@
+// CSV reader demo — daily-ten 11 Nov 2026 (library track, #15).
+// Verifies csv_parse with a header row and a string label column:
+// two data rows, numeric columns in `data`, cities in `labels`.
+// NOTE (finding): csv.fg's header says a non-numeric field is
+// treated as 0.0 in `data`, but parse_float raises on "jayant"
+// instead — so only the last (label) column may hold strings.
+// The demo uses numeric id/age columns to verify the module as
+// it actually behaves; the doc-vs-behavior gap is a fix candidate.
+import "csv.fg";
+
+fn main() {
+    let text: str = "id,age,city\n1,20,gorakhpur\n2,19,kanpur\n";
+    let c: Csv = csv_parse(text, true, true);
+    println(c.nrows);
+    println(c.ncols);
+    println(c.data[0]);
+    println(c.data[1]);
+    println(c.data[2]);
+    println(c.data[3]);
+    println(c.labels[0]);
+    println(c.labels[1]);
+    println(c.header[0]);
+    println(c.header[1]);
+    println(c.header[2]);
+    let ids: [int] = label_ids(c.labels);
+    println(ids[0]);
+    println(ids[1]);
+}

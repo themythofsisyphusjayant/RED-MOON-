@@ -1,0 +1,24 @@
+// Dataset pipeline demo — daily-ten 11 Nov 2026 (library track).
+// Verifies make_sequences (sliding windows), seq_get_x/y,
+// the 67/33 train/test split and the first batch, on ids
+// [10,20,30,40,50] with seq_len 2. rand.fg is imported because
+// dataset.fg's seq_shuffle needs it (see that file's header).
+import "dataset.fg";
+import "rand.fg";
+
+fn main() {
+    let d: SeqData = make_sequences([10, 20, 30, 40, 50], 2);
+    println(d.count);
+    let x1: [int] = seq_get_x(d, 1);
+    println(x1[0]);
+    println(x1[1]);
+    let y2: [int] = seq_get_y(d, 2);
+    println(y2[0]);
+    println(y2[1]);
+    let tr: SeqData = seq_train(d, 67);
+    println(tr.count);
+    let te: SeqData = seq_test(d, 67);
+    println(te.count);
+    let b: SeqData = seq_batch(d, 0, 2);
+    println(b.count);
+}

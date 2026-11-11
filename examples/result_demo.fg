@@ -1,0 +1,15 @@
+// Result demo — daily-ten 11 Nov 2026 (library track).
+// Verifies the ok/value/error struct, both branches, and
+// result_value_or on a failure (fallback) and a success.
+import "result.fg";
+
+fn main() {
+    let r1: Result<int, str> = Result { ok: true, value: 5, error: "" };
+    println(r1.ok);
+    println(r1.value);
+    let r2: Result<int, str> = Result { ok: false, value: 0, error: "div by zero" };
+    println(r2.ok);
+    println(r2.error);
+    println(result_value_or(r2, 99));
+    println(result_value_or(r1, 99));
+}

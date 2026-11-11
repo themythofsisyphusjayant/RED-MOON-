@@ -43,10 +43,17 @@ struct HInfer {
     // table_get is last-wins, so the later file's type shadowed
     // the earlier one's — e.g. parse's p.kinds read as [str]).
     current_fn: str;
+    // Empty array literals whose element type is not yet known
+    // (the infer pass's mirror of the checker's unresolved list):
+    // a let with an empty ArrayLit init and no annotation records
+    // its name and the literal node's infer key here; a later
+    // constraining use resolves it to a concrete array type.
+    unres_names: [str];
+    unres_keys: [str];
 }
 
 fn infer_new() -> HInfer {
-    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false, current_fn: "" };
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], type_keys: [], type_vals: [], scope_names: [], scope_types: [], scope_marks: [], current_ret: "void", template_keys: [], in_template: false, current_fn: "", unres_names: [], unres_keys: [] };
 }
 
 // First index of needle in hay (needle may be multi-char), or -1.
@@ -199,6 +206,85 @@ fn infer_lookup(h: HInfer, name: str) -> str {
         return h.variant_enums[vi];
     }
     return "int";
+}
+
+// Set a node's type by its infer key (last-wins in the table,
+// so this overrides the "[?]" the literal node got at its let).
+fn infer_set_key(h0: HInfer, key: str, t: str) -> HInfer {
+    let mut h: HInfer = h0;
+    if h.in_template {
+        push(h.type_keys, "T:" + key);
+        push(h.type_vals, t);
+        push(h.template_keys, "T:" + key);
+    } else {
+        push(h.type_keys, key);
+        push(h.type_vals, t);
+    }
+    return h;
+}
+
+// Concrete array type: starts with "[", ends with "]", and holds
+// no "?" anywhere (the checker's _resolve_empty condition).
+fn infer_is_concrete_array(t: str) -> bool {
+    if len(t) < 2 {
+        return false;
+    }
+    if substr(t, 0, 1) != "[" || substr(t, len(t) - 1, 1) != "]" {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(t) {
+        if substr(t, i, 1) == "?" {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Resolve an unresolved empty-array let to a concrete array type
+// (the infer pass's mirror of the checker's _resolve_empty):
+// re-type the recorded literal node, redeclare the variable to
+// the concrete type, and drop the record. Only fires for a let
+// this pass itself recorded as unresolved, whose binding is
+// still "[?]" — a variable that merely HOLDS "[?]" (e.g.
+// let y = x) is not in the list and stays unresolved. The
+// checker already validated the resolution; this only carries
+// the decision to codegen.
+fn infer_resolve_empty(h0: HInfer, name: str, concrete: str) -> HInfer {
+    let mut h: HInfer = h0;
+    if !infer_is_concrete_array(concrete) {
+        return h;
+    }
+    let mut idx: int = -1;
+    let mut j: int = 0;
+    while j < len(h.unres_names) {
+        if h.unres_names[j] == name {
+            idx = j;
+        }
+        j = j + 1;
+    }
+    if idx < 0 {
+        return h;
+    }
+    if infer_lookup(h, name) != "[?]" {
+        return h;
+    }
+    h = infer_set_key(h, h.unres_keys[idx], concrete);
+    h = infer_declare(h, name, concrete);
+    let mut nn: [str] = [];
+    let mut nk: [str] = [];
+    let mut k: int = 0;
+    while k < len(h.unres_names) {
+        if k != idx {
+            push(nn, h.unres_names[k]);
+            push(nk, h.unres_keys[k]);
+        }
+        k = k + 1;
+    }
+    h.unres_names = nn;
+    h.unres_keys = nk;
+    return h;
 }
 
 // "Box<int>" -> "Box_int"; "[T]" -> "Array_T"; recurse into args.
@@ -649,6 +735,22 @@ fn infer_walk_arg(h0: HInfer, arg: Node, pt: str) -> HInfer {
     if (arg.kind == 29 || arg.kind == 30) && (starts_with(pt, "[") || infer_is_tuple_type(pt)) {
         return infer_fill_lit(h0, arg, pt);
     }
+    if arg.kind == 34 {
+        // An unresolved array argument resolves to the parameter
+        // type.
+        let mut h: HInfer = infer_walk_expr(h0, arg);
+        h = infer_resolve_empty(h, arg.name, pt);
+        return h;
+    }
+    if arg.kind == 35 && infer_table_find(h0.variant_names, arg.name) >= 0 {
+        // A generic-enum variant passed as an argument takes the
+        // parameter's concrete type (same fill as the Let case).
+        let mut h: HInfer = infer_walk_expr(h0, arg);
+        if pt != "" && pt != "?" && find_lt(pt) >= 0 {
+            h = infer_set(h, arg, pt);
+        }
+        return h;
+    }
     return infer_walk_expr(h0, arg);
 }
 
@@ -673,6 +775,31 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
         if st.sval != "" {
             t = st.sval;
         }
+        if st.sval == "" && init.kind == 29 && len(init.kids) == 0 {
+            // Empty literal, no annotation: its element type is
+            // unresolved until a constraining use resolves it.
+            push(h.unres_names, st.name);
+            push(h.unres_keys, infer_key(init, h.current_fn));
+        }
+        if st.sval != "" && init.kind == 34 {
+            // An annotated let constrains an unresolved array
+            // value to the annotation's type.
+            h = infer_resolve_empty(h, init.name, st.sval);
+            // The init Var node was typed before the resolution:
+            // its type is the annotation now, or codegen would
+            // declare this let with the stale "[?]" type.
+            if infer_type_of(h, init) == "[?]" {
+                h = infer_set(h, init, st.sval);
+            }
+        }
+        if st.sval != "" && init.kind == 35 && infer_table_find(h.variant_names, init.name) >= 0 {
+            // An annotated let constrains a generic-enum variant
+            // to the annotation's concrete type (the checker fills
+            // the same way via fill_placeholder); without this,
+            // codegen declares the variable with the plain enum
+            // name and the C fails (generic_enums_demo).
+            h = infer_set(h, init, st.sval);
+        }
         h = infer_declare(h, st.name, t);
         return h;
     }
@@ -681,12 +808,25 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
         let rhs: Node = st.kids[0];
         if rhs.kind == 29 || rhs.kind == 30 {
             let vt: str = infer_lookup(h, st.name);
+            if vt == "[?]" {
+                // Assigning a concrete literal to an unresolved
+                // empty array resolves it to the literal's type.
+                h = infer_walk_expr(h, rhs);
+                let rt: str = infer_type_of(h, rhs);
+                h = infer_resolve_empty(h, st.name, rt);
+                return h;
+            }
             if starts_with(vt, "[") || infer_is_tuple_type(vt) {
                 return infer_fill_lit(h, rhs, vt);
             }
             return infer_walk_expr(h, rhs);
         }
-        return infer_walk_expr(h, rhs);
+        h = infer_walk_expr(h, rhs);
+        // Assigning a concrete value to an unresolved empty array
+        // resolves it to the value's type.
+        let rt2: str = infer_type_of(h, rhs);
+        h = infer_resolve_empty(h, st.name, rt2);
+        return h;
     }
     if st.kind == 20 {
         // Match: kids = [scrutinee, Arm...]; Arm: name = pattern,
@@ -761,6 +901,24 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
         // FieldAssign / IndexAssign: kids = [target, value].
         h = infer_walk_expr(h, st.kids[0]);
         h = infer_walk_expr(h, st.kids[1]);
+        if st.kind == 13 {
+            // Storing an unresolved array into a concretely typed
+            // field resolves it to the field's type.
+            if st.kids[1].kind == 34 {
+                let ft: str = infer_type_of(h, st.kids[0]);
+                h = infer_resolve_empty(h, st.kids[1].name, ft);
+            }
+        } else {
+            // Storing a concrete element through an unresolved
+            // array resolves it to an array of that element type.
+            if st.kids[0].kind == 36 && len(st.kids[0].kids) > 0 {
+                let base: Node = st.kids[0].kids[0];
+                if base.kind == 34 {
+                    let vt: str = infer_type_of(h, st.kids[1]);
+                    h = infer_resolve_empty(h, base.name, "[" + vt + "]");
+                }
+            }
+        }
         return h;
     }
     if st.kind == 14 {
@@ -789,6 +947,9 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
         if starts_with(at, "[") {
             et = substr(at, 1, len(at) - 2);
         }
+        if starts_with(at, "readonly ") {
+            et = infer_array_elem(at);
+        }
         h = infer_push_scope(h);
         h = infer_declare(h, st.name, et);
         let body: Node = st.kids[1];
@@ -815,6 +976,23 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
             }
             return infer_walk_expr(h, e);
         }
+        if e.kind == 34 {
+            // Returning an unresolved array from a concretely
+            // typed function resolves it to the return type.
+            h = infer_walk_expr(h, e);
+            h = infer_resolve_empty(h, e.name, h.current_ret);
+            return h;
+        }
+        if e.kind == 35 && infer_table_find(h.variant_names, e.name) >= 0 {
+            // Returning a generic-enum variant from a concretely
+            // typed function takes the return type (same fill as
+            // the Let case).
+            h = infer_walk_expr(h, e);
+            if h.current_ret != "" && h.current_ret != "?" && find_lt(h.current_ret) >= 0 {
+                h = infer_set(h, e, h.current_ret);
+            }
+            return h;
+        }
         return infer_walk_expr(h, e);
     }
     if st.kind == 24 {
@@ -823,6 +1001,41 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
     }
     // Break (18) / Continue (19): no case in Python — no-op.
     return h;
+}
+
+// Result type of one BinOp pair from already-walked operand
+// types (the old kind-40 branch below the two walks). ln/rn
+// are the operand nodes, for the fixed-int literal adaptation.
+fn infer_binop_type(op: str, lt: str, rt: str, ln: Node, rn: Node) -> str {
+    if op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=" || op == "&&" || op == "||" {
+        return "bool";
+    }
+    if op == "+" && lt == "str" {
+        return "str";
+    }
+    // Fixed-int literal adaptation (mirrors the checker): a
+    // fitting literal takes the other operand's fixed type.
+    if lt != rt && op != "<<" && op != ">>" {
+        if infer_is_fixed_int(lt) {
+            let v: [int] = infer_literal_value(rn);
+            if len(v) == 1 && (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^") {
+                let r: [int] = infer_fixed_range(lt);
+                if r[0] <= v[0] && v[0] <= r[1] {
+                    return lt;
+                }
+            }
+        }
+        if infer_is_fixed_int(rt) {
+            let v: [int] = infer_literal_value(ln);
+            if len(v) == 1 && (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^") {
+                let r: [int] = infer_fixed_range(rt);
+                if r[0] <= v[0] && v[0] <= r[1] {
+                    return rt;
+                }
+            }
+        }
+    }
+    return lt;
 }
 
 fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
@@ -902,6 +1115,11 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
                 h = infer_fill_lit(h, fexpr, ft);
             } else {
                 h = infer_walk_expr(h, fexpr);
+                if fexpr.kind == 34 {
+                    // An unresolved array stored into a concretely
+                    // typed field resolves it to the field's type.
+                    h = infer_resolve_empty(h, fexpr.name, ft);
+                }
             }
             i = i + 1;
         }
@@ -926,7 +1144,7 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         if bt == "str" {
             return infer_set(h, e, "str");
         }
-        if starts_with(bt, "[") {
+        if starts_with(bt, "[") || starts_with(bt, "readonly ") {
             return infer_set(h, e, infer_array_elem(bt));
         }
         return infer_set(h, e, "int");
@@ -956,38 +1174,33 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         return infer_set(h, e, t);
     }
     if e.kind == 40 {
-        // BinOp: name = op, kids = [left, right].
-        h = infer_walk_expr(h, e.kids[0]);
-        let lt: str = infer_type_of(h, e.kids[0]);
-        h = infer_walk_expr(h, e.kids[1]);
-        let rt: str = infer_type_of(h, e.kids[1]);
-        if e.name == "<" || e.name == "<=" || e.name == ">" || e.name == ">=" || e.name == "==" || e.name == "!=" || e.name == "&&" || e.name == "||" {
-            return infer_set(h, e, "bool");
+        // BinOp: flatten the left spine iteratively (same stack
+        // reason as the checker's check_binop: infer_walk_expr
+        // is ~98KB/frame, so a chain of N terms overflowed the
+        // 8MB C stack at ~65 terms). Each spine node's type is
+        // set as the fold reaches it, exactly as the recursion
+        // set inner nodes before walking the next right operand.
+        let mut spine_ops: [str] = [];
+        let mut spine_rights: [Node] = [];
+        let mut spine_lefts: [Node] = [];
+        let mut spine_nodes: [Node] = [];
+        let mut cur: Node = e;
+        while cur.kind == 40 {
+            push(spine_ops, cur.name);
+            push(spine_rights, cur.kids[1]);
+            push(spine_lefts, cur.kids[0]);
+            push(spine_nodes, cur);
+            cur = cur.kids[0];
         }
-        if e.name == "+" && lt == "str" {
-            return infer_set(h, e, "str");
-        }
-        // Fixed-int literal adaptation (mirrors the checker): a
-        // fitting literal takes the other operand's fixed type.
-        if lt != rt && e.name != "<<" && e.name != ">>" {
-            if infer_is_fixed_int(lt) {
-                let v: [int] = infer_literal_value(e.kids[1]);
-                if len(v) == 1 && (e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" || e.name == "&" || e.name == "|" || e.name == "^") {
-                    let r: [int] = infer_fixed_range(lt);
-                    if r[0] <= v[0] && v[0] <= r[1] {
-                        return infer_set(h, e, lt);
-                    }
-                }
-            }
-            if infer_is_fixed_int(rt) {
-                let v: [int] = infer_literal_value(e.kids[0]);
-                if len(v) == 1 && (e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" || e.name == "&" || e.name == "|" || e.name == "^") {
-                    let r: [int] = infer_fixed_range(rt);
-                    if r[0] <= v[0] && v[0] <= r[1] {
-                        return infer_set(h, e, rt);
-                    }
-                }
-            }
+        h = infer_walk_expr(h, cur);
+        let mut lt: str = infer_type_of(h, cur);
+        let mut i: int = len(spine_ops) - 1;
+        while i >= 0 {
+            h = infer_walk_expr(h, spine_rights[i]);
+            let rt: str = infer_type_of(h, spine_rights[i]);
+            lt = infer_binop_type(spine_ops[i], lt, rt, spine_lefts[i], spine_rights[i]);
+            h = infer_set(h, spine_nodes[i], lt);
+            i = i - 1;
         }
         return infer_set(h, e, lt);
     }
@@ -1213,6 +1426,28 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         if e.name == "http_listen" || e.name == "http_accept" || e.name == "http_respond" || e.name == "http_respond_status" || e.name == "http_close" {
             return infer_set(h, e, "int");
         }
+        if e.name == "push" {
+            // Pushing a concrete value into an unresolved array
+            // resolves it to an array of that value's type. The
+            // value is walked first (to learn its type), then the
+            // target is resolved and walked so its node type is
+            // the concrete array type.
+            if len(e.kids) == 2 {
+                h = infer_walk_expr(h, e.kids[1]);
+                let vt: str = infer_type_of(h, e.kids[1]);
+                if e.kids[0].kind == 34 {
+                    h = infer_resolve_empty(h, e.kids[0].name, "[" + vt + "]");
+                }
+                h = infer_walk_expr(h, e.kids[0]);
+            } else {
+                let mut j: int = 0;
+                while j < len(e.kids) {
+                    h = infer_walk_expr(h, e.kids[j]);
+                    j = j + 1;
+                }
+            }
+            return infer_set(h, e, "void");
+        }
         return infer_set(h, e, "void");
     }
     return infer_set(h, e, "int");
@@ -1221,11 +1456,12 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
 // Entry point: build the tables, walk every non-extern,
 // non-generic function body. type_keys/type_vals are the output.
 fn run_infer(prog: Node) -> HInfer {
+    let mut p: Node = expand_aliases_prog(prog);
     let mut h: HInfer = infer_new();
-    h = infer_build_tables(h, prog);
+    h = infer_build_tables(h, p);
     let mut i: int = 0;
-    while i < len(prog.kids) {
-        let n: Node = prog.kids[i];
+    while i < len(p.kids) {
+        let n: Node = p.kids[i];
         if n.kind == 2 {
             // Skip extern declarations (bval). Generic templates
             // are walked too (4d): their body types carry type
@@ -1244,6 +1480,8 @@ fn run_infer(prog: Node) -> HInfer {
                 h.scope_names = infer_trunc_str(h.scope_names, 0);
                 h.scope_types = infer_trunc_str(h.scope_types, 0);
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                h.unres_names = infer_trunc_str(h.unres_names, 0);
+                h.unres_keys = infer_trunc_str(h.unres_keys, 0);
                 h = infer_push_scope(h);
                 let mut j: int = 0;
                 while j < len(n.kids) {
@@ -1275,6 +1513,8 @@ fn run_infer(prog: Node) -> HInfer {
                 h.scope_names = infer_trunc_str(h.scope_names, 0);
                 h.scope_types = infer_trunc_str(h.scope_types, 0);
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
+                h.unres_names = infer_trunc_str(h.unres_names, 0);
+                h.unres_keys = infer_trunc_str(h.unres_keys, 0);
                 h = infer_push_scope(h);
                 let mut k: int = 0;
                 while k < len(m.kids) {

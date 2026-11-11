@@ -1,0 +1,12 @@
+// JSON get/make demo — daily-ten 11 Nov 2026 (library track, #16).
+// Verifies json_get on string values, the missing-key empty
+// return, and json_make building a one-field object.
+import "json.fg";
+
+fn main() {
+    let text: str = "{\"name\": \"qasida\", \"version\": \"2.0.0\"}";
+    println(json_get(text, "name"));
+    println(json_get(text, "version"));
+    println("missing=[", json_get(text, "missing"), "]");
+    println(json_make("lang", "qasida"));
+}

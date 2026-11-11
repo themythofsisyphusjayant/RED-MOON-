@@ -664,7 +664,13 @@ fn digit_val(ch: str) -> int {
 fn parse_int_lit(text: str) -> int {
     // Convert an INT token text to its value, handling 0x/0b/0o
     // prefixes and _ separators (the parse_int builtin is base-10
-    // only and fails on these).
+    // only and fails on these). Qasida int is i64, so a literal
+    // above i64 max (a u64 value such as 18000000000000000000)
+    // SATURATES at i64 max instead of overflowing the compiler
+    // itself (safe-mode checked arithmetic would fail_compile
+    // mid-parse); the raw text survives in the node's sval, and
+    // the checker/codegen use it for u64 range checks and C
+    // emission (see int_lit_digits / dec_le in selfhost_check.fg).
     let mut v: int = 0;
     let mut base: int = 10;
     let mut i: int = 0;
@@ -687,7 +693,12 @@ fn parse_int_lit(text: str) -> int {
             i = i + 1;
             continue;
         }
-        v = v * base + digit_val(c);
+        let d: int = digit_val(c);
+        if v > (9223372036854775807 - d) / base {
+            v = 9223372036854775807;
+        } else {
+            v = v * base + d;
+        }
         i = i + 1;
     }
     return v;

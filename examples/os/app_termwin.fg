@@ -1,0 +1,74 @@
+// Terminal in a window — daily-ten 11 Nov 2026 (OS track).
+// Native form of the OS chain's first item (kernel_term.fg is the
+// freestanding form and still needs a SOC2 sim). A 6-row text
+// buffer with scroll-on-overflow, drawn in an ASCII window with
+// a title bar; the 7th line scrolls the first line off.
+fn dashes(n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + "-";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn pad_to(s: str, w: int) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = out + " ";
+    }
+    return out;
+}
+
+fn term_put(buf: [str], n: int, line: str) -> [str] {
+    let mut out: [str] = buf;
+    if n < 6 {
+        out[n] = line;
+        return out;
+    }
+    let mut i: int = 0;
+    while i < 5 {
+        out[i] = buf[i + 1];
+        i = i + 1;
+    }
+    out[5] = line;
+    return out;
+}
+
+fn term_count(n: int) -> int {
+    if n < 6 {
+        return n + 1;
+    }
+    return 6;
+}
+
+fn main() {
+    let mut buf: [str] = ["", "", "", "", "", ""];
+    let mut n: int = 0;
+    buf = term_put(buf, n, "> help");
+    n = term_count(n);
+    buf = term_put(buf, n, "h f c");
+    n = term_count(n);
+    buf = term_put(buf, n, "> f");
+    n = term_count(n);
+    buf = term_put(buf, n, "a.txt b.txt");
+    n = term_count(n);
+    buf = term_put(buf, n, "> c");
+    n = term_count(n);
+    buf = term_put(buf, n, "(cleared)");
+    n = term_count(n);
+    buf = term_put(buf, n, "> _");
+    n = term_count(n);
+    println(n);
+    let border: str = "+" + dashes(30) + "+";
+    println(border);
+    println("| " + pad_to("Terminal - jalos", 28) + " |");
+    println(border);
+    let mut i: int = 0;
+    while i < 6 {
+        println("| " + pad_to(buf[i], 28) + " |");
+        i = i + 1;
+    }
+    println(border);
+}

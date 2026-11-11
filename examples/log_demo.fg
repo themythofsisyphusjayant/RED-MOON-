@@ -1,0 +1,16 @@
+// Leveled logging demo — daily-ten 11 Nov 2026 (library track, #53).
+// Verifies the plain log_* printers and Logger level filtering:
+// a level-2 (warn) logger suppresses debug/info and shows warn/error.
+import "log.fg";
+
+fn main() {
+    println(log_debug("boot"));
+    println(log_info("ready"));
+    println(log_warn("low disk"));
+    println(log_error("disk full"));
+    let lg: Logger = logger_new(2);
+    println(logger_log(lg, 0, "hidden debug"));
+    println(logger_log(lg, 1, "hidden info"));
+    println(logger_log(lg, 2, "warn shown"));
+    println(logger_log(lg, 3, "error shown"));
+}

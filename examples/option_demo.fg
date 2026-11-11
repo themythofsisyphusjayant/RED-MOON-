@@ -1,0 +1,16 @@
+// Option demo — daily-ten 11 Nov 2026 (library track).
+// Verifies opt_some, the present flag, and opt_value_or on a
+// present value, an absent value (dummy-filled, no null), and
+// a string option.
+import "option.fg";
+
+fn main() {
+    let o: Option<int> = opt_some(42);
+    println(o.present);
+    println(o.value);
+    let n: Option<int> = Option { present: false, value: 0 };
+    println(opt_value_or(n, 7));
+    println(opt_value_or(o, 7));
+    let s: Option<str> = opt_some("qasida");
+    println(s.value);
+}
