@@ -19,7 +19,11 @@ Repository = "https://github.com/themythofsisyphusjayant/RED-MOON-"
 ml = ["torch", "numpy"]
 
 [project.scripts]
-qasida = "forge_lang.cli:main"
+# 2.1.0: the installed command dispatches hosted-first (forge_lang/launcher.py).
+# It execs the bundled Linux-x86_64 hosted compiler
+# (forge_lang/bin/qasida-hosted) on the proven CLI surface and falls
+# back to the Python compiler everywhere else.
+qasida = "forge_lang.launcher:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "forge_lang.__version__" }
@@ -28,4 +32,7 @@ version = { attr = "forge_lang.__version__" }
 include = ["forge_lang*"]
 
 [tool.setuptools.package-data]
-forge_lang = ["stdlib/*.fg"]
+# 2.1.0: the wheel ships the prebuilt hosted compiler (Linux x86_64).
+# forge_lang/bin/qasida-hosted is a byte-identical copy of the repo's
+# bin/qasida-hosted — same blob, verified by md5 at release time.
+forge_lang = ["stdlib/*.fg", "bin/qasida-hosted"]

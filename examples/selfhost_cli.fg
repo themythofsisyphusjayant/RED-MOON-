@@ -20,8 +20,8 @@
 // Pinned behaviours (verified live against `python3 forge.py`):
 // - --version (any trailing args: argparse's version action fires
 //   first) and the bare `-V` / `version` forms (exact argv only,
-//   cli.py special case) -> "Qasida 2.0.0", 0.
-//   The version is hardcoded "2.0.0" and must be bumped with
+//   cli.py special case) -> "Qasida 2.1.0", 0.
+//   The version is hardcoded "2.1.0" and must be bumped with
 //   forge_lang/__init__.py.
 // - Argparse errors are reproduced byte-for-byte (usage text +
 //   error line to stderr via eprintln, exit 2). Two argparse
@@ -879,12 +879,12 @@ fn main() -> int {
     // special case in cli.py (exact argv only); `-V` with trailing
     // args is an unrecognized top-level flag instead.
     if cmd == "--version" {
-        // Hardcode "2.0.0": must be bumped with forge_lang/__init__.py.
-        println("Qasida 2.0.0");
+        // Hardcode "2.1.0": must be bumped with forge_lang/__init__.py.
+        println("Qasida 2.1.0");
         return 0;
     }
     if len(argv) == 1 && (cmd == "-V" || cmd == "version") {
-        println("Qasida 2.0.0");
+        println("Qasida 2.1.0");
         return 0;
     }
     // -h / --help as the first token prints the top-level help:

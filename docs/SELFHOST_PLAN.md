@@ -460,6 +460,48 @@ bootstrap, not the destination. Self-hosting removes it.
      run), empty-array inference, moved-state/branch joins,
      noreturn/never rules, builtin messages, void/union validation.
 
+   - **RELEASE 2.1.0 (11 Nov 2026)** — the switch-over shipped to
+     PyPI, on Jayant's word ("Before hosting on pypi check the
+     speed nd everything and compair with python then just push
+     everything"). Version bumped 2.0.0 -> 2.1.0 in
+     forge_lang/__init__.py AND in the hosted CLI's hardcoded
+     version (examples/selfhost_cli.fg — the two println sites +
+     header comment); bin/qasida-hosted rebuilt from the hosted
+     sources via the Python compiler (`forge.py --python build
+     examples/selfhost_cli.fg -o bin/qasida-hosted`), new md5
+     4974b436231cf465f9370626ca462360 (9,890,440 B, same size as
+     fix-13b — the version string is the same length). Speed
+     benchmark first (hosted vs Python, median of 3): hosted wins
+     on startup (~50x) and small files (~3.5x; 96-file small
+     corpus 3.9s vs 11.3s) but is ~10x slower at 255 lines, ~44x
+     on the 5,254-line checker, ~76–82x on the 6,898-line codegen
+     (emit 437s vs 5.8s) — reported honestly in the release
+     notes; no optimization in this release. Full bar re-proven
+     on the new binary (logs under
+     ~/workspace/blackmoon-iso/release_2.1.0/verify/): full suite
+     168/16 hosted, identical to the Python baseline 168/16
+     (same files, same failing cases, zero hosted-only
+     divergences), corpus 99/99, regression 62/62, CLI parity
+     68/68 (61 PASS + 7 EXPECTED), bootstrap emit 7/7
+     byte-identical, run_tests.py PASS. Verification used
+     prebuilt driver binaries (slice5a precedent) after the
+     stock per-file `forge.py run` harness proved too slow
+     (~7 min/file) and its 120s check timeout went flaky under
+     load; equivalence proven (old-path driver C == prebuilt
+     driver C == Python C, byte-identical on v01). Packaging:
+     the wheel now carries the hosted binary
+     (forge_lang/bin/qasida-hosted, same bytes as
+     bin/qasida-hosted) and the installed command dispatches
+     through forge_lang/launcher.py (73/73 argv shapes agree
+     with forge.py). Release steps after this entry: push the
+     tree, cut tag v2.1.0, release.yml publishes to PyPI
+     (qasida 2.1.0) and creates GitHub Release v2.1.0 — verify
+     both before calling the release done. NOT in
+     this release: the speed optimization program (queued
+     after), and the hosted-vs-Python divergence that hosted
+     `check` accepts main-less library files while Python
+     rejects them (follow-up, not smuggled in).
+
 ## Rules
 - Each slice is verified against the Python compiler before
   the next starts. No slice is "done" on vibes.

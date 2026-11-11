@@ -6,6 +6,39 @@ release — the documented language surface will not break
 without a major version bump (see docs/STABILITY.md).
 0.x releases were pre-stable; breaking changes were possible then.
 
+## 2.1.0 — 11 Nov 2026
+
+- Self-hosted compiler is now the DEFAULT: `qasida` / `forge.py`
+  dispatch to the hosted compiler (bin/qasida-hosted, built from
+  examples/selfhost_cli.fg) on the proven CLI surface; the Python
+  compiler stays the reference and the fallback
+  (`--python` / `QASIDA_COMPILER=python`). Minor bump, not 3.0.0:
+  the switch-over is a new feature (self-hosted compiler as
+  default), not a breaking language change — the command name,
+  error prefix and language surface are unchanged since 2.0.0.
+  Verified bar on the 2.1.0 binary: full suite 168/16, identical
+  to the Python baseline (same 16 fails — iverilog-missing +
+  big32-only cases — zero hosted-only divergences), corpus 99/99,
+  regression 62/62, CLI parity 68/68, bootstrap emit 7/7
+  byte-identical, run_tests.py PASS.
+- PyPI wheel now ships the hosted compiler: forge_lang/bin/
+  qasida-hosted (Linux x86_64, byte-identical to bin/qasida-
+  hosted) is included in the wheel, and the installed `qasida`
+  command uses it via forge_lang/launcher.py, which mirrors
+  forge.py's dispatch rule exactly (73/73 argv shapes agree).
+  On any other platform, or if the binary is missing, it falls
+  back to the Python compiler with a warning on stderr.
+- Speed (hosted vs Python, same machine, median of 3): hosted
+  starts ~50x faster (binary 0.002s vs Python 0.115s) and wins on
+  small files (~3.5x on a 20-line program; the 96-file small
+  corpus compiles in 3.9s vs Python's 11.3s) — but is ~10x slower
+  on a 255-line program, ~44x slower checking the 5,254-line
+  checker (80s vs 1.8s), and ~76–82x slower on the 6,898-line
+  codegen (emit 437s vs 5.8s). No optimization in this release:
+  the speed program (real hash map, stdlib caching, integer
+  node-ID keys, no-copy structs, incremental compilation) is
+  queued after the release.
+
 ## 2.0.0 — 7 Nov 2026
 
 - Renamed to Qasida. The command is now `qasida`, the PyPI package is `qasida`, and the runtime error prefix is `qasida:`. The version is bumped to 2.0.0 because the command name and error prefix are breaking changes. Technical names (`forge.py`, `forge_lang`, `.fg` files, RED-MOON-) are unchanged, so existing programs keep working.
