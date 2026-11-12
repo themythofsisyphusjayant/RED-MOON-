@@ -17,7 +17,7 @@ module tb_forge;
     initial begin
         rst_n = 0;
         for (i = 0; i < 65536; i = i + 1) dut.dmem[i] = 8'b0;
-        $readmemh("/home/hatch/workspace/forge-v2/examples/big32/out/sum.hex", dut.imem);
+        $readmemh("/home/hatch/workspace/forge-v2/examples/big32/out/break.hex", dut.imem);
         #23;
         rst_n = 1;
         cycles = 0;

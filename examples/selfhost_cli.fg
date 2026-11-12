@@ -289,90 +289,130 @@ fn import_source(path: str, dir: str) -> str {
     return read_file(r);
 }
 
-// Phase 1 of the import merge: the flat depth-first import order
-// for one source file (Python compiler.load_program order) — the
-// file's own direct imports in order, each followed by its whole
-// subtree, deduplicated by spelling. Returns only spellings, so
-// the recursion needs no struct return value. (An earlier
-// attempt returned a LoadOut { kids: [Node]; seen: [str] } from
-// the recursion; Python emits the per-struct array-free helpers
-// in program struct order with no forward declarations, and a
-// [Node] field in a struct defined before Node (parse.fg) made
-// the C build fail on an implicit forge_Node_array_free
-// declaration. Keeping [Node] out of the new code avoids that
-// latent codegen ordering rule entirely.)
-fn collect_imports(src: str, seen0: [str], dir: str) -> [str] {
+// Lex + parse one source text, returning the program root node.
+// The single place any file is lexed+parsed: the loader below
+// calls it exactly once per file (main + each import).
+fn parse_src(src: str) -> Node {
     let lx: LexOut = lex(src);
     let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
     let prog: POut = parse_program(hp);
-    let mut seen: [str] = seen0;
-    let mut out: [str] = [];
-    let mut i: int = 0;
-    while i < len(prog.n.kids) {
-        let n: Node = prog.n.kids[i];
-        if n.kind == 1 {
-            let ipath: str = n.sval;
-            let resolved: str = import_resolve(ipath, dir);
-            if resolved == "" {
-                fail_compile("import not found: " + ipath + " (looked in . and stdlib)");
-            }
-            let mut done: bool = false;
-            let mut k: int = 0;
-            while k < len(seen) {
-                if seen[k] == resolved {
-                    done = true;
-                }
-                k = k + 1;
-            }
-            if !done {
-                push(seen, resolved);
-                push(out, resolved);
-                let isrc: str = read_file(resolved);
-                let sub: [str] = collect_imports(isrc, seen, dir_of(resolved));
-                let mut m: int = 0;
-                while m < len(sub) {
-                    push(seen, sub[m]);
-                    push(out, sub[m]);
-                    m = m + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
-    return out;
+    return prog.n;
 }
 
 // Lex + parse one file, merging each import's top-level items into
-// the program depth-first (see collect_imports), deduplicating
-// by import spelling. Merged order: the file's own items first,
-// then each import's own items in the phase-1 order — exactly
-// Python's load_program order, so emitted prototypes and function
+// the program depth-first (Python compiler.load_program order),
+// deduplicating by import spelling. Merged order: the file's own
+// items first, then each import's own items in depth-first phase-1
+// order — exactly the old order, so emitted prototypes and function
 // bodies come out in the same order (the old breadth-first merge
 // put a leaf import before a sibling's whole subtree and the
 // bootstrap codegen stem failed on cg_header's position).
-// Each imported file is parsed twice (once to collect its
-// imports, once to merge) — cheap against the emit that follows.
+//
+// Single-parse (Step 5): the old loader parsed every file TWICE —
+// once in the recursive collect_imports (to find import nodes),
+// once in the merge loop. Here the parse done while walking the
+// import graph IS the parse merged below: each file's program node
+// is collected into `progs` at discovery time, in depth-first
+// pre-order, and the merge loop appends those nodes' kids.
+//
+// The walk is an explicit stack, not recursion, so the parsed
+// programs need no struct return value: a recursive collect would
+// have to return [Node] alongside the [str] order, i.e. a struct
+// with a [Node] field, and Python emits the per-struct array-free
+// helpers in program struct order with no forward declarations —
+// a [Node] field in a struct defined before Node (parse.fg) fails
+// the C build on an implicit forge_Node_array_free declaration
+// (the earlier LoadOut attempt). The stack frames are parallel
+// local arrays with a logical top pointer (the Step 3 pattern):
+// st_prog/st_dir/st_idx only ever grow by push, popping is
+// sp = sp - 1, so no trunc/pop helper is needed and no state is
+// threaded by value through recursion.
 fn load_merged(path: str) -> Node {
     let src: str = read_file(path);
-    let order: [str] = collect_imports(src, [], dir_of(path));
-    let lx: LexOut = lex(src);
-    let hp: HParser = HParser { kinds: lx.kinds, texts: lx.texts, lines: lx.lines, cols: lx.cols, pos: 0, has_nul: lx.has_nul };
-    let prog: POut = parse_program(hp);
-    let mut kids: [Node] = prog.n.kids;
+    let main_prog: Node = parse_src(src);
+    let mut kids: [Node] = main_prog.kids;
+    let mut seen: [str] = [];
+    let mut progs: [Node] = [];
+    let mut st_prog: [Node] = [main_prog];
+    let mut st_dir: [str] = [dir_of(path)];
+    let mut st_idx: [int] = [0];
+    let mut sp: int = 1;
+    while sp > 0 {
+        let top: int = sp - 1;
+        let prog: Node = st_prog[top];
+        let dir: str = st_dir[top];
+        let mut idx: int = st_idx[top];
+        let mut resolved: str = "";
+        let mut found: bool = false;
+        while idx < len(prog.kids) {
+            let n: Node = prog.kids[idx];
+            idx = idx + 1;
+            if n.kind == 1 {
+                let ipath: str = n.sval;
+                let r: str = import_resolve(ipath, dir);
+                if r == "" {
+                    fail_compile("import not found: " + ipath + " (looked in . and stdlib)");
+                }
+                let mut done: bool = false;
+                let mut k: int = 0;
+                while k < len(seen) {
+                    if seen[k] == r {
+                        done = true;
+                    }
+                    k = k + 1;
+                }
+                if !done {
+                    resolved = r;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        st_idx[top] = idx;
+        if found {
+            push(seen, resolved);
+            let isrc: str = read_file(resolved);
+            let iprog: Node = parse_src(isrc);
+            push(progs, iprog);
+            // Write the new frame at the LOGICAL top (sp), not by
+            // appending: the stack arrays only ever grow physically,
+            // and popping is sp = sp - 1, so after any pop the slot
+            // at sp still holds a stale frame from an earlier
+            // branch at the same depth. Appending would land the
+            // new frame at the physical end (past sp), and the next
+            // iteration would read the stale slot instead — the
+            // frame would never be processed and its whole subtree
+            // silently dropped (caught by probe: a file importing
+            // [seen, new] lost the new import; the cli stem then
+            // failed on the missing cg_freestanding_header). Index
+            // assignment overwrites the stale slot in place (the
+            // Step 3 pattern); only when sp reaches the physical
+            // length is there no slot to reuse, and push appends.
+            if sp < len(st_prog) {
+                st_prog[sp] = iprog;
+                st_dir[sp] = dir_of(resolved);
+                st_idx[sp] = 0;
+            } else {
+                push(st_prog, iprog);
+                push(st_dir, dir_of(resolved));
+                push(st_idx, 0);
+            }
+            sp = sp + 1;
+        } else {
+            sp = sp - 1;
+        }
+    }
     let mut i: int = 0;
-    while i < len(order) {
-        let isrc: str = read_file(order[i]);
-        let lx2: LexOut = lex(isrc);
-        let hp2: HParser = HParser { kinds: lx2.kinds, texts: lx2.texts, lines: lx2.lines, cols: lx2.cols, pos: 0, has_nul: lx2.has_nul };
-        let sub: POut = parse_program(hp2);
+    while i < len(progs) {
+        let p: Node = progs[i];
         let mut k: int = 0;
-        while k < len(sub.n.kids) {
-            push(kids, sub.n.kids[k]);
+        while k < len(p.kids) {
+            push(kids, p.kids[k]);
             k = k + 1;
         }
         i = i + 1;
     }
-    let mut merged: Node = prog.n;
+    let mut merged: Node = main_prog;
     merged.kids = kids;
     return merged;
 }
