@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Installed `qasida` entry point — hosted-first dispatch (2.1.0).
+"""Installed `qasida` entry point — hosted-first dispatch (2.2.0).
 
 Ships the hosted compiler in the wheel: the prebuilt Linux-x86_64
 binary lives at forge_lang/bin/qasida-hosted (package data, copied

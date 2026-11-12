@@ -17,7 +17,7 @@ and its stdout must match the expected transcript exactly.
   (V=12, d=8, S=8, H=16, L=1).
 - tgt: block size / param count / size+shape tables + init spot
   values (same tiny config).
-- version_info: Qasida 2.1.0, version_code 20100, at_least
+- version_info: Qasida 2.2.0, version_code 20200, at_least
   answers, WASM/GC/freestanding/self-hosted flags.
 Expectations were hand-computed before running (Python
 datetime.date for the calendar values, exact integer LCG
@@ -57,7 +57,7 @@ EXPECTED = {
                   "0.333559\n"),
     "tgt_demo": ("600\n776\n96\n64\n8\n192\n8\n8\n16\n12\n8\n8\n0\n8\n24\n32\n"
                  "1103527590\n0.0194112\n0.0100879\n1\n0\n"),
-    "version_info_demo": ("2\n1\n0\n2.1.0\n20100\ntrue\ntrue\nfalse\nfalse\n"
+    "version_info_demo": ("2\n2\n0\n2.2.0\n20200\ntrue\ntrue\ntrue\nfalse\n"
                           "true\ntrue\ntrue\ntrue\n"),
 }
 

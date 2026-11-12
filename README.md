@@ -505,9 +505,9 @@ flowchart TD
     LANG --> CUDA["codegen_cuda: GPU emit"]
     NAT --> APPS["examples/apps — Moon Notes, Gallery, Browser, Code"]
     NAT --> ML["stdlib — tensor, autograd, nn, gpt + 16 new libraries"]
-    RV --> OS["examples/os — macOS-look desktop, Finder, Terminal, allocator"]
+    RV --> OS["MOON-OS — from-scratch OS in Qasida (moved out 12 Nov 2026)"]
     ML --> LIBS["Library program — 120 items, numpy + pandas first"]
-    OS --> DAILY["Daily cadence — 10+ OS items and 10+ library items per day"]
+    OS --> DAILY["Daily cadence — OS track in MOON-OS, library track here"]
 ```
 
 ## 📊 At a glance (verified 29 Oct 2026)

@@ -6,6 +6,48 @@ release — the documented language surface will not break
 without a major version bump (see docs/STABILITY.md).
 0.x releases were pre-stable; breaking changes were possible then.
 
+## 2.2.0 — 12 Nov 2026
+
+- Compiler speed program (Steps 2–6), each step verified to the full bar
+  (bootstrap emit 7/7 byte-identical, corpus 99/99, regression 62/62,
+  CLI parity 68/68, full suite hosted == Python, run_tests.py PASS).
+  Cold-compile speed vs 2.1.0 (median emit): medium program 6.77x,
+  check-wrap (5,254-line checker) 12.28x, codegen-wrap (6,898-line
+  codegen) 16.42x. The hosted compiler now runs within 1.55x / 3.52x /
+  4.62x of the Python compiler on those three — it was ~10x / ~44x /
+  ~76–82x slower in 2.1.0. Steps: (2) real hash map + integer node-ID
+  keys in inference; (3) no-copy structs in codegen; (4) hash-indexed
+  codegen tables (plus a stack-overflow fix: the codegen state moved
+  into one heap array); (5) each import lexed+parsed exactly once;
+  (6) incremental compilation, Slice A — a whole-program emitted-C
+  cache.
+- Warm re-compiles are now effectively instant: the Step 6 cache stores
+  emitted C under /tmp/qasida_cache/, keyed on program + dependency
+  hashes (re-hashed on every lookup; any doubt means a full rebuild),
+  so a warm re-compile takes ~0.1s (medium 0.004s, check-wrap 0.032s,
+  codegen-wrap 0.089s — 154x / 196x / 303x vs Step 5 cold).
+  Correctness note: the cache is keyed on program+dependency hashes,
+  a cleared /tmp only costs a cold recompile, and the emitted C is
+  byte-identical to a full rebuild. The cache is ephemeral (VM
+  restarts wipe /tmp); cold compiles are unchanged vs Step 5.
+- The 7 suite fails are the known ones: run_big32_tests.py (iverilog
+  missing) plus test_never_v1, test_opaques_v1, test_readonly_v1,
+  test_sizedarrays_v1, test_sizedunif_fix, and test_top500_batch1.
+- The from-scratch OS moved out of this repo into
+  [MOON-OS](https://github.com/themythofsisyphusjayant/MOON-OS):
+  `examples/os/` (169 `.fg` + README.md) and `tests/test_kernel_*.py`
+  (126 files) deleted here, along with the OS-app tests
+  (`tests/test_os_apps_native.py`, `tests/test_daily_20261112_os.py`),
+  the OS half of `tests/test_daily_20261111.py`, the JalOS demo block
+  in `tests/run_tests.py`, and `tools/check_jalos_sync.py`. The
+  compiler side stays: freestanding mode, `ecall`/`ecall3`, and the
+  freestanding selfhost corpus. Post-removal suite (12 Nov 2026,
+  `blackmoon-iso/os-removal/` logs): 59 files, **52 pass / 7 fail
+  under hosted AND under Python, identical fail set** (run_big32 +
+  the 6 pre-existing big32-only cases); `run_tests.py` PASS in both
+  modes (238s hosted, 246s Python). The 10 fails that vanished vs
+  Step 6's 170/17 are the 9 deleted kernel tests + run_tests.py.
+
 ## 2.1.0 — 11 Nov 2026
 
 - Self-hosted compiler is now the DEFAULT: `qasida` / `forge.py`
@@ -452,6 +494,8 @@ without a major version bump (see docs/STABILITY.md).
   result in `a0`. Proved by `examples/os/kernel_ecall3.fg` +
   `tests/test_kernel_ecall3.py` (exact transcript `2 / 141 / -2 /
   DONE`, halted; the 141 proves the second argument arrives in `a1`).
+  (Both files moved 12 Nov 2026 to MOON-OS —
+  https://github.com/themythofsisyphusjayant/MOON-OS.)
   Scope note: this is the three-register call; real SBI also uses
   `a6` for the function id, so exact firmware-SBI calls remain a
   future slice.
@@ -576,7 +620,8 @@ without a major version bump (see docs/STABILITY.md).
   byte-exact file round-trip, and open-mode publish.
   The Docker image itself is not built here — the
   Dockerfile is a 10-line copy of the verified script.
-- JalOS (examples/os/jalos.fg, ~1300 lines): a complete
+- JalOS (examples/os/jalos.fg, ~1300 lines — moved 12 Nov 2026 to
+  MOON-OS: https://github.com/themythofsisyphusjayant/MOON-OS): a complete
   teaching OS in Qasida — boot, priority scheduler
   (29-tick demo: printer, counter, fibber, sorter,
   idler), first-fit heap allocator with coalescing,
@@ -587,7 +632,7 @@ without a major version bump (see docs/STABILITY.md).
   script-file and single-command modes. The demo tour
   is offline, deterministic, and wired into the suite
   as an exact-output test. Honest limits (see
-  examples/os/README.md): simulated, not bootable;
+  examples/os/README.md, now in MOON-OS): simulated, not bootable;
   text shell, no GUI; plain-string passwords; no
   persistence across shutdown; HTTPS needs direct
   internet (proxied sandboxes break the TLS handshake

@@ -239,6 +239,7 @@ DONE now (new): bitset-lite, bloom-lite, lru-lite (stdlib + examples
 demos, all qasida run verified), timezones-lite, gamedev-lite,
 vision-lite, rl-lite, rag-lite (retrieve only), property-test lite,
 mock-lite, tempfiles lite, passwords lite (salted FNV, NOT bcrypt/SHA).
-OS kernels (examples/os + tests/test_kernel_*.py, big32 model exact
-transcript + halt + final word): pwm, adc, spi, i2c, ringbuf, sem,
+OS kernels (now in MOON-OS — moved 12 Nov 2026 from `examples/os` +
+`tests/test_kernel_*.py` here; big32 model exact transcript + halt +
+final word): pwm, adc, spi, i2c, ringbuf, sem,
 mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
