@@ -301,13 +301,15 @@ fn import_source(path: str, dir: str) -> str {
 // compiler. The version string is the backstop; the epoch is the
 // tripwire.
 //
-// Two fingerprints (see the design doc — this distinction is
-// load-bearing): the LOOKUP fingerprint comes from a text scan
-// (cache_scan_fingerprint, never parses); the STORE fingerprint
-// comes from load_merged, which hashes each file as the real
-// parser reads it. Scan error can only ever cost a cache hit,
-// never produce a wrong answer, because a lookup hit requires
-// exact equality with a loader-computed fingerprint.
+// Lookup is by MANIFEST (revision of the design doc's scan,
+// see step6_design.md §9): the loader writes a small manifest
+// for each main file holding the authoritative fingerprint; a
+// later compile re-hashes exactly the files the fingerprint
+// lists and compares. Any input change makes some hash differ,
+// so a lookup hit requires the current files to hash-match the
+// stored fingerprint. A corrupt manifest can only ever cause a
+// miss, never a wrong answer — and the cache entry itself is
+// re-validated against the full fingerprint on lookup.
 
 // fnv-1a over file bytes, 32-bit masked (the stdlib checksum.fg
 // pattern; measured 576us / 274KB hosted, vs 7.6ms for crc32).
@@ -331,8 +333,13 @@ fn cache_fnv2(data: [int]) -> int {
     return h;
 }
 
-// [fnv1, fnv2, byte length] of a file's bytes.
+// [fnv1, fnv2, byte length] of a file's bytes. A missing file
+// yields [-1, -1, -1] (read_bytes would abort the whole compile;
+// verification must MISS on a deleted file, not crash).
 fn cache_file_hash(path: str) -> [int] {
+    if !file_exists(path) {
+        return [-1, -1, -1];
+    }
     let b: [int] = read_bytes(path);
     return [cache_fnv(b), cache_fnv2(b), len(b)];
 }
@@ -344,12 +351,10 @@ fn cache_mix(k: int, h: int, n: int, mult: int) -> int {
     return ((k * mult) ^ h ^ n) & 2147483647;
 }
 
-// True when ch is one ASCII word character (identifier char).
-fn cache_is_word_char(ch: str) -> bool {
-    return str_contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", ch);
-}
-
 // First index of needle in hay at or after from, or -1.
+// Only ever called on short strings (fingerprints); never on a
+// multi-MB haystack, where substr's per-call strlen would be
+// quadratic.
 fn cache_find_sub(hay: str, needle: str, from: int) -> int {
     let mut i: int = from;
     let hn: int = len(hay);
@@ -382,263 +387,6 @@ fn cache_digits_only(s: str) -> bool {
     return true;
 }
 
-// First index of the single character ch in hay at or after
-// from, or -1. Uses str_at (fast in a loop), never substr:
-// substr calls strlen on every invocation, which is O(n) per
-// call and quadratic over a large haystack (measured 905ms for
-// a 274KB file when substr was called per 'i' — the scan's
-// original hot spot).
-fn cache_find_char(hay: str, ch: str, from: int) -> int {
-    let hn: int = len(hay);
-    let mut i: int = from;
-    while i < hn {
-        if hay[i] == ch {
-            return i;
-        }
-        i = i + 1;
-    }
-    return -1;
-}
-
-// Import paths of one source text, in order, found by a
-// comment/string-aware scan that mirrors the lexer: // line
-// comments, non-nested /* */ block comments, "..." strings with
-// \ escapes, whole-word `import` followed by whitespace/comments
-// and a string literal (lexer's escape mapping). Malformed input
-// (unterminated string/comment, import with no string) simply
-// ends the scan of that file — the partial list can only make
-// the fingerprint miss, never hit wrongly.
-//
-// The `import` keyword is matched by an `imp` prefix counter
-// (0..6) instead of a substr call: substr does strlen on every
-// invocation, which made the scan quadratic (905ms on a 274KB
-// file). Boundary checks run only when a full match completes,
-// never per character.
-fn cache_scan_imports(src: str) -> [str] {
-    let mut out: [str] = [];
-    let mut i: int = 0;
-    let n: int = len(src);
-    let mut state: int = 0;
-    let mut imp: int = 0;
-    while i < n {
-        let ch: str = src[i];
-        if state == 1 {
-            if ch == "\n" {
-                state = 0;
-            }
-            i = i + 1;
-            continue;
-        }
-        if state == 2 {
-            if ch == "*" && i + 1 < n && src[i + 1] == "/" {
-                state = 0;
-                i = i + 2;
-                continue;
-            }
-            i = i + 1;
-            continue;
-        }
-        if state == 3 {
-            if ch == "\\" {
-                i = i + 2;
-                continue;
-            }
-            if ch == "\"" {
-                state = 0;
-                i = i + 1;
-                continue;
-            }
-            if ch == "\n" {
-                state = 0;
-                i = i + 1;
-                continue;
-            }
-            i = i + 1;
-            continue;
-        }
-        if ch == "/" && i + 1 < n && src[i + 1] == "/" {
-            state = 1;
-            imp = 0;
-            i = i + 2;
-            continue;
-        }
-        if ch == "/" && i + 1 < n && src[i + 1] == "*" {
-            state = 2;
-            imp = 0;
-            i = i + 2;
-            continue;
-        }
-        if ch == "\"" {
-            state = 3;
-            imp = 0;
-            i = i + 1;
-            continue;
-        }
-        if imp == 6 {
-            // ch is the char after a full "import" match (the
-            // match ends at i-1, its 'i' at i-6). Whole-word
-            // needs both boundaries to be non-word chars.
-            if !cache_is_word_char(ch) {
-                let before_ok: bool = i < 7 || !cache_is_word_char(src[i - 7]);
-                if before_ok {
-                    let mut j: int = i;
-                    let mut ok: bool = true;
-                    let mut saw_quote: bool = false;
-                    while j < n && !saw_quote {
-                        let c: str = src[j];
-                        if c == " " || c == "\t" || c == "\r" || c == "\n" {
-                            j = j + 1;
-                            continue;
-                        }
-                        if c == "/" && j + 1 < n && src[j + 1] == "/" {
-                            j = j + 2;
-                            while j < n && src[j] != "\n" {
-                                j = j + 1;
-                            }
-                            continue;
-                        }
-                        if c == "/" && j + 1 < n && src[j + 1] == "*" {
-                            j = j + 2;
-                            let mut closed: bool = false;
-                            while j < n {
-                                if src[j] == "*" && j + 1 < n && src[j + 1] == "/" {
-                                    j = j + 2;
-                                    closed = true;
-                                    break;
-                                }
-                                j = j + 1;
-                            }
-                            if !closed {
-                                ok = false;
-                                break;
-                            }
-                            continue;
-                        }
-                        if c == "\"" {
-                            saw_quote = true;
-                            break;
-                        }
-                        ok = false;
-                        break;
-                    }
-                    if ok && saw_quote {
-                        let mut p: str = "";
-                        j = j + 1;
-                        let mut closed2: bool = false;
-                        let mut bad: bool = false;
-                        while j < n {
-                            let c: str = src[j];
-                            if c == "\"" {
-                                closed2 = true;
-                                j = j + 1;
-                                break;
-                            }
-                            if c == "\n" {
-                                break;
-                            }
-                            if c == "\\" {
-                                if j + 1 >= n {
-                                    break;
-                                }
-                                let e: str = src[j + 1];
-                                if e == "n" {
-                                    p = p + "\n";
-                                } else if e == "t" {
-                                    p = p + "\t";
-                                } else if e == "r" {
-                                    p = p + "\r";
-                                } else if e == "\\" {
-                                    p = p + "\\";
-                                } else if e == "\"" {
-                                    p = p + "\"";
-                                } else {
-                                    bad = true;
-                                    break;
-                                }
-                                j = j + 2;
-                                continue;
-                            }
-                            p = p + c;
-                            j = j + 1;
-                        }
-                        if closed2 && !bad {
-                            push(out, p);
-                            i = j;
-                            imp = 0;
-                            continue;
-                        }
-                        return out;
-                    }
-                    if !ok {
-                        return out;
-                    }
-                }
-            }
-            imp = 0;
-        } else if imp == 0 {
-            if ch == "i" {
-                imp = 1;
-            }
-        } else {
-            if ch == "import"[imp] {
-                imp = imp + 1;
-            } else {
-                imp = 0;
-            }
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
-// Result of one scan-walk step: fingerprint-so-far, files seen,
-// and the running K1/K2 mixes. Plain str/int/[str] fields only —
-// no Node anywhere near this struct.
-struct CacheScan {
-    fp: str;
-    seen: [str];
-    k1: int;
-    k2: int;
-}
-
-// Recursive pre-order DFS over the import graph (import depth is
-// shallow; frames hold only strings and small arrays). Mirrors
-// load_merged's discovery order exactly: file first, then each
-// undiscovered import's subtree, dedup by resolved path.
-fn cache_scan_sub(resolved: str, dir: str, seen: [str], fp: str, k1: int, k2: int) -> CacheScan {
-    let src: str = read_file(resolved);
-    let h: [int] = cache_file_hash(resolved);
-    let mut nfp: str = fp + resolved + "=" + itoa(h[0]) + "," + itoa(h[1]) + "," + itoa(h[2]) + ";";
-    let mut nk1: int = cache_mix(k1, h[0], h[2], 1000003);
-    let mut nk2: int = cache_mix(k2, h[1], h[2], 999983);
-    let mut nseen: [str] = seen;
-    push(nseen, resolved);
-    let imps: [str] = cache_scan_imports(src);
-    let mut i: int = 0;
-    while i < len(imps) {
-        let r: str = import_resolve(imps[i], dir);
-        if r != "" {
-            let mut done: bool = false;
-            let mut k: int = 0;
-            while k < len(nseen) {
-                if nseen[k] == r {
-                    done = true;
-                }
-                k = k + 1;
-            }
-            if !done {
-                let sub: CacheScan = cache_scan_sub(r, dir_of(r), nseen, nfp, nk1, nk2);
-                nfp = sub.fp;
-                nseen = sub.seen;
-                nk1 = sub.k1;
-                nk2 = sub.k2;
-            }
-        }
-        i = i + 1;
-    }
-    return CacheScan { fp: nfp, seen: nseen, k1: nk1, k2: nk2 };
-}
-
 // K1/K2 seeds, folding the freestanding flag and mode in so
 // different flags never share a cache filename. Bump the seed
 // constants with the epoch (see the rule above).
@@ -666,15 +414,132 @@ fn cache_prefix(freestanding: bool, mode: str) -> str {
     return "QASIDA6|2.1.0|step6a|fs=" + itoa(fs) + "|mode=" + mode + "|";
 }
 
-// Lookup fingerprint for a program: "" means "skip the cache".
-fn cache_scan_fingerprint(path: str, freestanding: bool, mode: str) -> str {
-    if !file_exists(path) {
+// Best-effort file write for cache files: try the write, and if
+// the cache directory is missing, create it and retry once.
+// Returns 0 on success, 1 on failure. A failure is never fatal:
+// the compile already succeeded; the next run simply misses.
+fn cache_write_best_effort(path: str, content: str) -> int {
+    let mut wrote: bool = write_file(path, content);
+    if !wrote {
+        let rc: int = run_command("mkdir -p /tmp/qasida_cache");
+        if rc == 0 {
+            wrote = write_file(path, content);
+        }
+    }
+    if wrote {
+        return 0;
+    }
+    return 1;
+}
+
+// Manifest filename for a main file: the main path with "/" ->
+// "_" (the only character a filename cannot hold), truncated
+// to 80 chars. Only the (short) main path is scanned per
+// character — never a big string. Two mains that sanitise alike
+// share a manifest file, but the manifest stores the main path
+// and the lookup compares it, so that only ever costs a hit.
+fn cache_manifest_path(main: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(main) && i < 80 {
+        let c: str = main[i];
+        if c == "/" {
+            out = out + "_";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    if out == "" {
+        out = "main";
+    }
+    return "/tmp/qasida_cache/m_" + out + ".manifest";
+}
+
+// Re-hash every file a fingerprint lists and compare with the
+// recorded values. prefix is the fingerprint prefix (already
+// validated by the caller); segments follow it, the "|K1=…"
+// trailer ends the list. Any problem → false (miss). A path
+// holding ";" or "=" cannot round-trip through the segment
+// format, so such programs simply never hit — safe, never wrong.
+fn cache_verify_segments(fp: str, prefix: str) -> bool {
+    let body: str = substr(fp, len(prefix), len(fp) - len(prefix));
+    let pieces: [str] = split(body, ";");
+    let mut any: bool = false;
+    let mut i: int = 0;
+    while i < len(pieces) {
+        let piece: str = pieces[i];
+        if piece == "" {
+            i = i + 1;
+            continue;
+        }
+        if starts_with(piece, "|K1=") {
+            break;
+        }
+        let parts: [str] = split(piece, "=");
+        if len(parts) != 2 {
+            return false;
+        }
+        let nums: [str] = split(parts[1], ",");
+        if len(nums) != 3 {
+            return false;
+        }
+        if !cache_digits_only(nums[0]) || !cache_digits_only(nums[1]) || !cache_digits_only(nums[2]) {
+            return false;
+        }
+        let h: [int] = cache_file_hash(parts[0]);
+        if h[0] != parse_int(nums[0]) || h[1] != parse_int(nums[1]) || h[2] != parse_int(nums[2]) {
+            return false;
+        }
+        any = true;
+        i = i + 1;
+    }
+    return any;
+}
+
+// Manifest lookup: read the main file's manifest, check the
+// magic, the main path and the fingerprint prefix (version /
+// epoch / flags), re-hash every listed file, and only then read
+// the cache entry. Returns the cached C, or "" on any doubt.
+fn cache_manifest_lookup(path: str, freestanding: bool, mode: str) -> str {
+    let mpath: str = cache_manifest_path(path);
+    if !file_exists(mpath) {
         return "";
     }
-    let seeds: [int] = cache_seeds(freestanding, mode);
-    let fp: str = cache_prefix(freestanding, mode);
-    let r: CacheScan = cache_scan_sub(path, dir_of(path), [], fp, seeds[0], seeds[1]);
-    return r.fp + "|K1=" + itoa(r.k1) + "|K2=" + itoa(r.k2);
+    let m: str = read_file(mpath);
+    let lines: [str] = split(m, "\n");
+    if len(lines) < 4 {
+        return "";
+    }
+    if lines[0] != "QASIDA-MANIFEST-1" {
+        return "";
+    }
+    if lines[1] != path {
+        return "";
+    }
+    let fp: str = lines[2];
+    let prefix: str = cache_prefix(freestanding, mode);
+    if !starts_with(fp, prefix) {
+        return "";
+    }
+    if !cache_verify_segments(fp, prefix) {
+        return "";
+    }
+    let cpath: str = cache_path_for(fp);
+    if cpath == "" {
+        return "";
+    }
+    if lines[3] != cpath {
+        return "";
+    }
+    return cache_lookup(fp, cpath);
+}
+
+// Store a manifest for a main file (best-effort, like the entry).
+fn cache_manifest_store(main_path: str, fp: str, cpath: str) -> int {
+    let mpath: str = cache_manifest_path(main_path);
+    let content: str = "QASIDA-MANIFEST-1\n" + main_path + "\n" + fp + "\n" + cpath + "\n";
+    return cache_write_best_effort(mpath, content);
 }
 
 // Cache filename for a fingerprint, from its K1/K2 trailer.
@@ -720,34 +585,42 @@ fn cache_lookup(fp: str, path: str) -> str {
         return "";
     }
     let entry: str = read_file(path);
-    // Header newlines via cache_find_char (str_at), NOT
-    // cache_find_sub: find_sub calls substr per position, and
-    // substr does strlen on every invocation — over a multi-MB
-    // entry that is ~400ms of quadratic scanning.
-    let nl1: int = cache_find_char(entry, "\n", 0);
-    if nl1 < 0 {
+    // Header layout, all offsets derived from fp (the caller
+    // already knows it) — never scan the multi-MB entry per
+    // character: indexing it costs one strlen per access, which
+    // measured ~400ms on a 27MB entry. Layout:
+    //   "QASIDA-CACHE-1\n" (15) + fp + "\n" + clen + "\n" + C + "\n" + C
+    let magic: str = "QASIDA-CACHE-1\n";
+    if len(entry) < len(magic) + len(fp) + 2 {
         return "";
     }
-    if substr(entry, 0, nl1) != "QASIDA-CACHE-1" {
+    if substr(entry, 0, len(magic)) != magic {
         return "";
     }
-    let nl2: int = cache_find_char(entry, "\n", nl1 + 1);
-    if nl2 < 0 {
+    if substr(entry, len(magic), len(fp)) != fp {
         return "";
     }
-    if substr(entry, nl1 + 1, nl2 - (nl1 + 1)) != fp {
+    let clen_at: int = len(magic) + len(fp) + 1;
+    let win: str = substr(entry, clen_at, 16);
+    let mut ndig: int = 0;
+    while ndig < len(win) {
+        let c: str = win[ndig];
+        if c != "0" && c != "1" && c != "2" && c != "3" && c != "4" && c != "5" && c != "6" && c != "7" && c != "8" && c != "9" {
+            break;
+        }
+        ndig = ndig + 1;
+    }
+    if ndig == 0 {
         return "";
     }
-    let nl3: int = cache_find_char(entry, "\n", nl2 + 1);
-    if nl3 < 0 {
+    if ndig >= len(win) {
         return "";
     }
-    let clen_s: str = substr(entry, nl2 + 1, nl3 - (nl2 + 1));
-    if !cache_digits_only(clen_s) {
+    if win[ndig] != "\n" {
         return "";
     }
-    let clen: int = parse_int(clen_s);
-    let cpos: int = nl3 + 1;
+    let clen: int = parse_int(substr(win, 0, ndig));
+    let cpos: int = clen_at + ndig + 1;
     if cpos + clen + 1 + clen != len(entry) {
         return "";
     }
@@ -768,14 +641,7 @@ fn cache_lookup(fp: str, path: str) -> str {
 // interleaved write is detectable on lookup.
 fn cache_store(fp: str, path: str, c: str) -> int {
     let entry: str = "QASIDA-CACHE-1\n" + fp + "\n" + itoa(len(c)) + "\n" + c + "\n" + c;
-    let mut wrote: bool = write_file(path, entry);
-    if !wrote {
-        let rc: int = run_command("mkdir -p /tmp/qasida_cache");
-        if rc == 0 {
-            wrote = write_file(path, entry);
-        }
-    }
-    return 0;
+    return cache_write_best_effort(path, entry);
 }
 
 // Lex + parse one source text, returning the program root node.
@@ -930,21 +796,17 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str) -> Node 
 // failures exit inside the pipeline via fail_compile; the !ok
 // branch below is a backstop that cannot fire while they do.
 //
-// Slice A program cache: the scan fingerprint is tried first —
+// Slice A program cache: the manifest lookup is tried first —
 // on a hit the previously emitted C is returned verbatim without
-// running any pipeline stage. On a miss the pipeline runs and the
-// C is stored under the LOADER fingerprint (fp_box), never the
-// scan fingerprint (see the design doc, speed/step6_design.md).
+// running any pipeline stage. On a miss the pipeline runs and
+// the C is stored under the LOADER fingerprint (fp_box), never
+// anything the lookup computed (see the design doc,
+// speed/step6_design.md §9). The manifest is stored alongside
+// the entry so the next run can find it.
 fn compile_to_c(path: str, freestanding: bool, mode: str) -> str {
-    let fp: str = cache_scan_fingerprint(path, freestanding, mode);
-    if fp != "" {
-        let cpath: str = cache_path_for(fp);
-        if cpath != "" {
-            let hit: str = cache_lookup(fp, cpath);
-            if hit != "" {
-                return hit;
-            }
-        }
+    let hit: str = cache_manifest_lookup(path, freestanding, mode);
+    if hit != "" {
+        return hit;
     }
     let mut fp_box: [str] = [""];
     let merged: Node = load_merged(path, fp_box, freestanding, mode);
@@ -959,6 +821,7 @@ fn compile_to_c(path: str, freestanding: bool, mode: str) -> str {
         let cpath2: str = cache_path_for(lfp);
         if cpath2 != "" {
             cache_store(lfp, cpath2, c);
+            cache_manifest_store(path, lfp, cpath2);
         }
     }
     return c;
