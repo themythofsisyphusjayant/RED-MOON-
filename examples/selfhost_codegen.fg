@@ -47,6 +47,21 @@
 import "selfhost_infer.fg";
 import "selfhost_codegen_header.fg";
 
+// Hash index over a [str] name table: bucket keys ("" = empty)
+// and bucket values (table index, -1 = empty). cap is a power
+// of two; len counts live entries.
+// Defined BEFORE HCodegen on purpose: the codegen emits
+// per-struct array helpers in struct-definition order, and
+// HCodegen's array-free calls this map's array-free — so this
+// struct must come first, or the build fails on an implicit
+// declaration of forge_CGStrMap_array_free.
+struct CGStrMap {
+    keys: [str];
+    vals: [int];
+    cap: int;
+    len: int;
+}
+
 struct HCodegen {
     lines: [str];
     // Logical length of lines (speed step 3): lines is pre-grown
@@ -117,6 +132,27 @@ struct HCodegen {
     map_seq: [int];
     map_cap: int;
     map_len: int;
+    // Speed step 4: hash indexes over the name tables (func,
+    // struct, enum, newtype) plus two derived maps: variant
+    // name -> packed enum/variant index (ei * 100000 + j) for
+    // cg_variant_lookup, and generic-func base name -> func
+    // index for cg_template_lookup. Buckets are mutated by
+    // index assignment only (see cg_map_put); the parallel
+    // arrays keep insertion order and every iteration loop
+    // still walks them.
+    // Speed step 4 (fix): the six hash indexes live in ONE
+    // heap array, not six inline struct fields. Six inline
+    // CGStrMaps add 480 bytes to HCodegen, and the codegen
+    // threads HCodegen by value through cg_gen_expr/cg_gen_stmt
+    // (hundreds of live copies per frame): cg_gen_expr's frame
+    // grew 243,144 -> 302,632 bytes and cg_gen_stmt's 763,752 ->
+    // 951,752, overflowing the 8 MB stack on deeply nested code
+    // (ASan: stack-overflow in cg_gen_expr). One array field is
+    // 32 bytes; the maps themselves are unchanged. Slots:
+    // 0 func, 1 struct, 2 enum, 3 newtype, 4 variant, 5 tmpl.
+    // Index assignment (g.maps[i] = ...) writes in place on
+    // the shared buffer, exactly like the bucket writes.
+    maps: [CGStrMap];
     owned_names: [str];
     owned_types: [str];
     owned_marks: [int];
@@ -175,8 +211,360 @@ struct CGExpr {
     code: str;
 }
 
+// Rank of one ASCII char (0..62 for [A-Za-z0-9_], 63 otherwise).
+// Frequency-ordered == chain: no allocation, unlike infer_find_str
+// over the 95-char alphabet (~48 substr allocs per char — slower
+// than the scans this hash replaces). Hash quality only affects
+// probe length, never correctness: cg_map_get always verifies
+// with ==.
+fn cg_char_rank2(ch: str) -> int {
+    if ch == "_" {
+        return 0;
+    }
+    if ch == "e" {
+        return 1;
+    }
+    if ch == "a" {
+        return 2;
+    }
+    if ch == "t" {
+        return 3;
+    }
+    if ch == "i" {
+        return 4;
+    }
+    if ch == "o" {
+        return 5;
+    }
+    if ch == "n" {
+        return 6;
+    }
+    if ch == "s" {
+        return 7;
+    }
+    if ch == "r" {
+        return 8;
+    }
+    if ch == "c" {
+        return 9;
+    }
+    if ch == "g" {
+        return 10;
+    }
+    if ch == "l" {
+        return 11;
+    }
+    if ch == "u" {
+        return 12;
+    }
+    if ch == "m" {
+        return 13;
+    }
+    if ch == "p" {
+        return 14;
+    }
+    if ch == "f" {
+        return 15;
+    }
+    if ch == "d" {
+        return 16;
+    }
+    if ch == "h" {
+        return 17;
+    }
+    if ch == "b" {
+        return 18;
+    }
+    if ch == "k" {
+        return 19;
+    }
+    if ch == "v" {
+        return 20;
+    }
+    if ch == "w" {
+        return 21;
+    }
+    if ch == "y" {
+        return 22;
+    }
+    if ch == "x" {
+        return 23;
+    }
+    if ch == "j" {
+        return 24;
+    }
+    if ch == "q" {
+        return 25;
+    }
+    if ch == "z" {
+        return 26;
+    }
+    if ch == "A" {
+        return 27;
+    }
+    if ch == "B" {
+        return 28;
+    }
+    if ch == "C" {
+        return 29;
+    }
+    if ch == "D" {
+        return 30;
+    }
+    if ch == "E" {
+        return 31;
+    }
+    if ch == "F" {
+        return 32;
+    }
+    if ch == "G" {
+        return 33;
+    }
+    if ch == "H" {
+        return 34;
+    }
+    if ch == "I" {
+        return 35;
+    }
+    if ch == "J" {
+        return 36;
+    }
+    if ch == "K" {
+        return 37;
+    }
+    if ch == "L" {
+        return 38;
+    }
+    if ch == "M" {
+        return 39;
+    }
+    if ch == "N" {
+        return 40;
+    }
+    if ch == "O" {
+        return 41;
+    }
+    if ch == "P" {
+        return 42;
+    }
+    if ch == "Q" {
+        return 43;
+    }
+    if ch == "R" {
+        return 44;
+    }
+    if ch == "S" {
+        return 45;
+    }
+    if ch == "T" {
+        return 46;
+    }
+    if ch == "U" {
+        return 47;
+    }
+    if ch == "V" {
+        return 48;
+    }
+    if ch == "W" {
+        return 49;
+    }
+    if ch == "X" {
+        return 50;
+    }
+    if ch == "Y" {
+        return 51;
+    }
+    if ch == "Z" {
+        return 52;
+    }
+    if ch == "0" {
+        return 53;
+    }
+    if ch == "1" {
+        return 54;
+    }
+    if ch == "2" {
+        return 55;
+    }
+    if ch == "3" {
+        return 56;
+    }
+    if ch == "4" {
+        return 57;
+    }
+    if ch == "5" {
+        return 58;
+    }
+    if ch == "6" {
+        return 59;
+    }
+    if ch == "7" {
+        return 60;
+    }
+    if ch == "8" {
+        return 61;
+    }
+    if ch == "9" {
+        return 62;
+    }
+    return 63;
+}
+
+// FNV-style mix over sampled chars: positions 0, len/2, len-2,
+// len-1 plus the length. Values stay far below int64 (len <= ~60,
+// four *131 steps -> < 2e10), so no multiply-overflow risk. The
+// xor-shift tail mixes the high bits down into the bucket bits.
+fn cg_str_hash(s: str) -> int {
+    let n: int = len(s);
+    if n == 0 {
+        return 0;
+    }
+    let mut h: int = n;
+    h = h * 131 + cg_char_rank2(substr(s, 0, 1)) + 1;
+    h = h * 131 + cg_char_rank2(substr(s, n / 2, 1)) + 1;
+    if n >= 2 {
+        h = h * 131 + cg_char_rank2(substr(s, n - 2, 1)) + 1;
+    }
+    h = h * 131 + cg_char_rank2(substr(s, n - 1, 1)) + 1;
+    h = h ^ (h >> 16);
+    h = h ^ (h >> 8);
+    return h;
+}
+
+fn cg_map_new(cap: int) -> CGStrMap {
+    let mut keys: [str] = [];
+    let mut vals: [int] = [];
+    let mut i: int = 0;
+    while i < cap {
+        push(keys, "");
+        push(vals, -1);
+        i = i + 1;
+    }
+    return CGStrMap { keys: keys, vals: vals, cap: cap, len: 0 };
+}
+
+// Table index for key, or -1 when absent. cap == 0 (map not
+// built yet) misses, exactly like the old scans over the
+// then-empty tables.
+fn cg_map_get(m: CGStrMap, key: str) -> int {
+    if m.cap == 0 {
+        return -1;
+    }
+    let mut i: int = cg_str_hash(key) & (m.cap - 1);
+    while m.keys[i] != "" {
+        if m.keys[i] == key {
+            return m.vals[i];
+        }
+        i = (i + 1) & (m.cap - 1);
+    }
+    return -1;
+}
+
+// Double the buckets and rehash (load stays under 0.7). The new
+// arrays are fresh (refcount 1), so building them with push and
+// index assignment is in place; the caller's stale copy is
+// replaced when the returned map is assigned back.
+fn cg_map_grow(m0: CGStrMap) -> CGStrMap {
+    let mut m: CGStrMap = m0;
+    let ncap: int = m.cap * 2;
+    let nm: CGStrMap = cg_map_new(ncap);
+    let mut nk: [str] = nm.keys;
+    let mut nv: [int] = nm.vals;
+    let mut j: int = 0;
+    while j < m.cap {
+        if m.keys[j] != "" {
+            let mut b: int = cg_str_hash(m.keys[j]) & (ncap - 1);
+            while nk[b] != "" {
+                b = (b + 1) & (ncap - 1);
+            }
+            nk[b] = m.keys[j];
+            nv[b] = m.vals[j];
+        }
+        j = j + 1;
+    }
+    m.keys = nk;
+    m.vals = nv;
+    m.cap = ncap;
+    return m;
+}
+
+// Insert key -> val, overwriting any previous value for the key
+// (last-wins, like Python's dicts for these tables). Buckets are
+// written by index assignment — in place on the shared buffer,
+// no copy-on-write — which is observably identical here because
+// the codegen state is threaded strictly sequentially
+// (g = f(g, ...); audit: cg_build_tables builds once, and the
+// only post-build put is cg_register_concrete_struct, called
+// only from cg_collect_type, which also threads g sequentially;
+// no caller uses a pre-put copy of g afterwards). Grow at load
+// 0.7. The caller MUST assign the result back into the HCodegen
+// array slot (len/cap changes live in the returned struct).
+fn cg_map_put(m0: CGStrMap, key: str, val: int) -> CGStrMap {
+    let mut m: CGStrMap = m0;
+    if m.cap == 0 {
+        m = cg_map_new(256);
+    }
+    if (m.len + 1) * 10 > m.cap * 7 {
+        m = cg_map_grow(m);
+    }
+    let mut i: int = cg_str_hash(key) & (m.cap - 1);
+    while m.keys[i] != "" && m.keys[i] != key {
+        i = (i + 1) & (m.cap - 1);
+    }
+    if m.keys[i] == "" {
+        m.keys[i] = key;
+        m.vals[i] = val;
+        m.len = m.len + 1;
+    } else {
+        m.vals[i] = val;
+    }
+    return m;
+}
+
+// First-wins variant of put: inserts only when the key is absent.
+// Preserves the first-match scan semantics of cg_variant_lookup
+// (first enum holding the variant) and cg_template_lookup (first
+// template with the base name). Build-time only, so the extra
+// probe is cold.
+fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
+    let mut m: CGStrMap = m0;
+    if m.cap == 0 {
+        m = cg_map_new(256);
+    }
+    if cg_map_get(m, key) >= 0 {
+        return m;
+    }
+    if (m.len + 1) * 10 > m.cap * 7 {
+        m = cg_map_grow(m);
+    }
+    let mut i: int = cg_str_hash(key) & (m.cap - 1);
+    while m.keys[i] != "" && m.keys[i] != key {
+        i = (i + 1) & (m.cap - 1);
+    }
+    if m.keys[i] == "" {
+        m.keys[i] = key;
+        m.vals[i] = val;
+        m.len = m.len + 1;
+    }
+    return m;
+}
+
 fn cg_new(inf: HInfer) -> HCodegen {
-    return HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2 };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2, maps: [] };
+    // Speed step 4: pre-sized buckets (funcs ~419 in the
+    // codegen wrap; structs gain concrete mangled names during
+    // generation, so the struct map starts at 2048). The array
+    // is fresh (refcount 1), so these pushes are in place;
+    // the slots are never pushed to again, only index-assigned.
+    let mut maps: [CGStrMap] = [];
+    push(maps, cg_map_new(1024));
+    push(maps, cg_map_new(2048));
+    push(maps, cg_map_new(256));
+    push(maps, cg_map_new(128));
+    push(maps, cg_map_new(512));
+    push(maps, cg_map_new(256));
+    g.maps = maps;
+    return g;
 }
 
 // Index of a function name in func_names, or -2 when absent (a
@@ -184,14 +572,11 @@ fn cg_new(inf: HInfer) -> HCodegen {
 // list is built once by cg_build_tables, in the same order as
 // infer's fn_names, so shared names share indices.
 fn cg_fn_index(g: HCodegen, name: str) -> int {
-    let mut i: int = 0;
-    while i < len(g.func_names) {
-        if g.func_names[i] == name {
-            return i;
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[0], name);
+    if idx < 0 {
+        return -2;
     }
-    return -2;
+    return idx;
 }
 
 fn cg_trunc_node(a0: [Node], n: int) -> [Node] {
@@ -350,38 +735,29 @@ fn cg_expr_type_raw(g: HCodegen, n: Node) -> str {
 
 // Field encoding ("f:t~...") for a struct's base name, or "".
 fn cg_struct_fields_template(g: HCodegen, base: str) -> str {
-    let mut i: int = 0;
-    while i < len(g.struct_names) {
-        if g.struct_names[i] == base {
-            return g.struct_fields[i];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[1], base);
+    if idx < 0 {
+        return "";
     }
-    return "";
+    return g.struct_fields[idx];
 }
 
 // Type params ("T~U") of a struct template, or "".
 fn cg_struct_tparams(g: HCodegen, base: str) -> str {
-    let mut i: int = 0;
-    while i < len(g.struct_names) {
-        if g.struct_names[i] == base {
-            return g.struct_tparams[i];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[1], base);
+    if idx < 0 {
+        return "";
     }
-    return "";
+    return g.struct_tparams[idx];
 }
 
 // Type params ("T~U") of an enum template, or "".
 fn cg_enum_tparams(g: HCodegen, ename: str) -> str {
-    let mut i: int = 0;
-    while i < len(g.enum_names) {
-        if g.enum_names[i] == ename {
-            return g.enum_tparams[i];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[2], ename);
+    if idx < 0 {
+        return "";
     }
-    return "";
+    return g.enum_tparams[idx];
 }
 
 // Field encoding for a struct type spelling, with generic args
@@ -535,14 +911,7 @@ fn cg_enum_concrete_variants(g: HCodegen, t: str) -> str {
         base = generic_base(t);
         args = generic_args(t);
     }
-    let mut ei: int = -1;
-    let mut i: int = 0;
-    while i < len(g.enum_names) {
-        if g.enum_names[i] == base {
-            ei = i;
-        }
-        i = i + 1;
-    }
+    let ei: int = cg_map_get(g.maps[2], base);
     if ei < 0 {
         return "";
     }
@@ -700,6 +1069,11 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
             push(g.func_rets, n.sval);
             push(g.func_params, enc);
             push(g.func_extern, n.bval);
+            g.maps[0] = cg_map_put(g.maps[0], n.name, len(g.func_names) - 1);
+            let spf: [str] = split_tparams(n.name);
+            if spf[1] != "" {
+                g.maps[5] = cg_map_put_first(g.maps[5], spf[0], len(g.func_names) - 1);
+            }
         }
         if n.kind == 3 {
             let sp: [str] = split_tparams(n.name);
@@ -718,6 +1092,7 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
             push(g.struct_names, sp[0]);
             push(g.struct_fields, enc);
             push(g.struct_tparams, sp[1]);
+            g.maps[1] = cg_map_put(g.maps[1], sp[0], len(g.struct_names) - 1);
         }
         if n.kind == 4 {
             let sp: [str] = split_tparams(n.name);
@@ -743,6 +1118,15 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
             push(g.enum_variants, venc);
             push(g.enum_payloads, penc);
             push(g.enum_tparams, sp[1]);
+            g.maps[2] = cg_map_put(g.maps[2], sp[0], len(g.enum_names) - 1);
+            let vs: [str] = split(venc, "~");
+            let mut vi: int = 0;
+            while vi < len(vs) {
+                if vs[vi] != "" {
+                    g.maps[4] = cg_map_put_first(g.maps[4], vs[vi], (len(g.enum_names) - 1) * 100000 + vi);
+                }
+                vi = vi + 1;
+            }
         }
         if n.kind == 5 {
             // TraitDef: kids are FuncDef-like method nodes (kind
@@ -807,12 +1191,14 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
                 push(g.func_rets, m.sval);
                 push(g.func_params, enc);
                 push(g.func_extern, false);
+                g.maps[0] = cg_map_put(g.maps[0], sname + "__" + m.name, len(g.func_names) - 1);
                 j = j + 1;
             }
         }
         if n.kind == 8 {
             push(g.newtype_names, n.name);
             push(g.newtype_targets, n.sval);
+            g.maps[3] = cg_map_put(g.maps[3], n.name, len(g.newtype_names) - 1);
         }
         i = i + 1;
     }
@@ -822,14 +1208,11 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
 // ---- type predicates and spelling ----
 
 fn cg_newtype_target(g: HCodegen, name: str) -> str {
-    let mut i: int = 0;
-    while i < len(g.newtype_names) {
-        if g.newtype_names[i] == name {
-            return g.newtype_targets[i];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[3], name);
+    if idx < 0 {
+        return "";
     }
-    return "";
+    return g.newtype_targets[idx];
 }
 
 // _resolve_newtype (codegen.py:1104): recursive.
@@ -959,14 +1342,7 @@ fn cg_is_struct_type(g: HCodegen, t: str) -> bool {
         return false;
     }
     let name: str = cg_struct_type_name(g, r);
-    let mut i: int = 0;
-    while i < len(g.struct_names) {
-        if g.struct_names[i] == name {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
+    return cg_map_get(g.maps[1], name) >= 0;
 }
 
 fn cg_is_array_type(g: HCodegen, t: str) -> bool {
@@ -1119,25 +1495,19 @@ fn cg_c_str_literal(v: str, has_nul: bool) -> str {
 
 // Function lookup: ["1", ret, params_enc] or ["0", "", ""].
 fn cg_fn_lookup(g: HCodegen, name: str) -> [str] {
-    let mut i: int = 0;
-    while i < len(g.func_names) {
-        if g.func_names[i] == name {
-            return ["1", g.func_rets[i], g.func_params[i]];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[0], name);
+    if idx < 0 {
+        return ["0", "", ""];
     }
-    return ["0", "", ""];
+    return ["1", g.func_rets[idx], g.func_params[idx]];
 }
 
 fn cg_fn_is_extern(g: HCodegen, name: str) -> bool {
-    let mut i: int = 0;
-    while i < len(g.func_names) {
-        if g.func_names[i] == name {
-            return g.func_extern[i];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[0], name);
+    if idx < 0 {
+        return false;
     }
-    return false;
+    return g.func_extern[idx];
 }
 
 // Param nodes of a FuncDef as "name:type" entries.
@@ -2657,14 +3027,7 @@ fn cg_sorted_mode(a0: [str], mode: int) -> [str] {
 // ---- concrete generic types: registration + collection ----
 
 fn cg_is_enum_name(g: HCodegen, base: str) -> bool {
-    let mut i: int = 0;
-    while i < len(g.enum_names) {
-        if g.enum_names[i] == base {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
+    return cg_map_get(g.maps[2], base) >= 0;
 }
 
 // True when a type spelling mentions one of the given type-param
@@ -2723,17 +3086,15 @@ fn cg_register_concrete_struct(g0: HCodegen, t: str) -> HCodegen {
         return g;
     }
     let mangled: str = infer_mangle_type(t);
-    let mut i: int = 0;
-    while i < len(g.struct_names) {
-        if g.struct_names[i] == mangled {
-            return g;
-        }
-        i = i + 1;
+    if cg_map_get(g.maps[1], mangled) >= 0 {
+        return g;
     }
     let enc: str = cg_struct_fields_concrete(g, t);
+    let idx: int = len(g.struct_names);
     push(g.struct_names, mangled);
     push(g.struct_fields, enc);
     push(g.struct_tparams, "");
+    g.maps[1] = cg_map_put(g.maps[1], mangled, idx);
     return g;
 }
 
@@ -3486,48 +3847,39 @@ fn cg_find_last(s: str, ch: str) -> int {
 // Enum variant lookup: ["1", enum_name, tag, payload] or ["0"...].
 // Payload "" means the variant takes no payload.
 fn cg_variant_lookup(g: HCodegen, name: str) -> [str] {
-    let mut i: int = 0;
-    while i < len(g.enum_names) {
-        let vs: [str] = split(g.enum_variants[i], "~");
-        let mut j: int = 0;
-        while j < len(vs) {
-            if vs[j] == name {
-                let parts: [str] = split(g.enum_payloads[i], "~");
-                let mut pt: str = "";
-                let mut k: int = 0;
-                while k < len(parts) {
-                    let kv: [str] = split(parts[k], ":");
-                    if len(kv) >= 2 && kv[0] == name {
-                        pt = kv[1];
-                    }
-                    k = k + 1;
-                }
-                return ["1", g.enum_names[i], itoa(j), pt];
-            }
-            j = j + 1;
-        }
-        i = i + 1;
+    let packed: int = cg_map_get(g.maps[4], name);
+    if packed < 0 {
+        return ["0", "", "", ""];
     }
-    return ["0", "", "", ""];
+    let i: int = packed / 100000;
+    let j: int = packed % 100000;
+    let parts: [str] = split(g.enum_payloads[i], "~");
+    let mut pt: str = "";
+    let mut k: int = 0;
+    while k < len(parts) {
+        let kv: [str] = split(parts[k], ":");
+        if len(kv) >= 2 && kv[0] == name {
+            pt = kv[1];
+        }
+        k = k + 1;
+    }
+    return ["1", g.enum_names[i], itoa(j), pt];
 }
 
 // Does any variant of this enum carry a payload?
 fn cg_enum_has_payload(g: HCodegen, ename: str) -> bool {
-    let mut i: int = 0;
-    while i < len(g.enum_names) {
-        if g.enum_names[i] == ename {
-            let parts: [str] = split(g.enum_payloads[i], "~");
-            let mut k: int = 0;
-            while k < len(parts) {
-                let kv: [str] = split(parts[k], ":");
-                if len(kv) >= 2 && kv[1] != "" {
-                    return true;
-                }
-                k = k + 1;
-            }
-            return false;
+    let i: int = cg_map_get(g.maps[2], ename);
+    if i < 0 {
+        return false;
+    }
+    let parts: [str] = split(g.enum_payloads[i], "~");
+    let mut k: int = 0;
+    while k < len(parts) {
+        let kv: [str] = split(parts[k], ":");
+        if len(kv) >= 2 && kv[1] != "" {
+            return true;
         }
-        i = i + 1;
+        k = k + 1;
     }
     return false;
 }
@@ -6758,15 +7110,12 @@ struct CGBind {
 // Template lookup: ["1", ret, params_enc, tparams] for the template
 // whose base name matches, else ["0", "", "", ""].
 fn cg_template_lookup(g: HCodegen, name: str) -> [str] {
-    let mut i: int = 0;
-    while i < len(g.func_names) {
-        let sp: [str] = split_tparams(g.func_names[i]);
-        if sp[0] == name && sp[1] != "" {
-            return ["1", g.func_rets[i], g.func_params[i], sp[1]];
-        }
-        i = i + 1;
+    let idx: int = cg_map_get(g.maps[5], name);
+    if idx < 0 {
+        return ["0", "", "", ""];
     }
-    return ["0", "", "", ""];
+    let sp: [str] = split_tparams(g.func_names[idx]);
+    return ["1", g.func_rets[idx], g.func_params[idx], sp[1]];
 }
 
 // Bindings for a call to a generic template: unify each template

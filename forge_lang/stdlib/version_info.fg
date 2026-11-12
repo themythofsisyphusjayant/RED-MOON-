@@ -1,0 +1,51 @@
+// Qasida — version + feature flags (2.1.0).
+// Import with: import "version_info.fg";
+// Build stamps + feature flags for the language itself
+// (roadmap #120): the version this tree ships, and which
+// backends/capabilities are present in this build.
+// version_code packs major/minor/patch as M*10000 + m*100 + p.
+fn version_major() -> int {
+    return 2;
+}
+
+fn version_minor() -> int {
+    return 1;
+}
+
+fn version_patch() -> int {
+    return 0;
+}
+
+fn version_string() -> str {
+    return "2.1.0";
+}
+
+fn version_code() -> int {
+    return 20100;
+}
+
+fn version_at_least(maj: int, min: int) -> bool {
+    if version_major() > maj {
+        return true;
+    }
+    if version_major() < maj {
+        return false;
+    }
+    return version_minor() >= min;
+}
+
+fn feature_wasm() -> bool {
+    return true;
+}
+
+fn feature_gc() -> bool {
+    return true;
+}
+
+fn feature_freestanding() -> bool {
+    return true;
+}
+
+fn feature_self_hosted() -> bool {
+    return true;
+}

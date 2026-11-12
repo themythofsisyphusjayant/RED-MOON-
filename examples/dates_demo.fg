@@ -1,0 +1,22 @@
+// Dates demo — daily-ten 12 Nov 2026 (library track).
+// Verifies dates.fg: leap years, month lengths, Howard
+// Hinnant days_from_civil (day 0 = 1970-01-01), and
+// days_between. Expected values checked against Python
+// datetime.date before running: 2026-11-12 is day 20769,
+// 2000-01-01 is day 10957, 1 Jan to 12 Nov 2026 is 315 days.
+import "dates.fg";
+
+fn main() {
+    println(is_leap(2024));
+    println(is_leap(1900));
+    println(is_leap(2000));
+    println(is_leap(2026));
+    println(days_in_month(2024, 2));
+    println(days_in_month(2026, 2));
+    println(days_in_month(2026, 11));
+    println(days_from_civil(1970, 1, 1));
+    println(days_from_civil(2000, 1, 1));
+    println(days_from_civil(2026, 11, 12));
+    println(days_between(2026, 1, 1, 2026, 11, 12));
+    println(days_between(2000, 1, 1, 2026, 11, 12));
+}

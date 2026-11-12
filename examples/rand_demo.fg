@@ -1,0 +1,17 @@
+// Random demo — daily-ten 12 Nov 2026 (library track).
+// Verifies rand.fg's deterministic LCG (Numerical Recipes
+// constants, mod 2147483647): the first two outputs from
+// seed 1, the first output from seed 42, and rand_float
+// for fixed seeds. Expected values computed in Python
+// with exact integer math, floats via float32 %g.
+import "rand.fg";
+
+fn main() {
+    println(rand_next(1));
+    println(rand_next(1103527590));
+    println(rand_next(42));
+    println(rand_float(1));
+    println(rand_float(1103527590));
+    println(rand_float(944465040));
+    println(rand_float(42));
+}

@@ -1,0 +1,39 @@
+// Tensor GPT demo — daily-ten 12 Nov 2026 (library track).
+// Verifies tgt.fg's layout arithmetic + init for the tiny
+// config V=12, d=8, S=8, H=16, L=1: block size 600, total
+// params 776, the 16-entry param-size table (tok 96, pos 64,
+// qkv_w 192, W1 128, W2 128, final ln 8 + 8), the 32-entry
+// shape table (tok (12, 8), qkv_w (8, 24)), the LCG, and
+// init_params(7) spot values — params[0] first token
+// embedding (scale 0.1), params[96] first position
+// embedding, params[160] ln1_gamma = 1, params[168]
+// ln1_beta = 0. Float expectations from an independent
+// float32 reference (struct 'f', %g).
+import "tgt.fg";
+
+fn main() {
+    println(tgt_block_size(8, 16));
+    println(tgt_param_count(12, 8, 8, 16, 1));
+    let sizes: [int] = tgt_param_sizes(12, 8, 8, 16, 1);
+    println(sizes[0]);
+    println(sizes[1]);
+    println(sizes[2]);
+    println(sizes[4]);
+    println(sizes[8]);
+    println(sizes[15]);
+    println(len(sizes));
+    let shapes: [int] = tgt_param_shapes(12, 8, 8, 16, 1);
+    println(shapes[0]);
+    println(shapes[1]);
+    println(shapes[4]);
+    println(shapes[5]);
+    println(shapes[8]);
+    println(shapes[9]);
+    println(len(shapes));
+    println(tgt_lcg(1));
+    let p: [float] = tgt_init_params(12, 8, 8, 16, 1, 7);
+    println(p[0]);
+    println(p[96]);
+    println(p[160]);
+    println(p[168]);
+}

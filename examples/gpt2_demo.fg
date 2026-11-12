@@ -1,0 +1,25 @@
+// Scaled GPT demo — daily-ten 12 Nov 2026 (library track).
+// Verifies gpt2.fg's layout arithmetic + init for the tiny
+// config V=12, d=8, S=8, H=16, L=1: block size 600, total
+// params 776 (the same count as gpt.fg's fixed config),
+// block 0 base 160, final layernorm offset 760, the LCG,
+// and init_params(7) spot values — params[0] first token
+// embedding, params[96] first position embedding,
+// params[160] ln1_gamma = 1, params[168] ln1_beta = 0,
+// params[176] first Wq weight (scale 1/sqrt(8)).
+// Float expectations from an independent float32 reference.
+import "gpt2.fg";
+
+fn main() {
+    println(g2_block_size(8, 16));
+    println(g2_param_count(12, 8, 8, 16, 1));
+    println(g2_block_base(12, 8, 8, 16, 0));
+    println(g2_ln3_off(12, 8, 8, 16, 1));
+    println(g2_lcg(1));
+    let p: [float] = g2_init_params(12, 8, 8, 16, 1, 7);
+    println(p[0]);
+    println(p[96]);
+    println(p[160]);
+    println(p[168]);
+    println(p[176]);
+}

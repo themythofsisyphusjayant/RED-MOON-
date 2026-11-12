@@ -1,0 +1,23 @@
+// Version info demo — daily-ten 12 Nov 2026 (library track).
+// Verifies version_info.fg (roadmap #120, new with this
+// batch): the tree ships Qasida 2.1.0 (version_code 20100),
+// version_at_least answers the 2.0 / 2.1 / 2.2 / 3.0
+// questions, and the WASM, GC, freestanding, and
+// self-hosted feature flags are all present in this build.
+import "version_info.fg";
+
+fn main() {
+    println(version_major());
+    println(version_minor());
+    println(version_patch());
+    println(version_string());
+    println(version_code());
+    println(version_at_least(2, 0));
+    println(version_at_least(2, 1));
+    println(version_at_least(2, 2));
+    println(version_at_least(3, 0));
+    println(feature_wasm());
+    println(feature_gc());
+    println(feature_freestanding());
+    println(feature_self_hosted());
+}

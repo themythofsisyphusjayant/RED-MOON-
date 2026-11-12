@@ -1,0 +1,23 @@
+// Tiny GPT demo — daily-ten 12 Nov 2026 (library track).
+// Verifies gpt.fg's deterministic layout + init only (the
+// forward pass needs a tape; layout and init are the
+// checkable contract here): 776 params for d=8, hidden=16,
+// vocab=12; the LCG from seeds 1 and 7; and init_params(7)
+// spot values — params[0] is the first token embedding,
+// params[95] the last, params[96] the first position
+// embedding, params[160] ln1_gamma = 1, params[168]
+// ln1_beta = 0. Float expectations from an independent
+// float32 reference (struct 'f', %g).
+import "gpt.fg";
+
+fn main() {
+    println(gpt_param_count());
+    println(gpt_lcg(1));
+    println(gpt_lcg(7));
+    let p: [float] = gpt_init_params(7);
+    println(p[0]);
+    println(p[95]);
+    println(p[96]);
+    println(p[160]);
+    println(p[168]);
+}

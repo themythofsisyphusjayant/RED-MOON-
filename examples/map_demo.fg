@@ -1,0 +1,19 @@
+// Map demo — daily-ten 12 Nov 2026 (library track).
+// Verifies map.fg's MapStrInt: put/get/has, a missing key
+// returning the fallback, overwriting an existing key in
+// place, and the key count after three distinct puts.
+import "map.fg";
+
+fn main() {
+    let mut m: MapStrInt = map_new();
+    m = map_put(m, "gorakhpur", 273001);
+    m = map_put(m, "kanpur", 208001);
+    m = map_put(m, "delhi", 110001);
+    println(map_get(m, "kanpur", -1));
+    println(map_get(m, "lucknow", -1));
+    println(map_has(m, "delhi"));
+    println(map_has(m, "agra"));
+    m = map_put(m, "kanpur", 208002);
+    println(map_get(m, "kanpur", -1));
+    println(len(m.keys));
+}

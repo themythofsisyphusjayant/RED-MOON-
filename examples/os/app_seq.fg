@@ -1,0 +1,20 @@
+// seq — daily-ten 12 Nov 2026 (OS track).
+// Prints the sequence 2, 5, 8, 11, 14, 17, 20 (start 2,
+// step 3, end 20), then the count (7) and the sum
+// (2 + 5 + 8 + 11 + 14 + 17 + 20 = 77).
+fn main() {
+    let start: int = 2;
+    let step: int = 3;
+    let end: int = 20;
+    let mut v: int = start;
+    let mut n: int = 0;
+    let mut total: int = 0;
+    while v <= end {
+        println(v);
+        total = total + v;
+        n = n + 1;
+        v = v + step;
+    }
+    println(n);
+    println(total);
+}

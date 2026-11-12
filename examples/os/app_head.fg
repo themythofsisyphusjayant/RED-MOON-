@@ -1,0 +1,13 @@
+// head — daily-ten 12 Nov 2026 (OS track).
+// Prints the first 3 lines of a fixed 6-line text, then the
+// count of lines printed.
+fn main() {
+    let lines: [str] = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+    let n: int = 3;
+    let mut i: int = 0;
+    while i < n {
+        println(lines[i]);
+        i = i + 1;
+    }
+    println(n);
+}

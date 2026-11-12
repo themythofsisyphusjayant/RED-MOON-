@@ -1,0 +1,12 @@
+// nl — daily-ten 12 Nov 2026 (OS track).
+// Numbers four fixed log lines 1-based, then prints the
+// total line count (4).
+fn main() {
+    let lines: [str] = ["boot ok", "disk mounted", "net up", "ready"];
+    let mut i: int = 0;
+    while i < len(lines) {
+        println(i + 1, lines[i]);
+        i = i + 1;
+    }
+    println(len(lines));
+}

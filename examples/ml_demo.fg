@@ -1,0 +1,23 @@
+// ML helpers demo — daily-ten 12 Nov 2026 (library track).
+// Verifies ml.fg: dot, mean, relu, sigmoid, and 2x2 matmul.
+// dot([1,2,3],[4,5,6]) = 32; mean([1,2,3,4]) = 2.5;
+// sigmoid values from an independent float32 reference
+// (sigmoid(0) = 0.5, sigmoid(1) = 0.731059,
+// sigmoid(-2) = 0.119203); matmul rows are [19, 22]
+// and [43, 50].
+import "ml.fg";
+
+fn main() {
+    println(dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]));
+    println(mean([1.0, 2.0, 3.0, 4.0]));
+    println(relu(-3.0));
+    println(relu(2.5));
+    println(sigmoid(0.0));
+    println(sigmoid(1.0));
+    println(sigmoid(-2.0));
+    let m: [float] = matmul([1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], 2, 2, 2);
+    println(m[0]);
+    println(m[1]);
+    println(m[2]);
+    println(m[3]);
+}

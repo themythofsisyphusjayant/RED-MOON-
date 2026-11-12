@@ -1,0 +1,20 @@
+// Test helpers demo — daily-ten 12 Nov 2026 (library track).
+// Verifies test.fg: check, check_eq_int, check_close, and
+// check_eq_str each return 0 on a passing check and print
+// nothing, so a file of four passing checks sums to 0
+// failures. (A failing check prints a FAIL line and
+// returns 1; none fail here.)
+import "test.fg";
+
+fn main() {
+    let r1: int = check("one is one", 1 == 1);
+    println(r1);
+    let r2: int = check_eq_int("two plus two", 2 + 2, 4);
+    println(r2);
+    let r3: int = check_close("half", 0.5, 0.5, 0.001);
+    println(r3);
+    let r4: int = check_eq_str("lang", "qasida", "qasida");
+    println(r4);
+    let total: int = r1 + r2 + r3 + r4;
+    println(total);
+}

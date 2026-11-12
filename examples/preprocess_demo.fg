@@ -1,0 +1,52 @@
+// Preprocess demo — daily-ten 12 Nov 2026 (library track).
+// Verifies preprocess.fg on X = [[1, 2], [3, 4]] (n=2, d=2):
+// col_stats (means 2, 3; stds 1, 1), standardize to
+// [-1, -1, 1, 1], minmax_scale to [0, 0, 1, 1] plus the
+// mins [1, 2] and maxs [3, 4] it appends, one_hot(2, 4),
+// the deterministic Fisher-Yates split_indices(5, 2, 7),
+// and the word vocabulary built from "the cat sat the cat"
+// with "cat sat dog" encoding to [1, 2, -1] (dog is OOV).
+// Float expectations from an independent float32 reference.
+import "preprocess.fg";
+
+fn main() {
+    let x: [float] = [1.0, 2.0, 3.0, 4.0];
+    let stats: [float] = col_stats(x, 2, 2);
+    println(stats[0]);
+    println(stats[1]);
+    println(stats[2]);
+    println(stats[3]);
+    let std: [float] = standardize(x, 2, 2, stats);
+    println(std[0]);
+    println(std[1]);
+    println(std[2]);
+    println(std[3]);
+    let mm: [float] = minmax_scale(x, 2, 2);
+    println(mm[0]);
+    println(mm[1]);
+    println(mm[2]);
+    println(mm[3]);
+    println(mm[4]);
+    println(mm[5]);
+    println(mm[6]);
+    println(mm[7]);
+    let oh: [float] = one_hot(2, 4);
+    println(oh[0]);
+    println(oh[1]);
+    println(oh[2]);
+    println(oh[3]);
+    let sp: [int] = split_indices(5, 2, 7);
+    println(sp[0]);
+    println(sp[1]);
+    println(sp[2]);
+    println(sp[3]);
+    println(sp[4]);
+    let vocab: [str] = vocab_build("the cat sat the cat");
+    println(vocab[0]);
+    println(vocab[1]);
+    println(vocab[2]);
+    let enc: [int] = vocab_encode(vocab, "cat sat dog");
+    println(enc[0]);
+    println(enc[1]);
+    println(enc[2]);
+}
