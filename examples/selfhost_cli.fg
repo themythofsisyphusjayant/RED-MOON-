@@ -289,6 +289,495 @@ fn import_source(path: str, dir: str) -> str {
     return read_file(r);
 }
 
+// ---------- Slice A program cache (Step 6) ----------
+//
+// Whole-program emitted-C cache: a re-compile of an unchanged
+// program returns the previously emitted C verbatim, skipping
+// load + check + infer + codegen. See speed/step6_design.md.
+//
+// CACHE EPOCH RULE: bump the "step6a" literal in cache_prefix (and
+// the seed constants in cache_seeds) on ANY change to the hosted
+// compiler sources. A stale epoch can serve C from an older
+// compiler. The version string is the backstop; the epoch is the
+// tripwire.
+//
+// Two fingerprints (see the design doc — this distinction is
+// load-bearing): the LOOKUP fingerprint comes from a text scan
+// (cache_scan_fingerprint, never parses); the STORE fingerprint
+// comes from load_merged, which hashes each file as the real
+// parser reads it. Scan error can only ever cost a cache hit,
+// never produce a wrong answer, because a lookup hit requires
+// exact equality with a loader-computed fingerprint.
+
+// fnv-1a over file bytes, 32-bit masked (the stdlib checksum.fg
+// pattern; measured 576us / 274KB hosted, vs 7.6ms for crc32).
+fn cache_fnv(data: [int]) -> int {
+    let mut h: int = 2166136261;
+    for b in data {
+        h = h ^ b;
+        h = (h * 16777619) & 4294967295;
+    }
+    return h;
+}
+
+// Second independent fnv-1a (different basis). Two 32-bit hashes
+// per file make a content collision ~2^-64 per differing file.
+fn cache_fnv2(data: [int]) -> int {
+    let mut h: int = 522650748;
+    for b in data {
+        h = h ^ b;
+        h = (h * 16777619) & 4294967295;
+    }
+    return h;
+}
+
+// [fnv1, fnv2, byte length] of a file's bytes.
+fn cache_file_hash(path: str) -> [int] {
+    let b: [int] = read_bytes(path);
+    return [cache_fnv(b), cache_fnv2(b), len(b)];
+}
+
+// Running filename-key mix: (k * mult) ^ h ^ n, kept 31-bit
+// non-negative. k < 2^31 and mult ~1e6, so k * mult < 2^51 —
+// no 64-bit overflow.
+fn cache_mix(k: int, h: int, n: int, mult: int) -> int {
+    return ((k * mult) ^ h ^ n) & 2147483647;
+}
+
+// True when ch is one ASCII word character (identifier char).
+fn cache_is_word_char(ch: str) -> bool {
+    return str_contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", ch);
+}
+
+// First index of needle in hay at or after from, or -1.
+fn cache_find_sub(hay: str, needle: str, from: int) -> int {
+    let mut i: int = from;
+    let hn: int = len(hay);
+    let nn: int = len(needle);
+    if nn == 0 {
+        return from;
+    }
+    while i + nn <= hn {
+        if substr(hay, i, nn) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// True when s is non-empty and all decimal digits.
+fn cache_digits_only(s: str) -> bool {
+    if len(s) == 0 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        if c != "0" && c != "1" && c != "2" && c != "3" && c != "4" && c != "5" && c != "6" && c != "7" && c != "8" && c != "9" {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// First index of the single character ch in hay at or after
+// from, or -1. Uses str_at (fast in a loop), never substr:
+// substr calls strlen on every invocation, which is O(n) per
+// call and quadratic over a large haystack (measured 905ms for
+// a 274KB file when substr was called per 'i' — the scan's
+// original hot spot).
+fn cache_find_char(hay: str, ch: str, from: int) -> int {
+    let hn: int = len(hay);
+    let mut i: int = from;
+    while i < hn {
+        if hay[i] == ch {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Import paths of one source text, in order, found by a
+// comment/string-aware scan that mirrors the lexer: // line
+// comments, non-nested /* */ block comments, "..." strings with
+// \ escapes, whole-word `import` followed by whitespace/comments
+// and a string literal (lexer's escape mapping). Malformed input
+// (unterminated string/comment, import with no string) simply
+// ends the scan of that file — the partial list can only make
+// the fingerprint miss, never hit wrongly.
+//
+// The `import` keyword is matched by an `imp` prefix counter
+// (0..6) instead of a substr call: substr does strlen on every
+// invocation, which made the scan quadratic (905ms on a 274KB
+// file). Boundary checks run only when a full match completes,
+// never per character.
+fn cache_scan_imports(src: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    let n: int = len(src);
+    let mut state: int = 0;
+    let mut imp: int = 0;
+    while i < n {
+        let ch: str = src[i];
+        if state == 1 {
+            if ch == "\n" {
+                state = 0;
+            }
+            i = i + 1;
+            continue;
+        }
+        if state == 2 {
+            if ch == "*" && i + 1 < n && src[i + 1] == "/" {
+                state = 0;
+                i = i + 2;
+                continue;
+            }
+            i = i + 1;
+            continue;
+        }
+        if state == 3 {
+            if ch == "\\" {
+                i = i + 2;
+                continue;
+            }
+            if ch == "\"" {
+                state = 0;
+                i = i + 1;
+                continue;
+            }
+            if ch == "\n" {
+                state = 0;
+                i = i + 1;
+                continue;
+            }
+            i = i + 1;
+            continue;
+        }
+        if ch == "/" && i + 1 < n && src[i + 1] == "/" {
+            state = 1;
+            imp = 0;
+            i = i + 2;
+            continue;
+        }
+        if ch == "/" && i + 1 < n && src[i + 1] == "*" {
+            state = 2;
+            imp = 0;
+            i = i + 2;
+            continue;
+        }
+        if ch == "\"" {
+            state = 3;
+            imp = 0;
+            i = i + 1;
+            continue;
+        }
+        if imp == 6 {
+            // ch is the char after a full "import" match (the
+            // match ends at i-1, its 'i' at i-6). Whole-word
+            // needs both boundaries to be non-word chars.
+            if !cache_is_word_char(ch) {
+                let before_ok: bool = i < 7 || !cache_is_word_char(src[i - 7]);
+                if before_ok {
+                    let mut j: int = i;
+                    let mut ok: bool = true;
+                    let mut saw_quote: bool = false;
+                    while j < n && !saw_quote {
+                        let c: str = src[j];
+                        if c == " " || c == "\t" || c == "\r" || c == "\n" {
+                            j = j + 1;
+                            continue;
+                        }
+                        if c == "/" && j + 1 < n && src[j + 1] == "/" {
+                            j = j + 2;
+                            while j < n && src[j] != "\n" {
+                                j = j + 1;
+                            }
+                            continue;
+                        }
+                        if c == "/" && j + 1 < n && src[j + 1] == "*" {
+                            j = j + 2;
+                            let mut closed: bool = false;
+                            while j < n {
+                                if src[j] == "*" && j + 1 < n && src[j + 1] == "/" {
+                                    j = j + 2;
+                                    closed = true;
+                                    break;
+                                }
+                                j = j + 1;
+                            }
+                            if !closed {
+                                ok = false;
+                                break;
+                            }
+                            continue;
+                        }
+                        if c == "\"" {
+                            saw_quote = true;
+                            break;
+                        }
+                        ok = false;
+                        break;
+                    }
+                    if ok && saw_quote {
+                        let mut p: str = "";
+                        j = j + 1;
+                        let mut closed2: bool = false;
+                        let mut bad: bool = false;
+                        while j < n {
+                            let c: str = src[j];
+                            if c == "\"" {
+                                closed2 = true;
+                                j = j + 1;
+                                break;
+                            }
+                            if c == "\n" {
+                                break;
+                            }
+                            if c == "\\" {
+                                if j + 1 >= n {
+                                    break;
+                                }
+                                let e: str = src[j + 1];
+                                if e == "n" {
+                                    p = p + "\n";
+                                } else if e == "t" {
+                                    p = p + "\t";
+                                } else if e == "r" {
+                                    p = p + "\r";
+                                } else if e == "\\" {
+                                    p = p + "\\";
+                                } else if e == "\"" {
+                                    p = p + "\"";
+                                } else {
+                                    bad = true;
+                                    break;
+                                }
+                                j = j + 2;
+                                continue;
+                            }
+                            p = p + c;
+                            j = j + 1;
+                        }
+                        if closed2 && !bad {
+                            push(out, p);
+                            i = j;
+                            imp = 0;
+                            continue;
+                        }
+                        return out;
+                    }
+                    if !ok {
+                        return out;
+                    }
+                }
+            }
+            imp = 0;
+        } else if imp == 0 {
+            if ch == "i" {
+                imp = 1;
+            }
+        } else {
+            if ch == "import"[imp] {
+                imp = imp + 1;
+            } else {
+                imp = 0;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Result of one scan-walk step: fingerprint-so-far, files seen,
+// and the running K1/K2 mixes. Plain str/int/[str] fields only —
+// no Node anywhere near this struct.
+struct CacheScan {
+    fp: str;
+    seen: [str];
+    k1: int;
+    k2: int;
+}
+
+// Recursive pre-order DFS over the import graph (import depth is
+// shallow; frames hold only strings and small arrays). Mirrors
+// load_merged's discovery order exactly: file first, then each
+// undiscovered import's subtree, dedup by resolved path.
+fn cache_scan_sub(resolved: str, dir: str, seen: [str], fp: str, k1: int, k2: int) -> CacheScan {
+    let src: str = read_file(resolved);
+    let h: [int] = cache_file_hash(resolved);
+    let mut nfp: str = fp + resolved + "=" + itoa(h[0]) + "," + itoa(h[1]) + "," + itoa(h[2]) + ";";
+    let mut nk1: int = cache_mix(k1, h[0], h[2], 1000003);
+    let mut nk2: int = cache_mix(k2, h[1], h[2], 999983);
+    let mut nseen: [str] = seen;
+    push(nseen, resolved);
+    let imps: [str] = cache_scan_imports(src);
+    let mut i: int = 0;
+    while i < len(imps) {
+        let r: str = import_resolve(imps[i], dir);
+        if r != "" {
+            let mut done: bool = false;
+            let mut k: int = 0;
+            while k < len(nseen) {
+                if nseen[k] == r {
+                    done = true;
+                }
+                k = k + 1;
+            }
+            if !done {
+                let sub: CacheScan = cache_scan_sub(r, dir_of(r), nseen, nfp, nk1, nk2);
+                nfp = sub.fp;
+                nseen = sub.seen;
+                nk1 = sub.k1;
+                nk2 = sub.k2;
+            }
+        }
+        i = i + 1;
+    }
+    return CacheScan { fp: nfp, seen: nseen, k1: nk1, k2: nk2 };
+}
+
+// K1/K2 seeds, folding the freestanding flag and mode in so
+// different flags never share a cache filename. Bump the seed
+// constants with the epoch (see the rule above).
+fn cache_seeds(freestanding: bool, mode: str) -> [int] {
+    let mut fs: int = 0;
+    if freestanding {
+        fs = 1;
+    }
+    let mut mode_n: int = 0;
+    if mode == "fast" {
+        mode_n = 1;
+    }
+    let mut k1: int = cache_mix(18652613, fs + mode_n * 2 + 1, 0, 1000003);
+    let mut k2: int = cache_mix(506952113, fs + mode_n * 2 + 1, 0, 999983);
+    return [k1, k2];
+}
+
+// Fingerprint prefix: version + epoch + flags. Bump "step6a" on
+// ANY hosted-compiler change (see the rule above).
+fn cache_prefix(freestanding: bool, mode: str) -> str {
+    let mut fs: int = 0;
+    if freestanding {
+        fs = 1;
+    }
+    return "QASIDA6|2.1.0|step6a|fs=" + itoa(fs) + "|mode=" + mode + "|";
+}
+
+// Lookup fingerprint for a program: "" means "skip the cache".
+fn cache_scan_fingerprint(path: str, freestanding: bool, mode: str) -> str {
+    if !file_exists(path) {
+        return "";
+    }
+    let seeds: [int] = cache_seeds(freestanding, mode);
+    let fp: str = cache_prefix(freestanding, mode);
+    let r: CacheScan = cache_scan_sub(path, dir_of(path), [], fp, seeds[0], seeds[1]);
+    return r.fp + "|K1=" + itoa(r.k1) + "|K2=" + itoa(r.k2);
+}
+
+// Cache filename for a fingerprint, from its K1/K2 trailer.
+// "" on any parse failure (caller treats it as "no cache").
+fn cache_path_for(fp: str) -> str {
+    let mut k1pos: int = -1;
+    let mut k2pos: int = -1;
+    let mut p: int = cache_find_sub(fp, "|K1=", 0);
+    while p >= 0 {
+        k1pos = p;
+        p = cache_find_sub(fp, "|K1=", p + 1);
+    }
+    p = cache_find_sub(fp, "|K2=", 0);
+    while p >= 0 {
+        k2pos = p;
+        p = cache_find_sub(fp, "|K2=", p + 1);
+    }
+    if k1pos < 0 || k2pos < 0 {
+        return "";
+    }
+    if k2pos <= k1pos {
+        return "";
+    }
+    let k1s: str = substr(fp, k1pos + 4, k2pos - (k1pos + 4));
+    let k2s: str = substr(fp, k2pos + 4, len(fp) - (k2pos + 4));
+    if !cache_digits_only(k1s) || !cache_digits_only(k2s) {
+        return "";
+    }
+    if k1pos + 4 + len(k1s) != k2pos {
+        return "";
+    }
+    if k2pos + 4 + len(k2s) != len(fp) {
+        return "";
+    }
+    return "/tmp/qasida_cache/q_" + k1s + "_" + k2s + ".cache";
+}
+
+// Look up a cached C by fingerprint. Returns "" on ANY doubt
+// (missing file, bad magic, fingerprint mismatch, bad length,
+// torn write) — the caller then runs the full pipeline.
+fn cache_lookup(fp: str, path: str) -> str {
+    if !file_exists(path) {
+        return "";
+    }
+    let entry: str = read_file(path);
+    // Header newlines via cache_find_char (str_at), NOT
+    // cache_find_sub: find_sub calls substr per position, and
+    // substr does strlen on every invocation — over a multi-MB
+    // entry that is ~400ms of quadratic scanning.
+    let nl1: int = cache_find_char(entry, "\n", 0);
+    if nl1 < 0 {
+        return "";
+    }
+    if substr(entry, 0, nl1) != "QASIDA-CACHE-1" {
+        return "";
+    }
+    let nl2: int = cache_find_char(entry, "\n", nl1 + 1);
+    if nl2 < 0 {
+        return "";
+    }
+    if substr(entry, nl1 + 1, nl2 - (nl1 + 1)) != fp {
+        return "";
+    }
+    let nl3: int = cache_find_char(entry, "\n", nl2 + 1);
+    if nl3 < 0 {
+        return "";
+    }
+    let clen_s: str = substr(entry, nl2 + 1, nl3 - (nl2 + 1));
+    if !cache_digits_only(clen_s) {
+        return "";
+    }
+    let clen: int = parse_int(clen_s);
+    let cpos: int = nl3 + 1;
+    if cpos + clen + 1 + clen != len(entry) {
+        return "";
+    }
+    if entry[cpos + clen] != "\n" {
+        return "";
+    }
+    let c1: str = substr(entry, cpos, clen);
+    let c2: str = substr(entry, cpos + clen + 1, clen);
+    if c1 != c2 {
+        return "";
+    }
+    return c1;
+}
+
+// Store emitted C under a fingerprint. Best-effort: any failure
+// is ignored silently (the compile already succeeded; the next
+// run simply misses). The C is stored twice so a torn or
+// interleaved write is detectable on lookup.
+fn cache_store(fp: str, path: str, c: str) -> int {
+    let entry: str = "QASIDA-CACHE-1\n" + fp + "\n" + itoa(len(c)) + "\n" + c + "\n" + c;
+    let mut wrote: bool = write_file(path, entry);
+    if !wrote {
+        let rc: int = run_command("mkdir -p /tmp/qasida_cache");
+        if rc == 0 {
+            wrote = write_file(path, entry);
+        }
+    }
+    return 0;
+}
+
 // Lex + parse one source text, returning the program root node.
 // The single place any file is lexed+parsed: the loader below
 // calls it exactly once per file (main + each import).
@@ -327,8 +816,22 @@ fn parse_src(src: str) -> Node {
 // st_prog/st_dir/st_idx only ever grow by push, popping is
 // sp = sp - 1, so no trunc/pop helper is needed and no state is
 // threaded by value through recursion.
-fn load_merged(path: str) -> Node {
+fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str) -> Node {
     let src: str = read_file(path);
+    // Slice A program cache: the AUTHORITATIVE fingerprint — one
+    // segment per file the loader actually reads (main first, then
+    // each discovered import in DFS order), plus the K1/K2 trailer.
+    // fp_box is a 1-element [str] out-param; it is updated ONLY by
+    // index assignment (push on a shared array is CoW and would not
+    // be visible to the caller — Step 3 pattern).
+    let seeds: [int] = cache_seeds(freestanding, mode);
+    let mut k1: int = seeds[0];
+    let mut k2: int = seeds[1];
+    fp_box[0] = cache_prefix(freestanding, mode);
+    let mh: [int] = cache_file_hash(path);
+    fp_box[0] = fp_box[0] + path + "=" + itoa(mh[0]) + "," + itoa(mh[1]) + "," + itoa(mh[2]) + ";";
+    k1 = cache_mix(k1, mh[0], mh[2], 1000003);
+    k2 = cache_mix(k2, mh[1], mh[2], 999983);
     let main_prog: Node = parse_src(src);
     let mut kids: [Node] = main_prog.kids;
     let mut seen: [str] = [];
@@ -374,6 +877,10 @@ fn load_merged(path: str) -> Node {
             let isrc: str = read_file(resolved);
             let iprog: Node = parse_src(isrc);
             push(progs, iprog);
+            let ih: [int] = cache_file_hash(resolved);
+            fp_box[0] = fp_box[0] + resolved + "=" + itoa(ih[0]) + "," + itoa(ih[1]) + "," + itoa(ih[2]) + ";";
+            k1 = cache_mix(k1, ih[0], ih[2], 1000003);
+            k2 = cache_mix(k2, ih[1], ih[2], 999983);
             // Write the new frame at the LOGICAL top (sp), not by
             // appending: the stack arrays only ever grow physically,
             // and popping is sp = sp - 1, so after any pop the slot
@@ -414,6 +921,7 @@ fn load_merged(path: str) -> Node {
     }
     let mut merged: Node = main_prog;
     merged.kids = kids;
+    fp_box[0] = fp_box[0] + "|K1=" + itoa(k1) + "|K2=" + itoa(k2);
     return merged;
 }
 
@@ -421,14 +929,38 @@ fn load_merged(path: str) -> Node {
 // check -> infer -> codegen. Returns the emitted C. Lex/parse/check
 // failures exit inside the pipeline via fail_compile; the !ok
 // branch below is a backstop that cannot fire while they do.
-fn compile_to_c(path: str, freestanding: bool) -> str {
-    let merged: Node = load_merged(path);
+//
+// Slice A program cache: the scan fingerprint is tried first —
+// on a hit the previously emitted C is returned verbatim without
+// running any pipeline stage. On a miss the pipeline runs and the
+// C is stored under the LOADER fingerprint (fp_box), never the
+// scan fingerprint (see the design doc, speed/step6_design.md).
+fn compile_to_c(path: str, freestanding: bool, mode: str) -> str {
+    let fp: str = cache_scan_fingerprint(path, freestanding, mode);
+    if fp != "" {
+        let cpath: str = cache_path_for(fp);
+        if cpath != "" {
+            let hit: str = cache_lookup(fp, cpath);
+            if hit != "" {
+                return hit;
+            }
+        }
+    }
+    let mut fp_box: [str] = [""];
+    let merged: Node = load_merged(path, fp_box, freestanding, mode);
     let ok: bool = check_program(merged, freestanding);
     if !ok {
         fail_compile("check failed");
     }
     let inf: HInfer = run_infer(merged);
     let c: str = codegen_program(merged, inf, freestanding);
+    let lfp: str = fp_box[0];
+    if lfp != "" {
+        let cpath2: str = cache_path_for(lfp);
+        if cpath2 != "" {
+            cache_store(lfp, cpath2, c);
+        }
+    }
     return c;
 }
 
@@ -639,7 +1171,7 @@ fn cmd_run(argv: [str]) -> int {
         }
         prog_args = rest;
     }
-    let c: str = compile_to_c(file, false);
+    let c: str = compile_to_c(file, false, mode);
     let stamp: str = itoa(clock_micros());
     let c_path: str = "/tmp/qasida_run_" + stamp + ".c";
     let prog: str = "/tmp/qasida_run_" + stamp;
@@ -843,7 +1375,7 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
             fail_compile("--debug is not supported by the hosted driver yet");
         }
     }
-    let c: str = compile_to_c(file, freestanding);
+    let c: str = compile_to_c(file, freestanding, mode);
     if cmd == "check" {
         println("ok: no errors");
         return 0;
