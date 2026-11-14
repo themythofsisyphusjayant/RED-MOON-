@@ -1,0 +1,21 @@
+// Markdown-HTML demo — daily-ten 14 Nov 2026 (library track).
+// Verifies mdhtml.fg: "# Hello" -> <h1>Hello</h1>,
+// "This is **bold** text" -> <p>This is <b>bold</b> text</p>,
+// "plain line" -> <p>plain line</p>; then the line count (3).
+// Expected stdout:
+// <h1>Hello</h1>
+// <p>This is <b>bold</b> text</p>
+// <p>plain line</p>
+// 3
+import "mdhtml.fg";
+
+fn main() {
+    let lines: [str] = ["# Hello", "This is **bold** text", "plain line"];
+    let html: [str] = md_render_lines(lines);
+    let mut i: int = 0;
+    while i < len(html) {
+        println(html[i]);
+        i = i + 1;
+    }
+    println(len(html));
+}

@@ -57,9 +57,20 @@ def main(argv=None):
         p.add_argument("--freestanding", action="store_true",
                        help="build without libc/OS: no files, sockets, threads, "
                             "clock, print, or strings/arrays (freestanding v1)")
+        if name == "emit":
+            # Fix 1 B0 measurement toggles: hidden (help=SUPPRESS),
+            # NOT on `check` (DESIGN.md §5).
+            p.add_argument("--no-bounds-checks", action="store_true",
+                           help=argparse.SUPPRESS)
+            p.add_argument("--no-overflow-checks", action="store_true",
+                           help=argparse.SUPPRESS)
     p = sub.add_parser("run")
     p.add_argument("file")
     p.add_argument("--mode", choices=["safe", "fast"], default="safe")
+    p.add_argument("--no-bounds-checks", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--no-overflow-checks", action="store_true",
+                   help=argparse.SUPPRESS)
     p.add_argument("program_args", nargs=argparse.REMAINDER, default=[])
     sub.add_parser("test")
     p = sub.add_parser("fmt")
@@ -88,6 +99,10 @@ def main(argv=None):
                    help="WIT world file to check against (requires --target wasm)")
     p.add_argument("--debug", action="store_true",
                    help="emit #line directives + compile with -g so gdb steps through .fg source")
+    p.add_argument("--no-bounds-checks", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--no-overflow-checks", action="store_true",
+                   help=argparse.SUPPRESS)
     p.add_argument("--shared", action="store_true",
                    help="build a shared library (.so) for Python ctypes, no main required")
     p = sub.add_parser("emit-big32")
@@ -146,7 +161,9 @@ def main(argv=None):
             print("ok: no errors")
             return 0
         if args.cmd == "emit":
-            c_source, _ = compile_file(args.file, mode=args.mode, freestanding=args.freestanding)
+            c_source, _ = compile_file(args.file, mode=args.mode, freestanding=args.freestanding,
+                                       no_bounds_checks=args.no_bounds_checks,
+                                       no_overflow_checks=args.no_overflow_checks)
             print(c_source)
             return 0
         if args.cmd == "stack":
@@ -234,9 +251,13 @@ def main(argv=None):
         if args.cmd == "build":
             out = args.output or os.path.splitext(args.file)[0]
             build(args.file, out, mode=args.mode, keep_c=args.keep_c,
-                  debug=args.debug, freestanding=args.freestanding)
+                  debug=args.debug, freestanding=args.freestanding,
+                  no_bounds_checks=args.no_bounds_checks,
+                  no_overflow_checks=args.no_overflow_checks)
             print(f"built: {out} (mode={args.mode}"
-                  f"{', freestanding' if args.freestanding else ''})")
+                  f"{', freestanding' if args.freestanding else ''}"
+                  f"{', no-bounds-checks' if args.no_bounds_checks else ''}"
+                  f"{', no-overflow-checks' if args.no_overflow_checks else ''})")
             return 0
         if args.cmd == "test":
             suite = os.path.join(REPO_ROOT, "tests", "run_tests.py")
@@ -246,7 +267,9 @@ def main(argv=None):
             proc = subprocess.run([sys.executable, suite], cwd=REPO_ROOT)
             return proc.returncode
         if args.cmd == "run":
-            c_source, _ = compile_file(args.file, mode=args.mode)
+            c_source, _ = compile_file(args.file, mode=args.mode,
+                                       no_bounds_checks=args.no_bounds_checks,
+                                       no_overflow_checks=args.no_overflow_checks)
             with tempfile.TemporaryDirectory(prefix="forge2_run_") as td:
                 c_path = os.path.join(td, "prog.c")
                 exe = os.path.join(td, "prog")

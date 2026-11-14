@@ -1,0 +1,22 @@
+// Property-generator demo — daily-ten 14 Nov 2026 (library track).
+// Verifies propgen.fg with seed 11 (LCG replica in Python):
+// pg_int(1, 100) = 6, pg_bool = true, pg_pick(["a", "b", "c",
+// "d"]) = "a". The seed is threaded explicitly through the
+// tuple results (.0 = value, .1 = new seed).
+// Expected stdout:
+// 6
+// true
+// a
+import "propgen.fg";
+
+fn main() {
+    let mut seed: int = 11;
+    let gi = pg_int(seed, 1, 100);
+    println(gi.0);
+    seed = gi.1;
+    let gb = pg_bool(seed);
+    println(gb.0);
+    seed = gb.1;
+    let gp = pg_pick(seed, ["a", "b", "c", "d"]);
+    println(gp.0);
+}

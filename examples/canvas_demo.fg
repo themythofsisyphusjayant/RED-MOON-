@@ -1,0 +1,27 @@
+// Canvas demo — daily-ten 13 Nov 2026 (library track).
+// Verifies canvas.fg on a 10x5 buffer: a filled rect
+// (1,1,4,2), a Bresenham line (0,0)-(9,4), and a filled
+// circle at (7,2) r=1. Expected rows were computed with an
+// independent Python model of the same algorithms before
+// running (the model's line cells are (0,0),(1,0),(2,1),
+// (3,1),(4,2),(5,2),(6,3),(7,3),(8,4),(9,4)).
+// Expected stdout:
+// ##........
+// .####..#..
+// .########.
+// ......##..
+// ........##
+import "canvas.fg";
+
+fn main() {
+    let mut c: Canvas = canvas_new(10, 5);
+    c = canvas_rect(c, 1, 1, 4, 2, 1);
+    c = canvas_line(c, 0, 0, 9, 4, 1);
+    c = canvas_circle(c, 7, 2, 1, 1);
+    let rows: [str] = canvas_render(c);
+    let mut i: int = 0;
+    while i < len(rows) {
+        println(rows[i]);
+        i = i + 1;
+    }
+}

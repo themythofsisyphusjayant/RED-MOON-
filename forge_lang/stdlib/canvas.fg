@@ -1,0 +1,154 @@
+// Qasida - canvas (roadmap item 104).
+// Import with: import "canvas.fg";
+// In-memory pixel buffer: a flat [int] grid with rect /
+// circle / line rasterization and an ASCII render ("#" for
+// nonzero, "." for zero). No VRAM here - the buffer lives in
+// ordinary memory; kernel VRAM wrappers are a separate job.
+// Out-of-bounds sets are ignored, out-of-bounds gets read 0.
+
+struct Canvas {
+    w: int;
+    h: int;
+    px: [int];
+}
+
+fn canvas_new(w: int, h: int) -> Canvas {
+    let mut px: [int] = [];
+    let mut i: int = 0;
+    while i < w * h {
+        push(px, 0);
+        i = i + 1;
+    }
+    return Canvas { w: w, h: h, px: px };
+}
+
+fn canvas_set(c: Canvas, x: int, y: int, v: int) -> Canvas {
+    if x < 0 {
+        return c;
+    }
+    if y < 0 {
+        return c;
+    }
+    if x >= c.w {
+        return c;
+    }
+    if y >= c.h {
+        return c;
+    }
+    let mut px: [int] = [];
+    for p in c.px {
+        push(px, p);
+    }
+    px[y * c.w + x] = v;
+    return Canvas { w: c.w, h: c.h, px: px };
+}
+
+fn canvas_get(c: Canvas, x: int, y: int) -> int {
+    if x < 0 {
+        return 0;
+    }
+    if y < 0 {
+        return 0;
+    }
+    if x >= c.w {
+        return 0;
+    }
+    if y >= c.h {
+        return 0;
+    }
+    return c.px[y * c.w + x];
+}
+
+fn canvas_rect(c: Canvas, x: int, y: int, rw: int, rh: int, v: int) -> Canvas {
+    let mut out: Canvas = c;
+    let mut yy: int = y;
+    while yy < y + rh {
+        let mut xx: int = x;
+        while xx < x + rw {
+            out = canvas_set(out, xx, yy, v);
+            xx = xx + 1;
+        }
+        yy = yy + 1;
+    }
+    return out;
+}
+
+fn canvas_circle(c: Canvas, cx: int, cy: int, r: int, v: int) -> Canvas {
+    let mut out: Canvas = c;
+    let mut yy: int = cy - r;
+    while yy <= cy + r {
+        let mut xx: int = cx - r;
+        while xx <= cx + r {
+            let dx: int = xx - cx;
+            let dy: int = yy - cy;
+            if dx * dx + dy * dy <= r * r {
+                out = canvas_set(out, xx, yy, v);
+            }
+            xx = xx + 1;
+        }
+        yy = yy + 1;
+    }
+    return out;
+}
+
+// Bresenham line; the two step tests are independent ifs,
+// exactly as in the classic algorithm.
+fn canvas_line(c: Canvas, x0: int, y0: int, x1: int, y1: int, v: int) -> Canvas {
+    let mut out: Canvas = c;
+    let mut dx: int = x1 - x0;
+    if dx < 0 {
+        dx = 0 - dx;
+    }
+    let mut dy: int = y1 - y0;
+    if dy < 0 {
+        dy = 0 - dy;
+    }
+    dy = 0 - dy;
+    let mut sx: int = 1;
+    if x1 < x0 {
+        sx = -1;
+    }
+    let mut sy: int = 1;
+    if y1 < y0 {
+        sy = -1;
+    }
+    let mut err: int = dx + dy;
+    let mut x: int = x0;
+    let mut y: int = y0;
+    while true {
+        out = canvas_set(out, x, y, v);
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2: int = 2 * err;
+        if e2 > dy {
+            err = err + dy;
+            x = x + sx;
+        }
+        if e2 < dx {
+            err = err + dx;
+            y = y + sy;
+        }
+    }
+    return out;
+}
+
+fn canvas_render(c: Canvas) -> [str] {
+    let mut rows: [str] = [];
+    let mut y: int = 0;
+    while y < c.h {
+        let mut line: str = "";
+        let mut x: int = 0;
+        while x < c.w {
+            if canvas_get(c, x, y) == 0 {
+                line = line + ".";
+            } else {
+                line = line + "#";
+            }
+            x = x + 1;
+        }
+        push(rows, line);
+        y = y + 1;
+    }
+    return rows;
+}

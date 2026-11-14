@@ -1,0 +1,65 @@
+// Qasida - markdown to HTML (roadmap item 32).
+// Import with: import "mdhtml.fg";
+// The HTML-output half of markdown-lite (markdown.fg covers
+// md_to_text + headings): renders lines to HTML. "# " and
+// "## " become h1/h2, other non-blank lines become <p> with
+// **bold** spans. An unterminated ** passes through literally.
+// Blank lines are dropped.
+import "strings.fg";
+
+fn md_bold(line: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(line) {
+        if i + 1 < len(line) && substr(line, i, 2) == "**" {
+            let mut j: int = i + 2;
+            let mut inner: str = "";
+            let mut found: bool = false;
+            while j < len(line) && found == false {
+                if j + 1 < len(line) && substr(line, j, 2) == "**" {
+                    found = true;
+                } else {
+                    inner = inner + substr(line, j, 1);
+                    j = j + 1;
+                }
+            }
+            if found == true {
+                out = out + "<b>" + inner + "</b>";
+                i = j + 2;
+            } else {
+                out = out + "**" + inner;
+                i = len(line);
+            }
+        } else {
+            out = out + substr(line, i, 1);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+fn md_line(line: str) -> str {
+    if starts_with(line, "# ") {
+        return "<h1>" + substr(line, 2, len(line) - 2) + "</h1>";
+    }
+    if starts_with(line, "## ") {
+        return "<h2>" + substr(line, 3, len(line) - 3) + "</h2>";
+    }
+    if len(trim(line)) == 0 {
+        return "";
+    }
+    return "<p>" + md_bold(line) + "</p>";
+}
+
+fn md_render_lines(lines: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        let h: str = md_line(lines[i]);
+        if len(h) > 0 {
+            push(out, h);
+        }
+        i = i + 1;
+    }
+    return out;
+}

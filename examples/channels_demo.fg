@@ -1,0 +1,35 @@
+// Channels demo — daily-ten 13 Nov 2026 (library track).
+// Verifies channels.fg: FIFO order on the int channel and
+// one send/recv on the string channel. Hand-computed:
+// send 10, 20, 30; front 10; pop; front 20; len 2; send 40;
+// pop; front 30; pop; front 40; pop; empty true.
+// Expected stdout:
+// 10
+// 20
+// 2
+// 30
+// 40
+// true
+// hello
+import "channels.fg";
+
+fn main() {
+    let mut ch: Chan = ch_new();
+    ch = ch_send(ch, 10);
+    ch = ch_send(ch, 20);
+    ch = ch_send(ch, 30);
+    println(ch_front(ch));
+    ch = ch_pop(ch);
+    println(ch_front(ch));
+    println(ch_len(ch));
+    ch = ch_send(ch, 40);
+    ch = ch_pop(ch);
+    println(ch_front(ch));
+    ch = ch_pop(ch);
+    println(ch_front(ch));
+    ch = ch_pop(ch);
+    println(ch_empty(ch));
+    let mut cs: ChanStr = chs_new();
+    cs = chs_send(cs, "hello");
+    println(chs_front(cs));
+}

@@ -1,0 +1,20 @@
+// AES demo — daily-ten 13 Nov 2026 (library track).
+// Verifies aes.fg against the FIPS-197 test vector and the
+// all-zero vector. Expected ciphertexts were computed with an
+// independent pure-Python AES-128 reference before running:
+// the Python reference itself reproduces the FIPS-197 vector
+// (69c4e0d86a7b0430d8cdb78070b4c55a) and the known all-zero
+// answer (66e94bd4ef8a2c3b884cfa59ca342b2e).
+// Expected stdout:
+// 69c4e0d86a7b0430d8cdb78070b4c55a
+// 66e94bd4ef8a2c3b884cfa59ca342b2e
+import "aes.fg";
+
+fn main() {
+    let key: [int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    let pt: [int] = [0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255];
+    println(aes_bytes_to_hex(aes_encrypt_block(key, pt)));
+    let key0: [int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let pt0: [int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    println(aes_bytes_to_hex(aes_encrypt_block(key0, pt0)));
+}

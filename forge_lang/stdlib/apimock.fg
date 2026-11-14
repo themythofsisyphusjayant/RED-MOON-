@@ -1,0 +1,38 @@
+// Qasida - api-mock (roadmap item 48).
+// Import with: import "apimock.fg";
+// A stub server for tests: an in-memory route table
+// (method + path -> status + body) with dispatch. No live
+// socket: the honest v1 is the routing layer, for tests to
+// call directly. Unknown routes answer 404 with an empty body.
+struct Api {
+    methods: [str],
+    paths: [str],
+    statuses: [int],
+    bodies: [str]
+}
+
+fn api_status(a: Api, method: str, path: str) -> int {
+    let mut i: int = 0;
+    while i < len(a.methods) {
+        if a.methods[i] == method && a.paths[i] == path {
+            return a.statuses[i];
+        }
+        i = i + 1;
+    }
+    return 404;
+}
+
+fn api_body(a: Api, method: str, path: str) -> str {
+    let mut i: int = 0;
+    while i < len(a.methods) {
+        if a.methods[i] == method && a.paths[i] == path {
+            return a.bodies[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn api_routes(a: Api) -> int {
+    return len(a.methods);
+}

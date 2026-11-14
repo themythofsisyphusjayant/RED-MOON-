@@ -1,0 +1,204 @@
+// Qasida - 5x7 bitmap font (roadmap item 105, font-plus).
+// Import with: import "font.fg";
+// 37 glyphs (space, A-Z, 0-9), each 7 rows of 5 bits stored as
+// row-bit integers in one flat table (glyph-major). No other
+// characters in v1: unknown characters render as a space.
+// Rendered pixels are "#" (on) and " " (off); glyphs in a row
+// are separated by one space column.
+
+fn font_count() -> int {
+    return 37;
+}
+
+fn font_index(ch: str) -> int {
+    if ch == " " {
+        return 0;
+    }
+    if ch == "A" {
+        return 1;
+    }
+    if ch == "B" {
+        return 2;
+    }
+    if ch == "C" {
+        return 3;
+    }
+    if ch == "D" {
+        return 4;
+    }
+    if ch == "E" {
+        return 5;
+    }
+    if ch == "F" {
+        return 6;
+    }
+    if ch == "G" {
+        return 7;
+    }
+    if ch == "H" {
+        return 8;
+    }
+    if ch == "I" {
+        return 9;
+    }
+    if ch == "J" {
+        return 10;
+    }
+    if ch == "K" {
+        return 11;
+    }
+    if ch == "L" {
+        return 12;
+    }
+    if ch == "M" {
+        return 13;
+    }
+    if ch == "N" {
+        return 14;
+    }
+    if ch == "O" {
+        return 15;
+    }
+    if ch == "P" {
+        return 16;
+    }
+    if ch == "Q" {
+        return 17;
+    }
+    if ch == "R" {
+        return 18;
+    }
+    if ch == "S" {
+        return 19;
+    }
+    if ch == "T" {
+        return 20;
+    }
+    if ch == "U" {
+        return 21;
+    }
+    if ch == "V" {
+        return 22;
+    }
+    if ch == "W" {
+        return 23;
+    }
+    if ch == "X" {
+        return 24;
+    }
+    if ch == "Y" {
+        return 25;
+    }
+    if ch == "Z" {
+        return 26;
+    }
+    if ch == "0" {
+        return 27;
+    }
+    if ch == "1" {
+        return 28;
+    }
+    if ch == "2" {
+        return 29;
+    }
+    if ch == "3" {
+        return 30;
+    }
+    if ch == "4" {
+        return 31;
+    }
+    if ch == "5" {
+        return 32;
+    }
+    if ch == "6" {
+        return 33;
+    }
+    if ch == "7" {
+        return 34;
+    }
+    if ch == "8" {
+        return 35;
+    }
+    if ch == "9" {
+        return 36;
+    }
+    return 0;
+}
+
+fn font_table() -> [int] {
+    let t: [int] = [
+        0, 0, 0, 0, 0, 0, 0,
+        14, 17, 17, 31, 17, 17, 17,
+        30, 17, 17, 30, 17, 17, 30,
+        14, 17, 16, 16, 16, 17, 14,
+        30, 17, 17, 17, 17, 17, 30,
+        31, 16, 16, 30, 16, 16, 31,
+        31, 16, 16, 30, 16, 16, 16,
+        14, 17, 16, 23, 17, 17, 15,
+        17, 17, 17, 31, 17, 17, 17,
+        14, 4, 4, 4, 4, 4, 14,
+        7, 2, 2, 2, 2, 18, 12,
+        17, 18, 20, 24, 20, 18, 17,
+        16, 16, 16, 16, 16, 16, 31,
+        17, 27, 21, 21, 17, 17, 17,
+        17, 25, 21, 19, 17, 17, 17,
+        14, 17, 17, 17, 17, 17, 14,
+        30, 17, 17, 30, 16, 16, 16,
+        14, 17, 17, 17, 21, 18, 13,
+        30, 17, 17, 30, 20, 18, 17,
+        15, 16, 16, 14, 1, 1, 30,
+        31, 4, 4, 4, 4, 4, 4,
+        17, 17, 17, 17, 17, 17, 14,
+        17, 17, 17, 17, 17, 10, 4,
+        17, 17, 17, 21, 21, 27, 17,
+        17, 17, 10, 4, 10, 17, 17,
+        17, 17, 10, 4, 4, 4, 4,
+        31, 1, 2, 4, 8, 16, 31,
+        14, 17, 19, 21, 25, 17, 14,
+        4, 12, 4, 4, 4, 4, 14,
+        14, 17, 1, 6, 8, 16, 31,
+        31, 2, 4, 2, 1, 17, 14,
+        2, 6, 10, 18, 31, 2, 2,
+        31, 16, 30, 1, 1, 17, 14,
+        6, 8, 16, 30, 17, 17, 14,
+        31, 1, 2, 4, 8, 8, 8,
+        14, 17, 17, 14, 17, 17, 14,
+        14, 17, 17, 15, 1, 2, 12
+    ];
+    return t;
+}
+
+fn font_row_bits(ch: str, row: int) -> int {
+    let t: [int] = font_table();
+    return t[font_index(ch) * 7 + row];
+}
+
+// Render text to 7 strings (one per pixel row).
+fn font_render(text: str) -> [str] {
+    let t: [int] = font_table();
+    let mut rows: [str] = [];
+    let mut r: int = 0;
+    while r < 7 {
+        let mut line: str = "";
+        let mut i: int = 0;
+        while i < len(text) {
+            if i > 0 {
+                line = line + " ";
+            }
+            let bits: int = t[font_index(substr(text, i, 1)) * 7 + r];
+            let mut col: int = 0;
+            while col < 5 {
+                if (bits >> (4 - col)) % 2 == 1 {
+                    line = line + "#";
+                } else {
+                    line = line + " ";
+                }
+                col = col + 1;
+            }
+            i = i + 1;
+        }
+        push(rows, line);
+        r = r + 1;
+    }
+    return rows;
+}

@@ -1,0 +1,18 @@
+// Regex-full demo — daily-ten 14 Nov 2026 (library track).
+// Verifies regexfull.fg: alternation + one capture group.
+// "(cat|dog) sat" on "the dog sat" starts at 4, group "dog";
+// "red|blue" on "blue sky" starts at 0; "(cat|dog) sat" on
+// "the cat sat" starts at 4.
+// Expected stdout:
+// 4
+// dog
+// 0
+// 4
+import "regexfull.fg";
+
+fn main() {
+    println(rxf_search("(cat|dog) sat", "the dog sat"));
+    println(rxf_group("(cat|dog) sat", "the dog sat"));
+    println(rxf_search("red|blue", "blue sky"));
+    println(rxf_search("(cat|dog) sat", "the cat sat"));
+}

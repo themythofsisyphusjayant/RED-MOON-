@@ -1,0 +1,32 @@
+// Tarball demo — daily-ten 14 Nov 2026 (library track).
+// Verifies tarball.fg: builds a tar for "a.txt" with 5 bytes
+// of data ("hello"). The header checksum (checksum field as
+// spaces) is 3345, computed independently with a Python
+// replica of archive.fg's tar_header; the tar is 2048 bytes
+// (512 header + 512 data + 2 x 512 zero blocks); verify reads
+// the stored checksum, size (5) and name back; the file
+// round-trip through write_bytes / read_bytes is 2048 bytes.
+// Expected stdout:
+// 3345
+// 2048
+// true
+// 5
+// true
+// true
+// 2048
+import "tarball.fg";
+
+fn main() {
+    let name: [int] = [97, 46, 116, 120, 116];
+    let data: [int] = [104, 101, 108, 108, 111];
+    println(tar_checksum(tar_header(name, 5)));
+    let tar: [int] = tar_build(name, data);
+    println(len(tar));
+    println(tar_verify(tar));
+    println(tar_size(tar));
+    println(tar_name_matches(tar, name));
+    let ok: bool = write_bytes("/tmp/tarball14.tar", tar);
+    println(ok);
+    let back: [int] = read_bytes("/tmp/tarball14.tar");
+    println(len(back));
+}

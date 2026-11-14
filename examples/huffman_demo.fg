@@ -1,0 +1,20 @@
+// Huffman demo — daily-ten 13 Nov 2026 (library track).
+// Verifies huffman.fg on the fixed codes a=0, b=10, c=110,
+// d=111. "abacabad" encodes to 0|10|0|110|0|10|0|111 =
+// 01001100100111 (14 bits), decodes back, and the round-trip
+// check is true; "d" is 111 both ways.
+// Expected stdout:
+// 01001100100111
+// abacabad
+// true
+// 111
+// d
+import "huffman.fg";
+
+fn main() {
+    println(huff_encode("abacabad"));
+    println(huff_decode(huff_encode("abacabad")));
+    println(huff_roundtrip_ok("abacabad"));
+    println(huff_encode("d"));
+    println(huff_decode("111"));
+}

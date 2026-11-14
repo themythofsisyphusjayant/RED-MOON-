@@ -1,0 +1,25 @@
+// Font demo — daily-ten 13 Nov 2026 (library track).
+// Verifies font.fg: renders "HI 12" in the 5x7 font and
+// prints the glyph count. Expected rows come from the same
+// Python glyph table that generated font.fg, before running.
+// Expected stdout (rows have trailing spaces where the last
+// glyph's row ends in a blank pixel - kept exact):
+// #   #  ###          #    ###
+// #   #   #          ##   #   #
+// #   #   #           #       #
+// #####   #           #     ##
+// #   #   #           #    #
+// #   #   #           #   #
+// #   #  ###         ###  #####
+// 37
+import "font.fg";
+
+fn main() {
+    let rows: [str] = font_render("HI 12");
+    let mut i: int = 0;
+    while i < len(rows) {
+        println(rows[i]);
+        i = i + 1;
+    }
+    println(font_count());
+}

@@ -1,0 +1,25 @@
+// Feed-reader demo — daily-ten 14 Nov 2026 (library track).
+// Verifies feedreader.fg on a two-entry Atom feed (single
+// quotes on href, so no escapes): titles First Post / Second
+// Post, links /first / /second, unread 2, then 1 after entry
+// 0 is marked read.
+// Expected stdout:
+// First Post
+// /first
+// Second Post
+// /second
+// 2
+// 1
+import "feedreader.fg";
+
+fn main() {
+    let feed: str = "<feed><entry><title>First Post</title><link href='/first'/></entry><entry><title>Second Post</title><link href='/second'/></entry></feed>";
+    let mut f: Feed = fr_parse(feed);
+    println(f.titles[0]);
+    println(f.links[0]);
+    println(f.titles[1]);
+    println(f.links[1]);
+    println(fr_unread(f));
+    f = fr_mark_read(f, 0);
+    println(fr_unread(f));
+}

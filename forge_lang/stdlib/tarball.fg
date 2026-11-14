@@ -1,0 +1,115 @@
+// Qasida - tar data blocks (roadmap item 56).
+// Import with: import "tarball.fg";
+// The data half of archive.fg (which covers the ustar header
+// + checksum): builds a complete uncompressed tar in memory
+// (header + one 512-byte data block + two zero end blocks),
+// fills the checksum field, and verifies the result by
+// re-reading the stored checksum, the size field and the name.
+// tar_build("a.txt", "hello") is 2048 bytes with checksum 3345.
+import "archive.fg";
+
+fn tar_data_block(data: [int]) -> [int] {
+    let mut b: [int] = [];
+    let mut i: int = 0;
+    while i < 512 {
+        if i < len(data) {
+            push(b, data[i]);
+        } else {
+            push(b, 0);
+        }
+        i = i + 1;
+    }
+    return b;
+}
+
+fn tar_zero_block() -> [int] {
+    let mut b: [int] = [];
+    let mut i: int = 0;
+    while i < 512 {
+        push(b, 0);
+        i = i + 1;
+    }
+    return b;
+}
+
+fn tar_build(name: [int], data: [int]) -> [int] {
+    let h: [int] = tar_header(name, len(data));
+    let cs: int = tar_checksum(h);
+    let field: [int] = tar_octal_bytes(cs, 6);
+    let mut hh: [int] = h;
+    let mut i: int = 0;
+    while i < 6 {
+        hh[148 + i] = field[i];
+        i = i + 1;
+    }
+    hh[154] = 0;
+    hh[155] = 32;
+    let data_block: [int] = tar_data_block(data);
+    let end_block: [int] = tar_zero_block();
+    let mut out: [int] = [];
+    i = 0;
+    while i < len(hh) {
+        push(out, hh[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(data_block) {
+        push(out, data_block[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(end_block) {
+        push(out, end_block[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(end_block) {
+        push(out, end_block[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn tar_verify(t: [int]) -> bool {
+    if len(t) < 512 {
+        return false;
+    }
+    let mut stored: int = 0;
+    let mut i: int = 0;
+    while i < 6 {
+        stored = stored * 8 + (t[148 + i] - 48);
+        i = i + 1;
+    }
+    let mut sum: int = 0;
+    i = 0;
+    while i < 512 {
+        if i >= 148 && i < 156 {
+            sum = sum + 32;
+        } else {
+            sum = sum + t[i];
+        }
+        i = i + 1;
+    }
+    return stored == sum;
+}
+
+fn tar_size(t: [int]) -> int {
+    let mut v: int = 0;
+    let mut i: int = 0;
+    while i < 7 {
+        v = v * 8 + (t[124 + i] - 48);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn tar_name_matches(t: [int], name: [int]) -> bool {
+    let mut i: int = 0;
+    while i < len(name) {
+        if t[i] != name[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}

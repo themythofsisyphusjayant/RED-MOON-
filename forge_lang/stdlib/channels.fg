@@ -1,0 +1,98 @@
+// Qasida - channels (roadmap item 70).
+// Import with: import "channels.fg";
+// Single-owner FIFO queues: send appends, front peeks, pop
+// drops the front. There is deliberately no shared-memory
+// channel: Qasida has no shared-mutable primitive, so one
+// queue cannot be owned by two tasks at once. Cross-task
+// handoff goes through files (see async.fg); channels are
+// the in-task queue for staged work. Int and string variants.
+
+struct Chan {
+    items: [int];
+}
+
+struct ChanStr {
+    items: [str];
+}
+
+fn ch_new() -> Chan {
+    return Chan { items: [] };
+}
+
+fn ch_send(c: Chan, v: int) -> Chan {
+    let mut items: [int] = [];
+    for x in c.items {
+        push(items, x);
+    }
+    push(items, v);
+    return Chan { items: items };
+}
+
+fn ch_front(c: Chan) -> int {
+    if len(c.items) == 0 {
+        fail("ch_front: empty channel");
+    }
+    return c.items[0];
+}
+
+fn ch_pop(c: Chan) -> Chan {
+    if len(c.items) == 0 {
+        fail("ch_pop: empty channel");
+    }
+    let mut items: [int] = [];
+    let mut i: int = 1;
+    while i < len(c.items) {
+        push(items, c.items[i]);
+        i = i + 1;
+    }
+    return Chan { items: items };
+}
+
+fn ch_len(c: Chan) -> int {
+    return len(c.items);
+}
+
+fn ch_empty(c: Chan) -> bool {
+    return len(c.items) == 0;
+}
+
+fn chs_new() -> ChanStr {
+    return ChanStr { items: [] };
+}
+
+fn chs_send(c: ChanStr, v: str) -> ChanStr {
+    let mut items: [str] = [];
+    for x in c.items {
+        push(items, x);
+    }
+    push(items, v);
+    return ChanStr { items: items };
+}
+
+fn chs_front(c: ChanStr) -> str {
+    if len(c.items) == 0 {
+        fail("chs_front: empty channel");
+    }
+    return c.items[0];
+}
+
+fn chs_pop(c: ChanStr) -> ChanStr {
+    if len(c.items) == 0 {
+        fail("chs_pop: empty channel");
+    }
+    let mut items: [str] = [];
+    let mut i: int = 1;
+    while i < len(c.items) {
+        push(items, c.items[i]);
+        i = i + 1;
+    }
+    return ChanStr { items: items };
+}
+
+fn chs_len(c: ChanStr) -> int {
+    return len(c.items);
+}
+
+fn chs_empty(c: ChanStr) -> bool {
+    return len(c.items) == 0;
+}

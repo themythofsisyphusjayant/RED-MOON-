@@ -1,0 +1,32 @@
+// Qasida - unittest (roadmap item 77).
+// Import with: import "unittest.fg";
+// A tiny assert harness: Ut carries passed/failed counts,
+// ut_check / ut_eq_int / ut_true return an updated Ut (the
+// return-new-struct pattern), ut_total sums the two counts.
+struct Ut {
+    passed: int,
+    failed: int
+}
+
+fn ut_new() -> Ut {
+    return Ut { passed: 0, failed: 0 };
+}
+
+fn ut_check(u: Ut, cond: bool) -> Ut {
+    if cond == true {
+        return Ut { passed: u.passed + 1, failed: u.failed };
+    }
+    return Ut { passed: u.passed, failed: u.failed + 1 };
+}
+
+fn ut_eq_int(u: Ut, a: int, b: int) -> Ut {
+    return ut_check(u, a == b);
+}
+
+fn ut_true(u: Ut, cond: bool) -> Ut {
+    return ut_check(u, cond);
+}
+
+fn ut_total(u: Ut) -> int {
+    return u.passed + u.failed;
+}

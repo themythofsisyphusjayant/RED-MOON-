@@ -1,0 +1,30 @@
+// Random-extensions demo — daily-ten 14 Nov 2026 (library track).
+// Verifies randext.fg with seed 7 (LCG replica in Python):
+// rx_uniform(1, 10) = 10, rx_choice(["red", "green", "blue"])
+// = "green", rx_shuffle([1, 2, 3, 4, 5]) = [3, 2, 1, 4, 5].
+// Expected stdout:
+// 10
+// green
+// 3
+// 2
+// 1
+// 4
+// 5
+import "randext.fg";
+
+fn main() {
+    let mut seed: int = 7;
+    let u = rx_uniform(seed, 1, 10);
+    println(u.0);
+    seed = u.1;
+    let c = rx_choice(seed, ["red", "green", "blue"]);
+    println(c.0);
+    seed = c.1;
+    let s = rx_shuffle(seed, [1, 2, 3, 4, 5]);
+    let sh: [int] = s.0;
+    let mut i: int = 0;
+    while i < len(sh) {
+        println(sh[i]);
+        i = i + 1;
+    }
+}

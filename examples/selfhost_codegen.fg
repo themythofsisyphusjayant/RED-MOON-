@@ -46,6 +46,7 @@
 
 import "selfhost_infer.fg";
 import "selfhost_codegen_header.fg";
+import "selfhost_loopproof.fg";
 
 // Hash index over a [str] name table: bucket keys ("" = empty)
 // and bucket values (table index, -1 = empty). cap is a power
@@ -76,6 +77,18 @@ struct HCodegen {
     // Freestanding mode (slice 4g): freestanding header,
     // qasida_main + _start, no argv copy, no joins/frees.
     freestanding: bool;
+    // Fix 1 B0 (measurement toggles, hidden): safe mode only.
+    no_bounds_checks: bool;
+    no_overflow_checks: bool;
+    // Fix 1 B1 (loop-proof hoisting): the analysis tags its
+    // results onto the program tree itself (fix1_tag_program in
+    // selfhost_loopproof.fg) — a covered Index node carries
+    // has_nul, a guarded loop carries its guard texts in sval.
+    // HCodegen carries NO fix1 field: the B1 design stored five
+    // parallel arrays here and grew the giant codegen frames ~10%,
+    // overflowing the 8 MB stack, and even one heap array field
+    // (attempt 1) left the peak 160 KB over. Zero fields restores
+    // the pre-B1 stack profile exactly.
     func_names: [str];
     func_rets: [str];
     func_params: [str];
@@ -550,7 +563,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -3970,6 +3983,10 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         if e.name == "-" && cg_expr_type(g, e.kids[0]) == "int" {
             let inner: CGExpr = cg_gen_expr(g, e.kids[0]);
             g = inner.g;
+            // Fix 1 B0: --no-overflow-checks emits plain negation.
+            if g.no_overflow_checks {
+                return CGExpr { g: g, code: "(-" + inner.code + ")" };
+            }
             // 4f: interval-proven safe (codegen.py:3866): plain
             // when the operand's interval lo is above INT_MIN
             // (a literal above INT_MIN, or a narrowed variable);
@@ -4027,6 +4044,10 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
                 let iout: CGExpr = cg_gen_expr(g, idxnode.kids[1]);
                 g = iout.g;
                 let fa_pure: bool = !cg_subtree_has_call(idxnode.kids[0]) && !cg_subtree_has_call(idxnode.kids[1]);
+                // Fix 1 B0: --no-bounds-checks reads the slot direct.
+                if g.no_bounds_checks {
+                    return CGExpr { g: g, code: "(" + aout.code + ").data[" + iout.code + "]." + e.name };
+                }
                 let fa_key: str = cg_cache_key(["fa", aout.code, iout.code, e.name]);
                 if fa_pure && cg_cache_has(g, fa_key) {
                     return CGExpr { g: g, code: "(" + aout.code + ").data[" + iout.code + "]." + e.name };
@@ -4058,6 +4079,15 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         g = bout.g;
         let iout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = iout.g;
+        // Fix 1 B1 (attempt 4): a loop-proof-covered use takes the
+        // existing fast-mode emission — no third emission path, no
+        // separate early return. Covered means the tagger set
+        // has_nul on this Index node; each type branch below folds
+        // `|| e.has_nul` into its existing no_bounds_checks
+        // return (the str branch is left untouched on purpose:
+        // the Python mirror applies its covered check only AFTER
+        // the str dispatch, so a covered str-index keeps the
+        // checked forge_str_at form there too).
         if base_t == "str" {
             let idx_pure: bool = !cg_subtree_has_call(e.kids[0]) && !cg_subtree_has_call(e.kids[1]);
             let key: str = cg_cache_key(["str", bout.code, iout.code]);
@@ -4066,6 +4096,10 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             }
             if idx_pure {
                 g = cg_cache_add(g, key);
+            }
+            // Fix 1 B0: --no-bounds-checks takes the fast path.
+            if g.no_bounds_checks {
+                return CGExpr { g: g, code: "forge_str_at_fast(" + bout.code + ", " + iout.code + ")" };
             }
             return CGExpr { g: g, code: "forge_str_at(" + bout.code + ", " + iout.code + ")" };
         }
@@ -4078,8 +4112,17 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             if idx_pure && cg_cache_has(g, key) {
                 return CGExpr { g: g, code: "forge_" + sname + "_get_fast(" + bout.code + ", " + iout.code + ")" };
             }
-            if idx_pure {
+            // Fix 1 B1: a covered read must not pollute the check
+            // cache — the Python mirror's covered branch returns
+            // before the cache, so a later uncovered repeat of
+            // the same index still emits its check there.
+            if idx_pure && !e.has_nul {
                 g = cg_cache_add(g, key);
+            }
+            // Fix 1 B0: --no-bounds-checks takes the _get_fast form.
+            // Fix 1 B1: a loop-proof-covered read takes it too.
+            if g.no_bounds_checks || e.has_nul {
+                return CGExpr { g: g, code: "forge_" + sname + "_get_fast(" + bout.code + ", " + iout.code + ")" };
             }
             return CGExpr { g: g, code: "forge_" + sname + "_get(" + bout.code + ", " + iout.code + ")" };
         }
@@ -4087,6 +4130,17 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let idx_pure: bool = !cg_subtree_has_call(e.kids[0]) && !cg_subtree_has_call(e.kids[1]);
             let key: str = cg_cache_key(["arr", bout.code, iout.code]);
             if idx_pure && cg_cache_has(g, key) {
+                return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
+            }
+            // Fix 1 B0: --no-bounds-checks reads the slot direct.
+            // Fix 1 B1: a loop-proof-covered read does too. This
+            // check runs BEFORE the temp counter below, so a
+            // covered read consumes no counter — exactly like the
+            // Python mirror, whose covered branch returns before
+            // the array branch's counter increment (otherwise
+            // later __forge_iaN temp numbers would shift vs
+            // Python on programs with covered nested-array reads).
+            if g.no_bounds_checks || e.has_nul {
                 return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
             }
             let arr_t: str = cg_c_type(g, base_t);
@@ -4107,8 +4161,15 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         if idx_pure2 && cg_cache_has(g, key2) {
             return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
         }
-        if idx_pure2 {
+        // Fix 1 B1: a covered read must not pollute the check
+        // cache (see the struct branch above).
+        if idx_pure2 && !e.has_nul {
             g = cg_cache_add(g, key2);
+        }
+        // Fix 1 B0: --no-bounds-checks reads the slot direct.
+        // Fix 1 B1: a loop-proof-covered read does too.
+        if g.no_bounds_checks || e.has_nul {
+            return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
         }
         if et == "int" {
             return CGExpr { g: g, code: "forge_int_get(" + bout.code + ", " + iout.code + ")" };
@@ -4444,7 +4505,10 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
         let ti: str = "__forge_sc" + itoa(n) + "i0";
         let tn: str = "__forge_sc" + itoa(n) + "n0";
         decls = decls + "const char *" + ts + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; ";
-        decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+        // Fix 1 B0: --no-bounds-checks skips the inline check.
+        if !g.no_bounds_checks {
+            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+        }
         cmp0 = ts + "[" + ti + "]";
     }
     if kind1 == 2 {
@@ -4458,7 +4522,10 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
         let ti: str = "__forge_sc" + itoa(n) + "i1";
         let tn: str = "__forge_sc" + itoa(n) + "n1";
         decls = decls + "const char *" + ts + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; ";
-        decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+        // Fix 1 B0: --no-bounds-checks skips the inline check.
+        if !g.no_bounds_checks {
+            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+        }
         cmp1 = ts + "[" + ti + "]";
     }
     return CGExpr { g: g, code: "({ " + decls + "(" + cmp0 + " " + op + " " + cmp1 + "); })" };
@@ -4618,6 +4685,12 @@ fn cg_binop_combine(g0: HCodegen, e: Node, left: str, right: str) -> CGExpr {
     }
     if lt == "int" && rt == "int" {
         if e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" {
+            // Fix 1 B0: with --no-overflow-checks, +,-,* emit
+            // plain C; /,% keep forge_div/forge_mod (div-by-zero
+            // + INT_MIN/-1 live in the helper).
+            if g.no_overflow_checks && (e.name == "+" || e.name == "-" || e.name == "*") {
+                return CGExpr { g: g, code: "(" + left + " " + e.name + " " + right + ")" };
+            }
             // Check elimination (codegen.py:3900): provably safe ->
             // plain; a pure repeat of an identical checked op in
             // this statement -> plain (dedup via _check_cache).
@@ -5757,7 +5830,13 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit_struct_own(g, tmp, et);
                 val = tmp;
             }
-            g = cg_emit(g, "forge_" + cg_struct_type_name(g, et) + "_set(&" + base_code + ", " + idx.code + ", " + val + ");");
+            // Fix 1 B0: --no-bounds-checks uses the _set_fast form.
+            // Fix 1 B1: a loop-proof-covered write uses it too.
+            let mut set_suffix: str = "";
+            if g.no_bounds_checks || target.has_nul {  // Fix 1 B1: target is a loop-proof-covered Index (tagger-set has_nul), inlined — no helper call, no frame cost.
+                set_suffix = "_fast";
+            }
+            g = cg_emit(g, "forge_" + cg_struct_type_name(g, et) + "_set" + set_suffix + "(&" + base_code + ", " + idx.code + ", " + val + ");");
         } else if cg_is_array_type(g, et) {
             // Array element assignment: bind base (if not a Var or
             // temp) and index to temps, bounds-check, free the old
@@ -5778,7 +5857,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             let itmp: str = "__forge_si" + itoa(g.assign_counter);
             g.assign_counter = g.assign_counter + 1;
             g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
-            g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+            // Fix 1 B0: --no-bounds-checks skips the inline check.
+            // Fix 1 B1: a loop-proof-covered write skips it too.
+            if !g.no_bounds_checks && !target.has_nul {  // Fix 1 B1: covered tag (see above).
+                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+            }
             let fc: CGExpr = cg_array_free_code(g, base_code + ".data[" + itmp + "]", et);
             g = fc.g;
             g = cg_emit(g, fc.code);
@@ -5796,7 +5879,13 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             } else {
                 fail("index assign of element type " + et + " not supported in 4b");
             }
-            g = cg_emit(g, set_fn + "(&" + base_code + ", " + idx.code + ", " + val + ");");
+            // Fix 1 B0: --no-bounds-checks stores direct (fast path).
+            // Fix 1 B1: a loop-proof-covered write stores direct too.
+            if g.no_bounds_checks || target.has_nul {  // Fix 1 B1: target is a loop-proof-covered Index (tagger-set has_nul), inlined — no helper call, no frame cost.
+                g = cg_emit(g, "(" + base_code + ").data[" + idx.code + "] = " + val + ";");
+            } else {
+                g = cg_emit(g, set_fn + "(&" + base_code + ", " + idx.code + ", " + val + ");");
+            }
         }
         return g;
     }
@@ -5983,6 +6072,21 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     if st.kind == 15 {
         // While (codegen.py:3259). Facts reset at the loop boundary:
         // no facts cross into the body or out of the loop.
+        // Fix 1 B1: hoisted pre-loop guards, if the loop-proof
+        // analysis tagged this loop (guard texts joined with "\n"
+        // in st.sval). Split + emit per line so the emit matches
+        // the Python compiler's exactly (each guard its own
+        // indented line). Inlined — no helper call, no frame cost.
+        // Only when bounds checks are on: with --no-bounds-checks
+        // the program must not trap at all.
+        if !g.no_bounds_checks && st.sval != "" {
+            let gs: [str] = split(st.sval, "\n");
+            let mut gi: int = 0;
+            while gi < len(gs) {
+                g = cg_emit(g, gs[gi]);
+                gi = gi + 1;
+            }
+        }
         g = cg_facts_clear(g);
         let cout: CGExpr = cg_gen_expr(g, st.kids[0]);
         g = cout.g;
@@ -6024,6 +6128,15 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             let rng: str = "__forge_rng" + itoa(n);
             let iout: CGExpr = cg_gen_expr(g, iter);
             g = iout.g;
+            // Fix 1 B1: hoisted pre-loop guards (see While above).
+            if !g.no_bounds_checks && st.sval != "" {
+                let gs: [str] = split(st.sval, "\n");
+                let mut gi: int = 0;
+                while gi < len(gs) {
+                    g = cg_emit(g, gs[gi]);
+                    gi = gi + 1;
+                }
+            }
             g = cg_emit(g, "{");
             g.indent = g.indent + 1;
             g = cg_emit(g, "ForgeRange " + rng + " = " + iout.code + ";");
@@ -6532,6 +6645,14 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         g = cg_emit_raw(g, cg_freestanding_header());
     } else {
         g = cg_emit_raw(g, cg_header());
+    }
+    // Fix 1 B0 traceability: the emitted C records which
+    // measurement toggles were on (top comment, DESIGN.md §5).
+    if g.no_bounds_checks {
+        g = cg_emit(g, "/* qasida: no-bounds-checks */");
+    }
+    if g.no_overflow_checks {
+        g = cg_emit(g, "/* qasida: no-overflow-checks */");
     }
     // Enums: non-payload enums as C enums, in program order.
     let mut i: int = 0;
@@ -7337,13 +7458,40 @@ fn cg_collect_instantiations(g0: HCodegen, prog: Node) -> HCodegen {
     return g;
 }
 
+// Fix 1 B1: run the loop-proof analysis over the (expanded)
+// program and TAG its results onto the program tree itself.
+// b1fix2: tagging is PER FUNCTION (fix1_tag_program_fns), NOT the
+// pooled fix1_tag_program — pooled (line, col) keys collide across
+// files in a merged program and misplaced guards into other
+// functions (e.g. `cnt` guard into logreg_train/prf, 13 Nov 2026).
+// HCodegen is untouched — the B1 design stored the result in five
+// parallel arrays here and grew the giant codegen frames ~10%,
+// overflowing the 8 MB stack, and even one heap array field left
+// the peak 160 KB over (attempt 1). Total by construction:
+// the per-function analysis never fails a compile; an empty result
+// simply means every check stays.
+//
+// The tags are read inline at the use sites (no helper calls, so
+// the giant frames pay no call/spill cost): a covered Index node
+// carries has_nul (set only by the fix1 tagger; the parser sets
+// it only on StrLit nodes), and a guarded loop carries its guard
+// texts joined with "\n" in sval (split at the While/For sites).
+fn cg_fix1_run(g0: HCodegen, prog: Node) -> HCodegen {
+    let mut g: HCodegen = g0;
+    fix1_tag_program_fns(prog);
+    return g;
+}
+
 // Entry point: infer + generate, mode safe.
-fn codegen_program(prog: Node, inf: HInfer, freestanding: bool) -> str {
+fn codegen_program(prog: Node, inf: HInfer, freestanding: bool, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
     let mut p: Node = expand_aliases_prog(prog);
     let mut g: HCodegen = cg_new(inf);
     g.freestanding = freestanding;
+    g.no_bounds_checks = no_bounds_checks;
+    g.no_overflow_checks = no_overflow_checks;
     g = cg_build_tables(g, p);
     g = cg_collect_instantiations(g, p);
     g = cg_collect(g, p);
+    g = cg_fix1_run(g, p);
     return cg_generate(g, p);
 }

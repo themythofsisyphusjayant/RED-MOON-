@@ -1,0 +1,18 @@
+// Qasida - shell-utils (roadmap item 55).
+// Import with: import "spawn.fg";
+// exec-lite over the run_command builtin: run one command
+// through the shell and get back its exit code. The command's
+// own stdout/stderr pass straight through to this process.
+// No pipeline, no output capture in v1.
+
+fn sh_run(cmd: str) -> int {
+    return run_command(cmd);
+}
+
+fn sh_ok(cmd: str) -> bool {
+    return run_command(cmd) == 0;
+}
+
+fn sh_echo(msg: str) -> int {
+    return run_command("echo " + msg);
+}

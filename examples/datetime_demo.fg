@@ -1,0 +1,28 @@
+// Datetime demo — daily-ten 13 Nov 2026 (library track).
+// Verifies datetime.fg: zero-padded formatting, parsing back
+// to components, and a format(parse(x)) == x round-trip.
+// Expected stdout:
+// 2026-11-13
+// 09:05:07
+// 2026
+// 11
+// 13
+// true
+// 9
+// 5
+// 7
+import "datetime.fg";
+
+fn main() {
+    println(dt_format_date(2026, 11, 13));
+    println(dt_format_time(9, 5, 7));
+    let d: [int] = dt_parse_date("2026-11-13");
+    println(d[0]);
+    println(d[1]);
+    println(d[2]);
+    println(dt_format_date(d[0], d[1], d[2]) == "2026-11-13");
+    let t: [int] = dt_parse_time("09:05:07");
+    println(t[0]);
+    println(t[1]);
+    println(t[2]);
+}

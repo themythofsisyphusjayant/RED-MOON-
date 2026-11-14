@@ -1,0 +1,29 @@
+// Frames demo — daily-ten 13 Nov 2026 (library track).
+// Verifies frames.fg over pandas.fg on a 3-column, 4-row
+// frame (a = 1..4, b = 10..40, c = 5): filter c == 5 keeps
+// 4 rows, filter a < 3 keeps 2, projecting ["b"] keeps 4
+// rows with b values 10..40, head(2) keeps 2 rows.
+// Expected stdout:
+// 4
+// 2
+// 4
+// 10
+// 40
+// 2
+import "frames.fg";
+
+fn main() {
+    let f: Frame = Frame {
+        names: ["a", "b", "c"],
+        data: [1.0, 10.0, 5.0, 2.0, 20.0, 5.0, 3.0, 30.0, 5.0, 4.0, 40.0, 5.0],
+        nrows: 4,
+        ncols: 3
+    };
+    println(df_row_count(fr_filter_eq(f, "c", 5.0)));
+    println(df_row_count(fr_filter_lt(f, "a", 3.0)));
+    let proj: Frame = fr_project(f, ["b"]);
+    println(df_row_count(proj));
+    println(df_get(proj, 0, 0));
+    println(df_get(proj, 3, 0));
+    println(df_row_count(fr_head(f, 2)));
+}

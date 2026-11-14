@@ -1,0 +1,21 @@
+// Async demo — daily-ten 13 Nov 2026 (library track).
+// Verifies async.fg: marker files are pre-seeded with
+// "pending-*" so a worker that never ran would show up in
+// the output; async_run_markers spawns both workers in a
+// scope, which joins them before main reads the files back.
+// Expected stdout:
+// spawning
+// joined
+// marker-1
+// marker-2
+import "async.fg";
+
+fn main() {
+    async_store(async_result_path("marker-1"), "pending-1");
+    async_store(async_result_path("marker-2"), "pending-2");
+    println("spawning");
+    async_run_markers();
+    println("joined");
+    println(async_load(async_result_path("marker-1")));
+    println(async_load(async_result_path("marker-2")));
+}

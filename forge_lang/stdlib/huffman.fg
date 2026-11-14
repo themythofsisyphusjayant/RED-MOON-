@@ -1,0 +1,65 @@
+// Qasida - Huffman-lite (roadmap item 58).
+// Import with: import "huffman.fg";
+// Fixed small-alphabet prefix codes over a, b, c, d:
+// a = 0, b = 10, c = 110, d = 111. Encode turns a string
+// into a "0"/"1" bit string; decode walks the bits and
+// emits a symbol at every code boundary. A trailing partial
+// code is ignored. The alphabet is fixed in v1; a frequency
+// -built code table is a later item.
+
+fn huff_code(ch: str) -> str {
+    if ch == "a" {
+        return "0";
+    }
+    if ch == "b" {
+        return "10";
+    }
+    if ch == "c" {
+        return "110";
+    }
+    if ch == "d" {
+        return "111";
+    }
+    return "";
+}
+
+fn huff_encode(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        out = out + huff_code(substr(s, i, 1));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn huff_decode(bits: str) -> str {
+    let mut out: str = "";
+    let mut cur: str = "";
+    let mut i: int = 0;
+    while i < len(bits) {
+        cur = cur + substr(bits, i, 1);
+        if cur == "0" {
+            out = out + "a";
+            cur = "";
+        }
+        if cur == "10" {
+            out = out + "b";
+            cur = "";
+        }
+        if cur == "110" {
+            out = out + "c";
+            cur = "";
+        }
+        if cur == "111" {
+            out = out + "d";
+            cur = "";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn huff_roundtrip_ok(s: str) -> bool {
+    return huff_decode(huff_encode(s)) == s;
+}

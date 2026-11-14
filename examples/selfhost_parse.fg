@@ -37,6 +37,12 @@ struct Node {
     // for a \0 escape (copied from the lexer's per-token flag).
     // Only StrLit nodes ever set it; the codegen string emitter
     // consults it when mapping the sentinel back to \0.
+    // Fix 1 B1-FIX: the loop-proof tagger (fix1_tag_program in
+    // selfhost_loopproof.fg) also sets it on COVERED Index nodes
+    // (kind 36) — the flag is free there, and cg_fix1_covered
+    // reads it as the proof. Likewise a guarded While/For node
+    // carries its hoisted guard texts (joined with "\n") in sval,
+    // which the parser never sets on those kinds.
     has_nul: bool;
 }
 

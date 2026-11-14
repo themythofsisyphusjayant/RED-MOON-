@@ -1,0 +1,251 @@
+// Qasida - AES-128 single-block encrypt (roadmap item 67, aes-lite).
+// Import with: import "aes.fg";
+// Pure .fg, no bindings: FIPS-197 S-box as a literal table (decimal
+// literals only - Qasida has no hex literals), byte-wise key
+// expansion to 176 round-key bytes, 10 rounds over a flat 16-byte
+// state in column-major order (state[r + 4c]).
+// Encrypt-only in v1: no decryption, no modes, no padding.
+// Verified against the FIPS-197 test vector (key 000102...0f,
+// plaintext 001122...ff -> 69c4e0d86a7b0430d8cdb78070b4c55a).
+
+fn aes_sbox(b: int) -> int {
+    let t: [int] = [
+        99, 124, 119, 123, 242, 107, 111, 197, 48, 1, 103, 43, 254, 215, 171, 118,
+        202, 130, 201, 125, 250, 89, 71, 240, 173, 212, 162, 175, 156, 164, 114, 192,
+        183, 253, 147, 38, 54, 63, 247, 204, 52, 165, 229, 241, 113, 216, 49, 21,
+        4, 199, 35, 195, 24, 150, 5, 154, 7, 18, 128, 226, 235, 39, 178, 117,
+        9, 131, 44, 26, 27, 110, 90, 160, 82, 59, 214, 179, 41, 227, 47, 132,
+        83, 209, 0, 237, 32, 252, 177, 91, 106, 203, 190, 57, 74, 76, 88, 207,
+        208, 239, 170, 251, 67, 77, 51, 133, 69, 249, 2, 127, 80, 60, 159, 168,
+        81, 163, 64, 143, 146, 157, 56, 245, 188, 182, 218, 33, 16, 255, 243, 210,
+        205, 12, 19, 236, 95, 151, 68, 23, 196, 167, 126, 61, 100, 93, 25, 115,
+        96, 129, 79, 220, 34, 42, 144, 136, 70, 238, 184, 20, 222, 94, 11, 219,
+        224, 50, 58, 10, 73, 6, 36, 92, 194, 211, 172, 98, 145, 149, 228, 121,
+        231, 200, 55, 109, 141, 213, 78, 169, 108, 86, 244, 234, 101, 122, 174, 8,
+        186, 120, 37, 46, 28, 166, 180, 198, 232, 221, 116, 31, 75, 189, 139, 138,
+        112, 62, 181, 102, 72, 3, 246, 14, 97, 53, 87, 185, 134, 193, 29, 158,
+        225, 248, 152, 17, 105, 217, 142, 148, 155, 30, 135, 233, 206, 85, 40, 223,
+        140, 161, 137, 13, 191, 230, 66, 104, 65, 153, 45, 15, 176, 84, 187, 22
+    ];
+    return t[b];
+}
+
+fn aes_rcon(n: int) -> int {
+    if n == 1 {
+        return 1;
+    }
+    if n == 2 {
+        return 2;
+    }
+    if n == 3 {
+        return 4;
+    }
+    if n == 4 {
+        return 8;
+    }
+    if n == 5 {
+        return 16;
+    }
+    if n == 6 {
+        return 32;
+    }
+    if n == 7 {
+        return 64;
+    }
+    if n == 8 {
+        return 128;
+    }
+    if n == 9 {
+        return 27;
+    }
+    return 54;
+}
+
+// Multiply by x in GF(2^8) (poly 0x11b = 283; 27 = 0x1b).
+fn aes_xtime(a: int) -> int {
+    if a >= 128 {
+        return ((a * 2) ^ 27) & 255;
+    }
+    return (a * 2) & 255;
+}
+
+fn aes_mul3(a: int) -> int {
+    return aes_xtime(a) ^ a;
+}
+
+// Expand a 16-byte key to 176 round-key bytes (11 round keys).
+fn aes_key_expand(key: [int]) -> [int] {
+    let mut rk: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(rk, key[i]);
+        i = i + 1;
+    }
+    let mut w: int = 4;
+    while w < 44 {
+        let mut t0: int = rk[(w - 1) * 4 + 0];
+        let mut t1: int = rk[(w - 1) * 4 + 1];
+        let mut t2: int = rk[(w - 1) * 4 + 2];
+        let mut t3: int = rk[(w - 1) * 4 + 3];
+        if w % 4 == 0 {
+            let r0: int = t1;
+            let r1: int = t2;
+            let r2: int = t3;
+            let r3: int = t0;
+            t0 = aes_sbox(r0) ^ aes_rcon(w / 4);
+            t1 = aes_sbox(r1);
+            t2 = aes_sbox(r2);
+            t3 = aes_sbox(r3);
+        }
+        push(rk, rk[(w - 4) * 4 + 0] ^ t0);
+        push(rk, rk[(w - 4) * 4 + 1] ^ t1);
+        push(rk, rk[(w - 4) * 4 + 2] ^ t2);
+        push(rk, rk[(w - 4) * 4 + 3] ^ t3);
+        w = w + 1;
+    }
+    return rk;
+}
+
+fn aes_add_round_key(s: [int], rk: [int], round: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(out, s[i] ^ rk[round * 16 + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn aes_sub_bytes(s: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(out, aes_sbox(s[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn aes_shift_rows(s: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(out, 0);
+        i = i + 1;
+    }
+    let mut r: int = 0;
+    while r < 4 {
+        let mut c: int = 0;
+        while c < 4 {
+            out[r + 4 * c] = s[r + 4 * ((c + r) % 4)];
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn aes_mix_columns(s: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(out, 0);
+        i = i + 1;
+    }
+    let mut c: int = 0;
+    while c < 4 {
+        let a0: int = s[4 * c + 0];
+        let a1: int = s[4 * c + 1];
+        let a2: int = s[4 * c + 2];
+        let a3: int = s[4 * c + 3];
+        out[4 * c + 0] = aes_xtime(a0) ^ aes_mul3(a1) ^ a2 ^ a3;
+        out[4 * c + 1] = a0 ^ aes_xtime(a1) ^ aes_mul3(a2) ^ a3;
+        out[4 * c + 2] = a0 ^ a1 ^ aes_xtime(a2) ^ aes_mul3(a3);
+        out[4 * c + 3] = aes_mul3(a0) ^ a1 ^ a2 ^ aes_xtime(a3);
+        c = c + 1;
+    }
+    return out;
+}
+
+// Encrypt one 16-byte block under a 16-byte key. Returns 16 bytes.
+fn aes_encrypt_block(key: [int], pt: [int]) -> [int] {
+    let rk: [int] = aes_key_expand(key);
+    let mut s: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(s, pt[i]);
+        i = i + 1;
+    }
+    s = aes_add_round_key(s, rk, 0);
+    let mut round: int = 1;
+    while round < 10 {
+        s = aes_sub_bytes(s);
+        s = aes_shift_rows(s);
+        s = aes_mix_columns(s);
+        s = aes_add_round_key(s, rk, round);
+        round = round + 1;
+    }
+    s = aes_sub_bytes(s);
+    s = aes_shift_rows(s);
+    s = aes_add_round_key(s, rk, 10);
+    return s;
+}
+
+fn aes_hex_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    if d == 9 {
+        return "9";
+    }
+    if d == 10 {
+        return "a";
+    }
+    if d == 11 {
+        return "b";
+    }
+    if d == 12 {
+        return "c";
+    }
+    if d == 13 {
+        return "d";
+    }
+    if d == 14 {
+        return "e";
+    }
+    return "f";
+}
+
+fn aes_bytes_to_hex(data: [int]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(data) {
+        out = out + aes_hex_digit(data[i] / 16) + aes_hex_digit(data[i] % 16);
+        i = i + 1;
+    }
+    return out;
+}

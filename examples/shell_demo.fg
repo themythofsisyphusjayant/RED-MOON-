@@ -1,0 +1,22 @@
+// Shell-utils demo — daily-ten 13 Nov 2026 (library track).
+// Verifies spawn.fg (roadmap item 55, shell-utils) over the
+// run_command builtin: an echo whose output passes straight
+// through to stdout, then exit codes for true/false and the
+// bool helper. The echo is called FIRST on purpose: println
+// output is stdio-buffered when piped, while the child
+// process writes directly, so a later echo would overtake
+// earlier printlns in the captured stream.
+// Expected stdout:
+// hello-shell
+// 0
+// 0
+// 1
+// true
+import "spawn.fg";
+
+fn main() {
+    println(sh_echo("hello-shell"));
+    println(sh_run("true"));
+    println(sh_run("false"));
+    println(sh_ok("true"));
+}

@@ -1,0 +1,89 @@
+// Qasida - frames-fast (roadmap item 14).
+// Import with: import "frames.fg";
+// Columnar ops over pandas.fg's flat Frame: equality /
+// less-than filters, column projection, head. Every op
+// returns a new frame; the input frame is never mutated.
+
+import "pandas.fg";
+
+fn fr_filter_eq(f: Frame, name: str, v: float) -> Frame {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("fr_filter_eq: unknown column");
+    }
+    let mut out: [float] = [];
+    let mut n: int = 0;
+    let mut r: int = 0;
+    while r < f.nrows {
+        if df_get(f, r, ci) == v {
+            let mut cc: int = 0;
+            while cc < f.ncols {
+                push(out, df_get(f, r, cc));
+                cc = cc + 1;
+            }
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    return Frame { names: f.names, data: out, nrows: n, ncols: f.ncols };
+}
+
+fn fr_filter_lt(f: Frame, name: str, v: float) -> Frame {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("fr_filter_lt: unknown column");
+    }
+    let mut out: [float] = [];
+    let mut n: int = 0;
+    let mut r: int = 0;
+    while r < f.nrows {
+        if df_get(f, r, ci) < v {
+            let mut cc: int = 0;
+            while cc < f.ncols {
+                push(out, df_get(f, r, cc));
+                cc = cc + 1;
+            }
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    return Frame { names: f.names, data: out, nrows: n, ncols: f.ncols };
+}
+
+fn fr_project(f: Frame, keep: [str]) -> Frame {
+    let mut names: [str] = [];
+    let mut cis: [int] = [];
+    for k in keep {
+        let ci: int = df_col_index(f, k);
+        if ci < 0 {
+            fail("fr_project: unknown column");
+        }
+        push(names, k);
+        push(cis, ci);
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < f.nrows {
+        let mut j: int = 0;
+        while j < len(cis) {
+            push(out, df_get(f, r, cis[j]));
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    return Frame { names: names, data: out, nrows: f.nrows, ncols: len(keep) };
+}
+
+fn fr_head(f: Frame, n: int) -> Frame {
+    let mut rows: int = n;
+    if rows > f.nrows {
+        rows = f.nrows;
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < rows * f.ncols {
+        push(out, f.data[i]);
+        i = i + 1;
+    }
+    return Frame { names: f.names, data: out, nrows: rows, ncols: f.ncols };
+}

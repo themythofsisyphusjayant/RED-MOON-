@@ -91,18 +91,24 @@ def load_program(path, seen=None):
                      all_traits, all_impls, all_aliases, all_newtypes)
 
 
-def compile_source(source, mode="safe", freestanding=False):
+def compile_source(source, mode="safe", freestanding=False,
+                   no_bounds_checks=False, no_overflow_checks=False):
     program = parse(source)
     check(program, freestanding=freestanding)
     types = infer_types(program)
-    return generate(program, types, mode=mode, freestanding=freestanding), program
+    return generate(program, types, mode=mode, freestanding=freestanding,
+                    no_bounds_checks=no_bounds_checks,
+                    no_overflow_checks=no_overflow_checks), program
 
 
-def compile_file(path, mode="safe", require_main=True, debug=False, freestanding=False):
+def compile_file(path, mode="safe", require_main=True, debug=False, freestanding=False,
+                 no_bounds_checks=False, no_overflow_checks=False):
     program = load_program(path)
     check(program, require_main=require_main, freestanding=freestanding)
     types = infer_types(program)
-    return generate(program, types, mode=mode, debug=debug, freestanding=freestanding), program
+    return generate(program, types, mode=mode, debug=debug, freestanding=freestanding,
+                    no_bounds_checks=no_bounds_checks,
+                    no_overflow_checks=no_overflow_checks), program
 
 
 def build_shared(source_path, output_path, mode="safe"):
@@ -175,8 +181,11 @@ def _cc_flags(mode):
     return [_cc(), "-O2", "-std=gnu11", "-Wall", "-Wextra", "-Wno-unused-function", "-pthread"]
 
 
-def build(source_path, output_path, mode="safe", keep_c=None, debug=False, freestanding=False):
-    c_source, _ = compile_file(source_path, mode=mode, debug=debug, freestanding=freestanding)
+def build(source_path, output_path, mode="safe", keep_c=None, debug=False, freestanding=False,
+          no_bounds_checks=False, no_overflow_checks=False):
+    c_source, _ = compile_file(source_path, mode=mode, debug=debug, freestanding=freestanding,
+                               no_bounds_checks=no_bounds_checks,
+                               no_overflow_checks=no_overflow_checks)
     if keep_c:
         with open(keep_c, "w", encoding="utf-8") as f:
             f.write(c_source)

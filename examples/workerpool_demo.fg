@@ -1,0 +1,22 @@
+// Worker-pool demo — daily-ten 14 Nov 2026 (library track).
+// Verifies workerpool.fg: three workers run in one scope
+// (square 5 = 25, cube 3 = 27, double 7 = 14). Result files
+// are pre-seeded with "pending" (length 7), so a worker that
+// never ran would show up in the output.
+// Expected stdout:
+// 25
+// 27
+// 14
+// 3
+import "workerpool.fg";
+
+fn main() {
+    let ok1: bool = write_file(wp_path("square"), "pending");
+    let ok2: bool = write_file(wp_path("cube"), "pending");
+    let ok3: bool = write_file(wp_path("double"), "pending");
+    wp_run();
+    println(wp_result("square"));
+    println(wp_result("cube"));
+    println(wp_result("double"));
+    println(3);
+}

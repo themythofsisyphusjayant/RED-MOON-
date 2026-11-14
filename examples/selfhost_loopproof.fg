@@ -1,0 +1,1485 @@
+// Fix 1 Phase B1 — bounds-check hoisting proofs (H1, H2, H1-D),
+// hosted mirror of forge_lang/loopproof.py over the hosted Node
+// tree (kind tags from selfhost_parse.fg).
+//
+// Pure analysis: fix1_analyze_program(prog) returns a Fix1Res
+// (covered Index (line, col) pairs + per-loop guard strings).
+// The codegen (selfhost_codegen.fg) tags that result onto the
+// program tree itself (fix1_tag_program below) and consults the
+// tags only in safe mode with bounds checks on. Covered uses
+// reuse the existing fast-mode emission.
+//
+// The guard text built here is byte-identical to the Python
+// mirror's, including the two soundness deviations from the
+// DESIGN.md guard text (see loopproof.py header): H1b-var /
+// H2-RangeLit-var guards carry the loop-entry condition, and the
+// H1-D guard re-evaluates the entry expression E when stable
+// (else a singleton interval), with >= len iff an a[k] use is
+// covered, else > len.
+//
+// Interval rule shared with Python: ends are capped at 2^40 and
+// a * interval is unknown when any |end| > 10^6 (the hosted
+// checked * would trap the compiler itself on huge products).
+
+import "selfhost_parse.fg";
+
+// Node kinds used here (selfhost_parse.fg header):
+// 9 Block, 10 Let, 11 Assign, 12 IndexAssign, 13 FieldAssign,
+// 15 While, 16 For, 21 Spawn, 23 Defer, 25 IntLit, 26 FloatLit,
+// 27 StrLit, 28 BoolLit, 29 ArrayLit, 32 FieldAccess,
+// 33 MethodCall, 34 Var, 35 Call, 36 Index, 38 RangeLit,
+// 40 BinOp, 41 UnaryOp, 43 Param, 2 FuncDef, 6 ImplDef.
+
+struct Fix1Env {
+    names: [str];
+    types: [str];
+    los: [int];
+    his: [int];
+    lok: [bool];
+    hik: [bool];
+    sized_names: [str];
+    sized_ns: [int];
+}
+
+struct Fix1Res {
+    cov_lines: [int];
+    cov_cols: [int];
+    guard_lines: [int];
+    guard_cols: [int];
+    guards: [str];
+}
+
+struct Fix1Pair {
+    env: Fix1Env;
+    res: Fix1Res;
+}
+
+struct Fix1Uses {
+    lines: [int];
+    cols: [int];
+}
+
+fn fix1_env_new() -> Fix1Env {
+    return Fix1Env { names: [], types: [], los: [], his: [], lok: [], hik: [], sized_names: [], sized_ns: [] };
+}
+
+fn fix1_res_new() -> Fix1Res {
+    return Fix1Res { cov_lines: [], cov_cols: [], guard_lines: [], guard_cols: [], guards: [] };
+}
+
+fn fix1_is_var(n: Node, name: str) -> bool {
+    return n.kind == 34 && n.name == name;
+}
+
+fn fix1_is_intlit(n: Node) -> bool {
+    return n.kind == 25;
+}
+
+fn fix1_is_len_of(e: Node, arr: str) -> bool {
+    if e.kind == 35 && e.name == "len" && len(e.kids) == 1 {
+        return fix1_is_var(e.kids[0], arr);
+    }
+    if e.kind == 33 && e.name == "len" && len(e.kids) == 1 {
+        return fix1_is_var(e.kids[0], arr);
+    }
+    return false;
+}
+
+fn fix1_is_len_call(e: Node) -> bool {
+    if e.kind == 35 && e.name == "len" && len(e.kids) == 1 {
+        return true;
+    }
+    if e.kind == 33 && e.name == "len" && len(e.kids) == 1 {
+        return true;
+    }
+    return false;
+}
+
+// C rendering of a pure int expr (literal / var / + - * binop /
+// unary minus / len(var)). "" when not renderable.
+fn fix1_c_expr(e: Node) -> str {
+    if e.kind == 25 {
+        return itoa(e.ival);
+    }
+    if e.kind == 34 {
+        return e.name;
+    }
+    if e.kind == 41 && e.name == "-" {
+        let inner: str = fix1_c_expr(e.kids[0]);
+        if inner == "" {
+            return "";
+        }
+        return "(-" + inner + ")";
+    }
+    if e.kind == 40 && (e.name == "+" || e.name == "-" || e.name == "*") {
+        let l: str = fix1_c_expr(e.kids[0]);
+        let r: str = fix1_c_expr(e.kids[1]);
+        if l == "" || r == "" {
+            return "";
+        }
+        return "(" + l + " " + e.name + " " + r + ")";
+    }
+    if e.kind == 35 && e.name == "len" && len(e.kids) == 1 {
+        let inner: str = fix1_c_expr(e.kids[0]);
+        if inner == "" {
+            return "";
+        }
+        return "(" + inner + ").len";
+    }
+    return "";
+}
+
+fn fix1_is_array_type(t: str) -> bool {
+    if starts_with(t, "[") {
+        return true;
+    }
+    if starts_with(t, "readonly [") {
+        return true;
+    }
+    return false;
+}
+
+// Qasida has no ordering comparison on str: digit test is
+// explicit equality against each digit.
+fn fix1_is_digit(c: str) -> bool {
+    return c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+}
+
+// N for a sized array type spelling "[T; N]", -1 when not sized.
+fn fix1_sized_len(t: str) -> int {
+    let mut i: int = 0;
+    let mut semi: int = -1;
+    while i < len(t) {
+        if t[i] == ";" {
+            semi = i;
+        }
+        i = i + 1;
+    }
+    if semi < 0 {
+        return -1;
+    }
+    let mut j: int = semi + 1;
+    let mut digits: str = "";
+    while j < len(t) {
+        let c: str = t[j];
+        if fix1_is_digit(c) {
+            digits = digits + c;
+        } else if digits != "" {
+            break;
+        }
+        j = j + 1;
+    }
+    if digits == "" {
+        return -1;
+    }
+    return parse_int(digits);
+}
+
+// True iff v is within the interval cap (2^40); capped values are
+// reported as unknown by the caller via the known flag.
+fn fix1_in_cap(v: int) -> bool {
+    return v <= 1099511627776 && v >= -1099511627776;
+}
+
+// ---------- environment ----------
+
+fn fix1_env_idx(env: Fix1Env, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(env.names) {
+        if env.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn fix1_env_type(env: Fix1Env, name: str) -> str {
+    let idx: int = fix1_env_idx(env, name);
+    if idx < 0 {
+        return "";
+    }
+    return env.types[idx];
+}
+
+// Interval as [lok, lo, hik, hi] (lok/hik 0/1; lo/hi meaningless
+// when the matching flag is 0).
+fn fix1_env_interval(env: Fix1Env, name: str) -> [int] {
+    let idx: int = fix1_env_idx(env, name);
+    if idx < 0 {
+        return [0, 0, 0, 0];
+    }
+    let mut lok: int = 0;
+    if env.lok[idx] {
+        lok = 1;
+    }
+    let mut hik: int = 0;
+    if env.hik[idx] {
+        hik = 1;
+    }
+    return [lok, env.los[idx], hik, env.his[idx]];
+}
+
+fn fix1_env_set_type(env0: Fix1Env, name: str, t: str) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let idx: int = fix1_env_idx(env, name);
+    if idx >= 0 {
+        env.types[idx] = t;
+        return env;
+    }
+    push(env.names, name);
+    push(env.types, t);
+    push(env.los, 0);
+    push(env.his, 0);
+    push(env.lok, false);
+    push(env.hik, false);
+    return env;
+}
+
+fn fix1_env_set_interval(env0: Fix1Env, name: str, iv: [int]) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    if iv[0] == 0 && iv[2] == 0 {
+        return fix1_env_drop_interval(env, name);
+    }
+    let idx: int = fix1_env_idx(env, name);
+    if idx >= 0 {
+        env.los[idx] = iv[1];
+        env.his[idx] = iv[3];
+        env.lok[idx] = iv[0] == 1;
+        env.hik[idx] = iv[2] == 1;
+        return env;
+    }
+    push(env.names, name);
+    push(env.types, "");
+    push(env.los, iv[1]);
+    push(env.his, iv[3]);
+    push(env.lok, iv[0] == 1);
+    push(env.hik, iv[2] == 1);
+    return env;
+}
+
+fn fix1_env_drop_interval(env0: Fix1Env, name: str) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let idx: int = fix1_env_idx(env, name);
+    if idx >= 0 {
+        env.lok[idx] = false;
+        env.hik[idx] = false;
+    }
+    return env;
+}
+
+fn fix1_env_sized(env: Fix1Env, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(env.sized_names) {
+        if env.sized_names[i] == name {
+            return env.sized_ns[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn fix1_env_set_sized(env0: Fix1Env, name: str, n: int) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let mut i: int = 0;
+    while i < len(env.sized_names) {
+        if env.sized_names[i] == name {
+            env.sized_ns[i] = n;
+            return env;
+        }
+        i = i + 1;
+    }
+    push(env.sized_names, name);
+    push(env.sized_ns, n);
+    return env;
+}
+
+fn fix1_env_drop_sized(env0: Fix1Env, name: str) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let mut out_names: [str] = [];
+    let mut out_ns: [int] = [];
+    let mut i: int = 0;
+    while i < len(env.sized_names) {
+        if env.sized_names[i] != name {
+            push(out_names, env.sized_names[i]);
+            push(out_ns, env.sized_ns[i]);
+        }
+        i = i + 1;
+    }
+    env.sized_names = out_names;
+    env.sized_ns = out_ns;
+    return env;
+}
+
+// ---------- intervals ----------
+
+// [lok, lo, hik, hi] of an int expr. Mirrors Python _interval,
+// including the 2^40 cap and the 10^6 * threshold.
+fn fix1_interval(e: Node, env: Fix1Env) -> [int] {
+    if e.kind == 25 {
+        if fix1_in_cap(e.ival) {
+            return [1, e.ival, 1, e.ival];
+        }
+        return [0, 0, 0, 0];
+    }
+    if e.kind == 34 {
+        return fix1_env_interval(env, e.name);
+    }
+    if e.kind == 41 && e.name == "-" {
+        let inner: [int] = fix1_interval(e.kids[0], env);
+        let mut lok: int = 0;
+        let mut lo: int = 0;
+        let mut hik: int = 0;
+        let mut hi: int = 0;
+        if inner[2] == 1 && fix1_in_cap(-inner[3]) {
+            lok = 1;
+            lo = -inner[3];
+        }
+        if inner[0] == 1 && fix1_in_cap(-inner[1]) {
+            hik = 1;
+            hi = -inner[1];
+        }
+        return [lok, lo, hik, hi];
+    }
+    if e.kind == 40 && (e.name == "+" || e.name == "-" || e.name == "*") {
+        let l: [int] = fix1_interval(e.kids[0], env);
+        let r: [int] = fix1_interval(e.kids[1], env);
+        if e.name == "+" {
+            let mut lok: int = 0;
+            let mut lo: int = 0;
+            let mut hik: int = 0;
+            let mut hi: int = 0;
+            if l[0] == 1 && r[0] == 1 && fix1_in_cap(l[1] + r[1]) {
+                lok = 1;
+                lo = l[1] + r[1];
+            }
+            if l[2] == 1 && r[2] == 1 && fix1_in_cap(l[3] + r[3]) {
+                hik = 1;
+                hi = l[3] + r[3];
+            }
+            return [lok, lo, hik, hi];
+        }
+        if e.name == "-" {
+            let mut lok: int = 0;
+            let mut lo: int = 0;
+            let mut hik: int = 0;
+            let mut hi: int = 0;
+            if l[0] == 1 && r[2] == 1 && fix1_in_cap(l[1] - r[3]) {
+                lok = 1;
+                lo = l[1] - r[3];
+            }
+            if l[2] == 1 && r[0] == 1 && fix1_in_cap(l[3] - r[1]) {
+                hik = 1;
+                hi = l[3] - r[1];
+            }
+            return [lok, lo, hik, hi];
+        }
+        if l[0] == 0 || l[2] == 0 || r[0] == 0 || r[2] == 0 {
+            return [0, 0, 0, 0];
+        }
+        let mut big: bool = false;
+        if l[1] > 1000000 || l[1] < -1000000 {
+            big = true;
+        }
+        if l[3] > 1000000 || l[3] < -1000000 {
+            big = true;
+        }
+        if r[1] > 1000000 || r[1] < -1000000 {
+            big = true;
+        }
+        if r[3] > 1000000 || r[3] < -1000000 {
+            big = true;
+        }
+        if big {
+            return [0, 0, 0, 0];
+        }
+        let p0: int = l[1] * r[1];
+        let p1: int = l[1] * r[3];
+        let p2: int = l[3] * r[1];
+        let p3: int = l[3] * r[3];
+        let mut lo: int = p0;
+        if p1 < lo {
+            lo = p1;
+        }
+        if p2 < lo {
+            lo = p2;
+        }
+        if p3 < lo {
+            lo = p3;
+        }
+        let mut hi: int = p0;
+        if p1 > hi {
+            hi = p1;
+        }
+        if p2 > hi {
+            hi = p2;
+        }
+        if p3 > hi {
+            hi = p3;
+        }
+        if !fix1_in_cap(lo) || !fix1_in_cap(hi) {
+            return [0, 0, 0, 0];
+        }
+        return [1, lo, 1, hi];
+    }
+    if fix1_is_len_call(e) {
+        return [1, 0, 0, 0];
+    }
+    return [0, 0, 0, 0];
+}
+
+// Best-effort array type of an init expr (annotation handled by
+// the caller): ArrayLit / Var-copy.
+fn fix1_derive_type(e: Node, env: Fix1Env) -> str {
+    if e.kind == 29 && len(e.kids) > 0 {
+        let first: Node = e.kids[0];
+        if first.kind == 25 {
+            return "[int]";
+        }
+        if first.kind == 26 {
+            return "[float]";
+        }
+        if first.kind == 27 {
+            return "[str]";
+        }
+        if first.kind == 28 {
+            return "[bool]";
+        }
+        if first.kind == 29 {
+            let inner: str = fix1_derive_type(first, env);
+            if inner == "" {
+                return "";
+            }
+            return "[" + inner + "]";
+        }
+        if first.kind == 34 {
+            let et: str = fix1_env_type(env, first.name);
+            if et == "" {
+                return "";
+            }
+            if starts_with(et, "[") {
+                return et;
+            }
+            return "[" + et + "]";
+        }
+        return "";
+    }
+    if e.kind == 34 {
+        return fix1_env_type(env, e.name);
+    }
+    return "";
+}
+
+// ---------- subtree scans ----------
+
+fn fix1_has_push(n: Node) -> bool {
+    if n.kind == 35 && n.name == "push" {
+        return true;
+    }
+    if n.kind == 33 && n.name == "push" {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_has_push(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fix1_has_spawn_defer(n: Node) -> bool {
+    if n.kind == 21 || n.kind == 23 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_has_spawn_defer(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fix1_has_move_of(n: Node, name: str) -> bool {
+    if n.kind == 35 && n.name == "move" && len(n.kids) >= 1 {
+        if fix1_is_var(n.kids[0], name) {
+            return true;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_has_move_of(n.kids[i], name) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fix1_has_field_assign_to(n: Node, name: str) -> bool {
+    if n.kind == 13 && len(n.kids) >= 1 {
+        let tgt: Node = n.kids[0];
+        if tgt.kind == 32 && len(tgt.kids) >= 1 {
+            if fix1_is_var(tgt.kids[0], name) {
+                return true;
+            }
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_has_field_assign_to(n.kids[i], name) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Number of Assign/Let/For nodes in the subtree binding `name`.
+fn fix1_write_count(n: Node, name: str) -> int {
+    let mut c: int = 0;
+    if (n.kind == 11 || n.kind == 10) && n.name == name {
+        c = c + 1;
+    }
+    if n.kind == 16 && n.name == name {
+        c = c + 1;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        c = c + fix1_write_count(n.kids[i], name);
+        i = i + 1;
+    }
+    return c;
+}
+
+// [line, col] of the first Assign/Let/For binding `name` in the
+// subtree, [-1, -1] when there is none.
+fn fix1_write_site(n: Node, name: str) -> [int] {
+    if (n.kind == 11 || n.kind == 10 || n.kind == 16) && n.name == name {
+        return [n.line, n.col];
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let found: [int] = fix1_write_site(n.kids[i], name);
+        if found[0] >= 0 {
+            return found;
+        }
+        i = i + 1;
+    }
+    return [-1, -1];
+}
+
+// Distinct names bound by Assign/Let/For anywhere in the subtree.
+fn fix1_written_names(n: Node) -> [str] {
+    let mut out: [str] = [];
+    if (n.kind == 11 || n.kind == 10 || n.kind == 16) && n.name != "" {
+        push(out, n.name);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let sub: [str] = fix1_written_names(n.kids[i]);
+        let mut j: int = 0;
+        while j < len(sub) {
+            let mut seen: bool = false;
+            let mut k: int = 0;
+            while k < len(out) {
+                if out[k] == sub[j] {
+                    seen = true;
+                }
+                k = k + 1;
+            }
+            if !seen {
+                push(out, sub[j]);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fix1_vars_in(n: Node) -> [str] {
+    let mut out: [str] = [];
+    if n.kind == 34 {
+        push(out, n.name);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let sub: [str] = fix1_vars_in(n.kids[i]);
+        let mut j: int = 0;
+        while j < len(sub) {
+            push(out, sub[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Does `node`'s index form match the covered shape? mode 0:
+// exactly Var(ctr). mode 1: Var(ctr) or (ctr - 1).
+fn fix1_index_matches(ix: Node, ctr: str, mode: int) -> bool {
+    if fix1_is_var(ix, ctr) {
+        return true;
+    }
+    if mode == 1 && ix.kind == 40 && ix.name == "-" {
+        if fix1_is_var(ix.kids[0], ctr) && ix.kids[1].kind == 25 && ix.kids[1].ival == 1 {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn fix1_collect_rec(n: Node, arr: str, ctr: str, mode: int, uses: Fix1Uses) -> Fix1Uses {
+    let mut out: Fix1Uses = uses;
+    // FieldAccess over an Index: the Index node's own check lives
+    // in the FieldAccess emitter, so never cover it — but still
+    // walk its index expr and base for nested uses.
+    if n.kind == 32 && len(n.kids) >= 1 && n.kids[0].kind == 36 {
+        let idxnode: Node = n.kids[0];
+        out = fix1_collect_rec(idxnode.kids[1], arr, ctr, mode, out);
+        out = fix1_collect_rec(idxnode.kids[0], arr, ctr, mode, out);
+        return out;
+    }
+    if n.kind == 36 && len(n.kids) == 2 {
+        if fix1_is_var(n.kids[0], arr) && fix1_index_matches(n.kids[1], ctr, mode) {
+            push(out.lines, n.line);
+            push(out.cols, n.col);
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        out = fix1_collect_rec(n.kids[i], arr, ctr, mode, out);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fix1_collect_uses(body: Node, arr: str, ctr: str, mode: int) -> Fix1Uses {
+    let uses: Fix1Uses = Fix1Uses { lines: [], cols: [] };
+    return fix1_collect_rec(body, arr, ctr, mode, uses);
+}
+
+// Distinct Var bases of Index nodes in `body` whose index matches
+// the shape (mode as in fix1_collect_uses).
+fn fix1_candidate_rec(n: Node, ctr: str, mode: int, out: [str]) -> [str] {
+    let mut acc: [str] = out;
+    if n.kind == 32 && len(n.kids) >= 1 && n.kids[0].kind == 36 {
+        let idxnode: Node = n.kids[0];
+        acc = fix1_candidate_rec(idxnode.kids[1], ctr, mode, acc);
+        acc = fix1_candidate_rec(idxnode.kids[0], ctr, mode, acc);
+        return acc;
+    }
+    if n.kind == 36 && len(n.kids) == 2 {
+        if n.kids[0].kind == 34 && fix1_index_matches(n.kids[1], ctr, mode) {
+            let nm: str = n.kids[0].name;
+            let mut seen: bool = false;
+            let mut i: int = 0;
+            while i < len(acc) {
+                if acc[i] == nm {
+                    seen = true;
+                }
+                i = i + 1;
+            }
+            if !seen {
+                push(acc, nm);
+            }
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        acc = fix1_candidate_rec(n.kids[i], ctr, mode, acc);
+        i = i + 1;
+    }
+    return acc;
+}
+
+fn fix1_candidate_arrays(body: Node, ctr: str, mode: int) -> [str] {
+    let out: [str] = [];
+    return fix1_candidate_rec(body, ctr, mode, out);
+}
+
+// ---------- result accumulation ----------
+
+fn fix1_res_add_cov(res0: Fix1Res, line: int, col: int) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let mut i: int = 0;
+    while i < len(res.cov_lines) {
+        if res.cov_lines[i] == line && res.cov_cols[i] == col {
+            return res;
+        }
+        i = i + 1;
+    }
+    push(res.cov_lines, line);
+    push(res.cov_cols, col);
+    return res;
+}
+
+fn fix1_res_add_guard(res0: Fix1Res, line: int, col: int, guard: str) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    push(res.guard_lines, line);
+    push(res.guard_cols, col);
+    push(res.guards, guard);
+    return res;
+}
+
+fn fix1_res_add_uses(res0: Fix1Res, uses: Fix1Uses) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let mut i: int = 0;
+    while i < len(uses.lines) {
+        res = fix1_res_add_cov(res, uses.lines[i], uses.cols[i]);
+        i = i + 1;
+    }
+    return res;
+}
+
+// ---------- shared preconditions ----------
+
+// ---------- tagging the program (B1-FIX, attempt 2) ----------
+//
+// The analysis above returns a Fix1Res (positions + guard texts).
+// Storing that result on HCodegen grew the giant codegen frames
+// ~10% and overflowed the 8 MB stack — even one heap array field
+// (attempt 1) left the peak 160 KB over the limit. So the result
+// is tagged onto the program tree itself, and HCodegen carries
+// NO fix1 field at all (its pre-B1 size is restored exactly).
+//
+//   * a covered Index node gets has_nul = true. The parser sets
+//     has_nul only on StrLit nodes (selfhost_parse.fg, kind 27),
+//     so it is free on Index nodes (kind 36); the string emitter
+//     reads it only for StrLit nodes.
+//   * a loop node (While 15 / For 16) with hoisted guards gets
+//     the guard texts joined with "\n" in its sval. While/For
+//     nodes never carry an sval from the parser.
+// Tags are written through the parent's kids array, which shares
+// its buffer with the tree, so they land in the program codegen
+// reads. The walk is a dumb applicator — all proof logic stays
+// in fix1_analyze_program, which runs first and is unchanged.
+// Idempotent: re-tagging skips nodes already tagged (sval != "").
+
+fn fix1_res_covers(res: Fix1Res, line: int, col: int) -> bool {
+    let mut i: int = 0;
+    while i < len(res.cov_lines) {
+        if res.cov_lines[i] == line && res.cov_cols[i] == col {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fix1_res_guards(res: Fix1Res, line: int, col: int) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(res.guard_lines) {
+        if res.guard_lines[i] == line && res.guard_cols[i] == col {
+            push(out, res.guards[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fix1_tag_node(n: Node, res: Fix1Res) -> int {
+    let mut tagged: int = 0;
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let mut c: Node = n.kids[i];
+        if c.kind == 36 && fix1_res_covers(res, c.line, c.col) {
+            c.has_nul = true;
+            n.kids[i] = c;
+            tagged = tagged + 1;
+        }
+        if (c.kind == 15 || c.kind == 16) && c.sval == "" {
+            let gs: [str] = fix1_res_guards(res, c.line, c.col);
+            if len(gs) > 0 {
+                let mut s: str = "";
+                let mut j: int = 0;
+                while j < len(gs) {
+                    if j > 0 {
+                        s = s + "\n";
+                    }
+                    s = s + gs[j];
+                    j = j + 1;
+                }
+                c.sval = s;
+                n.kids[i] = c;
+                tagged = tagged + 1;
+            }
+        }
+        tagged = tagged + fix1_tag_node(c, res);
+        i = i + 1;
+    }
+    return tagged;
+}
+
+// Apply `res` to `prog` in place; returns the number of nodes
+// tagged (covered Index nodes + guarded loops).
+// WARNING (b1fix2): the pooled Fix1Res keys by bare (line, col),
+// which collides across files in a merged program. This function
+// is correct only within a single file — lp_test-only. Production
+// must use fix1_tag_program_fns (per-function tagging) instead.
+fn fix1_tag_program(prog: Node, res: Fix1Res) -> int {
+    return fix1_tag_node(prog, res);
+}
+
+// H1-P4/P5 / H1D-P5: exactly one write to `name` in the body, and
+// it is the last direct child, `name = name <step> 1`.
+fn fix1_counter_ok(body: Node, name: str, step: str) -> bool {
+    if len(body.kids) == 0 {
+        return false;
+    }
+    if fix1_write_count(body, name) != 1 {
+        return false;
+    }
+    let last: Node = body.kids[len(body.kids) - 1];
+    if last.kind != 11 || last.name != name {
+        return false;
+    }
+    let site: [int] = fix1_write_site(body, name);
+    if site[0] != last.line || site[1] != last.col {
+        return false;
+    }
+    let e: Node = last.kids[0];
+    if e.kind != 40 || e.name != step {
+        return false;
+    }
+    if !fix1_is_var(e.kids[0], name) {
+        return false;
+    }
+    return e.kids[1].kind == 25 && e.kids[1].ival == 1;
+}
+
+fn fix1_array_ok(body: Node, arr: str) -> bool {
+    if fix1_write_count(body, arr) > 0 {
+        return false;
+    }
+    if fix1_has_move_of(body, arr) {
+        return false;
+    }
+    if fix1_has_field_assign_to(body, arr) {
+        return false;
+    }
+    if fix1_has_push(body) {
+        return false;
+    }
+    if fix1_has_spawn_defer(body) {
+        return false;
+    }
+    return true;
+}
+
+// Guard text for a bound, mirroring Python _guard_for_bound.
+// bound_kind: 0 = len(a) (no guard), 1 = literal, 2 = var.
+// Returns "" (no guard), "FAIL", or "NEVER" (loop never runs —
+// record no proof at all), or the guard line.
+fn fix1_guard_bound(arr: str, bound_kind: int, bound_val: int, bound_name: str, entry_lit: int, entry_has: bool, env: Fix1Env) -> str {
+    if bound_kind == 0 {
+        return "";
+    }
+    let sized: int = fix1_env_sized(env, arr);
+    if bound_kind == 1 {
+        if sized >= 0 {
+            if bound_val <= sized {
+                return "";
+            }
+            return "FAIL";
+        }
+        if entry_has && entry_lit >= bound_val {
+            return "NEVER";
+        }
+        return "if (" + itoa(bound_val) + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    }
+    if sized >= 0 {
+        let iv: [int] = fix1_env_interval(env, bound_name);
+        if iv[2] == 1 && iv[3] <= sized {
+            return "";
+        }
+        if iv[0] == 1 && iv[1] > sized && entry_has && entry_lit < iv[1] {
+            return "FAIL";
+        }
+    }
+    if entry_has {
+        return "if (" + itoa(entry_lit) + " < " + bound_name + " && " + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    }
+    return "if (" + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+}
+
+// Nearest preceding write of `name` before stmts[pos] in the same
+// block (Let/Assign/For binding), or -1.
+fn fix1_nearest_entry(stmts: [Node], pos: int, name: str) -> int {
+    let mut k: int = pos - 1;
+    while k >= 0 {
+        let s: Node = stmts[k];
+        if (s.kind == 10 || s.kind == 11 || s.kind == 16) && s.name == name {
+            return k;
+        }
+        k = k - 1;
+    }
+    return -1;
+}
+
+// Fix 1 B1-FIX (stale entry): true when `name` is written by any
+// statement between the entry write at stmts[k] and the loop at
+// stmts[pos]. Writes inside an intervening if/loop/block count:
+// the entry value is unknowable there, so the nearest literal is
+// stale — a negative runtime entry would turn a "proven" a[i] into
+// an unchecked OOB access. Callers treat a stale entry as no entry.
+fn fix1_entry_stale(stmts: [Node], k: int, pos: int, name: str) -> bool {
+    let mut s: int = k + 1;
+    while s < pos {
+        if fix1_write_count(stmts[s], name) > 0 {
+            return true;
+        }
+        s = s + 1;
+    }
+    return false;
+}
+
+// ---------- H1: counted while ----------
+
+fn fix1_try_h1(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let body: Node = stmt.kids[1];
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || cond.name != "<" || cond.kids[0].kind != 34 {
+        return res;
+    }
+    let ctr: str = cond.kids[0].name;
+    let k: int = fix1_nearest_entry(stmts, pos, ctr);
+    if k < 0 {
+        return res;
+    }
+    if fix1_entry_stale(stmts, k, pos, ctr) {
+        return res;
+    }
+    let w: Node = stmts[k];
+    if w.kind != 10 && w.kind != 11 {
+        return res;
+    }
+    let entry: Node = w.kids[0];
+    if entry.kind != 25 || entry.ival < 0 {
+        return res;
+    }
+    let entry_lit: int = entry.ival;
+    if !fix1_counter_ok(body, ctr, "+") {
+        return res;
+    }
+    let bound_expr: Node = cond.kids[1];
+    let mut bound_kind: int = -1;
+    let mut bound_val: int = 0;
+    let mut bound_name: str = "";
+    if bound_expr.kind == 35 || bound_expr.kind == 33 {
+        bound_kind = 0;
+    } else if bound_expr.kind == 25 {
+        bound_kind = 1;
+        bound_val = bound_expr.ival;
+    } else if bound_expr.kind == 34 {
+        bound_kind = 2;
+        bound_name = bound_expr.name;
+        if fix1_write_count(body, bound_name) > 0 {
+            return res;
+        }
+    } else {
+        return res;
+    }
+    let cands: [str] = fix1_candidate_arrays(body, ctr, 0);
+    let mut i: int = 0;
+    while i < len(cands) {
+        let arr: str = cands[i];
+        if fix1_is_array_type(fix1_env_type(env, arr)) && fix1_array_ok(body, arr) {
+            let mut guard: str = "";
+            let mut ok: bool = true;
+            if bound_kind == 0 {
+                if !fix1_is_len_of(bound_expr, arr) {
+                    ok = false;
+                }
+            } else {
+                guard = fix1_guard_bound(arr, bound_kind, bound_val, bound_name, entry_lit, true, env);
+                if guard == "FAIL" || guard == "NEVER" {
+                    ok = false;
+                }
+            }
+            if ok {
+                let uses: Fix1Uses = fix1_collect_uses(body, arr, ctr, 0);
+                if len(uses.lines) > 0 {
+                    res = fix1_res_add_uses(res, uses);
+                    if guard != "" {
+                        res = fix1_res_add_guard(res, stmt.line, stmt.col, guard);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+// ---------- H1-D: descending while ----------
+
+fn fix1_try_h1d(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let body: Node = stmt.kids[1];
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || cond.name != ">" || cond.kids[0].kind != 34 {
+        return res;
+    }
+    let ctr: str = cond.kids[0].name;
+    let lexpr: Node = cond.kids[1];
+    let mut l_code: str = "";
+    let mut l_lo: int = 0;
+    let mut l_lok: int = 0;
+    if lexpr.kind == 25 {
+        if lexpr.ival < 0 {
+            return res;
+        }
+        l_code = itoa(lexpr.ival);
+        l_lo = lexpr.ival;
+        l_lok = 1;
+    } else if lexpr.kind == 34 {
+        let iv: [int] = fix1_env_interval(env, lexpr.name);
+        if iv[0] == 0 || iv[1] < 0 {
+            return res;
+        }
+        if fix1_write_count(body, lexpr.name) > 0 {
+            return res;
+        }
+        l_code = lexpr.name;
+        l_lo = iv[1];
+        l_lok = 1;
+    } else {
+        return res;
+    }
+    let k: int = fix1_nearest_entry(stmts, pos, ctr);
+    if k < 0 {
+        return res;
+    }
+    if fix1_entry_stale(stmts, k, pos, ctr) {
+        return res;
+    }
+    let w: Node = stmts[k];
+    if w.kind != 10 && w.kind != 11 {
+        return res;
+    }
+    let entry_expr: Node = w.kids[0];
+    let eiv: [int] = fix1_interval(entry_expr, env);
+    if eiv[2] == 0 {
+        return res;
+    }
+    if l_lok == 1 && eiv[3] <= l_lo {
+        return res;
+    }
+    if !fix1_counter_ok(body, ctr, "-") {
+        return res;
+    }
+    let e_code: str = fix1_c_expr(entry_expr);
+    let mut stable: bool = e_code != "";
+    if stable {
+        let evs: [str] = fix1_vars_in(entry_expr);
+        let mut vi: int = 0;
+        while vi < len(evs) {
+            let mut s: int = k + 1;
+            while s < pos {
+                if fix1_write_count(stmts[s], evs[vi]) > 0 {
+                    stable = false;
+                }
+                s = s + 1;
+            }
+            vi = vi + 1;
+        }
+    }
+    let singleton: bool = eiv[0] == 1 && eiv[1] == eiv[3];
+    if !stable && !singleton {
+        return res;
+    }
+    let mut e_val: str = e_code;
+    if singleton {
+        e_val = itoa(eiv[1]);
+    }
+    let cands: [str] = fix1_candidate_arrays(body, ctr, 1);
+    let mut i: int = 0;
+    while i < len(cands) {
+        let arr: str = cands[i];
+        if fix1_is_array_type(fix1_env_type(env, arr)) && fix1_array_ok(body, arr) {
+            let uses_k: Fix1Uses = fix1_collect_uses(body, arr, ctr, 0);
+            let uses: Fix1Uses = fix1_collect_uses(body, arr, ctr, 1);
+            if len(uses.lines) > 0 {
+                let mut cmp: str = ">";
+                if len(uses_k.lines) > 0 {
+                    cmp = ">=";
+                }
+                let mut guard: str = "";
+                if singleton {
+                    guard = "if (" + e_val + " > (" + l_code + ") && " + e_val + " " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+                } else {
+                    guard = "if ((" + e_val + ") > (" + l_code + ") && (" + e_val + ") " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+                }
+                let mut skip: bool = false;
+                if singleton && lexpr.kind == 25 && eiv[1] <= lexpr.ival {
+                    skip = true;
+                }
+                if !skip {
+                    res = fix1_res_add_uses(res, uses);
+                    res = fix1_res_add_guard(res, stmt.line, stmt.col, guard);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+// ---------- H2: for over range ----------
+
+fn fix1_try_h2(stmt: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let body: Node = stmt.kids[1];
+    let ctr: str = stmt.name;
+    let it: Node = stmt.kids[0];
+    let mut bound_kind: int = -1;
+    let mut bound_val: int = 0;
+    let mut bound_name: str = "";
+    let mut bound_node: Node = it;
+    let mut guard_kind: int = -1;
+    let mut start_lit: int = 0;
+    if it.kind == 35 && it.name == "range" && len(it.kids) == 1 {
+        guard_kind = 0;
+        let arg: Node = it.kids[0];
+        bound_node = arg;
+        if arg.kind == 25 {
+            bound_kind = 1;
+            bound_val = arg.ival;
+        } else if arg.kind == 34 {
+            bound_kind = 2;
+            bound_name = arg.name;
+            if fix1_write_count(body, bound_name) > 0 {
+                return res;
+            }
+        } else if arg.kind == 35 || arg.kind == 33 {
+            bound_kind = 0;
+        } else {
+            return res;
+        }
+    } else if it.kind == 38 {
+        guard_kind = 1;
+        if it.kids[0].kind != 25 || it.kids[0].ival < 0 {
+            return res;
+        }
+        start_lit = it.kids[0].ival;
+        let e: Node = it.kids[1];
+        bound_node = e;
+        if e.kind == 25 {
+            bound_kind = 1;
+            bound_val = e.ival;
+            if start_lit >= e.ival {
+                return res;
+            }
+        } else if e.kind == 34 {
+            bound_kind = 2;
+            bound_name = e.name;
+            if fix1_write_count(body, bound_name) > 0 {
+                return res;
+            }
+        } else if e.kind == 35 || e.kind == 33 {
+            bound_kind = 0;
+        } else {
+            return res;
+        }
+    } else {
+        return res;
+    }
+    if fix1_write_count(body, ctr) > 0 {
+        return res;
+    }
+    let cands: [str] = fix1_candidate_arrays(body, ctr, 0);
+    let mut i: int = 0;
+    while i < len(cands) {
+        let arr: str = cands[i];
+        if fix1_is_array_type(fix1_env_type(env, arr)) && fix1_array_ok(body, arr) {
+            let mut guard: str = "";
+            let mut ok: bool = true;
+            if bound_kind == 0 {
+                if !fix1_is_len_of(bound_node, arr) {
+                    ok = false;
+                }
+            } else if guard_kind == 0 {
+                guard = fix1_guard_bound(arr, bound_kind, bound_val, bound_name, 0, false, env);
+                if guard == "FAIL" || guard == "NEVER" {
+                    ok = false;
+                }
+                if bound_kind == 1 && bound_val <= 0 {
+                    ok = false;
+                }
+            } else {
+                guard = fix1_guard_bound(arr, bound_kind, bound_val, bound_name, start_lit, true, env);
+                if guard == "FAIL" || guard == "NEVER" {
+                    ok = false;
+                }
+            }
+            if ok {
+                let uses: Fix1Uses = fix1_collect_uses(body, arr, ctr, 0);
+                if len(uses.lines) > 0 {
+                    res = fix1_res_add_uses(res, uses);
+                    if guard != "" {
+                        res = fix1_res_add_guard(res, stmt.line, stmt.col, guard);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+// ---------- block analysis ----------
+
+fn fix1_apply_let(stmt: Node, env0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let name: str = stmt.name;
+    let ann: str = stmt.sval;
+    let init: Node = stmt.kids[0];
+    let mut t: str = ann;
+    if t == "" {
+        t = fix1_derive_type(init, env);
+    }
+    env = fix1_env_set_type(env, name, t);
+    env = fix1_env_set_interval(env, name, fix1_interval(init, env));
+    let n: int = fix1_sized_len(ann);
+    if n >= 0 {
+        env = fix1_env_set_sized(env, name, n);
+    } else if init.kind == 34 && fix1_env_sized(env, init.name) >= 0 {
+        env = fix1_env_set_sized(env, name, fix1_env_sized(env, init.name));
+    } else {
+        env = fix1_env_drop_sized(env, name);
+    }
+    return env;
+}
+
+fn fix1_drop_written(node: Node, env0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let names: [str] = fix1_written_names(node);
+    let mut i: int = 0;
+    while i < len(names) {
+        env = fix1_env_drop_interval(env, names[i]);
+        i = i + 1;
+    }
+    return env;
+}
+
+// R4 post-loop counter interval + stale intervals after a While.
+fn fix1_loop_exit(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = env0;
+    let body: Node = stmt.kids[1];
+    let cond: Node = stmt.kids[0];
+    let mut ctr: str = "";
+    let mut entry_lit: int = -1;
+    let mut bound_hi: int = 0;
+    let mut bound_has_hi: bool = false;
+    let mut bound_ok: bool = true;
+    if cond.kind == 40 && cond.name == "<" && cond.kids[0].kind == 34 {
+        ctr = cond.kids[0].name;
+        let k: int = fix1_nearest_entry(stmts, pos, ctr);
+        if k >= 0 {
+            let w: Node = stmts[k];
+            if (w.kind == 10 || w.kind == 11) && w.kids[0].kind == 25 && w.kids[0].ival >= 0 {
+                entry_lit = w.kids[0].ival;
+            }
+            // B1-FIX: a stale entry must not feed the R4 post-loop
+            // interval (it would poison later H1-D proofs).
+            if fix1_entry_stale(stmts, k, pos, ctr) {
+                entry_lit = -1;
+            }
+        }
+        let b: Node = cond.kids[1];
+        if b.kind == 25 {
+            bound_hi = b.ival;
+            bound_has_hi = true;
+        } else if b.kind == 34 {
+            let iv: [int] = fix1_env_interval(env, b.name);
+            if iv[2] == 1 {
+                bound_hi = iv[3];
+                bound_has_hi = true;
+            }
+            if fix1_write_count(body, b.name) > 0 {
+                bound_ok = false;
+            }
+        }
+    }
+    env = fix1_drop_written(body, env);
+    if ctr != "" && entry_lit >= 0 && bound_ok && fix1_counter_ok(body, ctr, "+") {
+        let mut hik: int = 0;
+        let mut hi: int = 0;
+        if bound_has_hi {
+            hik = 1;
+            hi = bound_hi;
+            if entry_lit > hi {
+                hi = entry_lit;
+            }
+        }
+        env = fix1_env_set_interval(env, ctr, [1, entry_lit, hik, hi]);
+    }
+    return env;
+}
+
+// Recurse into every Block under `node` (If arms, Match arms,
+// Scope bodies, bare blocks), analyzing each on a copy of env.
+// Blocks already entered by analyze_block itself are not passed
+// here (While/For bodies are handled by their own branches).
+fn fix1_recurse_blocks(node: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    if node.kind == 9 {
+        let pair: Fix1Pair = fix1_analyze_block(node.kids, env, res);
+        return pair.res;
+    }
+    let mut i: int = 0;
+    while i < len(node.kids) {
+        res = fix1_recurse_blocks(node.kids[i], env, res);
+        i = i + 1;
+    }
+    return res;
+}
+
+fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res) -> Fix1Pair {
+    let mut env: Fix1Env = env0;
+    let mut res: Fix1Res = res0;
+    let mut pos: int = 0;
+    while pos < len(stmts) {
+        let stmt: Node = stmts[pos];
+        if stmt.kind == 15 {
+            let before: int = len(res.cov_lines);
+            res = fix1_try_h1(stmt, stmts, pos, env, res);
+            if len(res.cov_lines) == before {
+                res = fix1_try_h1d(stmt, stmts, pos, env, res);
+            }
+            let pair: Fix1Pair = fix1_analyze_block(stmt.kids[1].kids, env, res);
+            res = pair.res;
+            env = fix1_loop_exit(stmt, stmts, pos, env);
+        } else if stmt.kind == 16 {
+            res = fix1_try_h2(stmt, env, res);
+            let pair: Fix1Pair = fix1_analyze_block(stmt.kids[1].kids, env, res);
+            res = pair.res;
+            env = fix1_drop_written(stmt.kids[1], env);
+            env = fix1_env_drop_interval(env, stmt.name);
+        } else if stmt.kind == 10 {
+            env = fix1_apply_let(stmt, env);
+        } else if stmt.kind == 11 {
+            let rhs: Node = stmt.kids[0];
+            env = fix1_env_set_interval(env, stmt.name, fix1_interval(rhs, env));
+            env = fix1_env_drop_sized(env, stmt.name);
+            if rhs.kind == 34 && fix1_env_sized(env, rhs.name) >= 0 {
+                env = fix1_env_set_sized(env, stmt.name, fix1_env_sized(env, rhs.name));
+            }
+        } else {
+            let mut i: int = 0;
+            while i < len(stmt.kids) {
+                res = fix1_recurse_blocks(stmt.kids[i], env, res);
+                i = i + 1;
+            }
+            env = fix1_drop_written(stmt, env);
+        }
+        pos = pos + 1;
+    }
+    return Fix1Pair { env: env, res: res };
+}
+
+fn fix1_analyze_node(n: Node, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    if n.kind == 2 {
+        if len(n.kids) == 0 {
+            return res;
+        }
+        let body: Node = n.kids[len(n.kids) - 1];
+        if body.kind != 9 {
+            return res;
+        }
+        let mut env: Fix1Env = fix1_env_new();
+        let mut i: int = 0;
+        while i < len(n.kids) - 1 {
+            let p: Node = n.kids[i];
+            if p.kind == 43 {
+                env = fix1_env_set_type(env, p.name, p.sval);
+                let sn: int = fix1_sized_len(p.sval);
+                if sn >= 0 {
+                    env = fix1_env_set_sized(env, p.name, sn);
+                }
+            }
+            i = i + 1;
+        }
+        let pair: Fix1Pair = fix1_analyze_block(body.kids, env, res);
+        return pair.res;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        res = fix1_analyze_node(n.kids[i], res);
+        i = i + 1;
+    }
+    return res;
+}
+
+fn fix1_analyze_program(prog: Node) -> Fix1Res {
+    let res: Fix1Res = fix1_res_new();
+    return fix1_analyze_node(prog, res);
+}
+
+// ---------- b1fix2: per-function tagging ----------
+//
+// BUG (found by the full suite, 13 Nov 2026): the pooled Fix1Res
+// keys proofs by bare (line, col), which is unique only within one
+// source file. In a merged program the same position in different
+// files collides, and fix1_tag_program stamped a guard proven for
+// one function's loop onto the loop at that position in other
+// functions — e.g. `if (3 > (cnt).len)` proven at demo line 57 was
+// also emitted in logreg_train and prf (line 57 in ml_classical.fg
+// and metrics.fg), where `cnt` is undeclared, so the C compiler
+// rejected the program. (A covered Index at a colliding position
+// would likewise have its check silently elided in the wrong file.)
+// Python never had this bug: its codegen keys proofs by id(node).
+//
+// FIX: analyze and tag ONE FUNCTION AT A TIME. The analysis already
+// runs with a fresh environment per FuncDef; only the pooling and
+// the global tag pass were cross-function. fix1_tag_function
+// analyzes a single FuncDef with a fresh Fix1Res and tags only
+// that FuncDef's subtree, so a (line, col) entry can only land on
+// nodes inside the function that proved it — and within one
+// function (one file) positions are unique. fix1_tag_program_fns
+// applies this to every FuncDef in the program (top-level or under
+// an ImplDef). The pooled fix1_analyze_program / fix1_tag_program
+// above are unchanged (lp_test still uses them for parity); the
+// pooled Fix1Res is single-file-only and production must not use
+// it — cg_fix1_run calls fix1_tag_program_fns.
+// Frame-neutral: no struct grows, no new HCodegen field; the new
+// walk has a small frame like fix1_tag_node, and fix1_tag_function
+// holds one Fix1Res per FuncDef, not nested.
+
+// Analyze one FuncDef with a fresh result and tag only its own
+// subtree. Returns the number of nodes tagged.
+fn fix1_tag_function(fn_node: Node) -> int {
+    let res: Fix1Res = fix1_analyze_node(fn_node, fix1_res_new());
+    return fix1_tag_node(fn_node, res);
+}
+
+// Walk `n`; on every FuncDef, analyze + tag that function only and
+// do not recurse into it; otherwise recurse into kids. Returns the
+// total number of nodes tagged.
+fn fix1_tag_functions(n: Node) -> int {
+    let mut tagged: int = 0;
+    if n.kind == 2 {
+        return fix1_tag_function(n);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        tagged = tagged + fix1_tag_functions(n.kids[i]);
+        i = i + 1;
+    }
+    return tagged;
+}
+
+// Tag the whole program's proofs, one function at a time.
+// Production entry point (called by cg_fix1_run); the pooled
+// fix1_tag_program above is lp_test-only.
+fn fix1_tag_program_fns(prog: Node) -> int {
+    return fix1_tag_functions(prog);
+}

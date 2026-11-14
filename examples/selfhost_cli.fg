@@ -295,7 +295,7 @@ fn import_source(path: str, dir: str) -> str {
 // program returns the previously emitted C verbatim, skipping
 // load + check + infer + codegen. See speed/step6_design.md.
 //
-// CACHE EPOCH RULE: bump the "step6a" literal in cache_prefix (and
+// CACHE EPOCH RULE: bump the "step6c" literal in cache_prefix (and
 // the seed constants in cache_seeds) on ANY change to the hosted
 // compiler sources. A stale epoch can serve C from an older
 // compiler. The version string is the backstop; the epoch is the
@@ -387,10 +387,12 @@ fn cache_digits_only(s: str) -> bool {
     return true;
 }
 
-// K1/K2 seeds, folding the freestanding flag and mode in so
-// different flags never share a cache filename. Bump the seed
-// constants with the epoch (see the rule above).
-fn cache_seeds(freestanding: bool, mode: str) -> [int] {
+// K1/K2 seeds, folding the freestanding flag, mode, and the Fix 1
+// B0 measurement toggles in so different flags never share a cache
+// filename. Bump the seed constants with the epoch (see the rule above).
+// (Epoch step6c, Fix 1 B1: hosted codegen gained the loop-proof
+// hoisting analysis + emission.)
+fn cache_seeds(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> [int] {
     let mut fs: int = 0;
     if freestanding {
         fs = 1;
@@ -399,19 +401,35 @@ fn cache_seeds(freestanding: bool, mode: str) -> [int] {
     if mode == "fast" {
         mode_n = 1;
     }
-    let mut k1: int = cache_mix(18652613, fs + mode_n * 2 + 1, 0, 1000003);
-    let mut k2: int = cache_mix(506952113, fs + mode_n * 2 + 1, 0, 999983);
+    let mut nb: int = 0;
+    if no_bounds_checks {
+        nb = 1;
+    }
+    let mut no: int = 0;
+    if no_overflow_checks {
+        no = 1;
+    }
+    let mut k1: int = cache_mix(18652631, fs + mode_n * 2 + nb * 4 + no * 8 + 1, 0, 1000003);
+    let mut k2: int = cache_mix(506952131, fs + mode_n * 2 + nb * 4 + no * 8 + 1, 0, 999983);
     return [k1, k2];
 }
 
-// Fingerprint prefix: version + epoch + flags. Bump "step6a" on
+// Fingerprint prefix: version + epoch + flags. Bump "step6c" on
 // ANY hosted-compiler change (see the rule above).
-fn cache_prefix(freestanding: bool, mode: str) -> str {
+fn cache_prefix(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
     let mut fs: int = 0;
     if freestanding {
         fs = 1;
     }
-    return "QASIDA6|2.2.0|step6a|fs=" + itoa(fs) + "|mode=" + mode + "|";
+    let mut nb: int = 0;
+    if no_bounds_checks {
+        nb = 1;
+    }
+    let mut no: int = 0;
+    if no_overflow_checks {
+        no = 1;
+    }
+    return "QASIDA6|2.2.0|step6c|fs=" + itoa(fs) + "|mode=" + mode + "|nb=" + itoa(nb) + "|no=" + itoa(no) + "|";
 }
 
 // Best-effort file write for cache files: try the write, and if
@@ -501,7 +519,7 @@ fn cache_verify_segments(fp: str, prefix: str) -> bool {
 // magic, the main path and the fingerprint prefix (version /
 // epoch / flags), re-hash every listed file, and only then read
 // the cache entry. Returns the cached C, or "" on any doubt.
-fn cache_manifest_lookup(path: str, freestanding: bool, mode: str) -> str {
+fn cache_manifest_lookup(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
     let mpath: str = cache_manifest_path(path);
     if !file_exists(mpath) {
         return "";
@@ -518,7 +536,7 @@ fn cache_manifest_lookup(path: str, freestanding: bool, mode: str) -> str {
         return "";
     }
     let fp: str = lines[2];
-    let prefix: str = cache_prefix(freestanding, mode);
+    let prefix: str = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks);
     if !starts_with(fp, prefix) {
         return "";
     }
@@ -682,7 +700,7 @@ fn parse_src(src: str) -> Node {
 // st_prog/st_dir/st_idx only ever grow by push, popping is
 // sp = sp - 1, so no trunc/pop helper is needed and no state is
 // threaded by value through recursion.
-fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str) -> Node {
+fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> Node {
     let src: str = read_file(path);
     // Slice A program cache: the AUTHORITATIVE fingerprint — one
     // segment per file the loader actually reads (main first, then
@@ -690,10 +708,10 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str) -> Node 
     // fp_box is a 1-element [str] out-param; it is updated ONLY by
     // index assignment (push on a shared array is CoW and would not
     // be visible to the caller — Step 3 pattern).
-    let seeds: [int] = cache_seeds(freestanding, mode);
+    let seeds: [int] = cache_seeds(freestanding, mode, no_bounds_checks, no_overflow_checks);
     let mut k1: int = seeds[0];
     let mut k2: int = seeds[1];
-    fp_box[0] = cache_prefix(freestanding, mode);
+    fp_box[0] = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks);
     let mh: [int] = cache_file_hash(path);
     fp_box[0] = fp_box[0] + path + "=" + itoa(mh[0]) + "," + itoa(mh[1]) + "," + itoa(mh[2]) + ";";
     k1 = cache_mix(k1, mh[0], mh[2], 1000003);
@@ -803,19 +821,19 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str) -> Node 
 // anything the lookup computed (see the design doc,
 // speed/step6_design.md §9). The manifest is stored alongside
 // the entry so the next run can find it.
-fn compile_to_c(path: str, freestanding: bool, mode: str) -> str {
-    let hit: str = cache_manifest_lookup(path, freestanding, mode);
+fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+    let hit: str = cache_manifest_lookup(path, freestanding, mode, no_bounds_checks, no_overflow_checks);
     if hit != "" {
         return hit;
     }
     let mut fp_box: [str] = [""];
-    let merged: Node = load_merged(path, fp_box, freestanding, mode);
+    let merged: Node = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks);
     let ok: bool = check_program(merged, freestanding);
     if !ok {
         fail_compile("check failed");
     }
     let inf: HInfer = run_infer(merged);
-    let c: str = codegen_program(merged, inf, freestanding);
+    let c: str = codegen_program(merged, inf, freestanding, no_bounds_checks, no_overflow_checks);
     let lfp: str = fp_box[0];
     if lfp != "" {
         let cpath2: str = cache_path_for(lfp);
@@ -971,6 +989,8 @@ fn choice_error(val: str, c1: str, c2: str, c3: str, label: str, usage: str, pro
 // program's exit code.
 fn cmd_run(argv: [str]) -> int {
     let mut mode: str = "safe";
+    let mut no_bounds_checks: bool = false;
+    let mut no_overflow_checks: bool = false;
     let mut file: str = "";
     let mut have_file: bool = false;
     let mut unknowns: [str] = [];
@@ -998,6 +1018,17 @@ fn cmd_run(argv: [str]) -> int {
                     return 2;
                 }
                 mode = fv.val;
+                continue;
+            }
+            // Fix 1 B0 measurement toggles (hidden, not in --help).
+            if tok == "--no-bounds-checks" {
+                no_bounds_checks = true;
+                i = i + 1;
+                continue;
+            }
+            if tok == "--no-overflow-checks" {
+                no_overflow_checks = true;
+                i = i + 1;
                 continue;
             }
             push(unknowns, tok);
@@ -1034,7 +1065,7 @@ fn cmd_run(argv: [str]) -> int {
         }
         prog_args = rest;
     }
-    let c: str = compile_to_c(file, false, mode);
+    let c: str = compile_to_c(file, false, mode, no_bounds_checks, no_overflow_checks);
     let stamp: str = itoa(clock_micros());
     let c_path: str = "/tmp/qasida_run_" + stamp + ".c";
     let prog: str = "/tmp/qasida_run_" + stamp;
@@ -1067,6 +1098,19 @@ fn cmd_run(argv: [str]) -> int {
     return rc;
 }
 
+// Fix 1 B0: ", no-bounds-checks" / ", no-overflow-checks" suffix
+// for the `built:` line, matching Python cli.py.
+fn built_suffix(no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+    let mut s: str = "";
+    if no_bounds_checks {
+        s = s + ", no-bounds-checks";
+    }
+    if no_overflow_checks {
+        s = s + ", no-overflow-checks";
+    }
+    return s;
+}
+
 // ---------- `check` / `emit` / `build` ----------
 
 // check <file> [--mode safe|fast] [--freestanding]
@@ -1079,6 +1123,8 @@ fn cmd_run(argv: [str]) -> int {
 fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
     let is_build: bool = cmd == "build";
     let mut mode: str = "safe";
+    let mut no_bounds_checks: bool = false;
+    let mut no_overflow_checks: bool = false;
     let mut freestanding: bool = false;
     let mut target: str = "native";
     let mut stack_top: str = "";
@@ -1114,6 +1160,18 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
             }
             if tok == "--shared" && is_build {
                 shared = true;
+                i = i + 1;
+                continue;
+            }
+            // Fix 1 B0 measurement toggles (hidden, not in --help;
+            // NOT on `check`, mirroring Python's argparse).
+            if cmd != "check" && tok == "--no-bounds-checks" {
+                no_bounds_checks = true;
+                i = i + 1;
+                continue;
+            }
+            if cmd != "check" && tok == "--no-overflow-checks" {
+                no_overflow_checks = true;
                 i = i + 1;
                 continue;
             }
@@ -1238,7 +1296,7 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
             fail_compile("--debug is not supported by the hosted driver yet");
         }
     }
-    let c: str = compile_to_c(file, freestanding, mode);
+    let c: str = compile_to_c(file, freestanding, mode, no_bounds_checks, no_overflow_checks);
     if cmd == "check" {
         println("ok: no errors");
         return 0;
@@ -1292,9 +1350,9 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         eprintln(cc_err);
     }
     if freestanding {
-        println("built: " + out + " (mode=" + mode + ", freestanding)");
+        println("built: " + out + " (mode=" + mode + ", freestanding" + built_suffix(no_bounds_checks, no_overflow_checks) + ")");
     } else {
-        println("built: " + out + " (mode=" + mode + ")");
+        println("built: " + out + " (mode=" + mode + built_suffix(no_bounds_checks, no_overflow_checks) + ")");
     }
     return 0;
 }

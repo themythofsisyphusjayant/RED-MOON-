@@ -1,0 +1,24 @@
+// Qasida - property-test generators (roadmap item 79).
+// Import with: import "propgen.fg";
+// The seeded-generator half of property testing (property.fg
+// already holds the checkers): deterministic generators over
+// rand.fg's LCG. Each returns (value, new seed) in the tuple
+// style of pool.fg, so callers thread the seed explicitly.
+// Seed 11: pg_int(1, 100) = 6, pg_bool = true,
+// pg_pick(["a", "b", "c", "d"]) = "a".
+import "rand.fg";
+
+fn pg_int(seed: int, lo: int, hi: int) -> (int, int) {
+    let s: int = rand_next(seed);
+    return (lo + s % (hi - lo + 1), s);
+}
+
+fn pg_bool(seed: int) -> (bool, int) {
+    let s: int = rand_next(seed);
+    return (s % 2 == 0, s);
+}
+
+fn pg_pick(seed: int, items: [str]) -> (str, int) {
+    let s: int = rand_next(seed);
+    return (items[s % len(items)], s);
+}

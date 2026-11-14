@@ -1,0 +1,170 @@
+// Qasida - regex-full (roadmap item 25).
+// Import with: import "regexfull.fg";
+// The regex.fg matcher (literals, '.', classes, *, +, ?) plus
+// the two missing pieces: alternation ('|' at top level or
+// inside a group) and one capture group '(...)'. v1 scope:
+// groups do not nest; a group holds literal alternatives.
+// rxf_search returns the first match start or -1;
+// rxf_group returns the first group's captured text or "".
+
+fn rxf_find_char(s: str, ch: str, from: int) -> int {
+    let mut i: int = from;
+    while i < len(s) {
+        if substr(s, i, 1) == ch {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rxf_split_top(pat: str) -> [str] {
+    let mut parts: [str] = [];
+    let mut depth: int = 0;
+    let mut cur: str = "";
+    let mut i: int = 0;
+    while i < len(pat) {
+        let c: str = substr(pat, i, 1);
+        if c == "(" {
+            depth = depth + 1;
+            cur = cur + c;
+        } else {
+            if c == ")" {
+                depth = depth - 1;
+                cur = cur + c;
+            } else {
+                if c == "|" && depth == 0 {
+                    push(parts, cur);
+                    cur = "";
+                } else {
+                    cur = cur + c;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    push(parts, cur);
+    return parts;
+}
+
+fn rxf_match_end(branch: str, text: str, ti: int) -> int {
+    let mut bi: int = 0;
+    let mut cur: int = ti;
+    while bi < len(branch) {
+        let c: str = substr(branch, bi, 1);
+        if c == "(" {
+            let close: int = rxf_find_char(branch, ")", bi + 1);
+            if close < 0 {
+                return -1;
+            }
+            let inner: str = substr(branch, bi + 1, close - bi - 1);
+            let alts: [str] = split(inner, "|");
+            let mut ok: bool = false;
+            let mut ai: int = 0;
+            while ai < len(alts) {
+                if ok == false && substr(text, cur, len(alts[ai])) == alts[ai] {
+                    cur = cur + len(alts[ai]);
+                    ok = true;
+                }
+                ai = ai + 1;
+            }
+            if ok == false {
+                return -1;
+            }
+            bi = close + 1;
+        } else {
+            if c == "." {
+                if cur >= len(text) {
+                    return -1;
+                }
+                cur = cur + 1;
+                bi = bi + 1;
+            } else {
+                if cur >= len(text) || substr(text, cur, 1) != c {
+                    return -1;
+                }
+                cur = cur + 1;
+                bi = bi + 1;
+            }
+        }
+    }
+    return cur;
+}
+
+fn rxf_match_cap(branch: str, text: str, ti: int) -> str {
+    let mut bi: int = 0;
+    let mut cur: int = ti;
+    let mut cap: str = "";
+    while bi < len(branch) {
+        let c: str = substr(branch, bi, 1);
+        if c == "(" {
+            let close: int = rxf_find_char(branch, ")", bi + 1);
+            if close < 0 {
+                return "";
+            }
+            let inner: str = substr(branch, bi + 1, close - bi - 1);
+            let alts: [str] = split(inner, "|");
+            let mut ok: bool = false;
+            let mut ai: int = 0;
+            while ai < len(alts) {
+                if ok == false && substr(text, cur, len(alts[ai])) == alts[ai] {
+                    cap = alts[ai];
+                    cur = cur + len(alts[ai]);
+                    ok = true;
+                }
+                ai = ai + 1;
+            }
+            if ok == false {
+                return "";
+            }
+            bi = close + 1;
+        } else {
+            if c == "." {
+                if cur >= len(text) {
+                    return "";
+                }
+                cur = cur + 1;
+                bi = bi + 1;
+            } else {
+                if cur >= len(text) || substr(text, cur, 1) != c {
+                    return "";
+                }
+                cur = cur + 1;
+                bi = bi + 1;
+            }
+        }
+    }
+    return cap;
+}
+
+fn rxf_search(pat: str, text: str) -> int {
+    let branches: [str] = rxf_split_top(pat);
+    let mut bi: int = 0;
+    while bi < len(branches) {
+        let mut start: int = 0;
+        while start <= len(text) {
+            if rxf_match_end(branches[bi], text, start) >= 0 {
+                return start;
+            }
+            start = start + 1;
+        }
+        bi = bi + 1;
+    }
+    return -1;
+}
+
+fn rxf_group(pat: str, text: str) -> str {
+    let branches: [str] = rxf_split_top(pat);
+    let mut bi: int = 0;
+    while bi < len(branches) {
+        let mut start: int = 0;
+        while start <= len(text) {
+            if rxf_match_end(branches[bi], text, start) >= 0 {
+                return rxf_match_cap(branches[bi], text, start);
+            }
+            start = start + 1;
+        }
+        bi = bi + 1;
+    }
+    return "";
+}

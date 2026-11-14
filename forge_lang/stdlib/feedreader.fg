@@ -1,0 +1,86 @@
+// Qasida - feed-reader (roadmap item 119).
+// Import with: import "feedreader.fg";
+// RSS/Atom reading over plain strings (no http_get in v1:
+// callers fetch the feed text themselves). Parses Atom
+// <entry> blocks: <title> and <link href='...'/> (single
+// quotes in v1, so no escapes are needed in .fg literals),
+// and tracks read/unread per entry. rss.fg covers RSS;
+// this is the Atom + read-tracking half.
+struct Feed {
+    titles: [str],
+    links: [str],
+    read: [int]
+}
+
+fn fr_find(hay: str, needle: str, from: int) -> int {
+    let mut i: int = from;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn fr_between(text: str, open: str, close: str, from: int) -> str {
+    let o: int = fr_find(text, open, from);
+    if o < 0 {
+        return "";
+    }
+    let start: int = o + len(open);
+    let c: int = fr_find(text, close, start);
+    if c < 0 {
+        return "";
+    }
+    return substr(text, start, c - start);
+}
+
+fn fr_parse(feed: str) -> Feed {
+    let mut titles: [str] = [];
+    let mut links: [str] = [];
+    let mut read: [int] = [];
+    let mut pos: int = 0;
+    while fr_find(feed, "<entry>", pos) >= 0 {
+        let e0: int = fr_find(feed, "<entry>", pos);
+        let e1: int = fr_find(feed, "</entry>", e0);
+        if e1 < 0 {
+            pos = len(feed);
+        } else {
+            let block: str = substr(feed, e0, e1 - e0);
+            push(titles, fr_between(block, "<title>", "</title>", 0));
+            let h0: int = fr_find(block, "href='", 0);
+            if h0 < 0 {
+                push(links, "");
+            } else {
+                let h1: int = fr_find(block, "'", h0 + 6);
+                if h1 < 0 {
+                    push(links, "");
+                } else {
+                    push(links, substr(block, h0 + 6, h1 - h0 - 6));
+                }
+            }
+            push(read, 0);
+            pos = e1 + 8;
+        }
+    }
+    return Feed { titles: titles, links: links, read: read };
+}
+
+fn fr_unread(f: Feed) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(f.read) {
+        if f.read[i] == 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn fr_mark_read(f: Feed, idx: int) -> Feed {
+    let mut read: [int] = f.read;
+    read[idx] = 1;
+    return Feed { titles: f.titles, links: f.links, read: read };
+}

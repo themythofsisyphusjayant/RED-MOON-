@@ -182,7 +182,7 @@ fn main() -> int {
         return 1;
     }
     let inf: HInfer = run_infer(merged);
-    let c: str = codegen_program(merged, inf, freestanding);
+    let c: str = codegen_program(merged, inf, freestanding, false, false);
     println(c);
     return 0;
 }

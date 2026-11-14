@@ -1,0 +1,85 @@
+// Qasida - table-store (roadmap item 20).
+// Import with: import "tablestore.fg";
+// File-backed tables: one file, a header line, then one
+// comma-separated row per line. NOT SQLite - honest name:
+// insert appends, select reads and filters in memory,
+// delete rewrites the file without the matching rows.
+// String equality on one column only in v1.
+
+import "fsutils.fg";
+
+// Non-empty lines of the file (header first).
+fn ts_lines(path: str) -> [str] {
+    let parts: [str] = split(read_file(path), "\n");
+    let mut out: [str] = [];
+    for p in parts {
+        if len(p) > 0 {
+            push(out, p);
+        }
+    }
+    return out;
+}
+
+fn ts_create(path: str, header: str) -> bool {
+    return write_file(path, header + "\n");
+}
+
+fn ts_insert(path: str, row: str) -> bool {
+    if !file_exists(path) {
+        return false;
+    }
+    return fs_append(path, row + "\n");
+}
+
+// All data rows (header skipped).
+fn ts_select_all(path: str) -> [str] {
+    let lines: [str] = ts_lines(path);
+    let mut out: [str] = [];
+    let mut i: int = 1;
+    while i < len(lines) {
+        push(out, lines[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ts_count(path: str) -> int {
+    return len(ts_select_all(path));
+}
+
+fn ts_select_where(path: str, col: int, value: str) -> [str] {
+    let rows: [str] = ts_select_all(path);
+    let mut out: [str] = [];
+    for r in rows {
+        let fields: [str] = split(r, ",");
+        if col < len(fields) {
+            if fields[col] == value {
+                push(out, r);
+            }
+        }
+    }
+    return out;
+}
+
+fn ts_delete_where(path: str, col: int, value: str) -> bool {
+    let lines: [str] = ts_lines(path);
+    if len(lines) == 0 {
+        return false;
+    }
+    let mut out: str = lines[0] + "\n";
+    let mut i: int = 1;
+    while i < len(lines) {
+        let fields: [str] = split(lines[i], ",");
+        let mut keep: bool = true;
+        if col < len(fields) {
+            if fields[col] == value {
+                keep = false;
+            }
+        }
+        if keep {
+            out = out + lines[i] + "\n";
+        }
+        i = i + 1;
+    }
+    return write_file(path, out);
+}

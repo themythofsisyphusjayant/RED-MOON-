@@ -1133,10 +1133,15 @@ def _resolve_newtype(t):
 
 
 class Codegen:
-    def __init__(self, program, mode="safe", debug=False, freestanding=False):
+    def __init__(self, program, mode="safe", debug=False, freestanding=False,
+                 no_bounds_checks=False, no_overflow_checks=False):
         self.program = program
         self.mode = mode
         self.freestanding = freestanding
+        # Fix 1 B0 (measurement toggles, hidden): safe mode only.
+        # In --mode fast both are no-ops (all checks already off).
+        self.no_bounds_checks = no_bounds_checks
+        self.no_overflow_checks = no_overflow_checks
         # --debug: emit #line directives mapping
         # generated C back to .fg files/lines, so
         # gdb (and readelf's line table) step through
@@ -1187,6 +1192,10 @@ class Codegen:
         self._check_cache = {}
         self._facts = {}
         self._let_stack = []
+        # Fix 1 B1: loop-proof results (loopproof.py), populated
+        # by generate(); empty until then (no proof => checks stay).
+        self._fix1_covered = set()
+        self._fix1_guards = {}
         # Structured concurrency: open scopes as (start-variable,
         # loop depth at entry). A scope joins every task spawned
         # while it is open (watermark into forge_threads); the
@@ -1194,6 +1203,18 @@ class Codegen:
         # from joining any thread twice.
         self.scope_stack = []
         self.scope_counter = 0
+
+    @property
+    def _bounds_on(self):
+        """True when array/string bounds checks are emitted (safe
+        mode with the --no-bounds-checks toggle off)."""
+        return self.mode == "safe" and not self.no_bounds_checks
+
+    @property
+    def _overflow_on(self):
+        """True when int +,-,* / unary - overflow checks are emitted
+        (safe mode with the --no-overflow-checks toggle off)."""
+        return self.mode == "safe" and not self.no_overflow_checks
 
     def owned_add(self, name, typ="str"):
         self.owned_stack[-1][name] = typ
@@ -1998,7 +2019,26 @@ class Codegen:
         return sorted(out, key=lambda t: t.count("["))
 
     def generate(self):
+        # Fix 1 B1: loop-proof hoisting analysis (loopproof.py).
+        # Total by construction; any unexpected failure means no
+        # proofs (checks stay) rather than a broken compile.
+        self._fix1_covered = set()
+        self._fix1_guards = {}
+        try:
+            from .loopproof import analyze_program
+            cov, guards = analyze_program(self.program)
+            self._fix1_covered = cov
+            self._fix1_guards = guards
+        except Exception:
+            self._fix1_covered = set()
+            self._fix1_guards = {}
         self.lines.append(FREESTANDING_HEADER if self.freestanding else HEADER)
+        # Fix 1 B0 traceability: the emitted C records which
+        # measurement toggles were on (top comment, §5).
+        if self.no_bounds_checks:
+            self.lines.append("/* qasida: no-bounds-checks */")
+        if self.no_overflow_checks:
+            self.lines.append("/* qasida: no-overflow-checks */")
         # Skip generic templates: only concrete structs are emitted.
         # self.structs is built from program.structs, which includes
         # templates; rebuild it from concrete structs only.
@@ -2651,7 +2691,7 @@ class Codegen:
             ti = f"__forge_sc{n}i{k}"
             tn = f"__forge_sc{n}n{k}"
             decls.append(f"const char *{ts} = {base}; long long {ti} = {idx}; ")
-            if self.mode == "safe":
+            if self._bounds_on:
                 decls.append(
                     f"long long {tn} = (long long)strlen({ts}); "
                     f"if ({ti} < 0 || {ti} >= {tn}) "
@@ -3016,7 +3056,11 @@ class Codegen:
                     self.emit(f"{c_type(et)} {tmp} = {val};")
                     self.emit_struct_own(tmp, et)
                     val = tmp
-                suffix = "" if self.mode == "safe" else "_fast"
+                # Fix 1 B1: a loop-proof-covered write uses the fast
+                # form, like --no-bounds-checks does.
+                suffix = "" if (self._bounds_on
+                                and id(stmt.base) not in self._fix1_covered) \
+                    else "_fast"
                 self.emit(f"forge_{self.struct_type_name(et)}_set{suffix}(&{base_code}, {idx}, {val});")
             elif self.is_array_type(et):
                 # Array element assignment: gain a reference for the
@@ -3037,12 +3081,14 @@ class Codegen:
                 itmp = f"__forge_si{self.assign_counter}"
                 self.assign_counter += 1
                 self.emit(f"long long {itmp} = {idx};")
-                if self.mode == "safe":
+                # Fix 1 B1: a loop-proof-covered write skips the
+                # inline bounds check (direct store below).
+                if self._bounds_on and id(stmt.base) not in self._fix1_covered:
                     self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
                               f"forge_fail(\"array index out of bounds\");")
                 self.emit(self.array_free_code(f"{base_code}.data[{itmp}]", et))
                 self.emit(f"{base_code}.data[{itmp}] = {val};")
-            elif self.mode == "safe":
+            elif self._bounds_on and id(stmt.base) not in self._fix1_covered:
                 self.emit(f"{SET_FN[et]}(&{base_code}, {idx}, {val});")
             else:
                 self.emit(f"({base_code}).data[{idx}] = {val};")
@@ -3280,6 +3326,13 @@ class Codegen:
             self.emit("continue;")
             return
         if isinstance(stmt, A.While):
+            # Fix 1 B1: hoisted pre-loop guard, if the loop-proof
+            # analysis recorded one for this loop. Only when bounds
+            # checks are on: in fast mode (or with the measurement
+            # toggle) the program must not trap at all.
+            if self._bounds_on:
+                for _g in self._fix1_guards.get(id(stmt), []):
+                    self.emit(_g)
             # A loop body runs many times: facts proven before the
             # loop may be stale by the second iteration, so no facts
             # cross a loop boundary in either direction.
@@ -3312,6 +3365,10 @@ class Codegen:
                 self.local_types[stmt.name] = "int"
                 rng_tmp = f"__forge_rng{self.arr_counter}"
                 self.arr_counter += 1
+                # Fix 1 B1: hoisted pre-loop guard (see While above).
+                if self._bounds_on:
+                    for _g in self._fix1_guards.get(id(stmt), []):
+                        self.emit(_g)
                 self.emit("{")
                 self.indent += 1
                 self.emit(f"ForgeRange {rng_tmp} = {self.gen_expr(stmt.expr)};")
@@ -3732,7 +3789,7 @@ class Codegen:
                 arr_t = c_type(self.expr_type(expr.base.base))
                 arr = self.gen_expr(expr.base.base)
                 idx = self.gen_expr(expr.base.index)
-                if self.mode == "safe":
+                if self._bounds_on:
                     fa_key = ("fa", arr, idx, expr.field)
                     fa_pure = (not self._subtree_has_call(expr.base.base)
                                and not self._subtree_has_call(expr.base.index))
@@ -3788,7 +3845,7 @@ class Codegen:
             if self.expr_type(expr.base) == "str":
                 base = self.gen_expr(expr.base)
                 idx = self.gen_expr(expr.index)
-                if self.mode == "safe":
+                if self._bounds_on:
                     key = ("str", base, idx)
                     if idx_pure and key in self._check_cache:
                         return f"forge_str_at_fast({base}, {idx})"
@@ -3799,8 +3856,14 @@ class Codegen:
             et = self.expr_type(expr)
             base = self.gen_expr(expr.base)
             idx = self.gen_expr(expr.index)
+            # Fix 1 B1: a loop-proof-covered use takes the existing
+            # fast-mode emission (no third emission path).
+            if self._bounds_on and id(expr) in self._fix1_covered:
+                if self.is_struct_type(et):
+                    return f"forge_{self.struct_type_name(et)}_get_fast({base}, {idx})"
+                return f"({base}).data[{idx}]"
             if self.is_struct_type(et):
-                if self.mode == "safe":
+                if self._bounds_on:
                     key = ("arr", base, idx)
                     if idx_pure and key in self._check_cache:
                         return f"forge_{self.struct_type_name(et)}_get_fast({base}, {idx})"
@@ -3812,7 +3875,7 @@ class Codegen:
                 # Array element: a shared refcounted value. Safe mode
                 # bounds-checks via temps (single evaluation); the
                 # caller gains a reference when storing it.
-                if self.mode == "safe":
+                if self._bounds_on:
                     key = ("arr", base, idx)
                     if idx_pure and key in self._check_cache:
                         return f"({base}).data[{idx}]"
@@ -3827,7 +3890,7 @@ class Codegen:
                             f"forge_fail(\"array index out of bounds\"); "
                             f"{tmp_a}.data[{tmp_i}]; }})")
                 return f"({base}).data[{idx}]"
-            if self.mode == "safe":
+            if self._bounds_on:
                 key = ("arr", base, idx)
                 if idx_pure and key in self._check_cache:
                     return f"({base}).data[{idx}]"
@@ -3887,7 +3950,7 @@ class Codegen:
                         f"if (!{temp}.ok) {{ {early} }} {temp}.value; }})")
             raise ForgeError("? expression was not checked as Option/Result")
         if isinstance(expr, A.UnaryOp):
-            if expr.op == "-" and self.expr_type(expr.expr) == "int" and self.mode == "safe":
+            if expr.op == "-" and self.expr_type(expr.expr) == "int" and self._overflow_on:
                 code = self.gen_expr(expr.expr)
                 iv = self._int_interval(expr.expr)
                 if iv is not None and iv[0] > self.INT_MIN:
@@ -3924,6 +3987,11 @@ class Codegen:
                 return f"(strcmp({left}, {right}) != 0)"
             if self.expr_type(expr.left) == "int" and self.expr_type(expr.right) == "int":
                 if self.mode == "safe":
+                    # Fix 1 B0: with --no-overflow-checks, +,-,*
+                    # emit plain C; /,% keep forge_div/forge_mod
+                    # (div-by-zero + INT_MIN/-1 live in the helper).
+                    if expr.op in ("+", "-", "*") and self.no_overflow_checks:
+                        return f"({left} {expr.op} {right})"
                     checked = {"+": "forge_add", "-": "forge_sub", "*": "forge_mul",
                                "/": "forge_div", "%": "forge_mod"}
                     if expr.op in checked:
@@ -4406,7 +4474,10 @@ class Codegen:
         raise ForgeError(f"unsupported expression {type(expr).__name__}")
 
 
-def generate(program, types, mode="safe", debug=False, freestanding=False):
-    gen = Codegen(program, mode=mode, debug=debug, freestanding=freestanding)
+def generate(program, types, mode="safe", debug=False, freestanding=False,
+             no_bounds_checks=False, no_overflow_checks=False):
+    gen = Codegen(program, mode=mode, debug=debug, freestanding=freestanding,
+                  no_bounds_checks=no_bounds_checks,
+                  no_overflow_checks=no_overflow_checks)
     gen.attach_types(types)
     return gen.generate()

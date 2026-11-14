@@ -1,0 +1,103 @@
+// Qasida - string-utils (roadmap item 26).
+// Import with: import "strutils.fg";
+// Case conversion, padding, title case and char counting.
+// (split / join / trim / starts_with / ends_with are builtins;
+// strings.fg covers repeat / word_count / csv_fields / lines_of.)
+// str_pad_left("42", 5, "0") = "00042"; str_upper("qasida") =
+// "QASIDA"; str_title("hello world") = "Hello World".
+
+fn str_upper_char(c: str) -> str {
+    let lower: str = "abcdefghijklmnopqrstuvwxyz";
+    let upper: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut j: int = 0;
+    while j < len(lower) {
+        if substr(lower, j, 1) == c {
+            return substr(upper, j, 1);
+        }
+        j = j + 1;
+    }
+    return c;
+}
+
+fn str_lower_char(c: str) -> str {
+    let lower: str = "abcdefghijklmnopqrstuvwxyz";
+    let upper: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut j: int = 0;
+    while j < len(upper) {
+        if substr(upper, j, 1) == c {
+            return substr(lower, j, 1);
+        }
+        j = j + 1;
+    }
+    return c;
+}
+
+fn str_upper(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        out = out + str_upper_char(substr(s, i, 1));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn str_lower(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        out = out + str_lower_char(substr(s, i, 1));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn str_pad_left(s: str, w: int, ch: str) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = ch + out;
+    }
+    return out;
+}
+
+fn str_pad_right(s: str, w: int, ch: str) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = out + ch;
+    }
+    return out;
+}
+
+fn str_title(s: str) -> str {
+    let mut out: str = "";
+    let mut cap: bool = true;
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == " " {
+            out = out + c;
+            cap = true;
+        } else {
+            if cap == true {
+                out = out + str_upper_char(c);
+                cap = false;
+            } else {
+                out = out + str_lower_char(c);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn str_count_char(s: str, ch: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == ch {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

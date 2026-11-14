@@ -1,0 +1,82 @@
+// Qasida - datetime format/parse (roadmap item 21).
+// Import with: import "datetime.fg";
+// Date/time formatting and parsing over dates.fg's calendar
+// math (dates.fg itself has no format or parse - that gap is
+// what this module fills). Dates are ISO "YYYY-MM-DD", times
+// are "HH:MM:SS", both zero-padded. Years 0-9999 in v1.
+
+fn dt_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    return "9";
+}
+
+fn dt_pad2(n: int) -> str {
+    if n < 10 {
+        return "0" + dt_digit(n);
+    }
+    return dt_digit(n / 10) + dt_digit(n % 10);
+}
+
+fn dt_pad4(n: int) -> str {
+    return dt_digit(n / 1000) + dt_digit(n / 100 % 10) + dt_digit(n / 10 % 10) + dt_digit(n % 10);
+}
+
+fn dt_format_date(y: int, m: int, d: int) -> str {
+    return dt_pad4(y) + "-" + dt_pad2(m) + "-" + dt_pad2(d);
+}
+
+fn dt_format_time(h: int, mi: int, s: int) -> str {
+    return dt_pad2(h) + ":" + dt_pad2(mi) + ":" + dt_pad2(s);
+}
+
+// Parse "YYYY-MM-DD" to [year, month, day].
+fn dt_parse_date(s: str) -> [int] {
+    let parts: [str] = split(s, "-");
+    if len(parts) != 3 {
+        fail("dt_parse_date: expected YYYY-MM-DD");
+    }
+    let mut out: [int] = [];
+    push(out, parse_int(parts[0]));
+    push(out, parse_int(parts[1]));
+    push(out, parse_int(parts[2]));
+    return out;
+}
+
+// Parse "HH:MM:SS" to [hour, minute, second].
+fn dt_parse_time(s: str) -> [int] {
+    let parts: [str] = split(s, ":");
+    if len(parts) != 3 {
+        fail("dt_parse_time: expected HH:MM:SS");
+    }
+    let mut out: [int] = [];
+    push(out, parse_int(parts[0]));
+    push(out, parse_int(parts[1]));
+    push(out, parse_int(parts[2]));
+    return out;
+}

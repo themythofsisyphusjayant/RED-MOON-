@@ -1,0 +1,25 @@
+// Api-mock demo — daily-ten 14 Nov 2026 (library track).
+// Verifies apimock.fg: a 3-route table (GET /users -> 200
+// "user-list", POST /users -> 201 "created", GET /stats ->
+// 200 "ok"); GET /nope is an unknown route -> 404, "".
+// Expected stdout:
+// 200
+// user-list
+// 201
+// 404
+// 3
+import "apimock.fg";
+
+fn main() {
+    let api: Api = Api {
+        methods: ["GET", "POST", "GET"],
+        paths: ["/users", "/users", "/stats"],
+        statuses: [200, 201, 200],
+        bodies: ["user-list", "created", "ok"]
+    };
+    println(api_status(api, "GET", "/users"));
+    println(api_body(api, "GET", "/users"));
+    println(api_status(api, "POST", "/users"));
+    println(api_status(api, "GET", "/nope"));
+    println(api_routes(api));
+}

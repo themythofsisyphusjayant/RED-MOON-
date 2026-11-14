@@ -167,6 +167,41 @@ def _hosted_bin():
     return os.environ.get("QASIDA_HOSTED_BIN") or HOSTED_DEFAULT
 
 
+def _raise_hosted_stack():
+    """Best-effort RLIMIT_STACK raise for the hosted compiler child.
+
+    Fix 1 B1-FIX (secondary): the hosted binary's codegen recursion
+    runs close to the default 8 MB stack (the B1 binary peaked at
+    8976 KB compiling the check wrapper, the pre-B1 binary at
+    8148 KB). forge.py execv's into the hosted binary, so raising
+    the soft limit here — before execv — raises it for the compiler
+    itself, and only for compiler invocations (never for user
+    programs built by it). Only ever raises, never lowers; capped
+    by the hard limit; any failure is silently ignored and the
+    execv still proceeds. Size via QASIDA_HOSTED_STACK_MB
+    (default 64).
+    """
+    try:
+        want_mb = int(os.environ.get("QASIDA_HOSTED_STACK_MB", "64"))
+    except ValueError:
+        want_mb = 64
+    if want_mb <= 0:
+        return
+    try:
+        import resource
+        want = want_mb * 1024 * 1024
+        soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
+        if soft == resource.RLIM_INFINITY or soft >= want:
+            return
+        new_soft = want if hard == resource.RLIM_INFINITY \
+            else min(want, hard)
+        if new_soft > soft:
+            resource.setrlimit(resource.RLIMIT_STACK,
+                               (new_soft, hard))
+    except (ValueError, OSError):
+        pass
+
+
 def main():
     argv = sys.argv[1:]
     # --python must come first: anywhere else it would be a subcommand
@@ -188,6 +223,7 @@ def main():
               "using Python fallback" % hosted, file=sys.stderr)
         _log_dispatch("python", "hosted binary missing", argv)
         return _run_python(argv, "hosted binary missing")
+    _raise_hosted_stack()
     os.execv(hosted, [hosted] + argv)
     return 1  # execv only returns on failure
 

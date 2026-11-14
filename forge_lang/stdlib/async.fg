@@ -1,0 +1,42 @@
+// Qasida - async-lite (roadmap item 69).
+// Import with: import "async.fg";
+// Structured concurrency over the spawn/scope primitives:
+// spawn runs a void fn of 0 or 1 int arg on a thread, and a
+// scope block joins every task spawned inside it. Workers
+// cannot return values - there is no shared-mutable state by
+// design - so results cross back to the main task through
+// files: a worker writes its marker file, and the scope join
+// guarantees the write finished before main reads it back.
+// async_run_markers is the built-in demo of that pattern;
+// async_result_path / async_store / async_load are the
+// helpers for demo-defined workers.
+
+fn async_result_path(tag: str) -> str {
+    return "/tmp/async_" + tag + ".txt";
+}
+
+fn async_store(path: str, text: str) -> bool {
+    return write_file(path, text);
+}
+
+fn async_load(path: str) -> str {
+    return read_file(path);
+}
+
+// Writes marker-1 / marker-2 depending on n (1 or 2).
+fn async_marker_worker(n: int) {
+    if n == 1 {
+        let ok: bool = write_file(async_result_path("marker-1"), "marker-1");
+    } else {
+        let ok: bool = write_file(async_result_path("marker-2"), "marker-2");
+    }
+}
+
+// Spawns both marker workers inside a scope, so both files
+// exist by the time this returns.
+fn async_run_markers() {
+    scope {
+        spawn async_marker_worker(1);
+        spawn async_marker_worker(2);
+    }
+}

@@ -1,0 +1,29 @@
+// Table-store demo — daily-ten 13 Nov 2026 (library track).
+// Verifies tablestore.fg (roadmap item 20): create a file
+// table, insert 3 rows, count/select/select-where, delete
+// one row by column value, count again.
+// Expected stdout:
+// 3
+// 3
+// 1,ana,10
+// 1
+// 2,bo,20
+// 2
+import "tablestore.fg";
+
+fn main() {
+    let path: str = "/tmp/ts_demo.txt";
+    ts_create(path, "id,name,score");
+    ts_insert(path, "1,ana,10");
+    ts_insert(path, "2,bo,20");
+    ts_insert(path, "3,cy,30");
+    println(ts_count(path));
+    let all: [str] = ts_select_all(path);
+    println(len(all));
+    println(all[0]);
+    let hit: [str] = ts_select_where(path, 1, "bo");
+    println(len(hit));
+    println(hit[0]);
+    ts_delete_where(path, 1, "bo");
+    println(ts_count(path));
+}

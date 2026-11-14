@@ -1,0 +1,22 @@
+// String-utils demo — daily-ten 14 Nov 2026 (library track).
+// Verifies strutils.fg: pad_left("42", 5, "0") = "00042",
+// pad_right("ab", 5, "*") = "ab***", upper("qasida") = "QASIDA",
+// lower("MOON") = "moon", title("hello world") = "Hello World",
+// count_char("banana", "a") = 3.
+// Expected stdout:
+// 00042
+// ab***
+// QASIDA
+// moon
+// Hello World
+// 3
+import "strutils.fg";
+
+fn main() {
+    println(str_pad_left("42", 5, "0"));
+    println(str_pad_right("ab", 5, "*"));
+    println(str_upper("qasida"));
+    println(str_lower("MOON"));
+    println(str_title("hello world"));
+    println(str_count_char("banana", "a"));
+}

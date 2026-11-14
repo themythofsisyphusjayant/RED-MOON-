@@ -1,0 +1,39 @@
+// Qasida - worker pool (roadmap item 71).
+// Import with: import "workerpool.fg";
+// A worker pool over the spawn/scope primitives: three workers
+// run on threads inside one scope (which joins them all), each
+// computing a fixed function of its input. Workers cannot
+// return values (no shared-mutable state by design), so results
+// cross back through files, the async.fg pattern: a worker
+// writes repeat_str("x", result) and the main task reads the
+// file length back. Files are pre-seeded with "pending" (length
+// 7) so a worker that never ran would show up in the output.
+import "strings.fg";
+
+fn wp_path(tag: str) -> str {
+    return "/tmp/wp_" + tag + ".txt";
+}
+
+fn wp_worker_square(n: int) {
+    let ok: bool = write_file(wp_path("square"), repeat_str("x", n * n));
+}
+
+fn wp_worker_cube(n: int) {
+    let ok: bool = write_file(wp_path("cube"), repeat_str("x", n * n * n));
+}
+
+fn wp_worker_double(n: int) {
+    let ok: bool = write_file(wp_path("double"), repeat_str("x", n * 2));
+}
+
+fn wp_run() {
+    scope {
+        spawn wp_worker_square(5);
+        spawn wp_worker_cube(3);
+        spawn wp_worker_double(7);
+    }
+}
+
+fn wp_result(tag: str) -> int {
+    return len(read_file(wp_path(tag)));
+}
