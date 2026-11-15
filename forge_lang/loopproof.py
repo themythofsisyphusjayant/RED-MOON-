@@ -561,6 +561,20 @@ def _loop_counter_facts(stmt, stmts, pos, env):
                 _lo, hi = env.interval_of(b.name)
                 return (ctr, (entry_lit, None if hi is None else hi - 1),
                         b.name)
+            if isinstance(b, A.BinOp):
+                # Fix 2 (a1): a BinOp bound (e.g. `n * n`) — the
+                # counter interval is [entry_lit, bhi - 1] when the
+                # bound's upper end is known and no var in the bound
+                # is written in the body (the bound is re-evaluated
+                # every iteration, so the outer env is valid for it
+                # only under that gate). No relational fact for a
+                # BinOp bound (no single bound var to relate to).
+                _blo, bhi = _interval(b, env)
+                if bhi is None:
+                    return None
+                if any(_write_sites(body, v) for v in _vars_in(b)):
+                    return None
+                return (ctr, (entry_lit, bhi - 1), None)
             return None
         if cond.op == ">":
             lexpr = cond.right
@@ -1127,6 +1141,141 @@ def _try_r1(stmt, stmts, pos, env):
     return triples
 
 
+# ------------------------------------------------------------------
+# Fix 2 (a2) + (b)
+# ------------------------------------------------------------------
+
+def _scan_o1_cond(stmt, env, plain):
+    """Fix 2 (a2): scan a While cond's bound BinOp(s) with the
+    pre-loop env. Only the bound (cond.right) is scanned, and only
+    when no var in it is written in the body — the bound is
+    re-evaluated every iteration, so the pre-loop env is valid for
+    it only under that gate. The counter (cond.left) is never
+    scanned: it varies across iterations. Reuses _scan_o1_uses, so
+    the Defer/Spawn skip applies automatically."""
+    cond = stmt.cond
+    if not (isinstance(cond, A.BinOp) and cond.op in ("<", ">")
+            and isinstance(cond.left, A.Var)):
+        return
+    bound = cond.right
+    if any(_write_sites(stmt.body, v) for v in _vars_in(bound)):
+        return
+    _scan_o1_uses(bound, env, plain)
+
+
+def _loop_runs_entry(stmt, env):
+    """Fix 2 (b): True when the loop provably runs >= 1 iteration
+    at first entry, judged with the env at the loop statement.
+    While `<`: counter's max entry value < bound's min; `>`:
+    counter's min > bound's max. For range(arg): arg >= 1. For
+    RangeLit s..e: s_hi < e_lo. For an IntLit iterable: value >= 1.
+    For a Var iterable: a sized array runs iff its length > 0, an
+    int count iff its interval lo >= 1. Anything else: False.
+    Uses the env at the loop statement (the first-entry env), NOT
+    the body env — the body env already assumes the loop runs,
+    which would be circular."""
+    if isinstance(stmt, A.While):
+        cond = stmt.cond
+        if not (isinstance(cond, A.BinOp)
+                and isinstance(cond.left, A.Var)):
+            return False
+        ctr_lo, ctr_hi = env.interval_of(cond.left.name)
+        blo, bhi = _interval(cond.right, env)
+        if cond.op == "<":
+            return (ctr_hi is not None and blo is not None
+                    and ctr_hi < blo)
+        if cond.op == ">":
+            return (ctr_lo is not None and bhi is not None
+                    and ctr_lo > bhi)
+        return False
+    if isinstance(stmt, A.For):
+        it = stmt.expr
+        if isinstance(it, A.Call) and it.name == "range" \
+                and len(it.args) == 1:
+            lo, _hi = _interval(it.args[0], env)
+            return lo is not None and lo >= 1
+        if isinstance(it, A.RangeLit):
+            _slo, shi = _interval(it.start, env)
+            elo, _ehi = _interval(it.end, env)
+            return (shi is not None and elo is not None
+                    and shi < elo)
+        if _is_intlit(it):
+            return it.value >= 1
+        if isinstance(it, A.Var):
+            n = env.sized.get(it.name)
+            if n is not None:
+                return n > 0
+            lo, _hi = env.interval_of(it.name)
+            return lo is not None and lo >= 1
+        return False
+    return False
+
+
+def _may_exit_early(node, loop_depth):
+    """Fix 2 (b): True when `node` can exit the enclosing function
+    or loop early — a Return anywhere, or a Break/Continue not
+    nested inside a loop of its own (loop_depth 0). While/For
+    bodies nest one level deeper."""
+    if isinstance(node, A.Return):
+        return True
+    if isinstance(node, (A.Break, A.Continue)) and loop_depth == 0:
+        return True
+    if isinstance(node, (A.While, A.For)):
+        return any(_may_exit_early(c, loop_depth + 1)
+                   for c in _children(node))
+    return any(_may_exit_early(c, loop_depth)
+               for c in _children(node))
+
+
+def _prefix_early_exit(body, child):
+    """Fix 2 (b): True when any statement in `body` before `child`
+    can exit early (see _may_exit_early). `child` must be a direct
+    child statement of `body`; when it is not found, return True
+    (block the move)."""
+    idx = None
+    for k, s in enumerate(body.stmts):
+        if s is child:
+            idx = k
+            break
+    if idx is None:
+        return True
+    return any(_may_exit_early(s, 0) for s in body.stmts[:idx])
+
+
+def _guard_move_target(loops, arr, free_vars, loop_runs):
+    """Fix 2 (b): the loop a guard recorded for loops[-1] should
+    attach to, walking outward while every crossed ancestor passes
+    the four gates: (1) the child loop is a direct child statement
+    of the ancestor's body, (2) the ancestor provably runs >= 1
+    iteration at first entry, (3) the array and every free var are
+    invariant in the ancestor's body, (4) no early exit in the
+    ancestor's body before the child loop. Returns the target loop
+    node; loops[-1] when no ancestor passes (B2 behavior)."""
+    if not loops:
+        return None
+    target = loops[-1]
+    # Walk outward: L = loops[j], child = loops[j+1].
+    for j in range(len(loops) - 2, -1, -1):
+        L = loops[j]
+        child = loops[j + 1]
+        # (1) child must be a direct child statement of L's body.
+        if not any(s is child for s in L.body.stmts):
+            break
+        # (2) L provably runs >= 1 iteration at first entry.
+        if not (loop_runs or {}).get(id(L), False):
+            break
+        # (3) the array and every free var are invariant in L's body.
+        if not _array_ok(L.body, arr):
+            break
+        if any(_write_sites(L.body, v) for v in free_vars):
+            break
+        # (4) no early exit in L's body before the child loop.
+        if _prefix_early_exit(L.body, child):
+            break
+        target = L
+    return target
+
+
 def _loop_ctx(loops, arr, env):
     """Innermost enclosing loop for an R-use on array `arr`:
     (loop node, body) when the array is a plain local of array type
@@ -1143,9 +1292,12 @@ def _loop_ctx(loops, arr, env):
     return (loop, body)
 
 
-def _try_r2(ix, env, loops, covered, guards, plain, idx_guards):
+def _try_r2(ix, env, loops, covered, guards, plain, idx_guards,
+            loop_runs=None):
     """B2 R2 — `a[i % n]`. Records coverage + loop guard + the `%`
-    in `plain`; returns True when proven."""
+    in `plain`; returns True when proven. Fix 2 (b): the guard is
+    recorded on the move target (outermost provably-running,
+    invariant ancestor), not unconditionally on loops[-1]."""
     if id(ix) in covered or not isinstance(ix.base, A.Var):
         return False
     arr = ix.base.name
@@ -1176,7 +1328,9 @@ def _try_r2(ix, env, loops, covered, guards, plain, idx_guards):
     if isinstance(nnode, A.Var) and _write_sites(body, nnode.name):
         return False
     covered.add(id(ix))
-    guards.setdefault(id(loop), []).append(
+    free_vars = [nnode.name] if isinstance(nnode, A.Var) else []
+    target = _guard_move_target(loops, arr, free_vars, loop_runs)
+    guards.setdefault(id(target), []).append(
         f"if ({ncode} > ({arr}).len) {FAIL_MSG};")
     plain.add(id(idx))
     return True
@@ -1201,9 +1355,12 @@ def _lt_n(var, nnode, env):
     return False
 
 
-def _try_r3(ix, env, loops, covered, guards, plain, idx_guards):
+def _try_r3(ix, env, loops, covered, guards, plain, idx_guards,
+            loop_runs=None):
     """B2 R3 — `a[i*n+k]` (and the `k+i*n` / `n*i` orders).
-    Records coverage + loop guard + the `*` and `+` in `plain`."""
+    Records coverage + loop guard + the `*` and `+` in `plain`.
+    Fix 2 (b): the guard is recorded on the move target, not
+    unconditionally on loops[-1]."""
     if id(ix) in covered or not isinstance(ix.base, A.Var):
         return False
     arr = ix.base.name
@@ -1253,17 +1410,22 @@ def _try_r3(ix, env, loops, covered, guards, plain, idx_guards):
     if ncode is None:
         return False
     covered.add(id(ix))
-    guards.setdefault(id(loop), []).append(
+    free_vars = [nnode.name] if isinstance(nnode, A.Var) else []
+    target = _guard_move_target(loops, arr, free_vars, loop_runs)
+    guards.setdefault(id(target), []).append(
         f"if ({ncode} * {ncode} > ({arr}).len) {FAIL_MSG};")
     plain.add(id(mul))
     plain.add(id(idx))
     return True
 
 
-def _try_r5(ix, env, loops, covered, guards, plain, idx_guards):
+def _try_r5(ix, env, loops, covered, guards, plain, idx_guards,
+            loop_runs=None):
     """B2 R5 — `a[e]` with a proven absolute interval [lo, hi],
     lo >= 0. In a loop the guard goes before the innermost loop;
-    straight-line it rides with the use (idx_guards)."""
+    straight-line it rides with the use (idx_guards). Fix 2 (b):
+    the loop guard is recorded on the move target, not
+    unconditionally on loops[-1]."""
     if id(ix) in covered or not isinstance(ix.base, A.Var):
         return False
     arr = ix.base.name
@@ -1278,7 +1440,8 @@ def _try_r5(ix, env, loops, covered, guards, plain, idx_guards):
         if not _array_ok(body, arr):
             return False
         covered.add(id(ix))
-        guards.setdefault(id(loop), []).append(guard)
+        target = _guard_move_target(loops, arr, [], loop_runs)
+        guards.setdefault(id(target), []).append(guard)
     else:
         covered.add(id(ix))
         idx_guards[id(ix)] = guard
@@ -1388,7 +1551,8 @@ def _scan_o1_uses(node, env, plain):
         _scan_o1_uses(c, env, plain)
 
 
-def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
+def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards,
+                 loop_runs=None):
     """B2: scan a statement's OWN expressions for R2/R3/R5 uses
     with the current env. Does not descend into Block subtrees
     (analysed separately, with narrowed / loop-body envs) or
@@ -1403,7 +1567,7 @@ def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
     if isinstance(node, (list, tuple)):
         for item in node:
             _scan_r_uses(item, env, loops, covered, guards, plain,
-                         idx_guards)
+                         idx_guards, loop_runs)
         return
     if not hasattr(node, "__dataclass_fields__"):
         return
@@ -1411,24 +1575,25 @@ def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
         return
     if isinstance(node, A.FieldAccess) and isinstance(node.base, A.Index):
         _scan_r_uses(node.base.index, env, loops, covered, guards,
-                     plain, idx_guards)
+                     plain, idx_guards, loop_runs)
         _scan_r_uses(node.base.base, env, loops, covered, guards,
-                     plain, idx_guards)
+                     plain, idx_guards, loop_runs)
         return
     if isinstance(node, A.Index):
         if isinstance(node.base, A.Var):
             if not _try_r2(node, env, loops, covered, guards, plain,
-                           idx_guards):
+                           idx_guards, loop_runs):
                 if not _try_r3(node, env, loops, covered, guards,
-                               plain, idx_guards):
+                               plain, idx_guards, loop_runs):
                     _try_r5(node, env, loops, covered, guards, plain,
-                            idx_guards)
+                            idx_guards, loop_runs)
         for c in _children(node):
             _scan_r_uses(c, env, loops, covered, guards, plain,
-                         idx_guards)
+                         idx_guards, loop_runs)
         return
     for c in _children(node):
-        _scan_r_uses(c, env, loops, covered, guards, plain, idx_guards)
+        _scan_r_uses(c, env, loops, covered, guards, plain, idx_guards,
+                     loop_runs)
 
 
 # ------------------------------------------------------------------
@@ -1436,7 +1601,7 @@ def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
 # ------------------------------------------------------------------
 
 def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
-                   loops=None):
+                   loops=None, loop_runs=None):
     """Analyze stmts in order, threading `env` (mutated in place
     for this block's own copy). Nested blocks are analyzed on
     copies; their lets never leak out. `loops` is the stack of
@@ -1446,9 +1611,14 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
     statement's own env update); loop bodies are entered on the
     loop-body env (body-written intervals dropped, counted-loop
     facts applied); If arms are entered with the condition's facts
-    (extended _cond_fact, singleton var-vs-var included)."""
+    (extended _cond_fact, singleton var-vs-var included). Fix 2
+    (b): `loop_runs` maps id(loop) -> whether the loop provably
+    runs >= 1 iteration at first entry; it is shared (one dict
+    per function) across every nested block."""
     if loops is None:
         loops = []
+    if loop_runs is None:
+        loop_runs = {}
     for pos, stmt in enumerate(stmts):
         if isinstance(stmt, A.While):
             triples = []
@@ -1470,10 +1640,22 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
                         guards.setdefault(id(stmt), []).append(g)
             except Exception:
                 pass
+            # Fix 2 (b): record whether this loop provably runs
+            # >= 1 iteration at first entry (env at the loop
+            # statement). Fix 2 (a2): scan the cond's bound
+            # BinOp(s) with the pre-loop env.
+            try:
+                loop_runs[id(stmt)] = _loop_runs_entry(stmt, env)
+            except Exception:
+                loop_runs[id(stmt)] = False
+            try:
+                _scan_o1_cond(stmt, env, plain)
+            except Exception:
+                pass
             # Recurse into the body on the loop-body env.
             benv = _body_env(stmt, stmts, pos, env)
             _analyze_block(stmt.body.stmts, benv, covered, guards,
-                           plain, idx_guards, loops + [stmt])
+                           plain, idx_guards, loops + [stmt], loop_runs)
             # Post-loop counter fact (R4) + stale intervals.
             _apply_loop_exit(stmt, stmts, pos, env)
         elif isinstance(stmt, A.For):
@@ -1493,9 +1675,14 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
                         guards.setdefault(id(stmt), []).append(g)
             except Exception:
                 pass
+            # Fix 2 (b): entry verdict for the For loop.
+            try:
+                loop_runs[id(stmt)] = _loop_runs_entry(stmt, env)
+            except Exception:
+                loop_runs[id(stmt)] = False
             benv = _body_env(stmt, stmts, pos, env)
             _analyze_block(stmt.body.stmts, benv, covered, guards,
-                           plain, idx_guards, loops + [stmt])
+                           plain, idx_guards, loops + [stmt], loop_runs)
             _drop_written_intervals(stmt.body, env)
             env.drop_interval(stmt.name)
             env.drop_rel(stmt.name)
@@ -1504,7 +1691,7 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             # then analyse each arm with the condition's facts.
             try:
                 _scan_r_uses(stmt.cond, env, loops, covered, guards,
-                             plain, idx_guards)
+                             plain, idx_guards, loop_runs)
             except Exception:
                 pass
             # B3: same site for the O1 scan.
@@ -1524,21 +1711,22 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             if fact is not None:
                 _narrow_env(then_env, fact[0], fact[1], fact[2])
             _analyze_block(stmt.then.stmts, then_env, covered, guards,
-                           plain, idx_guards, loops)
+                           plain, idx_guards, loops, loop_runs)
             if stmt.els is not None:
                 else_env = env.copy()
                 fact = _cond_fact_lp(stmt.cond, env, False)
                 if fact is not None:
                     _narrow_env(else_env, fact[0], fact[1], fact[2])
                 _analyze_block(stmt.els.stmts, else_env, covered,
-                               guards, plain, idx_guards, loops)
+                               guards, plain, idx_guards, loops,
+                               loop_runs)
             _drop_written_intervals(stmt, env)
             if reset is not None:
                 env.set_interval(reset[0], reset[1])
         elif isinstance(stmt, A.Let):
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
-                             idx_guards)
+                             idx_guards, loop_runs)
             except Exception:
                 pass
             try:
@@ -1551,7 +1739,7 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
         elif isinstance(stmt, A.Assign):
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
-                             idx_guards)
+                             idx_guards, loop_runs)
             except Exception:
                 pass
             try:
@@ -1575,7 +1763,7 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             # vars it writes.
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
-                             idx_guards)
+                             idx_guards, loop_runs)
             except Exception:
                 pass
             try:
@@ -1585,7 +1773,8 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             for child in _children(stmt):
                 if isinstance(child, A.Block):
                     _analyze_block(child.stmts, env.copy(), covered,
-                                   guards, plain, idx_guards, loops)
+                                   guards, plain, idx_guards, loops,
+                                   loop_runs)
             _drop_written_intervals(stmt, env)
     return env
 
@@ -1711,8 +1900,10 @@ def analyze_program(program):
                 n = _sized_len(ptype)
                 if n is not None:
                     env.sized[pname] = n
+            # Fix 2 (b): one shared loop_runs dict per function.
+            loop_runs = {}
             _analyze_block(body.stmts, env, covered, guards, plain,
-                           idx_guards)
+                           idx_guards, loop_runs=loop_runs)
         except Exception:
             # Totality: a failure in one function must never break
             # compilation of the rest (its loops simply keep checks).

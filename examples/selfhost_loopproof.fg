@@ -59,6 +59,12 @@ struct Fix1Res {
     ig_lines: [int];
     ig_cols: [int];
     ig_guards: [str];
+    // Fix 2 (b): first-entry run verdicts per loop position —
+    // run_vals[i] is 1 when the loop at (run_lines[i],
+    // run_cols[i]) provably runs >= 1 iteration at first entry.
+    run_lines: [int];
+    run_cols: [int];
+    run_vals: [int];
 }
 
 struct Fix1Pair {
@@ -123,7 +129,7 @@ fn fix1_env_deep_copy(env0: Fix1Env) -> Fix1Env {
 }
 
 fn fix1_res_new() -> Fix1Res {
-    return Fix1Res { cov_lines: [], cov_cols: [], guard_lines: [], guard_cols: [], guards: [], plain_lines: [], plain_cols: [], ig_lines: [], ig_cols: [], ig_guards: [] };
+    return Fix1Res { cov_lines: [], cov_cols: [], guard_lines: [], guard_cols: [], guards: [], plain_lines: [], plain_cols: [], ig_lines: [], ig_cols: [], ig_guards: [], run_lines: [], run_cols: [], run_vals: [] };
 }
 
 fn fix1_is_var(n: Node, name: str) -> bool {
@@ -980,6 +986,20 @@ fn fix1_vars_in(n: Node) -> [str] {
     return out;
 }
 
+// Fix 2 (a1)/(a2): true when no var appearing in `bound` is
+// written anywhere in `body`.
+fn fix1_bound_vars_invariant(bound: Node, body: Node) -> bool {
+    let vars: [str] = fix1_vars_in(bound);
+    let mut i: int = 0;
+    while i < len(vars) {
+        if fix1_write_count(body, vars[i]) > 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // Does `node`'s index form match the covered shape? mode 0:
 // exactly Var(ctr). mode 1: Var(ctr) or (ctr - 1).
 fn fix1_index_matches(ix: Node, ctr: str, mode: int) -> bool {
@@ -1102,6 +1122,37 @@ fn fix1_res_add_guard(res0: Fix1Res, line: int, col: int, guard: str) -> Fix1Res
     push(res.guard_cols, col);
     push(res.guards, guard);
     return res;
+}
+
+// Fix 2 (b): record a loop's first-entry run verdict (val 1 =
+// provably runs >= 1 iteration). First entry wins; a loop
+// statement is analysed exactly once per function.
+fn fix1_res_add_run(res0: Fix1Res, line: int, col: int, val: int) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let mut i: int = 0;
+    while i < len(res.run_lines) {
+        if res.run_lines[i] == line && res.run_cols[i] == col {
+            return res;
+        }
+        i = i + 1;
+    }
+    push(res.run_lines, line);
+    push(res.run_cols, col);
+    push(res.run_vals, val);
+    return res;
+}
+
+// Fix 2 (b): the recorded run verdict for the loop at
+// (line, col); false when absent (no verdict recorded).
+fn fix1_res_runs(res: Fix1Res, line: int, col: int) -> bool {
+    let mut i: int = 0;
+    while i < len(res.run_lines) {
+        if res.run_lines[i] == line && res.run_cols[i] == col {
+            return res.run_vals[i] == 1;
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // B2: a plain BinOp position (R2 '%' / R3 '*' and '+').
@@ -1843,6 +1894,34 @@ fn fix1_body_env(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env 
                 }
             }
         }
+        // Fix 2 (a1): a BinOp bound (e.g. `n * n`) — the counter
+        // interval is [lo, hi-1] when the bound's upper end is
+        // known and no var in the bound is written in the body.
+        // No rel fact for a BinOp bound. Mirrors Python
+        // _loop_counter_facts. The hi clamp matches the Var
+        // branch above (never-runs loops only; the body never
+        // executes then).
+        if cond.kind == 40 && cond.name == "<" && cond.kids[0].kind == 34 && cond.kids[1].kind == 40 {
+            let ctr: str = cond.kids[0].name;
+            let k: int = fix1_nearest_entry(stmts, pos, ctr);
+            let mut ok: bool = false;
+            let mut lo: int = 0;
+            if k >= 0 {
+                let w: Node = stmts[k];
+                if (w.kind == 10 || w.kind == 11) && w.kids[0].kind == 25 && w.kids[0].ival >= 0 && !fix1_entry_stale(stmts, k, pos, ctr) {
+                    lo = w.kids[0].ival;
+                    ok = true;
+                }
+            }
+            let biv: [int] = fix1_interval(cond.kids[1], env);
+            if ok && biv[2] == 1 && fix1_counter_ok(body, ctr, "+") && fix1_bound_vars_invariant(cond.kids[1], body) {
+                let mut hi: int = biv[3] - 1;
+                if hi < lo {
+                    hi = lo;
+                }
+                env = fix1_env_set_interval(env, ctr, [1, lo, 1, hi]);
+            }
+        }
         // H1-D: while ctr > L -> ctr in [L_lo+1, hi_E].
         if cond.kind == 40 && cond.name == ">" && cond.kids[0].kind == 34 && cond.kids[1].kind == 34 {
             let ctr: str = cond.kids[0].name;
@@ -2159,6 +2238,174 @@ fn fix1_try_r1(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res)
     return res;
 }
 
+// Fix 2 (b): true when the loop provably runs >= 1 iteration at
+// first entry, judged with the env at the loop statement. While
+// `<`: counter's max entry value < bound's min; `>`: counter's
+// min > bound's max. For range(arg): arg >= 1. For RangeLit s..e:
+// s_hi < e_lo. For an IntLit iterable: value >= 1. For a Var
+// iterable: a sized array runs iff its length > 0, an int count
+// iff its interval lo >= 1. Anything else: false. Uses the env at
+// the loop statement (the first-entry env), NOT the body env —
+// the body env already assumes the loop runs, which would be
+// circular. Mirrors Python _loop_runs_entry.
+fn fix1_loop_runs(stmt: Node, env: Fix1Env) -> bool {
+    if stmt.kind == 15 {
+        let cond: Node = stmt.kids[0];
+        if cond.kind != 40 || cond.kids[0].kind != 34 {
+            return false;
+        }
+        let civ: [int] = fix1_env_interval(env, cond.kids[0].name);
+        let biv: [int] = fix1_interval(cond.kids[1], env);
+        if cond.name == "<" {
+            return civ[2] == 1 && biv[0] == 1 && civ[3] < biv[1];
+        }
+        if cond.name == ">" {
+            return civ[0] == 1 && biv[2] == 1 && civ[1] > biv[3];
+        }
+        return false;
+    }
+    if stmt.kind == 16 {
+        let it: Node = stmt.kids[0];
+        if it.kind == 35 && it.name == "range" && len(it.kids) == 1 {
+            let aiv: [int] = fix1_interval(it.kids[0], env);
+            return aiv[0] == 1 && aiv[1] >= 1;
+        }
+        if it.kind == 38 {
+            let siv: [int] = fix1_interval(it.kids[0], env);
+            let eiv: [int] = fix1_interval(it.kids[1], env);
+            return siv[2] == 1 && eiv[0] == 1 && siv[3] < eiv[1];
+        }
+        if it.kind == 25 {
+            return it.ival >= 1;
+        }
+        if it.kind == 34 {
+            let sn: int = fix1_env_sized(env, it.name);
+            if sn >= 0 {
+                return sn > 0;
+            }
+            let iv: [int] = fix1_env_interval(env, it.name);
+            return iv[0] == 1 && iv[1] >= 1;
+        }
+        return false;
+    }
+    return false;
+}
+
+// Fix 2 (b): true when `node` can exit the enclosing function or
+// loop early: a Return anywhere, or a Break/Continue not nested
+// inside a loop of its own (depth 0). While/For bodies nest one
+// level deeper. Node kinds: Return 17, Break 18, Continue 19,
+// While 15, For 16. Mirrors Python _may_exit_early.
+fn fix1_may_exit_early(node: Node, depth: int) -> bool {
+    if node.kind == 17 {
+        return true;
+    }
+    if (node.kind == 18 || node.kind == 19) && depth == 0 {
+        return true;
+    }
+    if node.kind == 15 || node.kind == 16 {
+        let mut i: int = 0;
+        while i < len(node.kids) {
+            if fix1_may_exit_early(node.kids[i], depth + 1) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(node.kids) {
+        if fix1_may_exit_early(node.kids[i], depth) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Fix 2 (b): true when any statement in `body` before `child`
+// can exit early. `child` is identified by (line, col); when it
+// is not a direct child statement of `body`, return true (block
+// the move). Mirrors Python _prefix_early_exit.
+fn fix1_prefix_early_exit(body: Node, child: Node) -> bool {
+    let mut idx: int = -1;
+    let mut i: int = 0;
+    while i < len(body.kids) {
+        if body.kids[i].line == child.line && body.kids[i].col == child.col {
+            idx = i;
+        }
+        i = i + 1;
+    }
+    if idx < 0 {
+        return true;
+    }
+    i = 0;
+    while i < idx {
+        if fix1_may_exit_early(body.kids[i], 0) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Fix 2 (b): the loop a guard recorded for the innermost loop
+// should attach to, walking outward while every crossed ancestor
+// passes the four gates: (1) the child loop is a direct child
+// statement of the ancestor's body, (2) the ancestor provably
+// runs >= 1 iteration at first entry, (3) the array and every
+// free var are invariant in the ancestor's body, (4) no early
+// exit in the ancestor's body before the child loop. Returns the
+// target loop node; the innermost loop when no ancestor passes
+// (B2 behavior). Mirrors Python _guard_move_target.
+fn fix1_guard_move_target(loops: [Node], arr: str, free_vars: [str], res: Fix1Res) -> Node {
+    let mut target: Node = loops[len(loops) - 1];
+    let mut j: int = len(loops) - 2;
+    while j >= 0 {
+        let l: Node = loops[j];
+        let child: Node = loops[j + 1];
+        let lbody: Node = l.kids[1];
+        // (1) child must be a direct child statement of L's body.
+        let mut is_child: bool = false;
+        let mut ci: int = 0;
+        while ci < len(lbody.kids) {
+            if lbody.kids[ci].line == child.line && lbody.kids[ci].col == child.col {
+                is_child = true;
+            }
+            ci = ci + 1;
+        }
+        if !is_child {
+            return target;
+        }
+        // (2) L provably runs >= 1 iteration at first entry.
+        if !fix1_res_runs(res, l.line, l.col) {
+            return target;
+        }
+        // (3) the array and every free var are invariant in L's body.
+        if !fix1_array_ok(lbody, arr) {
+            return target;
+        }
+        let mut vi: int = 0;
+        let mut inv: bool = true;
+        while vi < len(free_vars) {
+            if fix1_write_count(lbody, free_vars[vi]) > 0 {
+                inv = false;
+            }
+            vi = vi + 1;
+        }
+        if !inv {
+            return target;
+        }
+        // (4) no early exit in L's body before the child loop.
+        if fix1_prefix_early_exit(lbody, child) {
+            return target;
+        }
+        target = l;
+        j = j - 1;
+    }
+    return target;
+}
+
 // B2 (R2): `a[i % n]` — i >= 0, n > 0 proven, guard
 // `n <= len(a)` on the innermost loop. The '%' node goes plain.
 fn fix1_try_r2(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res {
@@ -2208,7 +2455,15 @@ fn fix1_try_r2(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
     }
     let ncode: str = fix1_c_expr(idx.kids[1]);
     let guard: str = "if (" + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
-    res = fix1_res_add_guard(res, loopn.line, loopn.col, guard);
+    // Fix 2 (b): record the guard on the move target (outermost
+    // provably-running, invariant ancestor), not unconditionally
+    // on the innermost loop.
+    let mut free_vars: [str] = [];
+    if idx.kids[1].kind == 34 {
+        push(free_vars, idx.kids[1].name);
+    }
+    let target: Node = fix1_guard_move_target(loops, arr, free_vars, res);
+    res = fix1_res_add_guard(res, target.line, target.col, guard);
     res = fix1_res_add_cov(res, ix.line, ix.col);
     res = fix1_res_add_plain(res, idx.line, idx.col);
     return res;
@@ -2286,7 +2541,13 @@ fn fix1_try_r3(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
     }
     let ncode: str = fix1_c_expr(n_node);
     let guard: str = "if (" + ncode + " * " + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
-    res = fix1_res_add_guard(res, loopn.line, loopn.col, guard);
+    // Fix 2 (b): record the guard on the move target.
+    let mut free_vars: [str] = [];
+    if n_node.kind == 34 {
+        push(free_vars, n_node.name);
+    }
+    let target: Node = fix1_guard_move_target(loops, arr, free_vars, res);
+    res = fix1_res_add_guard(res, target.line, target.col, guard);
     res = fix1_res_add_cov(res, ix.line, ix.col);
     res = fix1_res_add_plain(res, star.line, star.col);
     res = fix1_res_add_plain(res, idx.line, idx.col);
@@ -2317,7 +2578,11 @@ fn fix1_try_r5(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
         // from the body env, which already dropped it when a var
         // is written (except the sound loop-counter case — e.g.
         // bid_px[j2] with j2 the scan-loop counter).
-        res = fix1_res_add_guard(res, loopn.line, loopn.col, guard);
+        // Fix 2 (b): record the guard on the move target (an R5
+        // guard has no free vars).
+        let free_vars: [str] = [];
+        let target: Node = fix1_guard_move_target(loops, arr, free_vars, res);
+        res = fix1_res_add_guard(res, target.line, target.col, guard);
     } else {
         res = fix1_res_add_idxguard(res, ix.line, ix.col, guard);
     }
@@ -2408,6 +2673,28 @@ fn fix1_scan_o1_uses(node: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
         i = i + 1;
     }
     return res;
+}
+
+// Fix 2 (a2): scan a While cond's bound BinOp(s) with the
+// pre-loop env. Only cond.right (the bound) is scanned, and only
+// when no var in it is written in the body — the bound is
+// re-evaluated every iteration, so the pre-loop env is valid for
+// it only under that gate. The counter (cond.left) is never
+// scanned: it varies across iterations. Reuses
+// fix1_scan_o1_uses, so the Defer/Spawn skip applies
+// automatically. Mirrors Python _scan_o1_cond.
+fn fix1_scan_o1_cond(stmt: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || (cond.name != "<" && cond.name != ">") || cond.kids[0].kind != 34 {
+        return res;
+    }
+    let bound: Node = cond.kids[1];
+    let body: Node = stmt.kids[1];
+    if !fix1_bound_vars_invariant(bound, body) {
+        return res;
+    }
+    return fix1_scan_o1_uses(bound, env, res);
 }
 
 fn fix1_scan_r_uses(node: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res {
@@ -2665,6 +2952,17 @@ fn fix1_reset_fact(stmt: Node, env: Fix1Env) -> Fix1Reset {
     return r;
 }
 
+// Fix 2 (b): record a loop statement's first-entry run verdict
+// in the res (1 = provably runs >= 1 iteration).
+fn fix1_record_run(stmt: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let mut run_val: int = 0;
+    if fix1_loop_runs(stmt, env) {
+        run_val = 1;
+    }
+    return fix1_res_add_run(res, stmt.line, stmt.col, run_val);
+}
+
 fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]) -> Fix1Pair {
     let mut env: Fix1Env = env0;
     let mut res: Fix1Res = res0;
@@ -2679,6 +2977,12 @@ fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]
             }
             // B2 R1 (independent shape — a loop can be H1 and R1).
             res = fix1_try_r1(stmt, stmts, pos, env, res);
+            // Fix 2 (b): record whether this loop provably runs
+            // >= 1 iteration at first entry (env at the loop
+            // statement). Fix 2 (a2): scan the cond's bound
+            // BinOp(s) with the pre-loop env.
+            res = fix1_record_run(stmt, env, res);
+            res = fix1_scan_o1_cond(stmt, env, res);
             let benv: Fix1Env = fix1_body_env(stmt, stmts, pos, env);
             let mut loops2: [Node] = loops;
             push(loops2, stmt);
@@ -2688,6 +2992,8 @@ fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]
         } else if stmt.kind == 16 {
             res = fix1_try_h2(stmt, env, res);
             res = fix1_try_r1(stmt, stmts, pos, env, res);
+            // Fix 2 (b): entry verdict for the For loop.
+            res = fix1_record_run(stmt, env, res);
             let benv: Fix1Env = fix1_body_env(stmt, stmts, pos, env);
             let mut loops2: [Node] = loops;
             push(loops2, stmt);
