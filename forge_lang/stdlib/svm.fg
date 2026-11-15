@@ -1,0 +1,45 @@
+// Linear SVM (SMO-lite: subgradient descent), in pure Qasida.
+// Import with: import "svm.fg";
+// Hinge loss with L2 regularisation, one pass per step over the
+// data. Kernel SVM is a later item, not claimed here.
+
+fn svm_margin(w: float, b: float, x: float, y: int) -> float {
+    return y as float * (w * x + b);
+}
+
+fn svm_hinge(w: float, b: float, x: float, y: int) -> float {
+    let m: float = svm_margin(w, b, x, y);
+    if m >= 1.0 {
+        return 0.0;
+    }
+    return 1.0 - m;
+}
+
+fn svm_predict(w: float, b: float, x: float) -> int {
+    if w * x + b >= 0.0 {
+        return 1;
+    }
+    return -1;
+}
+
+fn svm_train_gd(xs: [float], ys: [int], lr: float, steps: int, c: float) -> [float] {
+    // Subgradient descent on the hinge loss with L2 penalty.
+    let mut w: float = 0.0;
+    let mut b: float = 0.0;
+    let mut s: int = 0;
+    while s < steps {
+        let mut i: int = 0;
+        while i < len(xs) {
+            let yf: float = ys[i] as float;
+            if svm_margin(w, b, xs[i], ys[i]) < 1.0 {
+                w = w - lr * (w - c * yf * xs[i]);
+                b = b + lr * c * yf;
+            } else {
+                w = w - lr * w;
+            }
+            i = i + 1;
+        }
+        s = s + 1;
+    }
+    return [w, b];
+}

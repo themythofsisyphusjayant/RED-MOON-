@@ -1,0 +1,15 @@
+import "svm.fg";
+
+fn main() {
+    println(svm_hinge(1.0, 0.0, 2.0, 1));
+    println(svm_hinge(0.5, 0.0, 1.0, 1));
+    println(svm_margin(1.0, 0.0, 2.0, 1));
+    println(svm_margin(0.5, 0.0, 1.0, 1));
+    let xs: [float] = [2.0, 3.0];
+    let ys: [int] = [-1, 1];
+    let wb: [float] = svm_train_gd(xs, ys, 0.1, 1, 1.0);
+    println(wb[0]);
+    println(wb[1]);
+    println(svm_predict(wb[0], wb[1], 2.0));
+    println(svm_predict(wb[0], wb[1], 3.0));
+}

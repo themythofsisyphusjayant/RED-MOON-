@@ -1,0 +1,29 @@
+// Local run tracking (mlflow-style, files only), in pure Qasida.
+// Import with: import "tracking.fg";
+// A run line is "name|params|metric" (metric as an int, e.g.
+// accuracy x1000). One file holds one line per run; the demo
+// writes under /tmp so no repo files are created.
+
+fn tk_save(path: str, line: str) -> bool {
+    return write_file(path, line);
+}
+
+fn tk_load(path: str) -> str {
+    return read_file(path);
+}
+
+fn tk_count_lines(text: str) -> int {
+    // Lines = newline count + 1 for non-empty text.
+    if len(text) == 0 {
+        return 0;
+    }
+    let mut n: int = 1;
+    let mut i: int = 0;
+    while i < len(text) {
+        if substr(text, i, 1) == "\n" {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

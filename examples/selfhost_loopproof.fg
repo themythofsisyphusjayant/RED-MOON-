@@ -74,8 +74,52 @@ struct Fix1Uses {
     pos: [int];
 }
 
+// B3 (O1-S2b): post-reset union fact — has=1 with the var name
+// and the union interval, or has=0 when no reset fact holds.
+struct Fix1Reset {
+    has: int;
+    name: str;
+    lo: int;
+    hi: int;
+}
+
 fn fix1_env_new() -> Fix1Env {
     return Fix1Env { names: [], types: [], los: [], his: [], lok: [], hik: [], sized_names: [], sized_ns: [], rel_names: [], rel_bounds: [] };
+}
+
+// B3: TRUE copy of an env. `let mut env = env0` copies only the
+// array headers, so index-assignments (`env.los[idx] = ...`) write
+// through to the caller's buffer — the then-arm's `col = 1` leaked
+// into the else arm's scan and wrongly proved `col + 1` plain
+// (unsound: col is unbounded). Python uses dict(env) copies at
+// every branch point; the hosted mirror must do the same. Used at
+// the If-arm and loop-body branch points only — the statement
+// threading uses return values and needs no copy.
+fn fix1_env_deep_copy(env0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = fix1_env_new();
+    let mut i: int = 0;
+    while i < len(env0.names) {
+        push(env.names, env0.names[i]);
+        push(env.types, env0.types[i]);
+        push(env.los, env0.los[i]);
+        push(env.his, env0.his[i]);
+        push(env.lok, env0.lok[i]);
+        push(env.hik, env0.hik[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(env0.sized_names) {
+        push(env.sized_names, env0.sized_names[i]);
+        push(env.sized_ns, env0.sized_ns[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(env0.rel_names) {
+        push(env.rel_names, env0.rel_names[i]);
+        push(env.rel_bounds, env0.rel_bounds[i]);
+        i = i + 1;
+    }
+    return env;
 }
 
 fn fix1_res_new() -> Fix1Res {
@@ -525,6 +569,59 @@ fn fix1_interval(e: Node, env: Fix1Env) -> [int] {
         }
         return [1, lo, 1, hi];
     }
+    // B3 (O1-S3/S5): '%' and '/' intervals — magnitude bounds
+    // only; the analysis never divides, so the hosted mirror can
+    // never trap its own compiler on a zero divisor.
+    if e.kind == 40 && e.name == "%" {
+        let l: [int] = fix1_interval(e.kids[0], env);
+        let r: [int] = fix1_interval(e.kids[1], env);
+        if l[0] == 1 && l[1] >= 0 && r[0] == 1 && r[1] >= 1 {
+            if r[2] == 1 {
+                return [1, 0, 1, r[3] - 1];
+            }
+            return [1, 0, 0, 0];
+        }
+        if ((r[0] == 1 && r[1] >= 1) || (r[2] == 1 && r[3] <= -1)) && r[0] == 1 && r[2] == 1 {
+            let mut m: int = r[1];
+            if m < 0 {
+                m = -m;
+            }
+            let mut ar: int = r[3];
+            if ar < 0 {
+                ar = -ar;
+            }
+            if ar > m {
+                m = ar;
+            }
+            return [1, -(m - 1), 1, m - 1];
+        }
+        return [0, 0, 0, 0];
+    }
+    if e.kind == 40 && e.name == "/" {
+        let l: [int] = fix1_interval(e.kids[0], env);
+        let r: [int] = fix1_interval(e.kids[1], env);
+        if ((r[0] == 1 && r[1] >= 1) || (r[2] == 1 && r[3] <= -1)) && l[0] == 1 && l[2] == 1 {
+            let mut m: int = l[1];
+            if m < 0 {
+                m = -m;
+            }
+            let mut ah: int = l[3];
+            if ah < 0 {
+                ah = -ah;
+            }
+            if ah > m {
+                m = ah;
+            }
+            if l[1] >= 0 {
+                return [1, 0, 1, m];
+            }
+            if l[3] <= 0 {
+                return [1, -m, 1, 0];
+            }
+            return [1, -m, 1, m];
+        }
+        return [0, 0, 0, 0];
+    }
     if fix1_is_len_call(e) {
         return [1, 0, 0, 0];
     }
@@ -541,7 +638,7 @@ fn fix1_interval(e: Node, env: Fix1Env) -> [int] {
 // hosted compiler itself). Returns env unchanged when the
 // condition proves nothing.
 fn fix1_apply_cond_fact(env0: Fix1Env, cond: Node, truth: bool) -> Fix1Env {
-    let mut env: Fix1Env = env0;
+    let mut env: Fix1Env = fix1_env_deep_copy(env0);
     if cond.kind != 40 {
         return env;
     }
@@ -1140,6 +1237,14 @@ fn fix1_tag_node(n: Node, res: Fix1Res) -> int {
             n.kids[i] = c;
             tagged = tagged + 1;
         }
+        // B3: a plain UnaryOp (O1 '-') takes the fast path too;
+        // has_nul is free on UnaryOp nodes (the parser sets it
+        // only on StrLit).
+        if c.kind == 41 && fix1_res_is_plain(res, c.line, c.col) {
+            c.has_nul = true;
+            n.kids[i] = c;
+            tagged = tagged + 1;
+        }
         // B2: a straight-line R5 guard rides on the covered Index
         // node itself, in its sval (free on Index nodes); loop
         // guards stay on the loop node (below).
@@ -1625,8 +1730,71 @@ fn fix1_has_continue(node: Node) -> bool {
 // it the scan would "prove" buf[idx] from idx's entry value.
 // `stmts`/`pos` locate the loop in its enclosing block (needed
 // for the H1/H1-D entry facts).
+// B3 (O1-S2): ring-reset facts for the loop-body env. Groups
+// the body's `x = x + 1` increments per var (the same grouping
+// as fix1_try_r1) and, for each var with exactly one increment
+// whose ring candidate holds with a known w_hi, sets
+// `idx in [0, w_hi-1]` on env_body, INTERSECTED with any
+// interval idx already has there (a counter fact and a ring fact
+// cannot co-occur, but neither fact may ever widen the other).
+// Preconditions are read on env_outer (the env outside the loop),
+// exactly as fix1_try_r1 reads them.
+fn fix1_ring_body_facts(stmt: Node, stmts: [Node], pos: int, env_outer: Fix1Env, env_body0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = env_body0;
+    let body: Node = stmt.kids[1];
+    if len(body.kids) == 0 {
+        return env;
+    }
+    let mut inames: [str] = [];
+    let mut iposs: [int] = [];
+    let mut icnts: [int] = [];
+    let mut i: int = 0;
+    while i < len(body.kids) {
+        let s: Node = body.kids[i];
+        if s.kind == 11 && s.kids[0].kind == 40 && s.kids[0].name == "+" && s.kids[0].kids[0].kind == 34 && s.kids[0].kids[0].name == s.name && s.kids[0].kids[1].kind == 25 && s.kids[0].kids[1].ival == 1 {
+            let mut j: int = 0;
+            let mut found: bool = false;
+            while j < len(inames) {
+                if inames[j] == s.name {
+                    icnts[j] = icnts[j] + 1;
+                    found = true;
+                }
+                j = j + 1;
+            }
+            if !found {
+                push(inames, s.name);
+                push(iposs, i);
+                push(icnts, 1);
+            }
+        }
+        i = i + 1;
+    }
+    let mut vi: int = 0;
+    while vi < len(inames) {
+        if icnts[vi] == 1 {
+            let cand: [int] = fix1_ring_candidate(stmt, stmts, pos, env_outer, inames[vi], iposs[vi]);
+            if cand[0] == 1 && cand[1] == 1 {
+                let cur: [int] = fix1_env_interval(env, inames[vi]);
+                let mut nlo: int = 0;
+                if cur[0] == 1 && cur[1] > 0 {
+                    nlo = cur[1];
+                }
+                let mut nhi: int = cand[2] - 1;
+                if cur[2] == 1 && cur[3] < nhi {
+                    nhi = cur[3];
+                }
+                if nhi >= nlo {
+                    env = fix1_env_set_interval(env, inames[vi], [1, nlo, 1, nhi]);
+                }
+            }
+        }
+        vi = vi + 1;
+    }
+    return env;
+}
+
 fn fix1_body_env(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env {
-    let mut env: Fix1Env = env0;
+    let mut env: Fix1Env = fix1_env_deep_copy(env0);
     let body: Node = stmt.kids[1];
     let written: [str] = fix1_written_names(body);
     let mut i: int = 0;
@@ -1743,6 +1911,9 @@ fn fix1_body_env(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env 
             }
         }
     }
+    // B3 (O1-S2): ring-reset facts, read on the outer env (env0)
+    // and applied to the body env after the counter facts.
+    env = fix1_ring_body_facts(stmt, stmts, pos, env0, env);
     return env;
 }
 
@@ -1778,11 +1949,20 @@ fn fix1_lt_n(var: str, nnode: Node, env: Fix1Env) -> bool {
 // and must not abort this var's proof — the driver groups
 // increments per var (like the Python mirror) and calls this
 // once per var with exactly one increment.
-fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res, idx: str, inc_pos: int) -> Fix1Res {
-    let mut res: Fix1Res = res0;
+// B3 (O1-S2): one ring var's recognition, shared by fix1_try_r1_var
+// (R1 coverage) and fix1_ring_body_facts (the O1-S2 loop-top ring
+// fact). Returns [has, whi_has, whi, reset_pos]: has=1 when the
+// ring-reset preconditions hold (exactly one `idx = idx + 1`
+// increment at inc_pos, exactly one reset If after it — == / >= w,
+// no else, then-branch exactly one `idx = c` literal assignment —
+// w >= 1 and invariant, entry literal, no `continue` between
+// increment and reset); whi is w's interval upper end when known
+// (literal w: the literal; var w: env hi), whi_has=0 otherwise.
+fn fix1_ring_candidate(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, idx: str, inc_pos: int) -> [int] {
+    let mut no: [int] = [0, 0, 0, -1];
     let body: Node = stmt.kids[1];
     if len(body.kids) == 0 {
-        return res;
+        return no;
     }
     // reset: if idx == w { idx = c; } / if idx >= w { idx = c; }
     // (no else, then-branch exactly one literal assignment),
@@ -1799,7 +1979,7 @@ fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1
                 let thenb: Node = s.kids[1];
                 if len(thenb.kids) == 1 && thenb.kids[0].kind == 11 && thenb.kids[0].name == idx && thenb.kids[0].kids[0].kind == 25 {
                     if reset_pos >= 0 {
-                        return res;
+                        return no;
                     }
                     reset_pos = i;
                     w = cond.kids[1];
@@ -1810,7 +1990,7 @@ fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1
         i = i + 1;
     }
     if reset_pos < 0 {
-        return res;
+        return no;
     }
     // No `continue` in the direct-child statements strictly
     // between increment and reset — it would skip the reset and
@@ -1821,32 +2001,35 @@ fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1
     let mut cj: int = inc_pos + 1;
     while cj < reset_pos {
         if fix1_has_continue(body.kids[cj]) {
-            return res;
+            return no;
         }
         cj = cj + 1;
     }
     if fix1_write_count(body, idx) != 2 {
-        return res;
+        return no;
     }
-    let mut wcode: str = "";
+    let mut whi_has: int = 0;
+    let mut whi: int = 0;
     let mut wv: int = 0;
     if w.kind == 25 {
         wv = w.ival;
         if wv < 1 {
-            return res;
+            return no;
         }
-        wcode = fix1_c_expr(w);
+        whi_has = 1;
+        whi = wv;
     } else if w.kind == 34 {
         let wiv: [int] = fix1_env_interval(env, w.name);
         if wiv[0] == 0 || wiv[1] < 1 {
-            return res;
+            return no;
         }
         if fix1_write_count(body, w.name) > 0 {
-            return res;
+            return no;
         }
-        wcode = fix1_c_expr(w);
+        whi_has = wiv[2];
+        whi = wiv[3];
     } else {
-        return res;
+        return no;
     }
     // entry rule: literal w needs L < w and c in [0, w);
     // var w needs L == 0 and c == 0.
@@ -1868,8 +2051,32 @@ fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1
         }
     }
     if !entry_ok {
+        return no;
+    }
+    return [1, whi_has, whi, reset_pos];
+}
+
+// B2 (R1): one ring var's attempt. `idx` increments once at
+// `inc_pos` and resets once after it; every other `x = x + 1`
+// in the body (e.g. the loop counter) belongs to a different var
+// and must not abort this var's proof — the driver groups
+// increments per var (like the Python mirror) and calls this
+// once per var with exactly one increment. Recognition lives in
+// fix1_ring_candidate (B3); this keeps only the array/coverage
+// work.
+fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res, idx: str, inc_pos: int) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    let body: Node = stmt.kids[1];
+    if len(body.kids) == 0 {
         return res;
     }
+    let cand: [int] = fix1_ring_candidate(stmt, stmts, pos, env, idx, inc_pos);
+    if cand[0] == 0 {
+        return res;
+    }
+    let reset_pos: int = cand[3];
+    let w: Node = body.kids[reset_pos].kids[0].kids[1];
+    let wcode: str = fix1_c_expr(w);
     let arrs: [str] = fix1_candidate_arrays(body, idx, 0);
     let mut ai: int = 0;
     while ai < len(arrs) {
@@ -2123,6 +2330,86 @@ fn fix1_try_r5(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
 // are analysed separately); If conds ARE scanned (they are this
 // statement's own expression). FieldAccess-base Indexes are
 // never uses, but their index/base are scanned.
+// B3 (O1): True when a BinOp/UnaryOp's checked helper can be
+// dropped — the interval proof shows the operation cannot
+// overflow (and, for / %, cannot divide by zero or hit
+// INT_MIN / -1). Mirrors codegen's _binop_safe on the analysis's
+// (loop-aware) intervals. Any known interval end is within
+// ±2^40, so the explicit int64 check below is belt-and-braces.
+fn fix1_o1_plain(e: Node, env: Fix1Env) -> bool {
+    if e.kind == 41 && e.name == "-" {
+        let inner: [int] = fix1_interval(e.kids[0], env);
+        return inner[0] == 1;
+    }
+    if e.kind != 40 || (e.name != "+" && e.name != "-" && e.name != "*" && e.name != "/" && e.name != "%") {
+        return false;
+    }
+    // Type gate (defense in depth): a KNOWN non-int operand type
+    // disqualifies the node.
+    let mut si: int = 0;
+    while si < 2 {
+        let side: Node = e.kids[si];
+        if side.kind == 34 {
+            let t: str = fix1_env_type(env, side.name);
+            if t != "" && t != "int" {
+                return false;
+            }
+        }
+        si = si + 1;
+    }
+    if e.name == "+" || e.name == "-" || e.name == "*" {
+        let iv: [int] = fix1_interval(e, env);
+        if iv[0] == 1 && iv[2] == 1 && iv[1] >= fix1_int_min() && iv[3] <= fix1_int_max() {
+            return true;
+        }
+        return false;
+    }
+    // / and %: divisor excludes 0, and not (dividend possibly
+    // INT_MIN and divisor contains -1).
+    let d: [int] = fix1_interval(e.kids[1], env);
+    if !((d[0] == 1 && d[1] >= 1) || (d[2] == 1 && d[3] <= -1)) {
+        return false;
+    }
+    let a: [int] = fix1_interval(e.kids[0], env);
+    let mut contains_neg1: bool = false;
+    if (d[0] == 0 || d[1] <= -1) && (d[2] == 0 || d[3] >= -1) {
+        contains_neg1 = true;
+    }
+    if a[0] == 0 && contains_neg1 {
+        return false;
+    }
+    return true;
+}
+
+// B3: scan a statement's OWN expressions for O1 plain
+// BinOp/UnaryOp nodes with the current env. Same traversal
+// discipline as fix1_scan_r_uses (stop at Block/While/For; If
+// conds scanned; FieldAccess-base Index: scan index/base only),
+// plus SKIP Defer (23) / Spawn (21) subtrees entirely — a
+// deferred call's args are re-evaluated at block exit and a
+// spawned call runs in another thread, so the current env is
+// not valid for either.
+fn fix1_scan_o1_uses(node: Node, env: Fix1Env, res0: Fix1Res) -> Fix1Res {
+    let mut res: Fix1Res = res0;
+    if node.kind == 9 || node.kind == 15 || node.kind == 16 || node.kind == 21 || node.kind == 23 {
+        return res;
+    }
+    if node.kind == 32 && node.kids[0].kind == 36 {
+        res = fix1_scan_o1_uses(node.kids[0].kids[1], env, res);
+        res = fix1_scan_o1_uses(node.kids[0].kids[0], env, res);
+        return res;
+    }
+    if (node.kind == 40 || node.kind == 41) && fix1_o1_plain(node, env) {
+        res = fix1_res_add_plain(res, node.line, node.col);
+    }
+    let mut i: int = 0;
+    while i < len(node.kids) {
+        res = fix1_scan_o1_uses(node.kids[i], env, res);
+        i = i + 1;
+    }
+    return res;
+}
+
 fn fix1_scan_r_uses(node: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res {
     let mut res: Fix1Res = res0;
     if node.kind == 9 || node.kind == 15 || node.kind == 16 {
@@ -2328,6 +2615,56 @@ fn fix1_recurse_blocks(node: Node, env: Fix1Env, res0: Fix1Res, loops: [Node]) -
     return res;
 }
 
+// B3 (O1-S2b): post-reset union interval for an If with no else
+// whose cond is `idx == w` / `idx >= w` (Var vs Var/IntLit) and
+// whose then-branch is exactly one `idx = c` (IntLit). Returns
+// has=1 with the union of [c, c] and idx's pre-If interval, or
+// has=0. Sound with no R1 proof needed: after the If, idx is
+// either c (then taken) or its pre-If value.
+fn fix1_reset_fact(stmt: Node, env: Fix1Env) -> Fix1Reset {
+    let mut r: Fix1Reset = Fix1Reset { has: 0, name: "", lo: 0, hi: 0 };
+    if stmt.kind != 14 || len(stmt.kids) != 2 {
+        return r;
+    }
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || (cond.name != "==" && cond.name != ">=") {
+        return r;
+    }
+    if cond.kids[0].kind != 34 {
+        return r;
+    }
+    if cond.kids[1].kind != 34 && cond.kids[1].kind != 25 {
+        return r;
+    }
+    let idx: str = cond.kids[0].name;
+    let thenb: Node = stmt.kids[1];
+    if len(thenb.kids) != 1 {
+        return r;
+    }
+    let rs: Node = thenb.kids[0];
+    if rs.kind != 11 || rs.name != idx || rs.kids[0].kind != 25 {
+        return r;
+    }
+    let c: int = rs.kids[0].ival;
+    let pre: [int] = fix1_env_interval(env, idx);
+    if pre[0] == 0 || pre[2] == 0 {
+        return r;
+    }
+    let mut lo: int = c;
+    if pre[1] < lo {
+        lo = pre[1];
+    }
+    let mut hi: int = c;
+    if pre[3] > hi {
+        hi = pre[3];
+    }
+    r.has = 1;
+    r.name = idx;
+    r.lo = lo;
+    r.hi = hi;
+    return r;
+}
+
 fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]) -> Fix1Pair {
     let mut env: Fix1Env = env0;
     let mut res: Fix1Res = res0;
@@ -2364,6 +2701,12 @@ fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]
             // env), then analyse each arm with the condition's
             // facts (singleton var-vs-var included).
             res = fix1_scan_r_uses(stmt.kids[0], env, loops, res);
+            // B3: same site for the O1 scan.
+            res = fix1_scan_o1_uses(stmt.kids[0], env, res);
+            // B3 (O1-S2b): post-reset union fact, read on the
+            // pre-If env; applied after the arms drop idx's
+            // interval.
+            let rf: Fix1Reset = fix1_reset_fact(stmt, env);
             let mut then_env: Fix1Env = fix1_apply_cond_fact(env, stmt.kids[0], true);
             let pair: Fix1Pair = fix1_analyze_block(stmt.kids[1].kids, then_env, res, loops);
             res = pair.res;
@@ -2373,11 +2716,16 @@ fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]
                 res = pair2.res;
             }
             env = fix1_drop_written(stmt, env);
+            if rf.has == 1 {
+                env = fix1_env_set_interval(env, rf.name, [1, rf.lo, 1, rf.hi]);
+            }
         } else if stmt.kind == 10 {
             res = fix1_scan_r_uses(stmt, env, loops, res);
+            res = fix1_scan_o1_uses(stmt, env, res);
             env = fix1_apply_let(stmt, env);
         } else if stmt.kind == 11 {
             res = fix1_scan_r_uses(stmt, env, loops, res);
+            res = fix1_scan_o1_uses(stmt, env, res);
             let rhs: Node = stmt.kids[0];
             // B2: the mod fact is read on the pre-assign env.
             let mrel: str = fix1_mod_rel(rhs, env);
@@ -2396,6 +2744,7 @@ fn fix1_analyze_block(stmts: [Node], env0: Fix1Env, res0: Fix1Res, loops: [Node]
             }
         } else {
             res = fix1_scan_r_uses(stmt, env, loops, res);
+            res = fix1_scan_o1_uses(stmt, env, res);
             let mut i: int = 0;
             while i < len(stmt.kids) {
                 res = fix1_recurse_blocks(stmt.kids[i], env, res, loops);

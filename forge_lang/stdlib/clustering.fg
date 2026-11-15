@@ -1,0 +1,117 @@
+// Clustering-plus (DBSCAN-lite, single-link merges), in pure Qasida.
+// Import with: import "clustering.fg";
+// 1D points. DBSCAN labels core-seeded clusters and marks the
+// rest -1 (noise); the merge function returns the single-link
+// agglomerative merge distance at each step.
+
+fn cl_dbscan(points: [float], eps: float, min_pts: int) -> [int] {
+    let mut labels: [int] = [];
+    let mut i: int = 0;
+    while i < len(points) {
+        push(labels, -2);
+        i = i + 1;
+    }
+    let mut counts: [int] = [];
+    let mut a: int = 0;
+    while a < len(points) {
+        let mut n: int = 0;
+        let mut b: int = 0;
+        while b < len(points) {
+            let mut d: float = points[a] - points[b];
+            if d < 0.0 {
+                d = 0.0 - d;
+            }
+            if d <= eps {
+                n = n + 1;
+            }
+            b = b + 1;
+        }
+        push(counts, n);
+        a = a + 1;
+    }
+    let mut next_id: int = 0;
+    let mut c: int = 0;
+    while c < len(points) {
+        if counts[c] >= min_pts {
+            if labels[c] == -2 {
+                labels[c] = next_id;
+                next_id = next_id + 1;
+            }
+            let mut d2: int = 0;
+            while d2 < len(points) {
+                let mut dist: float = points[c] - points[d2];
+                if dist < 0.0 {
+                    dist = 0.0 - dist;
+                }
+                if dist <= eps {
+                    labels[d2] = labels[c];
+                }
+                d2 = d2 + 1;
+            }
+        }
+        c = c + 1;
+    }
+    let mut e: int = 0;
+    while e < len(points) {
+        if labels[e] == -2 {
+            labels[e] = -1;
+        }
+        e = e + 1;
+    }
+    return labels;
+}
+
+fn cl_merge_distances(points: [float]) -> [float] {
+    // Single-link agglomerative merges: repeatedly merge the two
+    // closest clusters; returns the merge distance at each step.
+    let mut cluster: [int] = [];
+    let mut i: int = 0;
+    while i < len(points) {
+        push(cluster, i);
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut merges: int = 0;
+    while merges < len(points) - 1 {
+        let mut best: float = -1.0;
+        let mut bi: int = 0;
+        let mut bj: int = 0;
+        let mut a: int = 0;
+        while a < len(points) {
+            let mut b: int = a + 1;
+            while b < len(points) {
+                if cluster[a] != cluster[b] {
+                    let mut d: float = points[a] - points[b];
+                    if d < 0.0 {
+                        d = 0.0 - d;
+                    }
+                    if best < 0.0 {
+                        best = d;
+                        bi = a;
+                        bj = b;
+                    } else {
+                        if d < best {
+                            best = d;
+                            bi = a;
+                            bj = b;
+                        }
+                    }
+                }
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        push(out, best);
+        let target: int = cluster[bi];
+        let source: int = cluster[bj];
+        let mut k: int = 0;
+        while k < len(points) {
+            if cluster[k] == source {
+                cluster[k] = target;
+            }
+            k = k + 1;
+        }
+        merges = merges + 1;
+    }
+    return out;
+}

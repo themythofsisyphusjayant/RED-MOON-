@@ -1,0 +1,10 @@
+import "tracking.fg";
+
+fn main() {
+    let path: str = "/tmp/tracking_demo_runs.txt";
+    println(tk_save(path, "run1|lr=0.01|acc=850\nrun2|lr=0.02|acc=910"));
+    let text: str = tk_load(path);
+    println(text);
+    println(tk_count_lines(text));
+    println(file_exists(path));
+}

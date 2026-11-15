@@ -4068,9 +4068,12 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             // 4f: interval-proven safe (codegen.py:3866): plain
             // when the operand's interval lo is above INT_MIN
             // (a literal above INT_MIN, or a narrowed variable);
-            // otherwise the checked form.
+            // otherwise the checked form. Fix 1 B3: a loop-proof
+            // plain unary minus (O1) emits plain C too
+            // (tagger-set has_nul, like the BinOp plain path in
+            // cg_binop_combine).
             let iv: [int] = cg_int_interval(g, e.kids[0]);
-            if iv[0] == 1 && iv[1] > cg_int_min() {
+            if e.has_nul || (iv[0] == 1 && iv[1] > cg_int_min()) {
                 return CGExpr { g: g, code: "(-" + inner.code + ")" };
             }
             return CGExpr { g: g, code: "forge_neg(" + inner.code + ")" };

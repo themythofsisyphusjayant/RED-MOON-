@@ -1,0 +1,15 @@
+import "summarize.fg";
+
+fn main() {
+    let s0: str = "cats sleep all day";
+    let s1: str = "dogs sleep all day";
+    let s2: str = "birds fly high";
+    println(sm_overlap(sm_words(s0), sm_words(s1)));
+    println(sm_overlap(sm_words(s0), sm_words(s2)));
+    let sents: [str] = [s0, s1, s2];
+    let scores: [float] = sm_textrank(sents, 1);
+    println(scores[0]);
+    println(scores[1]);
+    println(scores[2]);
+    println(sm_top(scores));
+}

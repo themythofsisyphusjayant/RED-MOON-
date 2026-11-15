@@ -295,7 +295,9 @@ class _Env:
 
 def _interval(node, env):
     """(lo, hi) interval of an int expr, None end = unbounded.
-    Literals, vars (env), + - * on intervals, unary -, len() >= 0."""
+    Literals, vars (env), + - * / % on intervals (B3: / and % are
+    magnitude bounds — the analysis never divides), unary -,
+    len() >= 0."""
     if isinstance(node, A.IntLit):
         return (_cap(node.value), _cap(node.value))
     if isinstance(node, A.Var):
@@ -327,6 +329,37 @@ def _interval(node, env):
             return (None, None)
         ps = [llo * rlo, llo * rhi, lhi * rlo, lhi * rhi]
         return (_cap(min(ps)), _cap(max(ps)))
+    if isinstance(node, A.BinOp) and node.op == "%":
+        # B3 (O1-S3): magnitude bound — the analysis never divides,
+        # so the hosted mirror can never trap its own compiler on
+        # a zero divisor. (a) dividend >= 0, divisor >= 1:
+        # (0, dhi-1) if dhi known, else (0, None). (b) divisor
+        # excludes 0 and both divisor ends known: (-(M-1), M-1)
+        # with M = max(|dlo|, |dhi|).
+        alo, ahi = _interval(node.left, env)
+        dlo, dhi = _interval(node.right, env)
+        if alo is not None and alo >= 0 and dlo is not None and dlo >= 1:
+            return (0, None if dhi is None else _cap(dhi - 1))
+        if ((dlo is not None and dlo >= 1)
+                or (dhi is not None and dhi <= -1)) \
+                and dlo is not None and dhi is not None:
+            m = max(abs(dlo), abs(dhi))
+            return (_cap(-(m - 1)), _cap(m - 1))
+        return (None, None)
+    if isinstance(node, A.BinOp) and node.op == "/":
+        # B3 (O1-S5): |quotient| <= |dividend| when |divisor| >= 1.
+        alo, ahi = _interval(node.left, env)
+        dlo, dhi = _interval(node.right, env)
+        if ((dlo is not None and dlo >= 1)
+                or (dhi is not None and dhi <= -1)) \
+                and alo is not None and ahi is not None:
+            m = max(abs(alo), abs(ahi))
+            if alo >= 0:
+                return (0, _cap(m))
+            if ahi <= 0:
+                return (_cap(-m), 0)
+            return (_cap(-m), _cap(m))
+        return (None, None)
     if _is_len_call(node):
         return (0, None)
     return (None, None)
@@ -616,6 +649,21 @@ def _body_env(stmt, stmts, pos, env):
         benv.set_interval(ctr, iv)
         if relb is not None:
             benv.add_rel(ctr, relb)
+    # B3 (O1-S2): ring-reset facts — idx in [0, w_hi-1] when w_hi
+    # is known, INTERSECTED with any interval idx already has in
+    # the body env (a counter fact and a ring fact cannot co-occur
+    # — _counter_discipline fails when a reset follows the
+    # increment — but neither fact may ever widen the other).
+    for idx, w_hi, _wc, _pi, _pr in \
+            _ring_candidates(stmt, stmts, pos, env):
+        if w_hi is None:
+            continue
+        _lo, _hi = benv.interval_of(idx)
+        nlo = 0 if _lo is None else max(_lo, 0)
+        nhi = w_hi - 1 if _hi is None else min(_hi, w_hi - 1)
+        if nhi < nlo:
+            continue
+        benv.set_interval(idx, (nlo, nhi))
     return benv
 
 
@@ -961,18 +1009,25 @@ def _has_continue(node):
     return False
 
 
-def _try_r1(stmt, stmts, pos, env):
-    """B2 R1 — ring-buffer reset idiom. Returns a list of
-    (covered_ids, guard) triples for the enclosing loop `stmt`
-    (While or For). The guard attaches to `stmt` itself."""
+def _ring_candidates(stmt, stmts, pos, env):
+    """B3 (O1-S2): per ring var (idx, w_hi, wcode, p_inc, p_reset)
+    for the ring-reset idiom in `stmt`'s body — same preconditions
+    as _try_r1 (R1-P2/P3/P4): exactly one `idx = idx + 1`
+    increment, exactly one reset If (== / >= w, no else,
+    then-branch exactly one `idx = c` IntLit), w >= 1 and
+    invariant, entry literal, no `continue` between increment and
+    reset. w_hi is w's interval upper end when known (literal w:
+    the literal; var w: env hi), else None; wcode is w's C
+    rendering for the guard. _try_r1 and _body_env both consume
+    this (the latter for the O1-S2 loop-top ring fact)."""
     body = stmt.body
-    triples = []
     incs = {}
     for p, s in enumerate(body.stmts):
         if isinstance(s, A.Assign) and isinstance(s.expr, A.BinOp) \
                 and s.expr.op == "+" and _is_var(s.expr.left, s.name) \
                 and _is_intlit(s.expr.right, 1):
             incs.setdefault(s.name, []).append(p)
+    out = []
     for idx, plist in incs.items():
         if len(plist) != 1:
             continue
@@ -1009,16 +1064,16 @@ def _try_r1(stmt, stmts, pos, env):
         if isinstance(wnode, A.Var):
             if _write_sites(body, wnode.name):
                 continue
-            wlo, _whi = env.interval_of(wnode.name)
+            wlo, whi = env.interval_of(wnode.name)
             if wlo is None or wlo < 1:
                 continue
+            w_hi = whi
             wcode = wnode.name
-            wlit = None
         else:
             if wnode.value < 1:
                 continue
+            w_hi = wnode.value
             wcode = str(wnode.value)
-            wlit = wnode.value
         # R1-P3: entry literal.
         _k, w = _nearest_entry(stmts, pos, idx)
         if w is None or not isinstance(w, (A.Let, A.Assign)):
@@ -1028,11 +1083,12 @@ def _try_r1(stmt, stmts, pos, env):
         if not _is_intlit(w.expr) or w.expr.value < 0:
             continue
         entry_lit = w.expr.value
-        if wlit is not None:
-            if entry_lit >= wlit or cval < 0 or cval >= wlit:
+        if isinstance(wnode, A.Var):
+            if entry_lit != 0 or cval != 0:
                 continue
         else:
-            if entry_lit != 0 or cval != 0:
+            if entry_lit >= wnode.value or cval < 0 \
+                    or cval >= wnode.value:
                 continue
         # B2 soundness (DESIGN.md gap): no `continue` between the
         # increment and the reset — it would skip the reset and the
@@ -1040,6 +1096,20 @@ def _try_r1(stmt, stmts, pos, env):
         if any(_has_continue(s)
                for s in body.stmts[p_inc + 1:p_reset]):
             continue
+        out.append((idx, w_hi, wcode, p_inc, p_reset))
+    return out
+
+
+def _try_r1(stmt, stmts, pos, env):
+    """B2 R1 — ring-buffer reset idiom. Returns a list of
+    (covered_ids, guard) triples for the enclosing loop `stmt`
+    (While or For). The guard attaches to `stmt` itself.
+    Recognition lives in _ring_candidates (B3); this keeps only
+    the array/coverage work."""
+    body = stmt.body
+    triples = []
+    for idx, _w_hi, wcode, p_inc, p_reset in \
+            _ring_candidates(stmt, stmts, pos, env):
         for arr in _candidate_arrays(body, idx):
             if not _is_array_type(env.type_of(arr)):
                 continue
@@ -1215,6 +1285,109 @@ def _try_r5(ix, env, loops, covered, guards, plain, idx_guards):
     return True
 
 
+INT64_MIN = -(2 ** 63)
+INT64_MAX = 2 ** 63 - 1
+
+
+def _reset_fact(stmt, env):
+    """B3 (O1-S2b): post-reset union interval for an If with no
+    else whose cond is `idx == w` / `idx >= w` (Var vs Var/IntLit)
+    and whose then-branch is exactly one `idx = c` (IntLit).
+    Returns (idx, (lo, hi)) — the union of [c, c] with idx's
+    pre-If interval — or None. Sound with no R1 proof needed:
+    after the If, idx is either c (then taken) or its pre-If
+    value."""
+    if not isinstance(stmt, A.If) or stmt.els is not None:
+        return None
+    cond = stmt.cond
+    if not (isinstance(cond, A.BinOp) and cond.op in ("==", ">=")
+            and _is_var(cond.left)):
+        return None
+    idx = cond.left.name
+    if not (isinstance(cond.right, A.Var) or _is_intlit(cond.right)):
+        return None
+    if len(stmt.then.stmts) != 1:
+        return None
+    rs = stmt.then.stmts[0]
+    if not (isinstance(rs, A.Assign) and rs.name == idx
+            and _is_intlit(rs.expr)):
+        return None
+    c = rs.expr.value
+    pre_lo, pre_hi = env.interval_of(idx)
+    if pre_lo is None or pre_hi is None:
+        return None
+    return (idx, (min(c, pre_lo), max(c, pre_hi)))
+
+
+def _o1_plain(node, env):
+    """B3 (O1): True when a BinOp/UnaryOp's checked helper can be
+    dropped — the interval proof shows the operation cannot
+    overflow (and, for / %, cannot divide by zero or hit
+    INT_MIN / -1). Mirrors codegen._binop_safe on the analysis's
+    (loop-aware) intervals."""
+    if isinstance(node, A.UnaryOp) and node.op == "-":
+        lo, _hi = _interval(node.expr, env)
+        # A known lo is >= -2**40 > INT_MIN, so -x cannot overflow.
+        return lo is not None
+    if not (isinstance(node, A.BinOp)
+            and node.op in ("+", "-", "*", "/", "%")):
+        return False
+    # Type gate (defense in depth): a KNOWN non-int operand type
+    # disqualifies the node. Float involvement already yields an
+    # unknown interval, except a float Var let-bound from an int
+    # literal — the gate catches that case. Codegen independently
+    # gates the plain path on int operand types.
+    for side in (node.left, node.right):
+        if isinstance(side, A.Var):
+            t = env.type_of(side.name)
+            if t and t != "int":
+                return False
+    if node.op in ("+", "-", "*"):
+        lo, hi = _interval(node, env)
+        return (lo is not None and hi is not None
+                and lo >= INT64_MIN and hi <= INT64_MAX)
+    # / and %: divisor excludes 0, and not (dividend possibly
+    # INT_MIN and divisor contains -1).
+    dlo, dhi = _interval(node.right, env)
+    if not ((dlo is not None and dlo >= 1)
+            or (dhi is not None and dhi <= -1)):
+        return False
+    alo, _ahi = _interval(node.left, env)
+    contains_neg1 = (dlo is None or dlo <= -1) \
+        and (dhi is None or dhi >= -1)
+    if alo is None and contains_neg1:
+        return False
+    return True
+
+
+def _scan_o1_uses(node, env, plain):
+    """B3: scan a statement's OWN expressions for O1 plain
+    BinOp/UnaryOp nodes with the current env. Same traversal
+    discipline as _scan_r_uses (stop at Block/While/For; If conds
+    scanned; FieldAccess-base Index: scan index/base only), plus
+    SKIP Defer/Spawn subtrees entirely — a deferred call's args
+    are re-evaluated at block exit (codegen.py:3559-3564) and a
+    spawned call runs in another thread, so the current env is
+    not valid for either."""
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            _scan_o1_uses(item, env, plain)
+        return
+    if not hasattr(node, "__dataclass_fields__"):
+        return
+    if isinstance(node, (A.Block, A.While, A.For, A.Defer, A.Spawn)):
+        return
+    if isinstance(node, A.FieldAccess) and isinstance(node.base, A.Index):
+        _scan_o1_uses(node.base.index, env, plain)
+        _scan_o1_uses(node.base.base, env, plain)
+        return
+    if isinstance(node, (A.BinOp, A.UnaryOp)):
+        if _o1_plain(node, env):
+            plain.add(id(node))
+    for c in _children(node):
+        _scan_o1_uses(c, env, plain)
+
+
 def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
     """B2: scan a statement's OWN expressions for R2/R3/R5 uses
     with the current env. Does not descend into Block subtrees
@@ -1334,6 +1507,18 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
                              plain, idx_guards)
             except Exception:
                 pass
+            # B3: same site for the O1 scan.
+            try:
+                _scan_o1_uses(stmt.cond, env, plain)
+            except Exception:
+                pass
+            # B3 (O1-S2b): post-reset union fact, read on the
+            # pre-If env; applied after the arms drop idx's
+            # interval.
+            try:
+                reset = _reset_fact(stmt, env)
+            except Exception:
+                reset = None
             then_env = env.copy()
             fact = _cond_fact_lp(stmt.cond, env, True)
             if fact is not None:
@@ -1348,10 +1533,16 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
                 _analyze_block(stmt.els.stmts, else_env, covered,
                                guards, plain, idx_guards, loops)
             _drop_written_intervals(stmt, env)
+            if reset is not None:
+                env.set_interval(reset[0], reset[1])
         elif isinstance(stmt, A.Let):
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
                              idx_guards)
+            except Exception:
+                pass
+            try:
+                _scan_o1_uses(stmt, env, plain)
             except Exception:
                 pass
             _apply_let(stmt, env)
@@ -1361,6 +1552,10 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
                              idx_guards)
+            except Exception:
+                pass
+            try:
+                _scan_o1_uses(stmt, env, plain)
             except Exception:
                 pass
             rhs_iv = _interval(stmt.expr, env)
@@ -1381,6 +1576,10 @@ def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
             try:
                 _scan_r_uses(stmt, env, loops, covered, guards, plain,
                              idx_guards)
+            except Exception:
+                pass
+            try:
+                _scan_o1_uses(stmt, env, plain)
             except Exception:
                 pass
             for child in _children(stmt):

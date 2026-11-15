@@ -4005,6 +4005,10 @@ class Codegen:
         if isinstance(expr, A.UnaryOp):
             if expr.op == "-" and self.expr_type(expr.expr) == "int" and self._overflow_on:
                 code = self.gen_expr(expr.expr)
+                # Fix 1 B3: a loop-proof plain unary minus (O1)
+                # emits plain C.
+                if id(expr) in self._fix1_plain:
+                    return f"(-{code})"
                 iv = self._int_interval(expr.expr)
                 if iv is not None and iv[0] > self.INT_MIN:
                     return f"(-{code})"

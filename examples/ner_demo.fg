@@ -1,0 +1,18 @@
+import "ner.fg";
+
+fn main() {
+    let words: [str] = ["Jayant", "lives", "in", "Delhi", "and", "works", "at", "Qasida"];
+    let tags: [str] = ner_tag(words);
+    let mut i: int = 0;
+    while i < len(tags) {
+        println(tags[i]);
+        i = i + 1;
+    }
+    println(ner_count_entities(tags));
+    let ents: [str] = ner_entities(words, tags);
+    let mut j: int = 0;
+    while j < len(ents) {
+        println(ents[j]);
+        j = j + 1;
+    }
+}

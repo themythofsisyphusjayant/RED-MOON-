@@ -1,0 +1,14 @@
+import "bandits.fg";
+
+fn main() {
+    let q: [float] = [0.5, 0.8, 0.2];
+    let counts: [int] = [10, 5, 20];
+    println(bd_ucb(q, counts, 35));
+    let q2: [float] = [0.9, 0.4, 0.7];
+    println(bd_greedy(q2));
+    let eg: [int] = bd_epsilon_greedy(q, 1.0, 7);
+    println(eg[0]);
+    println(eg[1]);
+    let rewards: [float] = [1.0, 0.0, 1.0, 0.0];
+    println(bd_regret(1.0, rewards));
+}

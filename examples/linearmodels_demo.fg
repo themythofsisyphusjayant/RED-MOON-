@@ -1,0 +1,15 @@
+import "linearmodels.fg";
+
+fn main() {
+    let xs: [float] = [1.0, 2.0, 3.0];
+    let ys: [float] = [2.0, 4.0, 6.0];
+    println(lm_ridge(xs, ys, 1.0));
+    println(lm_ridge(xs, ys, 0.0));
+    println(lm_soft_threshold(3.0, 1.0));
+    println(lm_soft_threshold(-3.0, 1.0));
+    println(lm_soft_threshold(0.5, 1.0));
+    println(lm_elastic_net(xs, ys, 1.0, 1.0));
+    let wb: [float] = lm_sgd_regressor(xs, ys, 0.1, 2);
+    println(wb[0]);
+    println(wb[1]);
+}

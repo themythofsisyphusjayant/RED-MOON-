@@ -1,0 +1,18 @@
+import "clustering.fg";
+
+fn main() {
+    let pts: [float] = [0.0, 0.5, 1.0, 5.0, 5.5, 10.0];
+    let labels: [int] = cl_dbscan(pts, 1.0, 2);
+    let mut i: int = 0;
+    while i < len(labels) {
+        println(labels[i]);
+        i = i + 1;
+    }
+    let pts2: [float] = [0.0, 1.0, 3.0, 6.0];
+    let merges: [float] = cl_merge_distances(pts2);
+    let mut j: int = 0;
+    while j < len(merges) {
+        println(merges[j]);
+        j = j + 1;
+    }
+}

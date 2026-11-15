@@ -1,0 +1,64 @@
+// Linear models (ridge, lasso, elastic net, SGD regressor),
+// in pure Qasida.
+// Import with: import "linearmodels.fg";
+// 1D closed forms where they exist; the SGD regressor is plain
+// gradient descent on [w, b] for y ~ w*x + b.
+
+fn lm_ridge(xs: [float], ys: [float], lambda: float) -> float {
+    // No-intercept 1D ridge: w = sum(x*y) / (sum(x^2) + lambda).
+    let mut sxy: float = 0.0;
+    let mut sxx: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        sxy = sxy + xs[i] * ys[i];
+        sxx = sxx + xs[i] * xs[i];
+        i = i + 1;
+    }
+    return sxy / (sxx + lambda);
+}
+
+fn lm_soft_threshold(z: float, lambda: float) -> float {
+    if z > lambda {
+        return z - lambda;
+    }
+    if z < 0.0 - lambda {
+        return z + lambda;
+    }
+    return 0.0;
+}
+
+fn lm_elastic_net(xs: [float], ys: [float], l1: float, l2: float) -> float {
+    // 1D closed form: soft_threshold(sum(x*y), l1) / (sum(x^2) + l2).
+    let mut sxy: float = 0.0;
+    let mut sxx: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        sxy = sxy + xs[i] * ys[i];
+        sxx = sxx + xs[i] * xs[i];
+        i = i + 1;
+    }
+    return lm_soft_threshold(sxy, l1) / (sxx + l2);
+}
+
+fn lm_sgd_regressor(xs: [float], ys: [float], lr: float, steps: int) -> [float] {
+    // Plain gradient descent on [w, b] for y ~ w*x + b.
+    let mut w: float = 0.0;
+    let mut b: float = 0.0;
+    let n: float = len(xs) as float;
+    let mut s: int = 0;
+    while s < steps {
+        let mut gw: float = 0.0;
+        let mut gb: float = 0.0;
+        let mut i: int = 0;
+        while i < len(xs) {
+            let e: float = ys[i] - (w * xs[i] + b);
+            gw = gw - 2.0 / n * xs[i] * e;
+            gb = gb - 2.0 / n * e;
+            i = i + 1;
+        }
+        w = w - lr * gw;
+        b = b - lr * gb;
+        s = s + 1;
+    }
+    return [w, b];
+}

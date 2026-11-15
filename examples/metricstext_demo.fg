@@ -1,0 +1,12 @@
+import "metricstext.fg";
+
+fn main() {
+    let cand: [str] = ["the", "cat", "sat"];
+    let reference: [str] = ["the", "cat", "sat", "on", "mat"];
+    println(mt_bleu1(cand, reference));
+    println(mt_rouge1(cand, reference));
+    let cand2: [str] = ["dog", "runs"];
+    let ref2: [str] = ["dog", "runs"];
+    println(mt_bleu1(cand2, ref2));
+    println(mt_rouge1(cand2, ref2));
+}

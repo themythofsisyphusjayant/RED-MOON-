@@ -1,0 +1,36 @@
+// Model selection (splits, k-fold, grid + random search),
+// in pure Qasida.
+// Import with: import "modelselect.fg";
+import "rand.fg";
+
+fn ms_split(n: int, train_num: int, train_den: int) -> [int] {
+    // Returns [train_n, test_n] for a train fraction num/den.
+    let train: int = n * train_num / train_den;
+    return [train, n - train];
+}
+
+fn ms_kfold(n: int, k: int, fold: int) -> [int] {
+    // Returns [start, end) of the test fold (equal folds).
+    let size: int = n / k;
+    return [fold * size, (fold + 1) * size];
+}
+
+fn ms_grid_best(scores: [float]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(scores) {
+        if scores[i] > scores[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn ms_random_pick(n: int, seed: int) -> [int] {
+    // One uniform pick from n options. Returns [pick, new_seed].
+    let u: float = rand_float(seed);
+    let nn: float = n as float;
+    let pick: int = (u * nn) as int;
+    return [pick, rand_next(seed)];
+}

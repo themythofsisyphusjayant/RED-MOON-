@@ -1,0 +1,91 @@
+// Extractive summarization (TextRank-lite), in pure Qasida.
+// Import with: import "summarize.fg";
+// Sentence similarity is shared-word count over log lengths;
+// scores are one PageRank pass (damping 0.85) from uniform.
+
+fn sm_words(s: str) -> [str] {
+    return split(s, " ");
+}
+
+fn sm_overlap(a: [str], b: [str]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut j: int = 0;
+        while j < len(b) {
+            if a[i] == b[j] {
+                n = n + 1;
+                j = len(b);
+            } else {
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn sm_sim(a: str, b: str) -> float {
+    let wa: [str] = sm_words(a);
+    let wb: [str] = sm_words(b);
+    let ov: int = sm_overlap(wa, wb);
+    if ov == 0 {
+        return 0.0;
+    }
+    return ov as float / (log(len(wa) as float) + log(len(wb) as float));
+}
+
+fn sm_textrank(sents: [str], steps: int) -> [float] {
+    // PageRank over the sentence-similarity graph, damping 0.85,
+    // uniform start. A sentence with no outgoing edges
+    // contributes nothing to others.
+    let mut scores: [float] = [];
+    let mut i: int = 0;
+    while i < len(sents) {
+        push(scores, 1.0);
+        i = i + 1;
+    }
+    let mut step: int = 0;
+    while step < steps {
+        let mut next: [float] = [];
+        let mut a: int = 0;
+        while a < len(sents) {
+            let mut total: float = 0.0;
+            let mut b: int = 0;
+            while b < len(sents) {
+                if b != a {
+                    let sim: float = sm_sim(sents[b], sents[a]);
+                    if sim > 0.0 {
+                        let mut out: float = 0.0;
+                        let mut c: int = 0;
+                        while c < len(sents) {
+                            if c != b {
+                                out = out + sm_sim(sents[b], sents[c]);
+                            }
+                            c = c + 1;
+                        }
+                        total = total + sim * scores[b] / out;
+                    }
+                }
+                b = b + 1;
+            }
+            push(next, 0.15 + 0.85 * total);
+            a = a + 1;
+        }
+        scores = next;
+        step = step + 1;
+    }
+    return scores;
+}
+
+fn sm_top(scores: [float]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(scores) {
+        if scores[i] > scores[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

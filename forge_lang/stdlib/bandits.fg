@@ -1,0 +1,67 @@
+// Multi-armed bandits, in pure Qasida.
+// Import with: import "bandits.fg";
+// UCB1, epsilon-greedy and a regret helper. Exploration draws
+// come from rand.fg's LCG, threaded as an explicit seed.
+import "rand.fg";
+
+fn bd_ucb(q: [float], counts: [int], total: int) -> int {
+    // Untried arms first; otherwise argmax of
+    // q[i] + sqrt(2 * ln(total) / counts[i]).
+    let mut i: int = 0;
+    while i < len(counts) {
+        if counts[i] == 0 {
+            return i;
+        }
+        i = i + 1;
+    }
+    let mut best: int = 0;
+    let mut bestv: float = -1.0;
+    let mut j: int = 0;
+    while j < len(q) {
+        let bonus: float = sqrt(2.0 * log(total as float) / counts[j] as float);
+        let v: float = q[j] + bonus;
+        if v > bestv {
+            bestv = v;
+            best = j;
+        }
+        j = j + 1;
+    }
+    return best;
+}
+
+fn bd_greedy(q: [float]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(q) {
+        if q[i] > q[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn bd_epsilon_greedy(q: [float], epsilon: float, seed: int) -> [int] {
+    // Returns [choice, new_seed]. Epsilon 0 always exploits;
+    // epsilon 1 always explores with a uniform arm.
+    let r: float = rand_float(seed);
+    let next: int = rand_next(seed);
+    if r < epsilon {
+        let u: float = r / epsilon;
+        let n: float = len(q) as float;
+        let scaled: float = u * n;
+        let choice: int = scaled as int;
+        return [choice, next];
+    }
+    return [bd_greedy(q), next];
+}
+
+fn bd_regret(best: float, rewards: [float]) -> float {
+    let mut total: float = 0.0;
+    let mut i: int = 0;
+    while i < len(rewards) {
+        total = total + (best - rewards[i]);
+        i = i + 1;
+    }
+    return total;
+}

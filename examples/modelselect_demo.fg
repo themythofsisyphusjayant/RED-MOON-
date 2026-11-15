@@ -1,0 +1,15 @@
+import "modelselect.fg";
+
+fn main() {
+    let sp: [int] = ms_split(10, 8, 10);
+    println(sp[0]);
+    println(sp[1]);
+    let kf: [int] = ms_kfold(10, 5, 2);
+    println(kf[0]);
+    println(kf[1]);
+    let scores: [float] = [0.7, 0.9, 0.8];
+    println(ms_grid_best(scores));
+    let rp: [int] = ms_random_pick(5, 11);
+    println(rp[0]);
+    println(rp[1]);
+}
