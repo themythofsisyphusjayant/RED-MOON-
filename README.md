@@ -1,6 +1,6 @@
 <div align="center">
 
-![Qasida header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=Qasida&fontSize=48&animation=fadeIn&fontColor=ffffff)
+![Qasida — 3D hero](figures/qasida_3d_hero.png)
 
 ![Typing](https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1000&color=F472B6&width=650&lines=Safe.+Simple.+Natively+fast.;Self-hosting.+No+null.+No+silent+overflow.;A+language+that+compiles+itself.)
 
