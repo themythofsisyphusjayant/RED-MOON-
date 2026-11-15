@@ -22,7 +22,7 @@ above checks.
 
 ## Two comparisons, because one lies
 
-- **Shipped**: `forge.py build` (safe: `-O2`) vs `forge.py build
+- **Shipped**: `forge.py build` (safe: `-O2 -march=native`) vs `forge.py build
   --mode fast` (fast: `-O3 -march=native`). This is what a user
   actually pays — but it mixes check removal with optimizer
   differences.

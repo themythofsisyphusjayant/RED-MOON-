@@ -254,7 +254,7 @@ def cmd_add_registry(cwd, spec):
     return cmd_add(cwd, src)
 
 
-def _build(cwd, mode):
+def _build(cwd, mode, portable=False):
     _mp, _text, pkg, _deps = read_manifest(cwd)
     name = pkg.get("name", "app")
     main = os.path.join(cwd, "src", "main.fg")
@@ -265,11 +265,13 @@ def _build(cwd, mode):
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, name)
     try:
-        forge_build(main, out, mode=mode)
+        # Fix 3: pkg build follows build() — native by default,
+        # --portable omits -march=native.
+        forge_build(main, out, mode=mode, portable=portable)
     except ForgeError as e:
         print(f"qasida: error: {e}", file=sys.stderr)
         return 1, None
-    print(f"built: {out} (mode={mode})")
+    print(f"built: {out} (mode={mode}{', portable' if portable else ''})")
     return 0, out
 
 
@@ -368,10 +370,12 @@ def dispatch(argv, forge_path, cwd):
             mode = "safe"
             if "--mode" in rest:
                 mode = rest[rest.index("--mode") + 1]
-            rc, _out = _build(cwd, mode)
+            portable = "--portable" in rest
+            rc, _out = _build(cwd, mode, portable=portable)
             return rc
         if cmd == "run":
             mode = "safe"
+            portable = False
             prog_args = rest
             if "--" in rest:
                 idx = rest.index("--")
@@ -379,7 +383,8 @@ def dispatch(argv, forge_path, cwd):
                 before = rest[:idx]
                 if "--mode" in before:
                     mode = before[before.index("--mode") + 1]
-            rc, out = _build(cwd, mode)
+                portable = "--portable" in before
+            rc, out = _build(cwd, mode, portable=portable)
             if rc != 0:
                 return rc
             proc = subprocess.run([out] + prog_args)

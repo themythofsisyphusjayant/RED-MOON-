@@ -34,11 +34,15 @@ Build a binary:
 python3 forge.py build prog.fg -o prog
 ```
 
-Two modes: **safe** (default, `-O2`, checked arithmetic,
+Two modes: **safe** (default, `-O2 -march=native`, checked arithmetic,
 bounds-checked indexing, readable aborts) and **fast**
 (`--mode fast`, `-O3 -march=native`, unchecked). Use fast only
 for hot code you already validated in safe mode. The C
-compiler is selectable with `QASIDA_CC` (default `cc`).
+compiler is selectable with `QASIDA_CC` (default `cc`). A safe
+binary built on this machine uses this machine's newest
+instructions and may not run elsewhere; pass `--portable` to
+`qasida build` / `qasida run` to omit `-march=native` when
+shipping the binary to another machine.
 
 ## 2. Types and values
 

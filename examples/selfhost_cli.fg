@@ -83,9 +83,9 @@ fn usage_for(cmd: str) -> str {
         return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file";
     }
     if cmd == "run" {
-        return "usage: qasida run [-h] [--mode {safe,fast}] file ...";
+        return "usage: qasida run [-h] [--mode {safe,fast}] [--portable] file ...";
     }
-    return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file";
+    return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding] [--portable]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file";
 }
 
 // ---------- --help texts (byte-exact, captured live from
@@ -103,7 +103,7 @@ fn help_text(cmd: str) -> str {
         return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)";
     }
     if cmd == "run" {
-        return "usage: qasida run [-h] [--mode {safe,fast}] file ...\n\npositional arguments:\n  file\n  program_args\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}";
+        return "usage: qasida run [-h] [--mode {safe,fast}] [--portable] file ...\n\npositional arguments:\n  file\n  program_args\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --portable          build a portable binary: omit -march=native (safe\n                      default is native; use this when shipping the binary to\n                      another machine)";
     }
     if cmd == "test" {
         return "usage: qasida test [-h]\n\noptions:\n  -h, --help  show this help message and exit";
@@ -124,7 +124,7 @@ fn help_text(cmd: str) -> str {
         return "usage: qasida pkg [-h] ...\n\npositional arguments:\n  pkg_args\n\noptions:\n  -h, --help  show this help message and exit";
     }
     if cmd == "build" {
-        return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help            show this help message and exit\n  --mode {safe,fast}\n  --freestanding        build without libc/OS: no files, sockets, threads,\n                        clock, print, or strings/arrays (freestanding v1)\n  --target {native,big32,wasm}\n  --stack-top STACK_TOP\n                        big32 only: initial sp value (decimal or 0x hex);\n                        default 65532, the model flat-memory top. SOC2 builds\n                        pass a RAM address such as 0x800F0000.\n  -o OUTPUT, --output OUTPUT\n  --keep-c KEEP_C\n  --wit WIT             WIT world file to check against (requires --target\n                        wasm)\n  --debug               emit #line directives + compile with -g so gdb steps\n                        through .fg source\n  --shared              build a shared library (.so) for Python ctypes, no\n                        main required";
+        return "usage: qasida build [-h] [--mode {safe,fast}] [--freestanding] [--portable]\n                    [--target {native,big32,wasm}] [--stack-top STACK_TOP]\n                    [-o OUTPUT] [--keep-c KEEP_C] [--wit WIT] [--debug]\n                    [--shared]\n                    file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help            show this help message and exit\n  --mode {safe,fast}\n  --freestanding        build without libc/OS: no files, sockets, threads,\n                        clock, print, or strings/arrays (freestanding v1)\n  --portable            build a portable binary: omit -march=native (safe\n                        default is native; use this when shipping the binary\n                        to another machine)\n  --target {native,big32,wasm}\n  --stack-top STACK_TOP\n                        big32 only: initial sp value (decimal or 0x hex);\n                        default 65532, the model flat-memory top. SOC2 builds\n                        pass a RAM address such as 0x800F0000.\n  -o OUTPUT, --output OUTPUT\n  --keep-c KEEP_C\n  --wit WIT             WIT world file to check against (requires --target\n                        wasm)\n  --debug               emit #line directives + compile with -g so gdb steps\n                        through .fg source\n  --shared              build a shared library (.so) for Python ctypes, no\n                        main required";
     }
     if cmd == "emit-big32" {
         return "usage: qasida emit-big32 [-h] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help  show this help message and exit";
@@ -916,6 +916,16 @@ fn str_contains(hay: str, needle: str) -> bool {
 // SSL libs are missing, retries once without them (cmd_nossl);
 // pass "" for cmd_nossl when the command has no SSL libs
 // (freestanding), so no retry is attempted.
+// Fix 3: when cc rejects -march=native, name the remedy instead of
+// failing silently or falling back. No silent fallback: a binary
+// that claims native but is not would be worse than failing loudly.
+fn cc_fail_msg(err: str) -> str {
+    if str_contains(err, "march") {
+        return "C compiler failed:\n" + err + "\n(if your compiler does not support -march=native, retry with --portable)";
+    }
+    return "C compiler failed:\n" + err;
+}
+
 fn cc_build(cmd: str, cmd_nossl: str, errfile: str) -> str {
     let rc: int = run_command(cmd);
     let mut err: str = "";
@@ -930,11 +940,11 @@ fn cc_build(cmd: str, cmd_nossl: str, errfile: str) -> str {
                 err2 = read_file(errfile);
             }
             if rc2 != 0 {
-                fail_compile("C compiler failed:\n" + err2);
+                fail_compile(cc_fail_msg(err2));
             }
             return err2;
         }
-        fail_compile("C compiler failed:\n" + err);
+        fail_compile(cc_fail_msg(err));
     }
     return err;
 }
@@ -989,6 +999,7 @@ fn choice_error(val: str, c1: str, c2: str, c3: str, label: str, usage: str, pro
 // program's exit code.
 fn cmd_run(argv: [str]) -> int {
     let mut mode: str = "safe";
+    let mut portable: bool = false;
     let mut no_bounds_checks: bool = false;
     let mut no_overflow_checks: bool = false;
     let mut file: str = "";
@@ -1018,6 +1029,12 @@ fn cmd_run(argv: [str]) -> int {
                     return 2;
                 }
                 mode = fv.val;
+                continue;
+            }
+            // Fix 3: portable binary — omit -march=native.
+            if tok == "--portable" {
+                portable = true;
+                i = i + 1;
                 continue;
             }
             // Fix 1 B0 measurement toggles (hidden, not in --help).
@@ -1074,15 +1091,21 @@ fn cmd_run(argv: [str]) -> int {
     if !wrote {
         fail_compile("could not write file: " + c_path);
     }
-    // cc flags mirror cli.run (safe: -O2; fast: -O3 -march=native).
+    // cc flags mirror cli.run. Fix 3: safe gains -march=native by
+    // default; --portable omits it in either mode. (Hosted has no
+    // MinGW branch — --portable is the hosted MinGW escape hatch.)
+    let mut march: str = " -march=native";
+    if portable {
+        march = "";
+    }
     let mut cc_cmd: str = "";
     let mut cc_nossl: str = "";
     if mode == "fast" {
-        cc_cmd = "cc -O3 -march=native -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
-        cc_nossl = "cc -O3 -march=native -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
+        cc_cmd = "cc -O3" + march + " -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
+        cc_nossl = "cc -O3" + march + " -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
     } else {
-        cc_cmd = "cc -O2 -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
-        cc_nossl = "cc -O2 -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
+        cc_cmd = "cc -O2" + march + " -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm -lssl -lcrypto 2> " + shell_quote(errfile);
+        cc_nossl = "cc -O2" + march + " -std=gnu11 -pthread -o " + shell_quote(prog) + " " + shell_quote(c_path) + " -lm 2> " + shell_quote(errfile);
     }
     // Python's run() does NOT print cc stderr on success (only
     // build() does): cc's stderr is read — cc_build fails the run
@@ -1099,14 +1122,18 @@ fn cmd_run(argv: [str]) -> int {
 }
 
 // Fix 1 B0: ", no-bounds-checks" / ", no-overflow-checks" suffix
-// for the `built:` line, matching Python cli.py.
-fn built_suffix(no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+// for the `built:` line, matching Python cli.py. Fix 3 adds
+// ", portable" the same way.
+fn built_suffix(no_bounds_checks: bool, no_overflow_checks: bool, portable: bool) -> str {
     let mut s: str = "";
     if no_bounds_checks {
         s = s + ", no-bounds-checks";
     }
     if no_overflow_checks {
         s = s + ", no-overflow-checks";
+    }
+    if portable {
+        s = s + ", portable";
     }
     return s;
 }
@@ -1123,6 +1150,7 @@ fn built_suffix(no_bounds_checks: bool, no_overflow_checks: bool) -> str {
 fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
     let is_build: bool = cmd == "build";
     let mut mode: str = "safe";
+    let mut portable: bool = false;
     let mut no_bounds_checks: bool = false;
     let mut no_overflow_checks: bool = false;
     let mut freestanding: bool = false;
@@ -1160,6 +1188,14 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
             }
             if tok == "--shared" && is_build {
                 shared = true;
+                i = i + 1;
+                continue;
+            }
+            // Fix 3: portable binary — omit -march=native.
+            // Build-only, mirroring Python (check/emit report it
+            // as unrecognized).
+            if tok == "--portable" && is_build {
+                portable = true;
                 i = i + 1;
                 continue;
             }
@@ -1323,11 +1359,18 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
     }
     // cc flags mirror compiler._cc_flags (fast drops -Wextra);
     // freestanding drops -pthread, adds -nostdlib, links nothing.
+    // Fix 3: safe gains -march=native by default; --portable omits
+    // it in either mode. (Hosted has no MinGW branch — --portable
+    // is the hosted MinGW escape hatch.)
+    let mut march: str = " -march=native";
+    if portable {
+        march = "";
+    }
     let mut flags: str = "";
     if mode == "fast" {
-        flags = "cc -O3 -march=native -std=gnu11 -Wall -Wno-unused-function";
+        flags = "cc -O3" + march + " -std=gnu11 -Wall -Wno-unused-function";
     } else {
-        flags = "cc -O2 -std=gnu11 -Wall -Wextra -Wno-unused-function";
+        flags = "cc -O2" + march + " -std=gnu11 -Wall -Wextra -Wno-unused-function";
     }
     if freestanding {
         flags = flags + " -nostdlib";
@@ -1350,9 +1393,9 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         eprintln(cc_err);
     }
     if freestanding {
-        println("built: " + out + " (mode=" + mode + ", freestanding" + built_suffix(no_bounds_checks, no_overflow_checks) + ")");
+        println("built: " + out + " (mode=" + mode + ", freestanding" + built_suffix(no_bounds_checks, no_overflow_checks, portable) + ")");
     } else {
-        println("built: " + out + " (mode=" + mode + built_suffix(no_bounds_checks, no_overflow_checks) + ")");
+        println("built: " + out + " (mode=" + mode + built_suffix(no_bounds_checks, no_overflow_checks, portable) + ")");
     }
     return 0;
 }

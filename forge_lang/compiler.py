@@ -111,14 +111,19 @@ def compile_file(path, mode="safe", require_main=True, debug=False, freestanding
                     no_overflow_checks=no_overflow_checks), program
 
 
-def build_shared(source_path, output_path, mode="safe"):
+def build_shared(source_path, output_path, mode="safe", portable=False):
     """Compile a Forge library (no main required) to a .so for Python ctypes."""
     c_source, _ = compile_file(source_path, mode=mode, require_main=False)
     fd, c_path = tempfile.mkstemp(suffix=".c", prefix="forge2_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(c_source)
-        flags = [_cc(), "-shared", "-fPIC", "-O2", "-std=gnu11", "-Wall",
+        # Fix 3: a .so is a shipped binary like any other, so it
+        # follows build() for the march token only (gains
+        # -march=native unless --portable or MinGW). The -O level
+        # stays -O2 in both modes — this fix does not change it.
+        march = [] if (portable or _is_mingw()) else ["-march=native"]
+        flags = [_cc(), "-shared", "-fPIC", "-O2"] + march + ["-std=gnu11", "-Wall",
                  "-Wno-unused-function", "-pthread"]
         result = subprocess.run(flags + ["-o", output_path, c_path, "-lm", "-lssl", "-lcrypto"],
                                 capture_output=True, text=True)
@@ -126,7 +131,13 @@ def build_shared(source_path, output_path, mode="safe"):
             result = subprocess.run(flags + ["-o", output_path, c_path, "-lm"],
                                     capture_output=True, text=True)
         if result.returncode != 0:
-            raise ForgeError(f"C compiler failed:\n{result.stderr}")
+            # Fix 3: no silent fallback when cc rejects -march=native
+            # (e.g. a cross compiler or TinyCC). Name the remedy.
+            msg = f"C compiler failed:\n{result.stderr}"
+            if "march" in result.stderr:
+                msg += ("\n(if your compiler does not support -march=native, "
+                        "retry with --portable)")
+            raise ForgeError(msg)
     finally:
         try:
             os.unlink(c_path)
@@ -168,21 +179,23 @@ def _is_mingw():
     return "mingw" in _cc()
 
 
-def _cc_flags(mode):
+def _cc_flags(mode, portable=False):
     # The generated header defines every builtin helper; unused ones
     # are expected, so silence that one warning (other -Wall warnings
     # still show).
+    # Fix 3: -march=native is the default in BOTH modes (safe gains it;
+    # fast already had it). --portable omits it. -march=native is
+    # wrong for a cross-compiled binary: it describes the build
+    # machine, not the target — so MinGW never gets it, in either
+    # mode (the fast-mode carve-out, extended to safe by Fix 3).
+    march = [] if (portable or _is_mingw()) else ["-march=native"]
     if mode == "fast":
-        if _is_mingw():
-            # -march=native is wrong for a cross-compiled binary: it
-            # describes the build machine, not the target.
-            return [_cc(), "-O3", "-std=gnu11", "-Wall", "-Wno-unused-function", "-pthread"]
-        return [_cc(), "-O3", "-march=native", "-std=gnu11", "-Wall", "-Wno-unused-function", "-pthread"]
-    return [_cc(), "-O2", "-std=gnu11", "-Wall", "-Wextra", "-Wno-unused-function", "-pthread"]
+        return [_cc(), "-O3"] + march + ["-std=gnu11", "-Wall", "-Wno-unused-function", "-pthread"]
+    return [_cc(), "-O2"] + march + ["-std=gnu11", "-Wall", "-Wextra", "-Wno-unused-function", "-pthread"]
 
 
 def build(source_path, output_path, mode="safe", keep_c=None, debug=False, freestanding=False,
-          no_bounds_checks=False, no_overflow_checks=False):
+          no_bounds_checks=False, no_overflow_checks=False, portable=False):
     c_source, _ = compile_file(source_path, mode=mode, debug=debug, freestanding=freestanding,
                                no_bounds_checks=no_bounds_checks,
                                no_overflow_checks=no_overflow_checks)
@@ -208,7 +221,7 @@ def build(source_path, output_path, mode="safe", keep_c=None, debug=False, frees
         if freestanding and _is_mingw():
             raise ForgeError("freestanding native is only supported for x86_64 Linux "
                              "(the _start entry uses the Linux exit_group syscall)")
-        flags = _cc_flags(mode) + (["-g"] if debug else [])
+        flags = _cc_flags(mode, portable=portable) + (["-g"] if debug else [])
         if freestanding:
             flags = [f for f in flags if f != "-pthread"] + ["-nostdlib"]
         have_ssl = os.environ.get("QASIDA_HAVE_OPENSSL") == "1"
@@ -231,7 +244,13 @@ def build(source_path, output_path, mode="safe", keep_c=None, debug=False, frees
                 result = subprocess.run(flags + ["-o", output_path, c_path] + libs,
                                         capture_output=True, text=True)
         if result.returncode != 0:
-            raise ForgeError(f"C compiler failed:\n{result.stderr}")
+            # Fix 3: no silent fallback when cc rejects -march=native
+            # (e.g. a cross compiler or TinyCC). Name the remedy.
+            msg = f"C compiler failed:\n{result.stderr}"
+            if "march" in result.stderr:
+                msg += ("\n(if your compiler does not support -march=native, "
+                        "retry with --portable)")
+            raise ForgeError(msg)
         if result.stderr.strip():
             print(result.stderr, file=sys.stderr)
     finally:

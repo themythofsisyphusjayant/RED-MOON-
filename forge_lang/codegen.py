@@ -1,6 +1,8 @@
 """Qasida -> C code generator.
 
-Safe mode (default): checked int arithmetic, bounds-checked indexing.
+Safe mode (default): checked int arithmetic, bounds-checked indexing,
+-O2 -march=native in the driver (use --portable to omit -march=native
+when shipping the binary to another machine).
 Fast mode (--mode fast): unchecked arithmetic/indexing, -O3 -march=native
 in the driver, for C++-style microsecond-latency work. Fast mode is an
 explicit opt-in: it can wrap, crash on division by zero, and read out

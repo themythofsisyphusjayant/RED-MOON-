@@ -19,7 +19,10 @@ Usage:
     qasida lsp
     qasida repl
     qasida pkg <init|add|build|run|test|list> ...
-Safe mode (default): checked int arithmetic + bounds-checked indexing.
+Safe mode (default): checked int arithmetic + bounds-checked indexing,
+-O2 -march=native (use --portable to omit -march=native when shipping
+the binary to another machine — a native binary uses this machine's
+newest instructions and may not run elsewhere).
 Fast mode: unchecked, -O3 -march=native, for microsecond-latency work.
 """
 
@@ -67,6 +70,10 @@ def main(argv=None):
     p = sub.add_parser("run")
     p.add_argument("file")
     p.add_argument("--mode", choices=["safe", "fast"], default="safe")
+    p.add_argument("--portable", action="store_true",
+                   help="build a portable binary: omit -march=native "
+                        "(safe default is native; use this when shipping "
+                        "the binary to another machine)")
     p.add_argument("--no-bounds-checks", action="store_true",
                    help=argparse.SUPPRESS)
     p.add_argument("--no-overflow-checks", action="store_true",
@@ -88,6 +95,10 @@ def main(argv=None):
     p.add_argument("--freestanding", action="store_true",
                    help="build without libc/OS: no files, sockets, threads, "
                         "clock, print, or strings/arrays (freestanding v1)")
+    p.add_argument("--portable", action="store_true",
+                   help="build a portable binary: omit -march=native "
+                        "(safe default is native; use this when shipping "
+                        "the binary to another machine)")
     p.add_argument("--target", choices=["native", "big32", "wasm"], default="native")
     p.add_argument("--stack-top", default=None,
                    help="big32 only: initial sp value (decimal or 0x hex); "
@@ -245,19 +256,22 @@ def main(argv=None):
         if args.cmd == "build" and args.shared:
             from forge_lang.compiler import build_shared
             out = args.output or (os.path.splitext(args.file)[0] + ".so")
-            build_shared(args.file, out, mode=args.mode)
-            print(f"built shared library: {out}")
+            build_shared(args.file, out, mode=args.mode, portable=args.portable)
+            print(f"built shared library: {out} (mode={args.mode}"
+                  f"{', portable' if args.portable else ''})")
             return 0
         if args.cmd == "build":
             out = args.output or os.path.splitext(args.file)[0]
             build(args.file, out, mode=args.mode, keep_c=args.keep_c,
                   debug=args.debug, freestanding=args.freestanding,
                   no_bounds_checks=args.no_bounds_checks,
-                  no_overflow_checks=args.no_overflow_checks)
+                  no_overflow_checks=args.no_overflow_checks,
+                  portable=args.portable)
             print(f"built: {out} (mode={args.mode}"
                   f"{', freestanding' if args.freestanding else ''}"
                   f"{', no-bounds-checks' if args.no_bounds_checks else ''}"
-                  f"{', no-overflow-checks' if args.no_overflow_checks else ''})")
+                  f"{', no-overflow-checks' if args.no_overflow_checks else ''}"
+                  f"{', portable' if args.portable else ''})")
             return 0
         if args.cmd == "test":
             suite = os.path.join(REPO_ROOT, "tests", "run_tests.py")
@@ -277,9 +291,16 @@ def main(argv=None):
                     f.write(c_source)
                 cc_bin = os.environ.get("QASIDA_CC", "cc")
                 mingw = "mingw" in cc_bin
-                flags = ([cc_bin, "-O3", "-std=gnu11", "-pthread"] if args.mode == "fast" and mingw
-                         else [cc_bin, "-O3", "-march=native", "-std=gnu11", "-pthread"] if args.mode == "fast"
-                         else [cc_bin, "-O2", "-std=gnu11", "-pthread"])
+                # Fix 3: mirror _cc_flags — safe gains -march=native
+                # by default; --portable or MinGW omits it, in
+                # either mode. (Kept inline, not refactored to call
+                # _cc_flags — see DESIGN.md §1.1 P2.)
+                if args.mode == "fast":
+                    flags = ([cc_bin, "-O3", "-std=gnu11", "-pthread"] if (mingw or args.portable)
+                             else [cc_bin, "-O3", "-march=native", "-std=gnu11", "-pthread"])
+                else:
+                    flags = ([cc_bin, "-O2", "-std=gnu11", "-pthread"] if (mingw or args.portable)
+                             else [cc_bin, "-O2", "-march=native", "-std=gnu11", "-pthread"])
                 if os.environ.get("QASIDA_HAVE_OPENSSL") == "1" and mingw:
                     flags = flags + ["-DFORGE_HAVE_OPENSSL"]
                 if os.environ.get("QASIDA_NO_OPENSSL") == "1":
@@ -295,7 +316,13 @@ def main(argv=None):
                         cc = subprocess.run(flags + ["-o", exe, c_path] + libs,
                                             capture_output=True, text=True)
                 if cc.returncode != 0:
-                    raise ForgeError(f"C compiler failed:\n{cc.stderr}")
+                    # Fix 3: no silent fallback when cc rejects
+                    # -march=native. Name the remedy.
+                    msg = f"C compiler failed:\n{cc.stderr}"
+                    if "march" in cc.stderr:
+                        msg += ("\n(if your compiler does not support -march=native, "
+                                "retry with --portable)")
+                    raise ForgeError(msg)
                 prog_args = list(args.program_args)
                 if prog_args and prog_args[0] == "--":
                     prog_args = prog_args[1:]
