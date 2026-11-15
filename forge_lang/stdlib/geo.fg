@@ -31,7 +31,8 @@ fn geo_haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float
     let s2 = geo_sin(dlon / 2.0);
     let a = s1 * s1 + geo_cos(geo_rad(lat1)) * geo_cos(geo_rad(lat2)) * s2 * s2;
     // asin(sqrt(a)) by its Taylor series to x^5; accurate to < 1e-6
-    // for the demo distances (sqrt(a) < 0.15). No trig builtin exists.
+    // for the demo distances (sqrt(a) < 0.15). sin/cos/tan builtins
+    // exist now, but asin still doesn't, so the series stays.
     let s = sqrt(a);
     let s3 = s * s * s;
     let s5 = s3 * s * s;

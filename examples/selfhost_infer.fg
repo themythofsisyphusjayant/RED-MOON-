@@ -1563,7 +1563,7 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         if e.name == "args" || e.name == "split" {
             return infer_set(h, e, "[str]");
         }
-        if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "pow" || e.name == "parse_float" {
+        if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "sin" || e.name == "cos" || e.name == "tan" || e.name == "pow" || e.name == "parse_float" {
             return infer_set(h, e, "float");
         }
         if e.name == "read_file" || e.name == "read_line" || e.name == "join" || e.name == "substr" || e.name == "trim" {

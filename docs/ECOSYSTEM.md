@@ -85,7 +85,7 @@ to check is not kept. Commands: `:help`, `:defs`, `:reset`, `:quit`.
   stddev, median (median sorts a copy, never the caller's array)
 
 Builtins: print/println, push, fail, len, range, clock_micros,
-sqrt/exp/log/pow/abs, read_file/write_file, args, parse_int,
+sqrt/exp/log/sin/cos/tan/pow/abs, read_file/write_file, args, parse_int,
 split/join/substr/trim/starts_with/ends_with.
 
 ## CI

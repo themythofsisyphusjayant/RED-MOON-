@@ -365,7 +365,7 @@ class Infer:
                 return self.set(expr, "[int]")
             if expr.name in ("args", "split"):
                 return self.set(expr, "[str]")
-            if expr.name in ("sqrt", "exp", "log", "pow", "parse_float"):
+            if expr.name in ("sqrt", "exp", "log", "sin", "cos", "tan", "pow", "parse_float"):
                 return self.set(expr, "float")
             if expr.name in ("read_file", "read_line", "join", "substr", "trim"):
                 return self.set(expr, "str")

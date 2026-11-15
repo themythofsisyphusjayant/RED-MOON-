@@ -6,6 +6,17 @@ release — the documented language surface will not break
 without a major version bump (see docs/STABILITY.md).
 0.x releases were pre-stable; breaking changes were possible then.
 
+## Unreleased
+
+- Trig builtins `sin(x: float) -> float`, `cos(x: float) -> float`,
+  `tan(x: float) -> float`, lowering directly to libm (quant/trig).
+  Same shape as sqrt/exp/log: one float argument, one-message
+  checker error otherwise. Freestanding and big32 reject them like
+  the other libm builtins; WASM rejects them with the generic
+  unsupported-call error. New demo `examples/trig_demo.fg` plus
+  `tests/test_trig_v1.py`, and a Box-Muller Monte Carlo variant
+  (`quant/mc_boxmuller.fg`) that the builtins unblock.
+
 ## 2.2.0 — 12 Nov 2026
 
 - Compiler speed program (Steps 2–6), each step verified to the full bar

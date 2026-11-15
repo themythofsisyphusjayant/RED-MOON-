@@ -1,0 +1,16 @@
+fn main() {
+    let pi: float = 3.141592653589793;
+    println("sin(0) =", sin(0.0));
+    println("sin(pi/6) =", sin(pi / 6.0));
+    println("sin(pi/4) =", sin(pi / 4.0));
+    println("sin(pi/2) =", sin(pi / 2.0));
+    println("sin(-pi/2) =", sin(0.0 - pi / 2.0));
+    println("cos(0) =", cos(0.0));
+    println("cos(pi/3) =", cos(pi / 3.0));
+    println("cos(pi/4) =", cos(pi / 4.0));
+    println("cos(pi) =", cos(pi));
+    println("tan(0) =", tan(0.0));
+    println("tan(pi/4) =", tan(pi / 4.0));
+    println("tan(-pi/4) =", tan(0.0 - pi / 4.0));
+    println("sin^2+cos^2 =", sin(pi / 4.0) * sin(pi / 4.0) + cos(pi / 4.0) * cos(pi / 4.0));
+}

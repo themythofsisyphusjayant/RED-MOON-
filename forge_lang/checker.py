@@ -83,7 +83,7 @@ STMT_BUILTINS = {"print", "println", "push", "pin", "fail", "assert", "poke32",
                  "mmap_set", "mmap_close", "mmap_set32",
                  "csr_write", "csr_set", "csr_clear",
                  "fail_compile", "eprintln"}
-EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs",
+EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
@@ -2384,7 +2384,7 @@ class Checker:
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
                 "clock_micros", "args", "parallel_dot", "parallel_matmul",
-                "sqrt", "exp", "log", "pow", "abs", "run_command"):
+                "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "run_command"):
             raise ForgeError(f"'{call.name}' needs the hosted runtime "
                              f"(not in freestanding v1)",
                              call.line, call.col)
@@ -2548,7 +2548,7 @@ class Checker:
             if len(call.args) != 3 or self.check_expr(call.args[0]) != "[float]" or self.check_expr(call.args[1]) != "[float]" or self.check_expr(call.args[2]) != "int":
                 raise ForgeError("parallel_matmul() takes [float], [float], int", call.line, call.col)
             return "[float]"
-        if call.name in ("sqrt", "exp", "log"):
+        if call.name in ("sqrt", "exp", "log", "sin", "cos", "tan"):
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "float":
                 raise ForgeError(f"{call.name}() takes exactly one float argument",
                                  call.line, call.col)

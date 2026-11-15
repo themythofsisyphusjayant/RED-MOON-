@@ -4935,7 +4935,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     if e.name == "clock_micros" {
         return CGExpr { g: g, code: "forge_clock_micros()" };
     }
-    if e.name == "sqrt" || e.name == "exp" || e.name == "log" {
+    if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "sin" || e.name == "cos" || e.name == "tan" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         return CGExpr { g: g, code: e.name + "(" + aout.code + ")" };

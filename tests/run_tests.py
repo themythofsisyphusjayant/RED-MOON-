@@ -25,6 +25,17 @@ def main():
     expect("examples/hello2.fg",
            "sum = 7.5 len = 3\ni = 0 xs[i] = 1.5\ni = 1 xs[i] = 2.5\ni = 2 xs[i] = 3.5\n"
            "sqrt(2) = 1.41421 exp(1) = 2.71828\n")
+    # Trig builtins: sin/cos/tan lower to libm (quant/trig).
+    expect("examples/trig_demo.fg",
+           "sin(0) = 0\nsin(pi/6) = 0.5\nsin(pi/4) = 0.707107\n"
+           "sin(pi/2) = 1\nsin(-pi/2) = -1\ncos(0) = 1\ncos(pi/3) = 0.5\n"
+           "cos(pi/4) = 0.707107\ncos(pi) = -1\ntan(0) = 0\n"
+           "tan(pi/4) = 1\ntan(-pi/4) = -1\nsin^2+cos^2 = 1\n")
+    expect("examples/trig_demo.fg",
+           "sin(0) = 0\nsin(pi/6) = 0.5\nsin(pi/4) = 0.707107\n"
+           "sin(pi/2) = 1\nsin(-pi/2) = -1\ncos(0) = 1\ncos(pi/3) = 0.5\n"
+           "cos(pi/4) = 0.707107\ncos(pi) = -1\ntan(0) = 0\n"
+           "tan(pi/4) = 1\ntan(-pi/4) = -1\nsin^2+cos^2 = 1\n", "fast")
     expect("examples/matrix.fg", "58 64 139 154 \ndot = 217\n")
     # Structs: distance 3-4-5, then field assignment to 6-4.
     expect("examples/structs_point.fg",

@@ -10,8 +10,8 @@ subset, and its rules are:
     exit_group syscall with main's return value. ldd reports
     "statically linked" and nm shows no undefined symbols.
   * No OS at check time: files, sockets, threads (spawn/scope),
-    clock, args, print/println, libm builtins (sqrt/exp/log/pow/
-    abs), and extern C functions are all clean checker errors.
+    clock, args, print/println, libm builtins (sqrt/exp/log/sin/
+    cos/tan/pow/abs), and extern C functions are all clean checker errors.
   * No allocator at codegen time: strings and arrays have no
     values, so any program building one fails with a clear
     error, never a C or link error. fail() halts (infinite loop)
@@ -27,7 +27,7 @@ Tests:
   4. native: checked overflow halts (timeout, not exit)
   5. big32 model: freestanding OK via poke32 + RAM round-trip
   6. checker rejects print, read_file, http_get, clock_micros,
-     args, spawn, scope, sqrt, abs, extern (freestanding only)
+     args, spawn, scope, sqrt, sin, cos, tan, abs, extern (freestanding only)
   7. codegen rejects a string literal (freestanding only)
   8. wasm + freestanding refused clearly
   9. hosted control: the print program builds WITHOUT the flag
@@ -166,6 +166,9 @@ fn main() -> int {
         ("spawn", "fn worker() { }\nfn main() { spawn worker(); }\n", "check"),
         ("scope", "fn worker() { }\nfn main() { scope { spawn worker(); } }\n", "check"),
         ("sqrt", "fn f() -> float { return sqrt(4.0); }\nfn main() { let x: float = f(); }\n", "check"),
+        ("sin", "fn f() -> float { return sin(1.0); }\nfn main() { let x: float = f(); }\n", "check"),
+        ("cos", "fn f() -> float { return cos(1.0); }\nfn main() { let x: float = f(); }\n", "check"),
+        ("tan", "fn f() -> float { return tan(1.0); }\nfn main() { let x: float = f(); }\n", "check"),
         ("abs", "fn main() -> int { return abs(0 - 5); }\n", "check"),
         ("extern", "extern fn puts(s: str) -> int;\nfn main() { let x: int = puts(\"hi\"); }\n", "check"),
     ]

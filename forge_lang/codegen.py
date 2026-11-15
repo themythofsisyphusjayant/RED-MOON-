@@ -4239,7 +4239,7 @@ class Codegen:
                 return f"forge_range({self.gen_expr(expr.args[0])})"
             if expr.name == "clock_micros":
                 return "forge_clock_micros()"
-            if expr.name in ("sqrt", "exp", "log"):
+            if expr.name in ("sqrt", "exp", "log", "sin", "cos", "tan"):
                 return f"{expr.name}({self.gen_expr(expr.args[0])})"
             if expr.name == "pow":
                 return f"pow({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"

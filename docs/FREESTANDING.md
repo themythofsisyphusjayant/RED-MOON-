@@ -112,7 +112,7 @@ arithmetic via gcc builtins, volatile peek/poke helpers);
 exit to. Anything needing the OS is a clean error, not a link
 error: the checker rejects files, sockets, threads (spawn and
 scope), clock, args, print/println, libm builtins (sqrt/exp/log/
-pow/abs), and extern C functions; the codegen rejects any
+sin/cos/tan/pow/abs), and extern C functions; the codegen rejects any
 string/array value (including structs carrying str/array fields)
 and `emit_free_owned` is a no-op, since no owned values can
 exist. big32 runs under the same flag (its output is already

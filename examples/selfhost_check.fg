@@ -466,7 +466,7 @@ fn heap_error(n: Node, t: str) -> str {
 // Freestanding blocklist (Python checker.py:2251): builtins
 // that need the hosted runtime.
 fn is_fs_blocked_builtin(name: str) -> bool {
-    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "pow" || name == "abs" || name == "run_command";
+    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
 }
 
 fn elem_type(t: str) -> str {
@@ -801,7 +801,7 @@ fn suggest(name: str, candidates: [str]) -> str {
 // All builtin function names (Python checker.py BUILTINS), as
 // suggestion candidates for undefined functions.
 fn builtin_names() -> [str] {
-    return ["print", "println", "push", "pin", "fail", "assert", "poke32", "mmap_set", "mmap_close", "mmap_set32", "csr_write", "csr_set", "csr_clear", "fail_compile", "eprintln", "len", "range", "clock_micros", "sqrt", "exp", "log", "pow", "abs", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "read_file", "read_line", "write_file", "read_bytes", "write_bytes", "file_exists", "args", "parse_int", "parse_float", "run_command", "try_alloc", "split", "join", "substr", "trim", "starts_with", "ends_with", "http_get", "http_listen", "http_accept", "http_read_request", "http_respond", "http_respond_status", "http_close", "alloc_count", "free_count", "parallel_dot", "parallel_matmul", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "weak_upgrade", "move", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3"];
+    return ["print", "println", "push", "pin", "fail", "assert", "poke32", "mmap_set", "mmap_close", "mmap_set32", "csr_write", "csr_set", "csr_clear", "fail_compile", "eprintln", "len", "range", "clock_micros", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "read_file", "read_line", "write_file", "read_bytes", "write_bytes", "file_exists", "args", "parse_int", "parse_float", "run_command", "try_alloc", "split", "join", "substr", "trim", "starts_with", "ends_with", "http_get", "http_listen", "http_accept", "http_read_request", "http_respond", "http_respond_status", "http_close", "alloc_count", "free_count", "parallel_dot", "parallel_matmul", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "weak_upgrade", "move", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3"];
 }
 
 // Statement-only builtins (Python checker.py STMT_BUILTINS):
@@ -812,7 +812,7 @@ fn is_stmt_builtin(name: str) -> bool {
 }
 
 fn is_expr_builtin(name: str) -> bool {
-    return name == "len" || name == "range" || name == "clock_micros" || name == "sqrt" || name == "exp" || name == "log" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
+    return name == "len" || name == "range" || name == "clock_micros" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -3122,7 +3122,7 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         c = expect_builtin_msg(c, n, [], "clock_micros() takes no arguments");
         return COut { c: c, typ: "int" };
     }
-    if n.name == "sqrt" || n.name == "exp" || n.name == "log" {
+    if n.name == "sqrt" || n.name == "exp" || n.name == "log" || n.name == "sin" || n.name == "cos" || n.name == "tan" {
         c = expect_builtin_msg(c, n, ["float"], n.name + "() takes exactly one float argument");
         return COut { c: c, typ: "float" };
     }
