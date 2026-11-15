@@ -1,6 +1,11 @@
+fn get_i() -> int { return 1; }
 fn main() -> int {
     let xs: [int] = [10, 20, 30];
-    let i: int = 1;
+    // i comes from a call, so no interval is proven (R5 does not
+    // fire): the first xs[i] is checked, the repeat is direct
+    // via the check cache. (With a let-bound literal i, B2 R5
+    // would cover both uses and the dedupe would be unobservable.)
+    let i: int = get_i();
     let a: int = xs[i] * 3 + xs[i] % 7;
     println("a =", a);
     return 0;

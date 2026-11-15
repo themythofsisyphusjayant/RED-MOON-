@@ -1,4 +1,5 @@
-"""Fix 1 Phase B1 — bounds-check hoisting proofs (H1, H2, H1-D).
+"""Fix 1 Phase B — bounds-check hoisting proofs (H1, H2, H1-D) plus
+range analysis (R1–R5).
 
 Pure analysis pass over the checked AST. Runs after the checker,
 before native codegen (called from Codegen.generate), and annotates
@@ -6,10 +7,23 @@ nothing on the AST itself: it returns
 
     covered: set of id(Index node) proven in-bounds
     guards:  dict id(loop node) -> [guard C strings] (in emit order)
+    plain:   set of id(BinOp node) whose checked helper may drop
+             (R2 '%' with n > 0 proven; R3 '*' and '+' with the
+             product/sum proven in range)
+    idx_guards: dict id(Index node) -> guard C string, for
+             straight-line R5 uses (the guard rides with the use
+             as a statement expression; see DESIGN.md in
+             quant/fix1/b2/ for why it is not a separate statement)
 
-Codegen consults only these two results, and only in safe mode with
+Codegen consults only these four results, and only in safe mode with
 bounds checks on (the fast emission is reused for covered uses — no
 third emission path).
+
+DESIGN.md references: H1 §2 (counted while), H2 §2 (for range),
+H1-D §2 (descending while), H1-G (sized arrays, folded into H1),
+R1–R5 §2 (range analysis), R4 (post-loop counter interval, used
+only to prove H1-D-P3 and, via the singleton _cond_fact extension,
+to narrow `if j < nlv` for R5).
 
 DESIGN.md references: H1 §2 (counted while), H2 §2 (for range),
 H1-D §2 (descending while), H1-G (sized arrays, folded into H1),
@@ -121,10 +135,22 @@ def _cap(v):
 # ------------------------------------------------------------------
 
 def _children(node):
-    """Direct child AST nodes of `node` (via dataclass fields)."""
+    """Direct child AST nodes of `node` (via dataclass fields).
+
+    Tuple-valued fields hold pairs: StructLit.fields is
+    [(field_name, expr)] and Match.arms is [(pattern, Block)].
+    The node element of a pair IS a direct child (the expr / the
+    arm Block) — yielding only its children skips it entirely,
+    which made the R-scan (and _walk) blind to uses inside struct
+    literals (B2: check.fg's `args[0]` in `COut { ..., typ:
+    args[0] }` was covered by hosted but invisible to Python).
+    """
     if isinstance(node, (list, tuple)):
         for item in node:
-            yield from _children(item)
+            if hasattr(item, "__dataclass_fields__"):
+                yield item
+            elif isinstance(item, (list, tuple)):
+                yield from _children(item)
         return
     if not hasattr(node, "__dataclass_fields__"):
         return
@@ -229,12 +255,17 @@ class _Env:
         self.types = {}    # name -> type spelling ("" = unknown)
         self.iv = {}       # name -> (lo, hi); None end = unbounded
         self.sized = {}    # name -> N for sized arrays
+        # B2 (§4): relational upper bounds — name -> set of VAR
+        # names x such that `name < x` is proven (from loop-counter
+        # bounds and R2 mod results). Needed by R3-P2.
+        self.rel = {}
 
     def copy(self):
         e = _Env()
         e.types = dict(self.types)
         e.iv = dict(self.iv)
         e.sized = dict(self.sized)
+        e.rel = {k: set(v) for k, v in self.rel.items()}
         return e
 
     def type_of(self, name):
@@ -251,6 +282,15 @@ class _Env:
 
     def drop_interval(self, name):
         self.iv.pop(name, None)
+
+    def rel_of(self, name):
+        return self.rel.get(name, set())
+
+    def add_rel(self, name, bound):
+        self.rel.setdefault(name, set()).add(bound)
+
+    def drop_rel(self, name):
+        self.rel.pop(name, None)
 
 
 def _interval(node, env):
@@ -298,6 +338,81 @@ def _is_len_call(node):
     if isinstance(node, A.MethodCall) and node.method == "len" and not node.args:
         return True
     return False
+
+
+# B2: condition facts for If-arm narrowing (mirrors codegen.py
+# _cond_fact, extended to var-vs-var where the other side has a
+# singleton interval — DESIGN.md §4.3, needed by R4's consumer:
+# `if j2 < nlv` with nlv let-bound to 64 narrows j2 to [0, 63]).
+# Returns (var, lo, hi) proven when `cond` holds (truth=True) or
+# fails (truth=False), or None. Only <, <=, >, >=, == comparisons.
+def _cond_fact_lp(cond, env, truth):
+    if not isinstance(cond, A.BinOp):
+        return None
+    if cond.op not in ("<", "<=", ">", ">=", "=="):
+        return None
+    left, right, op = cond.left, cond.right, cond.op
+    lit = None
+    if isinstance(left, A.IntLit) and isinstance(right, A.Var):
+        left, right = right, left
+        op = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "==": "=="}[op]
+        lit = right.value if isinstance(right, A.IntLit) else None
+    if isinstance(left, A.Var) and isinstance(right, A.IntLit):
+        lit = right.value
+    elif isinstance(left, A.Var) and isinstance(right, A.Var):
+        # Singleton var-vs-var: the other side's interval must be a
+        # single value; that value plays the literal's role.
+        _lo, _hi = env.interval_of(right.name)
+        if _lo is not None and _lo == _hi:
+            lit = _lo
+        else:
+            # The narrowed var may be on the right instead.
+            _lo2, _hi2 = env.interval_of(left.name)
+            if _lo2 is not None and _lo2 == _hi2:
+                left, right = right, left
+                op = {"<": ">", "<=": ">=", ">": "<", ">=": "<=",
+                      "==": "=="}[op]
+                lit = _lo2
+            else:
+                return None
+    else:
+        return None
+    if lit is None or not isinstance(left, A.Var):
+        return None
+    # Only int vars are narrowed (a well-typed `<` against an int
+    # literal implies int; a known non-int type must not be narrowed).
+    t = env.type_of(left.name)
+    if t and t != "int":
+        return None
+    if not truth:
+        if op == "==":
+            return None
+        op = {"<": ">=", "<=": ">", ">": "<=", ">=": "<"}[op]
+    table = {"<": (None, lit - 1), "<=": (None, lit),
+             ">": (lit + 1, None), ">=": (lit, None),
+             "==": (lit, lit)}
+    lo, hi = table[op]
+    return (left.name, lo, hi)
+
+
+def _narrow_env(env, var, lo, hi):
+    """Intersect env's interval for `var` with (lo, hi) in place
+    (None end = unbounded). Mirrors codegen._narrow's clamping, but
+    the analysis keeps None ends (no INT_MIN/INT_MAX clamp: the
+    analysis cap is 2^40, applied by _cap at interval build time)."""
+    old_lo, old_hi = env.interval_of(var)
+    nlo = old_lo if lo is None else (lo if old_lo is None else max(old_lo, lo))
+    nhi = old_hi if hi is None else (hi if old_hi is None else min(old_hi, hi))
+    if nlo is not None and nhi is not None and nlo > nhi:
+        env.drop_interval(var)
+        env.drop_rel(var)
+        return
+    nlo = _cap(nlo)
+    nhi = _cap(nhi)
+    if nlo is None and nhi is None:
+        env.drop_interval(var)
+    else:
+        env.set_interval(var, (nlo, nhi))
 
 
 def _derive_type(expr, env):
@@ -374,6 +489,134 @@ def _counter_discipline(body, name, step):
     e = last.expr
     return (isinstance(e, A.BinOp) and e.op == step
             and _is_var(e.left, name) and _is_intlit(e.right, 1))
+
+
+def _loop_counter_facts(stmt, stmts, pos, env):
+    """B2: the loop-counter interval (+ relational bound, if any)
+    that holds at every use inside the body of a counted loop:
+    (counter, interval, rel_bound_or_None), or None when the loop
+    has no counted shape. H1: [L, B_hi-1] with rel {B} for a var
+    bound; H1-D: [L_lo+1, hi_E]; H2: [s, e_hi-1] with rel {bound}.
+    The interval is the LOOP-TOP value (the increment/decrement is
+    the last statement, so every use sees it). Requires the same
+    entry + discipline preconditions as H1/H1-D/H2 — a loop that
+    fails them contributes no fact (its counter stays unknown)."""
+    if isinstance(stmt, A.While):
+        body = stmt.body
+        cond = stmt.cond
+        if not (isinstance(cond, A.BinOp)
+                and isinstance(cond.left, A.Var)):
+            return None
+        ctr = cond.left.name
+        if cond.op == "<":
+            _k, w = _nearest_entry(stmts, pos, ctr)
+            if w is None or not isinstance(w, (A.Let, A.Assign)):
+                return None
+            if _entry_stale(stmts, _k, pos, ctr):
+                return None
+            if not _is_intlit(w.expr) or w.expr.value < 0:
+                return None
+            if not _counter_discipline(body, ctr, "+"):
+                return None
+            entry_lit = w.expr.value
+            b = cond.right
+            if _is_intlit(b):
+                return (ctr, (entry_lit, b.value - 1), None)
+            if isinstance(b, A.Var):
+                if _write_sites(body, b.name):
+                    return None
+                _lo, hi = env.interval_of(b.name)
+                return (ctr, (entry_lit, None if hi is None else hi - 1),
+                        b.name)
+            return None
+        if cond.op == ">":
+            lexpr = cond.right
+            if _is_intlit(lexpr):
+                if lexpr.value < 0:
+                    return None
+                l_lo = lexpr.value
+            elif isinstance(lexpr, A.Var):
+                lo, _hi = env.interval_of(lexpr.name)
+                if lo is None or lo < 0:
+                    return None
+                if _write_sites(body, lexpr.name):
+                    return None
+                l_lo = lo
+            else:
+                return None
+            _k, w = _nearest_entry(stmts, pos, ctr)
+            if w is None or not isinstance(w, (A.Let, A.Assign)):
+                return None
+            if _entry_stale(stmts, _k, pos, ctr):
+                return None
+            elo, ehi = _interval(w.expr, env)
+            if ehi is None:
+                return None
+            if ehi <= l_lo:
+                return None  # never runs; no body fact
+            if not _counter_discipline(body, ctr, "-"):
+                return None
+            return (ctr, (l_lo + 1, ehi), None)
+        return None
+    if isinstance(stmt, A.For):
+        ctr = stmt.name
+        it = stmt.expr
+        if isinstance(it, A.Call) and it.name == "range" \
+                and len(it.args) == 1:
+            arg = it.args[0]
+            if _is_intlit(arg):
+                return (ctr, (0, arg.value - 1), None)
+            if isinstance(arg, A.Var):
+                _lo, hi = env.interval_of(arg.name)
+                if _write_sites(stmt.body, arg.name):
+                    return None
+                return (ctr, (0, None if hi is None else hi - 1),
+                        arg.name)
+            if isinstance(arg, (A.Call, A.MethodCall)):
+                return (ctr, (0, None), None)
+            return None
+        if isinstance(it, A.RangeLit):
+            if not _is_intlit(it.start) or it.start.value < 0:
+                return None
+            e = it.end
+            if _is_intlit(e):
+                return (ctr, (it.start.value, e.value - 1), None)
+            if isinstance(e, A.Var):
+                _lo, hi = env.interval_of(e.name)
+                if _write_sites(stmt.body, e.name):
+                    return None
+                return (ctr, (it.start.value,
+                              None if hi is None else hi - 1), e.name)
+            if isinstance(e, (A.Call, A.MethodCall)):
+                return (ctr, (it.start.value, None), None)
+            return None
+        return None
+    return None
+
+
+def _body_env(stmt, stmts, pos, env):
+    """B2: the environment at the top of a loop body for the R-scan.
+    The outer env with intervals + rel-facts DROPPED for every var
+    written anywhere in the body subtree (their values vary across
+    iterations), then the counted-loop facts applied. A For loop's
+    own variable is dropped first (it is rebound every iteration)
+    and only re-established by a counted shape. Types and sized
+    lengths are kept (they do not vary)."""
+    benv = env.copy()
+    for name in {n.name for n in _walk(stmt.body)
+                 if isinstance(n, (A.Assign, A.Let, A.For))}:
+        benv.drop_interval(name)
+        benv.drop_rel(name)
+    if isinstance(stmt, A.For):
+        benv.drop_interval(stmt.name)
+        benv.drop_rel(stmt.name)
+    facts = _loop_counter_facts(stmt, stmts, pos, env)
+    if facts is not None:
+        ctr, iv, relb = facts
+        benv.set_interval(ctr, iv)
+        if relb is not None:
+            benv.add_rel(ctr, relb)
+    return benv
 
 
 def _array_ok(body, arr):
@@ -688,14 +931,351 @@ def _try_h2(stmt, env):
     return triples
 
 
+def _mod_fact(expr, env):
+    """B2 (R3-P2(b)): (rel_bound, interval) for `x % n` assigned to
+    a var, when x >= 0 and n > 0 are proven; else None. The
+    interval is [0, n_hi-1] (n's upper end, if known)."""
+    if not (isinstance(expr, A.BinOp) and expr.op == "%"
+            and isinstance(expr.left, A.Var)
+            and isinstance(expr.right, A.Var)):
+        return None
+    xlo, _xhi = env.interval_of(expr.left.name)
+    nlo, nhi = env.interval_of(expr.right.name)
+    if xlo is None or xlo < 0 or nlo is None or nlo <= 0:
+        return None
+    iv = None if nhi is None else (0, nhi - 1)
+    return (expr.right.name, iv)
+
+
+def _has_continue(node):
+    """B2 (R1): True when `node` holds a `continue` that targets
+    the enclosing loop — i.e. a Continue NOT nested inside an inner
+    While/For (whose continue targets that inner loop)."""
+    if isinstance(node, A.Continue):
+        return True
+    if isinstance(node, (A.While, A.For)):
+        return False
+    for c in _children(node):
+        if _has_continue(c):
+            return True
+    return False
+
+
+def _try_r1(stmt, stmts, pos, env):
+    """B2 R1 — ring-buffer reset idiom. Returns a list of
+    (covered_ids, guard) triples for the enclosing loop `stmt`
+    (While or For). The guard attaches to `stmt` itself."""
+    body = stmt.body
+    triples = []
+    incs = {}
+    for p, s in enumerate(body.stmts):
+        if isinstance(s, A.Assign) and isinstance(s.expr, A.BinOp) \
+                and s.expr.op == "+" and _is_var(s.expr.left, s.name) \
+                and _is_intlit(s.expr.right, 1):
+            incs.setdefault(s.name, []).append(p)
+    for idx, plist in incs.items():
+        if len(plist) != 1:
+            continue
+        p_inc = plist[0]
+        resets = []
+        for q, s in enumerate(body.stmts):
+            if q <= p_inc or not isinstance(s, A.If):
+                continue
+            if s.els is not None:
+                continue
+            cond = s.cond
+            if not (isinstance(cond, A.BinOp)
+                    and cond.op in ("==", ">=")
+                    and _is_var(cond.left, idx)):
+                continue
+            wnode = cond.right
+            if not (isinstance(wnode, A.Var) or _is_intlit(wnode)):
+                continue
+            if len(s.then.stmts) != 1:
+                continue
+            rs = s.then.stmts[0]
+            if not (isinstance(rs, A.Assign) and rs.name == idx
+                    and _is_intlit(rs.expr)):
+                continue
+            resets.append((q, wnode, rs.expr.value))
+        if len(resets) != 1:
+            continue
+        p_reset, wnode, cval = resets[0]
+        # R1-P4: the only writes to idx are the increment and the
+        # reset's own assignment.
+        if len(_write_sites(body, idx)) != 2:
+            continue
+        # R1-P2: w invariant and >= 1.
+        if isinstance(wnode, A.Var):
+            if _write_sites(body, wnode.name):
+                continue
+            wlo, _whi = env.interval_of(wnode.name)
+            if wlo is None or wlo < 1:
+                continue
+            wcode = wnode.name
+            wlit = None
+        else:
+            if wnode.value < 1:
+                continue
+            wcode = str(wnode.value)
+            wlit = wnode.value
+        # R1-P3: entry literal.
+        _k, w = _nearest_entry(stmts, pos, idx)
+        if w is None or not isinstance(w, (A.Let, A.Assign)):
+            continue
+        if _entry_stale(stmts, _k, pos, idx):
+            continue
+        if not _is_intlit(w.expr) or w.expr.value < 0:
+            continue
+        entry_lit = w.expr.value
+        if wlit is not None:
+            if entry_lit >= wlit or cval < 0 or cval >= wlit:
+                continue
+        else:
+            if entry_lit != 0 or cval != 0:
+                continue
+        # B2 soundness (DESIGN.md gap): no `continue` between the
+        # increment and the reset — it would skip the reset and the
+        # next iteration could start with idx == w.
+        if any(_has_continue(s)
+               for s in body.stmts[p_inc + 1:p_reset]):
+            continue
+        for arr in _candidate_arrays(body, idx):
+            if not _is_array_type(env.type_of(arr)):
+                continue
+            if not _array_ok(body, arr):
+                continue
+            ids = []
+            for sp, s in enumerate(body.stmts):
+                if sp < p_inc or sp > p_reset:
+                    uses = _collect_uses(
+                        s, arr, lambda ix: _is_var(ix, idx))
+                    ids.extend(id(u) for u in uses)
+            if ids:
+                guard = f"if ({wcode} > ({arr}).len) {FAIL_MSG};"
+                triples.append((ids, guard))
+    return triples
+
+
+def _loop_ctx(loops, arr, env):
+    """Innermost enclosing loop for an R-use on array `arr`:
+    (loop node, body) when the array is a plain local of array type
+    with no reassign/shadow/move/push/spawn in that loop's body,
+    else None."""
+    if not loops:
+        return None
+    loop = loops[-1]
+    body = loop.body
+    if not _is_array_type(env.type_of(arr)):
+        return None
+    if not _array_ok(body, arr):
+        return None
+    return (loop, body)
+
+
+def _try_r2(ix, env, loops, covered, guards, plain, idx_guards):
+    """B2 R2 — `a[i % n]`. Records coverage + loop guard + the `%`
+    in `plain`; returns True when proven."""
+    if id(ix) in covered or not isinstance(ix.base, A.Var):
+        return False
+    arr = ix.base.name
+    idx = ix.index
+    if not (isinstance(idx, A.BinOp) and idx.op == "%"
+            and isinstance(idx.left, A.Var)):
+        return False
+    i_name = idx.left.name
+    nnode = idx.right
+    if isinstance(nnode, A.IntLit):
+        if nnode.value <= 0:
+            return False
+        ncode = str(nnode.value)
+    elif isinstance(nnode, A.Var):
+        nlo, _nhi = env.interval_of(nnode.name)
+        if nlo is None or nlo <= 0:
+            return False
+        ncode = nnode.name
+    else:
+        return False
+    ilo, _ihi = env.interval_of(i_name)
+    if ilo is None or ilo < 0:
+        return False
+    ctx = _loop_ctx(loops, arr, env)
+    if ctx is None:
+        return False
+    loop, body = ctx
+    if isinstance(nnode, A.Var) and _write_sites(body, nnode.name):
+        return False
+    covered.add(id(ix))
+    guards.setdefault(id(loop), []).append(
+        f"if ({ncode} > ({arr}).len) {FAIL_MSG};")
+    plain.add(id(idx))
+    return True
+
+
+def _lt_n(var, nnode, env):
+    """B2 (R3-P2): True when `var` is proven < n. For a literal n,
+    the var's absolute interval must lie in [0, n). For a var n,
+    either a relational fact (var < n) or n's singleton interval
+    playing the literal's role."""
+    if isinstance(nnode, A.IntLit):
+        lo, hi = env.interval_of(var)
+        return (lo is not None and lo >= 0 and hi is not None
+                and hi < nnode.value)
+    if nnode.name in env.rel_of(var):
+        return True
+    nlo, nhi = env.interval_of(nnode.name)
+    if nlo is not None and nlo == nhi:
+        lo, hi = env.interval_of(var)
+        return (lo is not None and lo >= 0 and hi is not None
+                and hi < nlo)
+    return False
+
+
+def _try_r3(ix, env, loops, covered, guards, plain, idx_guards):
+    """B2 R3 — `a[i*n+k]` (and the `k+i*n` / `n*i` orders).
+    Records coverage + loop guard + the `*` and `+` in `plain`."""
+    if id(ix) in covered or not isinstance(ix.base, A.Var):
+        return False
+    arr = ix.base.name
+    idx = ix.index
+    if not (isinstance(idx, A.BinOp) and idx.op == "+"):
+        return False
+    mul = None
+    kname = None
+    for side_a, side_b in ((idx.left, idx.right),
+                           (idx.right, idx.left)):
+        if (isinstance(side_a, A.BinOp) and side_a.op == "*"
+                and isinstance(side_b, A.Var)):
+            mul, kname = side_a, side_b.name
+            break
+    if mul is None:
+        return False
+    iname = None
+    nnode = None
+    for side_a, side_b in ((mul.left, mul.right),
+                           (mul.right, mul.left)):
+        if isinstance(side_a, A.Var) and (isinstance(side_b, A.Var)
+                                          or _is_intlit(side_b)):
+            iname, nnode = side_a.name, side_b
+            break
+    if iname is None:
+        return False
+    # R3-P3: n in [lo, hi], 1 <= lo, hi*hi <= INT_MAX.
+    if isinstance(nnode, A.IntLit):
+        nlo = nhi = nnode.value
+    else:
+        nlo, nhi = env.interval_of(nnode.name)
+    if nlo is None or nlo < 1 or nhi is None:
+        return False
+    if nhi * nhi > 2 ** 63 - 1:
+        return False
+    if not _lt_n(iname, nnode, env):
+        return False
+    if not _lt_n(kname, nnode, env):
+        return False
+    ctx = _loop_ctx(loops, arr, env)
+    if ctx is None:
+        return False
+    loop, body = ctx
+    if isinstance(nnode, A.Var) and _write_sites(body, nnode.name):
+        return False
+    ncode = _c_expr(nnode)
+    if ncode is None:
+        return False
+    covered.add(id(ix))
+    guards.setdefault(id(loop), []).append(
+        f"if ({ncode} * {ncode} > ({arr}).len) {FAIL_MSG};")
+    plain.add(id(mul))
+    plain.add(id(idx))
+    return True
+
+
+def _try_r5(ix, env, loops, covered, guards, plain, idx_guards):
+    """B2 R5 — `a[e]` with a proven absolute interval [lo, hi],
+    lo >= 0. In a loop the guard goes before the innermost loop;
+    straight-line it rides with the use (idx_guards)."""
+    if id(ix) in covered or not isinstance(ix.base, A.Var):
+        return False
+    arr = ix.base.name
+    lo, hi = _interval(ix.index, env)
+    if lo is None or hi is None or lo < 0:
+        return False
+    if not _is_array_type(env.type_of(arr)):
+        return False
+    guard = f"if ({hi} >= ({arr}).len) {FAIL_MSG};"
+    if loops:
+        loop, body = loops[-1], loops[-1].body
+        if not _array_ok(body, arr):
+            return False
+        covered.add(id(ix))
+        guards.setdefault(id(loop), []).append(guard)
+    else:
+        covered.add(id(ix))
+        idx_guards[id(ix)] = guard
+    return True
+
+
+def _scan_r_uses(node, env, loops, covered, guards, plain, idx_guards):
+    """B2: scan a statement's OWN expressions for R2/R3/R5 uses
+    with the current env. Does not descend into Block subtrees
+    (analysed separately, with narrowed / loop-body envs) or
+    While/For subtrees (their bodies are analysed as statements;
+    their conds are not scanned — a cond is evaluated every
+    iteration, so the outer env is not valid there). An If cond IS
+    scanned (evaluated once, current env valid). FieldAccess-base
+    Indexes are never uses, but their index/base exprs are scanned
+    for nested uses. R2 is tried before R3 before R5: R5's interval
+    could also cover an R2/R3 index, but only R2/R3 drop the
+    arithmetic's checked helpers."""
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            _scan_r_uses(item, env, loops, covered, guards, plain,
+                         idx_guards)
+        return
+    if not hasattr(node, "__dataclass_fields__"):
+        return
+    if isinstance(node, (A.Block, A.While, A.For)):
+        return
+    if isinstance(node, A.FieldAccess) and isinstance(node.base, A.Index):
+        _scan_r_uses(node.base.index, env, loops, covered, guards,
+                     plain, idx_guards)
+        _scan_r_uses(node.base.base, env, loops, covered, guards,
+                     plain, idx_guards)
+        return
+    if isinstance(node, A.Index):
+        if isinstance(node.base, A.Var):
+            if not _try_r2(node, env, loops, covered, guards, plain,
+                           idx_guards):
+                if not _try_r3(node, env, loops, covered, guards,
+                               plain, idx_guards):
+                    _try_r5(node, env, loops, covered, guards, plain,
+                            idx_guards)
+        for c in _children(node):
+            _scan_r_uses(c, env, loops, covered, guards, plain,
+                         idx_guards)
+        return
+    for c in _children(node):
+        _scan_r_uses(c, env, loops, covered, guards, plain, idx_guards)
+
+
 # ------------------------------------------------------------------
 # block analysis (sequential env threading)
 # ------------------------------------------------------------------
 
-def _analyze_block(stmts, env, covered, guards):
+def _analyze_block(stmts, env, covered, guards, plain, idx_guards,
+                   loops=None):
     """Analyze stmts in order, threading `env` (mutated in place
     for this block's own copy). Nested blocks are analyzed on
-    copies; their lets never leak out."""
+    copies; their lets never leak out. `loops` is the stack of
+    enclosing loop nodes (innermost last) for the R-scan's guard
+    placement. B2: each statement's own expressions are scanned
+    for R2/R3/R5 uses with the env at that point (before the
+    statement's own env update); loop bodies are entered on the
+    loop-body env (body-written intervals dropped, counted-loop
+    facts applied); If arms are entered with the condition's facts
+    (extended _cond_fact, singleton var-vs-var included)."""
+    if loops is None:
+        loops = []
     for pos, stmt in enumerate(stmts):
         if isinstance(stmt, A.While):
             triples = []
@@ -709,8 +1289,18 @@ def _analyze_block(stmts, env, covered, guards):
                 covered.update(ids)
                 if g is not None:
                     guards.setdefault(id(stmt), []).append(g)
-            # Recurse into the body on a copy (nested loops inside).
-            _analyze_block(stmt.body.stmts, env.copy(), covered, guards)
+            # B2 R1 (independent shape — a loop can be H1 and R1).
+            try:
+                for ids, g in _try_r1(stmt, stmts, pos, env):
+                    covered.update(ids)
+                    if g is not None:
+                        guards.setdefault(id(stmt), []).append(g)
+            except Exception:
+                pass
+            # Recurse into the body on the loop-body env.
+            benv = _body_env(stmt, stmts, pos, env)
+            _analyze_block(stmt.body.stmts, benv, covered, guards,
+                           plain, idx_guards, loops + [stmt])
             # Post-loop counter fact (R4) + stale intervals.
             _apply_loop_exit(stmt, stmts, pos, env)
         elif isinstance(stmt, A.For):
@@ -723,24 +1313,80 @@ def _analyze_block(stmts, env, covered, guards):
                 covered.update(ids)
                 if g is not None:
                     guards.setdefault(id(stmt), []).append(g)
-            _analyze_block(stmt.body.stmts, env.copy(), covered, guards)
+            try:
+                for ids, g in _try_r1(stmt, stmts, pos, env):
+                    covered.update(ids)
+                    if g is not None:
+                        guards.setdefault(id(stmt), []).append(g)
+            except Exception:
+                pass
+            benv = _body_env(stmt, stmts, pos, env)
+            _analyze_block(stmt.body.stmts, benv, covered, guards,
+                           plain, idx_guards, loops + [stmt])
             _drop_written_intervals(stmt.body, env)
             env.drop_interval(stmt.name)
+            env.drop_rel(stmt.name)
+        elif isinstance(stmt, A.If):
+            # B2: scan the condition (evaluated once, current env),
+            # then analyse each arm with the condition's facts.
+            try:
+                _scan_r_uses(stmt.cond, env, loops, covered, guards,
+                             plain, idx_guards)
+            except Exception:
+                pass
+            then_env = env.copy()
+            fact = _cond_fact_lp(stmt.cond, env, True)
+            if fact is not None:
+                _narrow_env(then_env, fact[0], fact[1], fact[2])
+            _analyze_block(stmt.then.stmts, then_env, covered, guards,
+                           plain, idx_guards, loops)
+            if stmt.els is not None:
+                else_env = env.copy()
+                fact = _cond_fact_lp(stmt.cond, env, False)
+                if fact is not None:
+                    _narrow_env(else_env, fact[0], fact[1], fact[2])
+                _analyze_block(stmt.els.stmts, else_env, covered,
+                               guards, plain, idx_guards, loops)
+            _drop_written_intervals(stmt, env)
         elif isinstance(stmt, A.Let):
+            try:
+                _scan_r_uses(stmt, env, loops, covered, guards, plain,
+                             idx_guards)
+            except Exception:
+                pass
             _apply_let(stmt, env)
             # Nested blocks inside the init expr cannot exist
             # (exprs hold no blocks), nothing to recurse into.
         elif isinstance(stmt, A.Assign):
-            env.set_interval(stmt.name, _interval(stmt.expr, env))
+            try:
+                _scan_r_uses(stmt, env, loops, covered, guards, plain,
+                             idx_guards)
+            except Exception:
+                pass
+            rhs_iv = _interval(stmt.expr, env)
+            mf = _mod_fact(stmt.expr, env)
+            env.set_interval(stmt.name, rhs_iv)
+            env.drop_rel(stmt.name)
+            if mf is not None:
+                env.add_rel(stmt.name, mf[0])
+                if mf[1] is not None:
+                    env.set_interval(stmt.name, mf[1])
             env.sized.pop(stmt.name, None)
             if isinstance(stmt.expr, A.Var) and stmt.expr.name in env.sized:
                 env.sized[stmt.name] = env.sized[stmt.expr.name]
         else:
-            # Any other statement: recurse into nested blocks on
-            # copies, then drop intervals of vars it writes.
+            # Any other statement: scan its own expressions, recurse
+            # into nested blocks on copies, then drop intervals of
+            # vars it writes.
+            try:
+                _scan_r_uses(stmt, env, loops, covered, guards, plain,
+                             idx_guards)
+            except Exception:
+                pass
             for child in _children(stmt):
                 if isinstance(child, A.Block):
-                    _analyze_block(child.stmts, env.copy(), covered, guards)
+                    _analyze_block(child.stmts, env.copy(), covered,
+                                   guards, plain, idx_guards, loops)
             _drop_written_intervals(stmt, env)
     return env
 
@@ -750,7 +1396,14 @@ def _apply_let(stmt, env):
     ann = stmt.ann or ""
     t = ann if ann else _derive_type(stmt.expr, env)
     env.types[name] = t
-    env.set_interval(name, _interval(stmt.expr, env))
+    iv = _interval(stmt.expr, env)
+    mf = _mod_fact(stmt.expr, env)
+    env.set_interval(name, iv)
+    env.drop_rel(name)
+    if mf is not None:
+        env.add_rel(name, mf[0])
+        if mf[1] is not None:
+            env.set_interval(name, mf[1])
     n = _sized_len(ann)
     if n is not None:
         env.sized[name] = n
@@ -764,6 +1417,7 @@ def _drop_written_intervals(node, env):
     for n in _walk(node):
         if isinstance(n, (A.Assign, A.Let, A.For)):
             env.drop_interval(n.name)
+            env.drop_rel(n.name)
 
 
 def _apply_loop_exit(stmt, stmts, pos, env):
@@ -805,6 +1459,30 @@ def _apply_loop_exit(stmt, stmts, pos, env):
             if bound_hi is not None:
                 hi = max(bound_hi, entry_lit)
             env.set_interval(ctr, (entry_lit, hi))
+    # B2: H1-D post-loop interval [min(E_lo, L_lo), max(E_hi, L_hi)].
+    # Normal exit: k == L; break exit: k in (L, E_hi]; never ran:
+    # k in [E_lo, E_hi]. (L's interval is read after the drop above,
+    # so an L written in the body yields no fact, as required.)
+    if isinstance(cond, A.BinOp) and cond.op == ">" \
+            and isinstance(cond.left, A.Var):
+        ctr2 = cond.left.name
+        lexpr = cond.right
+        if _is_intlit(lexpr):
+            l_lo = l_hi = lexpr.value
+        elif isinstance(lexpr, A.Var):
+            l_lo, l_hi = env.interval_of(lexpr.name)
+        else:
+            l_lo = l_hi = None
+        if l_lo is not None and l_hi is not None \
+                and _counter_discipline(stmt.body, ctr2, "-"):
+            _k2, w2 = _nearest_entry(stmts, pos, ctr2)
+            elo = ehi = None
+            if w2 is not None and isinstance(w2, (A.Let, A.Assign)) \
+                    and not _entry_stale(stmts, _k2, pos, ctr2):
+                elo, ehi = _interval(w2.expr, env)
+            if elo is not None and ehi is not None:
+                env.set_interval(
+                    ctr2, (min(elo, l_lo), max(ehi, l_hi)))
 
 
 # ------------------------------------------------------------------
@@ -812,9 +1490,12 @@ def _apply_loop_exit(stmt, stmts, pos, env):
 # ------------------------------------------------------------------
 
 def analyze_program(program):
-    """Returns (covered_ids, guards) for the whole program."""
+    """Returns (covered_ids, guards, plain_ids, idx_guards) for the
+    whole program."""
     covered = set()
     guards = {}
+    plain = set()
+    idx_guards = {}
     funcs = list(getattr(program, "funcs", None) or [])
     for impl in (getattr(program, "impls", None) or []):
         funcs.extend(getattr(impl, "methods", None) or [])
@@ -831,7 +1512,8 @@ def analyze_program(program):
                 n = _sized_len(ptype)
                 if n is not None:
                     env.sized[pname] = n
-            _analyze_block(body.stmts, env, covered, guards)
+            _analyze_block(body.stmts, env, covered, guards, plain,
+                           idx_guards)
         except Exception:
             # Totality: a failure in one function must never break
             # compilation of the rest (its loops simply keep checks).
@@ -843,4 +1525,4 @@ def analyze_program(program):
             if g not in seen:
                 seen.append(g)
         guards[k] = seen
-    return covered, guards
+    return covered, guards, plain, idx_guards

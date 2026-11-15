@@ -1196,6 +1196,11 @@ class Codegen:
         # by generate(); empty until then (no proof => checks stay).
         self._fix1_covered = set()
         self._fix1_guards = {}
+        # Fix 1 B2: BinOp nodes whose checked helper may drop (R2
+        # '%', R3 '*' and '+'), and straight-line R5 guards that
+        # ride with their Index node (see loopproof.py).
+        self._fix1_plain = set()
+        self._fix1_idx_guards = {}
         # Structured concurrency: open scopes as (start-variable,
         # loop depth at entry). A scope joins every task spawned
         # while it is open (watermark into forge_threads); the
@@ -2024,14 +2029,20 @@ class Codegen:
         # proofs (checks stay) rather than a broken compile.
         self._fix1_covered = set()
         self._fix1_guards = {}
+        self._fix1_plain = set()
+        self._fix1_idx_guards = {}
         try:
             from .loopproof import analyze_program
-            cov, guards = analyze_program(self.program)
+            cov, guards, plain, idx_guards = analyze_program(self.program)
             self._fix1_covered = cov
             self._fix1_guards = guards
+            self._fix1_plain = plain
+            self._fix1_idx_guards = idx_guards
         except Exception:
             self._fix1_covered = set()
             self._fix1_guards = {}
+            self._fix1_plain = set()
+            self._fix1_idx_guards = {}
         self.lines.append(FREESTANDING_HEADER if self.freestanding else HEADER)
         # Fix 1 B0 traceability: the emitted C records which
         # measurement toggles were on (top comment, §5).
@@ -2556,8 +2567,9 @@ class Codegen:
         """(var, lo, hi) proven by a comparison, or None.
 
         truth=True: the comparison holds; truth=False: it does not.
-        Only var-vs-int-literal comparisons are tracked; anything
-        else (including !=) yields no fact.
+        Var-vs-int-literal comparisons are tracked, plus (Fix 1 B2)
+        var-vs-var where the other side has a singleton interval;
+        anything else (including !=) yields no fact.
         """
         if not isinstance(cond, A.BinOp):
             return None
@@ -2567,11 +2579,32 @@ class Codegen:
         if isinstance(left, A.IntLit) and isinstance(right, A.Var):
             left, right = right, left
             op = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "==": "=="}[op]
-        if not (isinstance(left, A.Var) and isinstance(right, A.IntLit)):
+        lit = None
+        if isinstance(left, A.Var) and isinstance(right, A.IntLit):
+            lit = right.value
+        elif isinstance(left, A.Var) and isinstance(right, A.Var):
+            # Fix 1 B2 (DESIGN.md §4.3): var-vs-var where the other
+            # side has a singleton interval in _facts — treat it as
+            # var-vs-literal. If both sides are singletons, the
+            # right side plays the literal (narrow the left var).
+            rf = self._facts.get(right.name)
+            if rf is not None and rf[0] == rf[1]:
+                lit = rf[0]
+            else:
+                lf = self._facts.get(left.name)
+                if lf is not None and lf[0] == lf[1]:
+                    left, right = right, left
+                    op = {"<": ">", "<=": ">=", ">": "<", ">=": "<=",
+                          "==": "=="}[op]
+                    lit = lf[0]
+                else:
+                    return None
+        else:
+            return None
+        if lit is None or not isinstance(left, A.Var):
             return None
         if self.expr_type(left) != "int":
             return None
-        lit = right.value
         if not truth:
             if op == "==":
                 return None
@@ -3027,6 +3060,13 @@ class Codegen:
                 self.moved_fields.discard(field_path)
             return
         if isinstance(stmt, A.IndexAssign):
+            # Fix 1 B2: a straight-line R5 write carries its guard
+            # as a statement line immediately before the store
+            # (loop R5 writes use the hoisted loop guard instead).
+            if self._bounds_on:
+                _ig = self._fix1_idx_guards.get(id(stmt.base))
+                if _ig is not None:
+                    self.emit(_ig)
             base = stmt.base.base
             if isinstance(base, A.Index) and self.is_array_type(self.expr_type(base)):
                 # Chained index assignment (m[i][j] = v): the inner
@@ -3398,6 +3438,11 @@ class Codegen:
             self.arr_counter += 1
             idx = f"__forge_i{self.loop_counter}"
             self.loop_counter += 1
+            # Fix 1 B2: hoisted pre-loop guard (see While above;
+            # R-guards can attach to a for-array loop too).
+            if self._bounds_on:
+                for _g in self._fix1_guards.get(id(stmt), []):
+                    self.emit(_g)
             self.emit("{")
             self.indent += 1
             self.emit(f"{c_type(arr_type)} {arr_tmp} = {self.gen_expr(stmt.expr)};")
@@ -3860,8 +3905,16 @@ class Codegen:
             # fast-mode emission (no third emission path).
             if self._bounds_on and id(expr) in self._fix1_covered:
                 if self.is_struct_type(et):
-                    return f"forge_{self.struct_type_name(et)}_get_fast({base}, {idx})"
-                return f"({base}).data[{idx}]"
+                    fast = (f"forge_{self.struct_type_name(et)}_get_fast"
+                            f"({base}, {idx})")
+                else:
+                    fast = f"({base}).data[{idx}]"
+                # Fix 1 B2: a straight-line R5 use carries its guard
+                # with it (statement expression — see loopproof.py).
+                ig = self._fix1_idx_guards.get(id(expr))
+                if ig is not None:
+                    return f"({{ {ig} {fast}; }})"
+                return fast
             if self.is_struct_type(et):
                 if self._bounds_on:
                     key = ("arr", base, idx)
@@ -3987,6 +4040,10 @@ class Codegen:
                 return f"(strcmp({left}, {right}) != 0)"
             if self.expr_type(expr.left) == "int" and self.expr_type(expr.right) == "int":
                 if self.mode == "safe":
+                    # Fix 1 B2: a loop-proof plain BinOp (R2 '%',
+                    # R3 '*' and '+') emits plain C.
+                    if id(expr) in self._fix1_plain:
+                        return f"({left} {expr.op} {right})"
                     # Fix 1 B0: with --no-overflow-checks, +,-,*
                     # emit plain C; /,% keep forge_div/forge_mod
                     # (div-by-zero + INT_MIN/-1 live in the helper).

@@ -1837,6 +1837,24 @@ fn cg_int_interval(g: HCodegen, node: Node) -> [int] {
 // _apply_cond_facts (codegen.py:2498-2532): narrow the var proven
 // by a var-vs-int-literal comparison; truth=False flips the op
 // (== proves nothing when false).
+// Flip a comparison operator when its sides are swapped
+// (< becomes >, and so on; == is unchanged).
+fn cg_flip_op_swap(op: str) -> str {
+    if op == "<" {
+        return ">";
+    }
+    if op == "<=" {
+        return ">=";
+    }
+    if op == ">" {
+        return "<";
+    }
+    if op == ">=" {
+        return "<=";
+    }
+    return op;
+}
+
 fn cg_apply_cond_facts(g0: HCodegen, cond: Node, truth: bool) -> HCodegen {
     let mut g: HCodegen = g0;
     if cond.kind != 40 {
@@ -1852,23 +1870,67 @@ fn cg_apply_cond_facts(g0: HCodegen, cond: Node, truth: bool) -> HCodegen {
         let tmp: Node = left;
         left = right;
         right = tmp;
-        if op == "<" {
-            op = ">";
-        } else if op == "<=" {
-            op = ">=";
-        } else if op == ">" {
-            op = "<";
-        } else if op == ">=" {
-            op = "<=";
+        op = cg_flip_op_swap(op);
+    }
+    // Fix 1 B2 (§4.3): var-vs-var where the other side has a
+    // singleton fact — it plays the literal's role (needed by
+    // R4's consumer: `if j2 < nlv` with nlv let-bound to 64
+    // narrows j2 to [0, 63], so `j2 + 1` drops forge_add).
+    let mut lit: int = 0;
+    let mut has_lit: bool = false;
+    if left.kind == 34 && right.kind == 25 {
+        lit = right.ival;
+        has_lit = true;
+    } else if left.kind == 34 && right.kind == 34 {
+        // Singleton fact lookup, inlined from cg_facts_find: a
+        // call here would pay a full HCodegen arg-temp slot in
+        // this already-large frame (measured +4,160 B, B2v1).
+        // Backward search, newest fact wins, exactly as
+        // cg_facts_find does.
+        let mut fi: int = len(g.fact_names) - 1;
+        let mut f_lo: int = 0;
+        let mut f_hi: int = 0;
+        let mut f_found: bool = false;
+        while fi >= 0 {
+            if g.fact_names[fi] == right.name {
+                f_found = true;
+                f_lo = g.fact_los[fi];
+                f_hi = g.fact_his[fi];
+                break;
+            }
+            fi = fi - 1;
+        }
+        if f_found && f_lo == f_hi {
+            lit = f_lo;
+            has_lit = true;
+        } else {
+            fi = len(g.fact_names) - 1;
+            f_found = false;
+            while fi >= 0 {
+                if g.fact_names[fi] == left.name {
+                    f_found = true;
+                    f_lo = g.fact_los[fi];
+                    f_hi = g.fact_his[fi];
+                    break;
+                }
+                fi = fi - 1;
+            }
+            if f_found && f_lo == f_hi {
+                let tmp2: Node = left;
+                left = right;
+                right = tmp2;
+                op = cg_flip_op_swap(op);
+                lit = f_lo;
+                has_lit = true;
+            }
         }
     }
-    if left.kind != 34 || right.kind != 25 {
+    if !has_lit || left.kind != 34 {
         return g;
     }
     if cg_expr_type(g, left) != "int" {
         return g;
     }
-    let lit: int = right.ival;
     if !truth {
         if op == "==" {
             return g;
@@ -3897,6 +3959,22 @@ fn cg_enum_has_payload(g: HCodegen, ename: str) -> bool {
     return false;
 }
 
+// Fix 1 B2: wrap a covered Index's fast code with its
+// straight-line R5 guard (in e.sval), if any and if bounds
+// checks are on. Loop-guarded uses have sval == "" (their guard
+// rides on the loop); with --no-bounds-checks nothing is wrapped
+// (the program must not trap). Uncovered reads never reach here
+// with sval set — the tagger only writes sval for idx-guards.
+// A helper (not inline): the helper takes no HCodegen, so its
+// frame is 80 B, while inlining the wrap at the three sites cost
+// cg_gen_expr +5,424 B of frame (measured -fstack-usage, B2v2).
+fn cg_fix1_idx_wrap(e: Node, fast: str, no_bounds_checks: bool) -> str {
+    if e.has_nul && e.sval != "" && !no_bounds_checks {
+        return "({ " + e.sval + " " + fast + "; })";
+    }
+    return fast;
+}
+
 fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
     let mut g: HCodegen = g0;
     if g.freestanding {
@@ -4121,8 +4199,9 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             }
             // Fix 1 B0: --no-bounds-checks takes the _get_fast form.
             // Fix 1 B1: a loop-proof-covered read takes it too.
+            // Fix 1 B2: a straight-line R5 guard wraps it.
             if g.no_bounds_checks || e.has_nul {
-                return CGExpr { g: g, code: "forge_" + sname + "_get_fast(" + bout.code + ", " + iout.code + ")" };
+                return CGExpr { g: g, code: cg_fix1_idx_wrap(e, "forge_" + sname + "_get_fast(" + bout.code + ", " + iout.code + ")", g.no_bounds_checks) };
             }
             return CGExpr { g: g, code: "forge_" + sname + "_get(" + bout.code + ", " + iout.code + ")" };
         }
@@ -4140,8 +4219,9 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             // the array branch's counter increment (otherwise
             // later __forge_iaN temp numbers would shift vs
             // Python on programs with covered nested-array reads).
+            // Fix 1 B2: a straight-line R5 guard wraps it.
             if g.no_bounds_checks || e.has_nul {
-                return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
+                return CGExpr { g: g, code: cg_fix1_idx_wrap(e, "(" + bout.code + ").data[" + iout.code + "]", g.no_bounds_checks) };
             }
             let arr_t: str = cg_c_type(g, base_t);
             let n: int = g.arr_counter;
@@ -4168,8 +4248,9 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         }
         // Fix 1 B0: --no-bounds-checks reads the slot direct.
         // Fix 1 B1: a loop-proof-covered read does too.
+        // Fix 1 B2: a straight-line R5 guard wraps it.
         if g.no_bounds_checks || e.has_nul {
-            return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
+            return CGExpr { g: g, code: cg_fix1_idx_wrap(e, "(" + bout.code + ").data[" + iout.code + "]", g.no_bounds_checks) };
         }
         if et == "int" {
             return CGExpr { g: g, code: "forge_int_get(" + bout.code + ", " + iout.code + ")" };
@@ -4687,8 +4768,12 @@ fn cg_binop_combine(g0: HCodegen, e: Node, left: str, right: str) -> CGExpr {
         if e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" {
             // Fix 1 B0: with --no-overflow-checks, +,-,* emit
             // plain C; /,% keep forge_div/forge_mod (div-by-zero
-            // + INT_MIN/-1 live in the helper).
-            if g.no_overflow_checks && (e.name == "+" || e.name == "-" || e.name == "*") {
+            // + INT_MIN/-1 live in the helper). Fix 1 B2: a
+            // loop-proof plain BinOp (R2 '%' / R3 '*' and '+')
+            // emits plain C too (the tagger sets has_nul on such
+            // nodes, free on BinOp nodes). One return, so the
+            // frame pays for one set of concat temps, not two.
+            if (g.no_overflow_checks && (e.name == "+" || e.name == "-" || e.name == "*")) || e.has_nul {
                 return CGExpr { g: g, code: "(" + left + " " + e.name + " " + right + ")" };
             }
             // Check elimination (codegen.py:3900): provably safe ->
@@ -5791,6 +5876,22 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         // IndexAssign (codegen.py:2966). Counters read-then-incremented.
         let target: Node = st.kids[0];
         let value: Node = st.kids[1];
+        // Fix 1 B2: a straight-line R5 write guard, as a statement
+        // line before the store (loop writes use the hoisted loop
+        // guard instead, so their Index nodes carry no sval).
+        // Inlined cg_emit/cg_emit_raw body (not a call): a cg_emit
+        // call here would pay a full HCodegen arg-temp slot in
+        // this already-large frame (measured +1,904 B). The guard
+        // text is never "" (sval != ""), so the empty-text branch
+        // of cg_emit does not apply.
+        if !g.no_bounds_checks && target.sval != "" {
+            let ig_text: str = cg_indent_str(g.indent) + target.sval;
+            if g.lines_len >= len(g.lines) {
+                g.lines = cg_lines_grow(g.lines, g.lines_len);
+            }
+            g.lines[g.lines_len] = ig_text;
+            g.lines_len = g.lines_len + 1;
+        }
         let inner: Node = target.kids[0];
         let mut base_code: str = "";
         let mut base_is_temp: bool = false;
@@ -6120,6 +6221,19 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         let iter: Node = st.kids[0];
         let body: Node = st.kids[1];
         let at: str = cg_expr_type(g, iter);
+        // Fix 1 B1/B2: hoisted pre-loop guards (see While above).
+        // Emitted once here, before the range/array split, so the
+        // frame pays for one copy, not two: cg_gen_expr is pure
+        // (it never emits), so this is the same output order as
+        // emitting after each branch's iout.
+        if !g.no_bounds_checks && st.sval != "" {
+            let gs: [str] = split(st.sval, "\n");
+            let mut gi: int = 0;
+            while gi < len(gs) {
+                g = cg_emit(g, gs[gi]);
+                gi = gi + 1;
+            }
+        }
         if at == "range" {
             push(g.local_names, st.name);
             push(g.local_types, "int");
@@ -6128,15 +6242,6 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             let rng: str = "__forge_rng" + itoa(n);
             let iout: CGExpr = cg_gen_expr(g, iter);
             g = iout.g;
-            // Fix 1 B1: hoisted pre-loop guards (see While above).
-            if !g.no_bounds_checks && st.sval != "" {
-                let gs: [str] = split(st.sval, "\n");
-                let mut gi: int = 0;
-                while gi < len(gs) {
-                    g = cg_emit(g, gs[gi]);
-                    gi = gi + 1;
-                }
-            }
             g = cg_emit(g, "{");
             g.indent = g.indent + 1;
             g = cg_emit(g, "ForgeRange " + rng + " = " + iout.code + ";");
