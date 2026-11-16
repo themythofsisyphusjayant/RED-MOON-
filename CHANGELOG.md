@@ -6,8 +6,25 @@ release — the documented language surface will not break
 without a major version bump (see docs/STABILITY.md).
 0.x releases were pre-stable; breaking changes were possible then.
 
-## Unreleased
+## 2.3.0 — 16 Nov 2026
 
+- Quant-latency phase COMPLETE (Fix 1, Fix 2, Fix 3), each verified to
+  the full bar (bootstrap 7/7 byte-identical, corpus 99/99, regression
+  62/62, fuzz 86/86 both modes, parity 96/96, suite PASS both modes).
+  Fix 1: bounds-check hoisting (B1) + range analysis (B2) + overflow
+  narrowing (B3) — order-book bounds checks 20 → 4, then the last 4
+  gone under Fix 2. Fix 2: overflow narrowing extended to builder-loop
+  bounds/increments, loop guards moved before the rep loop — matmul at
+  `-O3 -march=native` ~69k → ~13k μs/20 reps (7.3x, checksum 517008).
+  Fix 3: `-march=native` is now the safe-mode default, with
+  `--portable` reproducing the old `-O2` behaviour exactly. Final
+  safe-mode numbers (median of 5, vs C `-O3`): order-book ~1.03–1.08x
+  (tied), tick 3.71x, Black–Scholes 0.91–0.98x (tied), Monte Carlo
+  0.92–1.01x (tied), matmul 2.09–2.14x, alloc 1.09–1.12x; fast mode
+  ties or beats C everywhere. Honest limit: safe-mode matmul stays
+  ~90–95k μs/20 reps (scalar) — the vectorization win is `-O3` only;
+  the `-O2` blocker is buffer provenance (push-built arrays), a bigger
+  redesign, not fixed here.
 - Trig builtins `sin(x: float) -> float`, `cos(x: float) -> float`,
   `tan(x: float) -> float`, lowering directly to libm (quant/trig).
   Same shape as sqrt/exp/log: one float argument, one-message
@@ -15,7 +32,19 @@ without a major version bump (see docs/STABILITY.md).
   the other libm builtins; WASM rejects them with the generic
   unsupported-call error. New demo `examples/trig_demo.fg` plus
   `tests/test_trig_v1.py`, and a Box-Muller Monte Carlo variant
-  (`quant/mc_boxmuller.fg`) that the builtins unblock.
+  (`quant/mc_boxmuller.fg`) that the builtins unblock. The trig demo
+  is byte-identical to the C reference (13 values, max diff 0.0);
+  Box-Muller Monte Carlo mean 0.0114 / stddev 1.0008 vs Acklam
+  -0.0029 / 1.0066.
+- Daily library batches 13–16 Nov 2026 (40 new stdlib modules, all
+  verified under both compilers): 13 Nov aes-lite, async-lite,
+  channels, datetime, shell-utils, canvas, font-plus, frames-fast,
+  huffman, tablestore; 14 Nov apimock, feedreader, mdhtml, propgen,
+  randext, regexfull, strutils, tarball, unittest, workerpool;
+  15 Nov bandits, gym, metricstext, tracking, linearmodels, svm,
+  clustering, modelselect, summarize, ner; 16 Nov xgboost-lite,
+  lightgbm-lite, keras-lite, torch-data, transformers-lite, image-io,
+  detection-lite, segmentation-lite, agents-lite, ppo-lite.
 
 ## 2.2.0 — 12 Nov 2026
 

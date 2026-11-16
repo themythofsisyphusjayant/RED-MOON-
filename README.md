@@ -8,7 +8,7 @@
 
 A statically typed language that compiles to native code — and compiles itself.
 
-[![Qasida](https://img.shields.io/badge/Qasida-v2.2.0-blue)](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.2.0)
+[![Qasida](https://img.shields.io/badge/Qasida-v2.3.0-blue)](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0)
 [![PyPI](https://img.shields.io/pypi/v/qasida.svg)](https://pypi.org/project/qasida/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Self-hosted](https://img.shields.io/badge/compiler-self--hosted-brightgreen)
@@ -33,13 +33,13 @@ The conclusion that drives it: **no single language has replaced Rust, Go, or C,
 | **Safety** | Static types · no null · immutable by default · checked arithmetic |
 | **Speed** | Compiles to native code · safe mode by default, `-O3 -march=native` fast mode on demand |
 | **Self-hosting** | The Qasida compiler compiles itself — the hosted compiler is the default since 11 Nov 2026 |
-| **Scale** | 693 `.fg` files · ~49,100 lines of Qasida · 30 registry packages |
+| **Scale** | 713 `.fg` files · ~50,000 lines of Qasida · 30 registry packages |
 
 ---
 
-## ✨ What's new in 2.2.0
+## ✨ What's new in 2.3.0
 
-Released **12 Nov 2026** — [v2.2.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.2.0) · `pip install qasida`
+Released **16 Nov 2026** — [v2.3.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0) · `pip install qasida`
 
 ### 🚀 The compiler got fast — Steps 2–6
 
@@ -63,9 +63,9 @@ The quant-latency phase is done: bounds-check hoisting, loop-guard placement, an
 | Black–Scholes / Monte Carlo | **~tied** |
 | Matrix multiply (`-O3 -march=native`) | **7.3× faster** after Fix 2 vectorization |
 
-### 🧮 Just landed on main
+### 🧮 Trig builtins — `sin`, `cos`, `tan`
 
-Trig builtins — `sin`, `cos`, `tan` — lowering directly to libm, plus a Box–Muller Monte Carlo they unblock. (In the next release; on `main` now.)
+Trig builtins — `sin`, `cos`, `tan` — lowering directly to libm, plus a Box–Muller Monte Carlo they unblock. New in 2.3.0.
 
 ---
 
@@ -75,7 +75,7 @@ Requirements: Python 3 and a C compiler (`cc` / `gcc`).
 
 ```sh
 pip install qasida
-qasida --version       # Qasida 2.2.0
+qasida --version       # Qasida 2.3.0
 ```
 
 **From source:**
@@ -294,22 +294,22 @@ flowchart TD
 
 | Measure | Value |
 |---|---|
-| Language version | **2.2.0** (12 Nov 2026) |
+| Language version | **2.3.0** (16 Nov 2026) |
 | Compiler | Self-hosted (Qasida compiles itself) |
-| Qasida code in repo | 693 `.fg` files · ~49,100 lines |
+| Qasida code in repo | 713 `.fg` files · ~50,000 lines |
 | Registry packages | 30 |
 | Cold-compile speedup vs 2.1.0 | up to **16.42×** |
 | Warm re-compile | **~0.1s** |
 | Order-book vs C -O3 | ~tied |
 | License | MIT |
-| Last verified | 15 Nov 2026 |
+| Last verified | 16 Nov 2026 |
 
 ---
 
 ## 🔗 Links
 
 - **PyPI:** [pypi.org/project/qasida](https://pypi.org/project/qasida/) — `pip install qasida`
-- **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest: [v2.2.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.2.0)
+- **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest: [v2.3.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0)
 - **Source:** [github.com/themythofsisyphusjayant/RED-MOON-](https://github.com/themythofsisyphusjayant/RED-MOON-)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 - **Docs:** [docs/HIGH_SCHOOL_GUIDE.md](docs/HIGH_SCHOOL_GUIDE.md) (start here) · [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) · [docs/FREESTANDING.md](docs/FREESTANDING.md)
