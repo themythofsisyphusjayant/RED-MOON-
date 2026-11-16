@@ -1,0 +1,44 @@
+// torch-data-lite: Dataset / DataLoader helpers, in pure Qasida.
+// Import with: import "torchdata.fg";
+// Batch ranges, batch counts, a deterministic Fisher-Yates
+// shuffle driven by rand.fg's LCG (seed threaded explicitly),
+// and gather-by-index for building a batch from shuffled indices.
+import "rand.fg";
+
+fn td_num_batches(n: int, batch: int) -> int {
+    return (n + batch - 1) / batch;
+}
+
+fn td_batch_range(n: int, batch: int, idx: int) -> [int] {
+    let start: int = idx * batch;
+    let mut end: int = start + batch;
+    if end > n {
+        end = n;
+    }
+    return [start, end];
+}
+
+fn td_shuffle(n: int, seed: int) -> [int] {
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut s: int = seed;
+    let mut k: int = n - 1;
+    while k >= 1 {
+        let r: int = rand_next(s);
+        let j: int = r % (k + 1);
+        s = r;
+        let tmp: int = idx[k];
+        idx[k] = idx[j];
+        idx[j] = tmp;
+        k = k - 1;
+    }
+    return idx;
+}
+
+fn td_gather(data: [int], idx: [int], k: int) -> int {
+    return data[idx[k]];
+}

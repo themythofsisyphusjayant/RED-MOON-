@@ -1,0 +1,15 @@
+import "transformers.fg";
+
+fn main() {
+    let q: [float] = [1.0, 0.0, 0.0, 1.0];
+    let k: [float] = [1.0, 0.0, 0.0, 1.0];
+    let v: [float] = [1.0, 2.0, 3.0, 4.0];
+    let out: [float] = tf_attention(q, k, v, 2, 2);
+    println(out[0], out[1]);
+    println(out[2], out[3]);
+    let mask: [float] = [0.0, 0.0, -100.0, 0.0];
+    let mout: [float] = tf_attention_masked(q, k, v, 2, 2, mask);
+    println(mout[2], mout[3]);
+    let pe: [float] = tf_positional(1, 4);
+    println(pe[0], pe[1], pe[2], pe[3]);
+}

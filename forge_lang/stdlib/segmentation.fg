@@ -1,0 +1,89 @@
+// segmentation-lite: threshold + connected components, in pure Qasida.
+// Import with: import "segmentation.fg";
+// Threshold turns a grey image into a 0/1 mask; labelling runs
+// min-label propagation over 4-neighbours until stable, so each
+// connected foreground region ends up with the smallest index+1
+// among its pixels. Region size counts one label.
+
+fn seg_threshold(img: [int], t: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        if img[i] >= t {
+            push(out, 1);
+        } else {
+            push(out, 0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn seg_label(bin: [int], w: int, h: int) -> [int] {
+    let mut labels: [int] = [];
+    let mut i: int = 0;
+    while i < len(bin) {
+        if bin[i] == 1 {
+            push(labels, i + 1);
+        } else {
+            push(labels, 0);
+        }
+        i = i + 1;
+    }
+    let mut changed: bool = true;
+    let mut it: int = 0;
+    while changed && it < 100 {
+        changed = false;
+        it = it + 1;
+        let mut p: int = 0;
+        while p < len(bin) {
+            if bin[p] == 1 {
+                let r: int = p / w;
+                let c: int = p % w;
+                let mut m: int = labels[p];
+                if r > 0 {
+                    let q: int = p - w;
+                    if bin[q] == 1 && labels[q] > 0 && labels[q] < m {
+                        m = labels[q];
+                    }
+                }
+                if r + 1 < h {
+                    let q: int = p + w;
+                    if bin[q] == 1 && labels[q] > 0 && labels[q] < m {
+                        m = labels[q];
+                    }
+                }
+                if c > 0 {
+                    let q: int = p - 1;
+                    if bin[q] == 1 && labels[q] > 0 && labels[q] < m {
+                        m = labels[q];
+                    }
+                }
+                if c + 1 < w {
+                    let q: int = p + 1;
+                    if bin[q] == 1 && labels[q] > 0 && labels[q] < m {
+                        m = labels[q];
+                    }
+                }
+                if m != labels[p] {
+                    labels[p] = m;
+                    changed = true;
+                }
+            }
+            p = p + 1;
+        }
+    }
+    return labels;
+}
+
+fn seg_region_size(labels: [int], id: int) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(labels) {
+        if labels[i] == id {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

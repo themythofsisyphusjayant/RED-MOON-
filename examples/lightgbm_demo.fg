@@ -1,0 +1,19 @@
+import "lightgbm.fg";
+
+fn main() {
+    let xs: [float] = [0.1, 0.4, 0.6, 0.9];
+    let grads: [float] = [-0.5, -0.5, 0.5, 0.5];
+    let hess: [float] = [0.25, 0.25, 0.25, 0.25];
+    let edges: [float] = [0.0, 0.5, 1.0];
+    let counts: [int] = lgbm_hist_counts(xs, edges, 2);
+    println(counts[0], counts[1]);
+    let gsum: [float] = lgbm_hist_grad_sums(xs, grads, edges, 2);
+    println(gsum[0], gsum[1]);
+    let hsum: [float] = lgbm_hist_hess_sums(xs, hess, edges, 2);
+    println(hsum[0], hsum[1]);
+    let b: int = lgbm_best_bin(gsum, hsum, 1.0);
+    println(b);
+    println(lgbm_split_gain(gsum, hsum, 1.0, b));
+    println(lgbm_leaf_value(gsum, hsum, 1.0, 0, 1));
+    println(lgbm_leaf_value(gsum, hsum, 1.0, 1, 2));
+}

@@ -1,0 +1,82 @@
+// image-io-lite: PPM P3 text images, in pure Qasida.
+// Import with: import "imageio.fg";
+// Pixels are flat RGB [int] arrays (row-major, 3 per pixel).
+// Encode builds a P3 text image; grayscale uses integer
+// luma weights (299/587/114); channel extracts one colour
+// plane; flip_h mirrors each row. PNG decode is a later item.
+
+fn io_int_str(n: int) -> str {
+    let digits: str = "0123456789";
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut v: int = n;
+    if v < 0 {
+        neg = true;
+        v = 0 - v;
+    }
+    let mut out: str = "";
+    while v > 0 {
+        out = substr(digits, v % 10, 1) + out;
+        v = v / 10;
+    }
+    if neg {
+        out = "-" + out;
+    }
+    return out;
+}
+
+fn io_ppm_encode(w: int, h: int, maxv: int, pixels: [int]) -> str {
+    let mut out: str = "P3\n" + io_int_str(w) + " " + io_int_str(h) + "\n" + io_int_str(maxv) + "\n";
+    let mut i: int = 0;
+    while i < len(pixels) {
+        if i > 0 {
+            out = out + " ";
+        }
+        out = out + io_int_str(pixels[i]);
+        i = i + 1;
+    }
+    out = out + "\n";
+    return out;
+}
+
+fn io_grayscale(pixels: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut p: int = 0;
+    while p * 3 + 2 < len(pixels) {
+        let r: int = pixels[p * 3];
+        let g: int = pixels[p * 3 + 1];
+        let b: int = pixels[p * 3 + 2];
+        push(out, (299 * r + 587 * g + 114 * b) / 1000);
+        p = p + 1;
+    }
+    return out;
+}
+
+fn io_channel(pixels: [int], ch: int) -> [int] {
+    let mut out: [int] = [];
+    let mut p: int = 0;
+    while p * 3 + ch < len(pixels) {
+        push(out, pixels[p * 3 + ch]);
+        p = p + 1;
+    }
+    return out;
+}
+
+fn io_flip_h(w: int, h: int, pixels: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut c: int = 0;
+        while c < w {
+            let src: int = r * w + (w - 1 - c);
+            push(out, pixels[src * 3]);
+            push(out, pixels[src * 3 + 1]);
+            push(out, pixels[src * 3 + 2]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}

@@ -1,0 +1,65 @@
+// transformers-lite: raw-matrix attention blocks, in pure Qasida.
+// Import with: import "transformers.fg";
+// Scaled dot-product attention over flat [float] matrices
+// (seq x d, row-major), an optional additive mask (0 or -100),
+// and sinusoidal positional encoding. This is the raw-matrix
+// API; nn.fg's attention_forward is the Linear-struct API.
+
+fn tf_attention_masked(q: [float], k: [float], v: [float], seq: int, d: int, mask: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < seq {
+        let mut sm: [float] = [];
+        let mut s: float = 0.0;
+        let mut j: int = 0;
+        while j < seq {
+            let mut dot: float = 0.0;
+            let mut t: int = 0;
+            while t < d {
+                dot = dot + q[i * d + t] * k[j * d + t];
+                t = t + 1;
+            }
+            let sc: float = dot / sqrt(d as float) + mask[i * seq + j];
+            push(sm, exp(sc));
+            s = s + exp(sc);
+            j = j + 1;
+        }
+        let mut t2: int = 0;
+        while t2 < d {
+            let mut acc: float = 0.0;
+            let mut j2: int = 0;
+            while j2 < seq {
+                acc = acc + sm[j2] / s * v[j2 * d + t2];
+                j2 = j2 + 1;
+            }
+            push(out, acc);
+            t2 = t2 + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn tf_attention(q: [float], k: [float], v: [float], seq: int, d: int) -> [float] {
+    let mut mask: [float] = [];
+    let mut i: int = 0;
+    while i < seq * seq {
+        push(mask, 0.0);
+        i = i + 1;
+    }
+    return tf_attention_masked(q, k, v, seq, d, mask);
+}
+
+fn tf_positional(pos: int, d: int) -> [float] {
+    // PE(pos, 2i) = sin(pos / 10000^(2i/d)),
+    // PE(pos, 2i+1) = cos(pos / 10000^(2i/d)).
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i * 2 < d {
+        let denom: float = exp(2.0 * i as float / d as float * log(10000.0));
+        push(out, sin(pos as float / denom));
+        push(out, cos(pos as float / denom));
+        i = i + 1;
+    }
+    return out;
+}

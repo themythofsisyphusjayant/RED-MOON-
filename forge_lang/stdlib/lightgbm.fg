@@ -1,0 +1,115 @@
+// Histogram-based gradient boosting (lightgbm-lite), in pure Qasida.
+// Import with: import "lightgbm.fg";
+// Values are binned into equal-width bins over [edges[0], edges[n]];
+// per-bin gradient/hessian histograms drive the split search, with
+// the same gain formula as xgboost-lite. Split b puts bins 0..b
+// left and the rest right.
+
+fn lgbm_bin_index(x: float, edges: [float]) -> int {
+    let nbins: int = len(edges) - 1;
+    let mut b: int = 0;
+    while b < nbins - 1 {
+        if x < edges[b + 1] {
+            return b;
+        }
+        b = b + 1;
+    }
+    return nbins - 1;
+}
+
+fn lgbm_hist_counts(xs: [float], edges: [float], nbins: int) -> [int] {
+    let mut counts: [int] = [];
+    let mut b: int = 0;
+    while b < nbins {
+        push(counts, 0);
+        b = b + 1;
+    }
+    let mut i: int = 0;
+    while i < len(xs) {
+        let bi: int = lgbm_bin_index(xs[i], edges);
+        counts[bi] = counts[bi] + 1;
+        i = i + 1;
+    }
+    return counts;
+}
+
+fn lgbm_hist_grad_sums(xs: [float], grads: [float], edges: [float], nbins: int) -> [float] {
+    let mut sums: [float] = [];
+    let mut b: int = 0;
+    while b < nbins {
+        push(sums, 0.0);
+        b = b + 1;
+    }
+    let mut i: int = 0;
+    while i < len(xs) {
+        let bi: int = lgbm_bin_index(xs[i], edges);
+        sums[bi] = sums[bi] + grads[i];
+        i = i + 1;
+    }
+    return sums;
+}
+
+fn lgbm_hist_hess_sums(xs: [float], hess: [float], edges: [float], nbins: int) -> [float] {
+    let mut sums: [float] = [];
+    let mut b: int = 0;
+    while b < nbins {
+        push(sums, 0.0);
+        b = b + 1;
+    }
+    let mut i: int = 0;
+    while i < len(xs) {
+        let bi: int = lgbm_bin_index(xs[i], edges);
+        sums[bi] = sums[bi] + hess[i];
+        i = i + 1;
+    }
+    return sums;
+}
+
+fn lgbm_split_gain(gsum: [float], hsum: [float], lambda: float, b: int) -> float {
+    let mut gl: float = 0.0;
+    let mut hl: float = 0.0;
+    let mut i: int = 0;
+    while i <= b {
+        gl = gl + gsum[i];
+        hl = hl + hsum[i];
+        i = i + 1;
+    }
+    let mut gr: float = 0.0;
+    let mut hr: float = 0.0;
+    let mut j: int = b + 1;
+    while j < len(gsum) {
+        gr = gr + gsum[j];
+        hr = hr + hsum[j];
+        j = j + 1;
+    }
+    let g: float = gl + gr;
+    let h: float = hl + hr;
+    return gl * gl / (hl + lambda) + gr * gr / (hr + lambda) - g * g / (h + lambda);
+}
+
+fn lgbm_best_bin(gsum: [float], hsum: [float], lambda: float) -> int {
+    let mut best: int = 0;
+    let mut bestg: float = lgbm_split_gain(gsum, hsum, lambda, 0);
+    let mut b: int = 1;
+    while b < len(gsum) - 1 {
+        let gv: float = lgbm_split_gain(gsum, hsum, lambda, b);
+        if gv > bestg {
+            bestg = gv;
+            best = b;
+        }
+        b = b + 1;
+    }
+    return best;
+}
+
+fn lgbm_leaf_value(gsum: [float], hsum: [float], lambda: float, lo: int, hi: int) -> float {
+    let mut gs: float = 0.0;
+    let mut hs: float = 0.0;
+    let mut i: int = lo;
+    while i < hi {
+        gs = gs + gsum[i];
+        hs = hs + hsum[i];
+        i = i + 1;
+    }
+    return 0.0 - gs / (hs + lambda);
+}

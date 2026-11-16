@@ -1,0 +1,85 @@
+// Gradient-boosted stumps (xgboost-lite), in pure Qasida.
+// Import with: import "xgboost.fg";
+// One boosting round on 1D sorted data: gradients g = p - y,
+// Hessians h = p * (1 - p), split gain
+//   G_L^2/(H_L+lambda) + G_R^2/(H_R+lambda) - G^2/(H+lambda)
+// and leaf values -G/(H+lambda). Split k puts the first k
+// points left; the predict threshold is xs[k].
+
+fn xgb_grad(pred: float, y: int) -> float {
+    return pred - y as float;
+}
+
+fn xgb_hess(pred: float) -> float {
+    return pred * (1.0 - pred);
+}
+
+fn xgb_gain_at(grads: [float], hess: [float], lambda: float, k: int) -> float {
+    let mut gl: float = 0.0;
+    let mut hl: float = 0.0;
+    let mut i: int = 0;
+    while i < k {
+        gl = gl + grads[i];
+        hl = hl + hess[i];
+        i = i + 1;
+    }
+    let mut gr: float = 0.0;
+    let mut hr: float = 0.0;
+    let mut j: int = k;
+    while j < len(grads) {
+        gr = gr + grads[j];
+        hr = hr + hess[j];
+        j = j + 1;
+    }
+    let g: float = gl + gr;
+    let h: float = hl + hr;
+    return gl * gl / (hl + lambda) + gr * gr / (hr + lambda) - g * g / (h + lambda);
+}
+
+fn xgb_best_k(grads: [float], hess: [float], lambda: float) -> int {
+    let mut best: int = 1;
+    let mut bestg: float = xgb_gain_at(grads, hess, lambda, 1);
+    let mut k: int = 2;
+    while k < len(grads) {
+        let gv: float = xgb_gain_at(grads, hess, lambda, k);
+        if gv > bestg {
+            bestg = gv;
+            best = k;
+        }
+        k = k + 1;
+    }
+    return best;
+}
+
+fn xgb_leaf_value(grads: [float], hess: [float], lambda: float, lo: int, hi: int) -> float {
+    let mut gs: float = 0.0;
+    let mut hs: float = 0.0;
+    let mut i: int = lo;
+    while i < hi {
+        gs = gs + grads[i];
+        hs = hs + hess[i];
+        i = i + 1;
+    }
+    return 0.0 - gs / (hs + lambda);
+}
+
+fn xgb_apply_stump(preds: [float], k: int, left: float, right: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(preds) {
+        if i < k {
+            push(out, preds[i] + left);
+        } else {
+            push(out, preds[i] + right);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn xgb_predict(x: float, threshold: float, left: float, right: float) -> float {
+    if x < threshold {
+        return left;
+    }
+    return right;
+}

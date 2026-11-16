@@ -1,0 +1,68 @@
+// Keras-lite: Sequential-style dense stacks, in pure Qasida.
+// Import with: import "keras.fg";
+// Dense layers over flat weight arrays (out-major: out_j reads
+// w[j*in_dim .. j*in_dim+in_dim]), ReLU, softmax, cross-entropy
+// and argmax. This is the Sequential API shape; the Linear struct
+// in nn.fg is a different, lower-level API.
+
+fn kr_dense(x: [float], w: [float], b: [float], in_dim: int, out_dim: int) -> [float] {
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < out_dim {
+        let mut s: float = b[j];
+        let mut i: int = 0;
+        while i < in_dim {
+            s = s + x[i] * w[j * in_dim + i];
+            i = i + 1;
+        }
+        push(out, s);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn kr_relu(x: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(x) {
+        if x[i] > 0.0 {
+            push(out, x[i]);
+        } else {
+            push(out, 0.0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn kr_softmax(x: [float]) -> [float] {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(x) {
+        s = s + exp(x[i]);
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, exp(x[j]) / s);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn kr_cross_entropy(probs: [float], target: int) -> float {
+    return 0.0 - log(probs[target]);
+}
+
+fn kr_argmax(x: [float]) -> int {
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(x) {
+        if x[i] > x[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

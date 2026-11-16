@@ -1,0 +1,15 @@
+import "segmentation.fg";
+
+fn main() {
+    let img: [int] = [0, 10, 0, 10, 10, 0, 0, 0, 20];
+    let bin: [int] = seg_threshold(img, 5);
+    println(bin[0], bin[1], bin[2]);
+    println(bin[3], bin[4], bin[5]);
+    println(bin[6], bin[7], bin[8]);
+    let labels: [int] = seg_label(bin, 3, 3);
+    println(labels[0], labels[1], labels[2]);
+    println(labels[3], labels[4], labels[5]);
+    println(labels[6], labels[7], labels[8]);
+    println(seg_region_size(labels, labels[1]));
+    println(seg_region_size(labels, labels[8]));
+}

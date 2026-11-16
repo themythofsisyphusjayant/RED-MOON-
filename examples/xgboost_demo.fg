@@ -1,0 +1,25 @@
+import "xgboost.fg";
+
+fn main() {
+    let xs: [float] = [1.0, 2.0, 3.0, 4.0];
+    let ys: [int] = [0, 0, 1, 1];
+    let preds: [float] = [0.5, 0.5, 0.5, 0.5];
+    let mut grads: [float] = [];
+    let mut hess: [float] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(grads, xgb_grad(preds[i], ys[i]));
+        push(hess, xgb_hess(preds[i]));
+        i = i + 1;
+    }
+    let k: int = xgb_best_k(grads, hess, 1.0);
+    println(k);
+    println(xgb_gain_at(grads, hess, 1.0, k));
+    let left: float = xgb_leaf_value(grads, hess, 1.0, 0, k);
+    let right: float = xgb_leaf_value(grads, hess, 1.0, k, len(xs));
+    println(left);
+    println(right);
+    let thr: float = xs[k];
+    println(preds[0] + xgb_predict(xs[0], thr, left, right));
+    println(preds[3] + xgb_predict(xs[3], thr, left, right));
+}

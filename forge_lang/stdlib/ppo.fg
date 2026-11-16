@@ -1,0 +1,49 @@
+// ppo-lite: clipped PPO objective helpers, in pure Qasida.
+// Import with: import "ppo.fg";
+// ratio = exp(new_logp - old_logp); the clipped surrogate is
+// min(ratio*adv, clip(ratio, 1-eps, 1+eps)*adv). Advantages
+// normalise as (adv - mean) / std; entropy is -sum(p * ln p).
+
+fn ppo_ratio(new_logp: float, old_logp: float) -> float {
+    return exp(new_logp - old_logp);
+}
+
+fn ppo_clip(x: float, lo: float, hi: float) -> float {
+    if x < lo {
+        return lo;
+    }
+    if x > hi {
+        return hi;
+    }
+    return x;
+}
+
+fn ppo_objective(ratio: float, adv: float, eps: float) -> float {
+    let clipped: float = ppo_clip(ratio, 1.0 - eps, 1.0 + eps);
+    let a: float = ratio * adv;
+    let b: float = clipped * adv;
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+fn ppo_normalize(advs: [float], mean: float, std: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(advs) {
+        push(out, (advs[i] - mean) / std);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ppo_entropy(probs: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(probs) {
+        s = s + probs[i] * log(probs[i]);
+        i = i + 1;
+    }
+    return 0.0 - s;
+}

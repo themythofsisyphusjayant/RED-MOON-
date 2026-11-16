@@ -1,0 +1,15 @@
+import "detection.fg";
+
+fn main() {
+    let img: [int] = [0, 0, 0, 0, 0, 5, 5, 0, 0, 5, 5, 0, 0, 0, 0, 0];
+    let tpl: [int] = [5, 5, 5, 5];
+    let m: [int] = det_match(img, 4, 4, tpl, 2, 2);
+    println(m[0]);
+    println(m[1]);
+    println(m[2]);
+    let a: [int] = [0, 0, 2, 2];
+    let b: [int] = [1, 1, 2, 2];
+    let iou: float = det_iou(a, b);
+    println(iou);
+    println(det_keep(iou, 0.5));
+}

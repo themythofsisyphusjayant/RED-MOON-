@@ -1,0 +1,59 @@
+// agents-lite: Q-table agents (SARSA, expected SARSA), in pure Qasida.
+// Import with: import "agents.fg";
+// Q-tables are flat [float] arrays indexed state*n_actions+action.
+// Epsilon-greedy draws come from rand.fg's LCG, threaded as an
+// explicit seed (same shape as bandits.fg). This is the agent
+// layer; rl.fg holds the lower-level Q-update/greedy primitives.
+import "rand.fg";
+
+fn ag_sarsa(q: float, alpha: float, gamma: float, reward: float, next_q: float) -> float {
+    return q + alpha * (reward + gamma * next_q - q);
+}
+
+fn ag_expected_sarsa(q: float, alpha: float, gamma: float, reward: float, next_values: [float], probs: [float]) -> float {
+    let mut expected: float = 0.0;
+    let mut i: int = 0;
+    while i < len(next_values) {
+        expected = expected + probs[i] * next_values[i];
+        i = i + 1;
+    }
+    return q + alpha * (reward + gamma * expected - q);
+}
+
+fn ag_epsilon_greedy(qrow: [float], epsilon: float, seed: int) -> [int] {
+    // Returns [choice, new_seed]. Epsilon 0 always exploits.
+    let r: float = rand_float(seed);
+    let next: int = rand_next(seed);
+    if r < epsilon {
+        let u: float = r / epsilon;
+        let choice: int = (u * len(qrow) as float) as int;
+        return [choice, next];
+    }
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(qrow) {
+        if qrow[i] > qrow[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return [best, next];
+}
+
+fn ag_table_get(table: [float], n_actions: int, state: int, action: int) -> float {
+    return table[state * n_actions + action];
+}
+
+fn ag_table_set(table: [float], n_actions: int, state: int, action: int, value: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(table) {
+        if i == state * n_actions + action {
+            push(out, value);
+        } else {
+            push(out, table[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

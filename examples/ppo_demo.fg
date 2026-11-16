@@ -1,0 +1,13 @@
+import "ppo.fg";
+
+fn main() {
+    let ratio: float = ppo_ratio(-0.5, -0.7);
+    println(ratio);
+    println(ppo_objective(ratio, 1.0, 0.2));
+    println(ppo_objective(ratio, -0.5, 0.2));
+    let advs: [float] = [1.0, 2.0, 3.0];
+    let norm: [float] = ppo_normalize(advs, 2.0, 0.8164965809);
+    println(norm[0], norm[1], norm[2]);
+    let probs: [float] = [0.5, 0.5];
+    println(ppo_entropy(probs));
+}

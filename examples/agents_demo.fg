@@ -1,0 +1,15 @@
+import "agents.fg";
+
+fn main() {
+    println(ag_sarsa(0.5, 0.1, 0.9, 1.0, 0.5));
+    let vals: [float] = [0.0, 1.0];
+    let probs: [float] = [0.25, 0.75];
+    println(ag_expected_sarsa(0.5, 0.1, 0.9, 1.0, vals, probs));
+    let qrow: [float] = [0.1, 0.9, 0.3];
+    let eg: [int] = ag_epsilon_greedy(qrow, 1.0, 7);
+    println(eg[0]);
+    println(eg[1]);
+    let table: [float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let t2: [float] = ag_table_set(table, 2, 2, 1, 0.595);
+    println(ag_table_get(t2, 2, 2, 1));
+}

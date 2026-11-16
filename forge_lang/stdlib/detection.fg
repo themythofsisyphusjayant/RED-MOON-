@@ -1,0 +1,81 @@
+// detection-lite: template matching + box IoU, in pure Qasida.
+// Import with: import "detection.fg";
+// Template match scans every placement and keeps the smallest
+// sum of squared differences (strict <, so the first best wins).
+// Boxes are [x, y, w, h] ints; IoU is intersection over union.
+
+fn det_ssd(patch: [int], template: [int]) -> int {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(patch) {
+        let d: int = patch[i] - template[i];
+        s = s + d * d;
+        i = i + 1;
+    }
+    return s;
+}
+
+fn det_match(img: [int], w: int, h: int, tpl: [int], tw: int, th: int) -> [int] {
+    let mut best_x: int = 0;
+    let mut best_y: int = 0;
+    let mut best_s: int = 2147483647;
+    let mut by: int = 0;
+    while by + th <= h {
+        let mut bx: int = 0;
+        while bx + tw <= w {
+            let mut patch: [int] = [];
+            let mut dy: int = 0;
+            while dy < th {
+                let mut dx: int = 0;
+                while dx < tw {
+                    push(patch, img[(by + dy) * w + bx + dx]);
+                    dx = dx + 1;
+                }
+                dy = dy + 1;
+            }
+            let s: int = det_ssd(patch, tpl);
+            if s < best_s {
+                best_s = s;
+                best_x = bx;
+                best_y = by;
+            }
+            bx = bx + 1;
+        }
+        by = by + 1;
+    }
+    return [best_x, best_y, best_s];
+}
+
+fn det_iou(a: [int], b: [int]) -> float {
+    let mut x0: int = a[0];
+    if b[0] > x0 {
+        x0 = b[0];
+    }
+    let mut y0: int = a[1];
+    if b[1] > y0 {
+        y0 = b[1];
+    }
+    let mut x1: int = a[0] + a[2];
+    if b[0] + b[2] < x1 {
+        x1 = b[0] + b[2];
+    }
+    let mut y1: int = a[1] + a[3];
+    if b[1] + b[3] < y1 {
+        y1 = b[1] + b[3];
+    }
+    let mut iw: int = x1 - x0;
+    if iw < 0 {
+        iw = 0;
+    }
+    let mut ih: int = y1 - y0;
+    if ih < 0 {
+        ih = 0;
+    }
+    let inter: int = iw * ih;
+    let union_area: int = a[2] * a[3] + b[2] * b[3] - inter;
+    return inter as float / union_area as float;
+}
+
+fn det_keep(iou: float, thresh: float) -> bool {
+    return iou < thresh;
+}

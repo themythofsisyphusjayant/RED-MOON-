@@ -1,0 +1,13 @@
+import "imageio.fg";
+
+fn main() {
+    let px: [int] = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+    println(io_ppm_encode(2, 2, 255, px));
+    let g: [int] = io_grayscale(px);
+    println(g[0], g[1], g[2], g[3]);
+    let r: [int] = io_channel(px, 0);
+    println(r[0], r[1], r[2], r[3]);
+    let f: [int] = io_flip_h(2, 2, px);
+    println(f[0], f[1], f[2], f[3], f[4], f[5]);
+    println(f[6], f[7], f[8], f[9], f[10], f[11]);
+}

@@ -1,0 +1,16 @@
+import "keras.fg";
+
+fn main() {
+    let x: [float] = [1.0, 0.5];
+    let w1: [float] = [0.5, -0.5, 0.2, 0.8];
+    let b1: [float] = [0.1, -0.1];
+    let h: [float] = kr_relu(kr_dense(x, w1, b1, 2, 2));
+    println(h[0], h[1]);
+    let w2: [float] = [1.0, 0.0, 0.0, 1.0];
+    let b2: [float] = [0.0, 0.0];
+    let logits: [float] = kr_dense(h, w2, b2, 2, 2);
+    let probs: [float] = kr_softmax(logits);
+    println(probs[0], probs[1]);
+    println(kr_cross_entropy(probs, 1));
+    println(kr_argmax(probs));
+}
