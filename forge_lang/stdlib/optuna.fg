@@ -1,0 +1,83 @@
+// Qasida — optuna-lite library (AI/ML program item 45).
+// Import with: import "optuna.fg";
+// Random / grid search + TPE-lite, in pure Qasida. The objective is
+// supplied by the caller as a plain function value is not supported,
+// so the searches here minimise the reference objective
+// f(x) = (x - 2)^2 + 1; callers reuse the trial machinery by copying
+// the loop shape. Random draws come from rand.fg's LCG, threaded as
+// an explicit seed (deterministic, reproducible).
+import "rand.fg";
+
+fn opt_objective(x: float) -> float {
+    let d: float = x - 2.0;
+    return d * d + 1.0;
+}
+
+fn opt_random_search(low: float, high: float, n: int, seed: int) -> [float] {
+    if n < 1 {
+        fail("opt_random_search: need at least 1 trial");
+    }
+    let mut s: int = seed;
+    let mut best_x: float = 0.0;
+    let mut best_f: float = 0.0;
+    let mut first: bool = true;
+    let mut i: int = 0;
+    while i < n {
+        let u: float = rand_float(s);
+        s = rand_next(s);
+        let x: float = low + u * (high - low);
+        let f: float = opt_objective(x);
+        if first {
+            best_x = x;
+            best_f = f;
+            first = false;
+        } else {
+            if f < best_f {
+                best_x = x;
+                best_f = f;
+            }
+        }
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    push(out, best_x);
+    push(out, best_f);
+    return out;
+}
+
+fn opt_grid_search(low: float, high: float, n: int) -> [float] {
+    if n < 1 {
+        fail("opt_grid_search: need at least 1 point");
+    }
+    let mut best_x: float = low;
+    let mut best_f: float = opt_objective(low);
+    let mut i: int = 1;
+    while i < n {
+        let x: float = low + (i as float) * (high - low) / ((n - 1) as float);
+        let f: float = opt_objective(x);
+        if f < best_f {
+            best_x = x;
+            best_f = f;
+        }
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    push(out, best_x);
+    push(out, best_f);
+    return out;
+}
+
+fn opt_tpe_suggest(best_xs: [float], spread: float, seed: int) -> float {
+    if len(best_xs) == 0 {
+        fail("opt_tpe_suggest: need at least 1 good trial");
+    }
+    let mut mean: float = 0.0;
+    let mut i: int = 0;
+    while i < len(best_xs) {
+        mean = mean + best_xs[i];
+        i = i + 1;
+    }
+    mean = mean / (len(best_xs) as float);
+    let u: float = rand_float(seed);
+    return mean + (u - 0.5) * spread;
+}

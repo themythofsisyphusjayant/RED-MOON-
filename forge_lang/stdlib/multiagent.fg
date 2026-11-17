@@ -1,0 +1,48 @@
+// Qasida — multi-agent-lite library (AI/ML program item 39).
+// Import with: import "multiagent.fg";
+// Two-agent gridworld-lite, in pure Qasida. Two agents share a 1D
+// line of cells; each step both move one cell toward each other
+// (and stop when they meet). The joint reward each step is the
+// negative distance between them, so cooperation (meeting fast)
+// maximises the shared return. Builds on the single-agent Q-table
+// layer in agents.fg; the joint step/reward/simulate loop is new.
+fn ma_step(a: int, b: int) -> [int] {
+    let mut na: int = a;
+    let mut nb: int = b;
+    if a < b {
+        na = a + 1;
+    }
+    if b > a {
+        nb = b - 1;
+    }
+    let mut out: [int] = [];
+    push(out, na);
+    push(out, nb);
+    return out;
+}
+
+fn ma_reward(a: int, b: int) -> int {
+    return 0 - (b - a);
+}
+
+fn ma_simulate(a0: int, b0: int, steps: int) -> [int] {
+    if steps < 0 {
+        fail("ma_simulate: steps must be >= 0");
+    }
+    let mut a: int = a0;
+    let mut b: int = b0;
+    let mut total: int = 0;
+    let mut s: int = 0;
+    while s < steps {
+        let next: [int] = ma_step(a, b);
+        a = next[0];
+        b = next[1];
+        total = total + ma_reward(a, b);
+        s = s + 1;
+    }
+    let mut out: [int] = [];
+    push(out, a);
+    push(out, b);
+    push(out, total);
+    return out;
+}

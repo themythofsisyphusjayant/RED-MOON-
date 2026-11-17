@@ -1,0 +1,94 @@
+// Qasida — bert-finetune-lite library (AI/ML program item 23).
+// Import with: import "bertfinetune.fg";
+// Classification head + tiny fine-tune step, in pure Qasida. The
+// "BERT" here is a toy 2-dim mean-pooled token embedding (fixed
+// table, no pretrained weights — full weight loading is a later
+// slice, not faked); the head is a 2x2 linear layer trained with
+// one cross-entropy SGD step, gradients computed analytically.
+fn bf_embed_token(id: int) -> [float] {
+    let mut out: [float] = [];
+    if id == 0 {
+        push(out, 1.0);
+        push(out, 0.0);
+    } else {
+        if id == 1 {
+            push(out, 0.0);
+            push(out, 1.0);
+        } else {
+            if id == 2 {
+                push(out, 1.0);
+                push(out, 1.0);
+            } else {
+                push(out, 0.5);
+                push(out, 0.5);
+            }
+        }
+    }
+    return out;
+}
+
+fn bf_mean_embed(tokens: [int]) -> [float] {
+    if len(tokens) == 0 {
+        fail("bf_mean_embed: empty tokens");
+    }
+    let mut s0: float = 0.0;
+    let mut s1: float = 0.0;
+    let mut i: int = 0;
+    while i < len(tokens) {
+        let e: [float] = bf_embed_token(tokens[i]);
+        s0 = s0 + e[0];
+        s1 = s1 + e[1];
+        i = i + 1;
+    }
+    let n: float = len(tokens) as float;
+    let mut out: [float] = [];
+    push(out, s0 / n);
+    push(out, s1 / n);
+    return out;
+}
+
+fn bf_logits(emb: [float], w: [float]) -> [float] {
+    let mut out: [float] = [];
+    push(out, w[0] * emb[0] + w[1] * emb[1]);
+    push(out, w[2] * emb[0] + w[3] * emb[1]);
+    return out;
+}
+
+fn bf_softmax(x: [float]) -> [float] {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(x) {
+        s = s + exp(x[i]);
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, exp(x[j]) / s);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn bf_ce_loss(probs: [float], label: int) -> float {
+    return 0.0 - log(probs[label]);
+}
+
+fn bf_sgd_step(emb: [float], w: [float], probs: [float], label: int, lr: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < 2 {
+        let mut onehot: float = 0.0;
+        if i == label {
+            onehot = 1.0;
+        }
+        let mut j: int = 0;
+        while j < 2 {
+            let grad: float = (probs[i] - onehot) * emb[j];
+            push(out, w[i * 2 + j] - lr * grad);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

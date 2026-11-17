@@ -1,0 +1,14 @@
+import "explain.fg";
+
+fn main() -> int {
+    let x0: [float] = [1.0, 2.0, 3.0, 4.0];
+    let x1: [float] = [2.0, 1.0, 2.0, 1.0];
+    let ys: [float] = [4.0, 5.0, 8.0, 9.0];
+    println(ex_mse(x0, x1, ys, 2.0, 1.0, 0.0));
+    println(ex_importance(x0, x1, ys, 2.0, 1.0, 0.0, 0), ex_importance(x0, x1, ys, 2.0, 1.0, 0.0, 1));
+    let scores: [float] = [1.0, 2.0, 0.5];
+    let attn: [float] = ex_softmax(scores);
+    println(attn[0], attn[1], attn[2]);
+    println(ex_argmax(attn));
+    return 0;
+}

@@ -1,0 +1,21 @@
+import "autogradext.fg";
+
+fn main() -> int {
+    let probs: [float] = [0.2, 0.5, 0.3];
+    let go: [float] = [1.0, 0.0, 0.0];
+    let sb: [float] = agx_softmax_backward(probs, go);
+    println(sb[0], sb[1], sb[2]);
+    let a: [float] = [1.0, 2.0, 3.0, 4.0];
+    let b: [float] = [5.0, 6.0, 7.0, 8.0];
+    let dc: [float] = [1.0, 0.0, 0.0, 1.0];
+    let grads: [float] = agx_matmul_grads(a, b, dc);
+    println(grads[0], grads[1], grads[2], grads[3], grads[4], grads[5], grads[6], grads[7]);
+    println(agx_exp_backward(1.0, 2.0), agx_log_backward(2.0, 1.0));
+    let vals: [float] = [10.0, 20.0, 30.0];
+    println(agx_gather(vals, 1));
+    let idxs: [int] = [0, 2, 0];
+    let scvals: [float] = [1.0, 2.0, 3.0];
+    let sc: [float] = agx_scatter_add(3, idxs, scvals);
+    println(sc[0], sc[1], sc[2]);
+    return 0;
+}

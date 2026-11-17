@@ -1,0 +1,89 @@
+// Qasida — datasets-extended library (AI/ML program item 40).
+// Import with: import "datasetsext.fg";
+// More loaders on top of dataset.fg, in pure Qasida: CSV column
+// parsing (via split + parse_float), word counts, min-max
+// normalisation, per-image means for an image-folder-lite layout
+// (flat pixels, n images x n pixels), and building dataset.fg
+// SeqData windows from a CSV column.
+import "dataset.fg";
+import "rand.fg";
+
+fn dsext_csv_col_sum(csv: str, col: int) -> float {
+    let rows: [str] = split(csv, "\n");
+    let mut total: float = 0.0;
+    let mut i: int = 0;
+    while i < len(rows) {
+        let cols: [str] = split(rows[i], ",");
+        total = total + parse_float(cols[col]);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn dsext_csv_col_ints(csv: str, col: int) -> [int] {
+    let rows: [str] = split(csv, "\n");
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(rows) {
+        let cols: [str] = split(rows[i], ",");
+        push(out, parse_float(cols[col]) as int);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dsext_word_count(text: str) -> int {
+    return len(split(text, " "));
+}
+
+fn dsext_normalize(values: [float]) -> [float] {
+    if len(values) == 0 {
+        fail("dsext_normalize: empty input");
+    }
+    let mut lo: float = values[0];
+    let mut hi: float = values[0];
+    let mut i: int = 1;
+    while i < len(values) {
+        if values[i] < lo {
+            lo = values[i];
+        }
+        if values[i] > hi {
+            hi = values[i];
+        }
+        i = i + 1;
+    }
+    if hi == lo {
+        fail("dsext_normalize: constant input");
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(values) {
+        push(out, (values[j] - lo) / (hi - lo));
+        j = j + 1;
+    }
+    return out;
+}
+
+fn dsext_image_means(pixels: [float], n_images: int, n_pixels: int) -> [float] {
+    if len(pixels) != n_images * n_pixels {
+        fail("dsext_image_means: size mismatch");
+    }
+    let mut out: [float] = [];
+    let mut im: int = 0;
+    while im < n_images {
+        let mut s: float = 0.0;
+        let mut p: int = 0;
+        while p < n_pixels {
+            s = s + pixels[im * n_pixels + p];
+            p = p + 1;
+        }
+        push(out, s / (n_pixels as float));
+        im = im + 1;
+    }
+    return out;
+}
+
+fn dsext_seq_from_csv(csv: str, col: int, seq_len: int) -> SeqData {
+    let ids: [int] = dsext_csv_col_ints(csv, col);
+    return make_sequences(ids, seq_len);
+}

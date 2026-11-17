@@ -1,0 +1,65 @@
+// Qasida — quant-lite library (AI/ML program item 49).
+// Import with: import "quant.fg";
+// Per-channel int8 quantisation steps, in pure Qasida: scale /
+// zero-point from a calibration range, quantise / dequantise, and
+// the max reconstruction error. Extends the scalar int8 steps in
+// nn.fg (quantize/dequantize) with calibration and per-channel
+// scales; it does not replace them.
+fn qt_round_half_up(x: float) -> int {
+    if x >= 0.0 {
+        return (x + 0.5) as int;
+    }
+    return (x - 0.5) as int;
+}
+
+fn qt_clamp_int(v: int, lo: int, hi: int) -> int {
+    if v < lo {
+        return lo;
+    }
+    if v > hi {
+        return hi;
+    }
+    return v;
+}
+
+fn qt_scale(min_v: float, max_v: float) -> float {
+    if max_v <= min_v {
+        fail("qt_scale: max must exceed min");
+    }
+    return (max_v - min_v) / 255.0;
+}
+
+fn qt_zero_point(min_v: float, scale: float) -> int {
+    return qt_round_half_up(0.0 - min_v / scale);
+}
+
+fn qt_quantize(x: float, scale: float, zp: int) -> int {
+    let q: int = qt_round_half_up(x / scale) + zp;
+    return qt_clamp_int(q, 0, 255);
+}
+
+fn qt_dequantize(q: int, scale: float, zp: int) -> float {
+    return (q - zp) as float * scale;
+}
+
+fn qt_absf(x: float) -> float {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+fn qt_max_error(values: [float], scale: float, zp: int) -> float {
+    let mut worst: float = 0.0;
+    let mut i: int = 0;
+    while i < len(values) {
+        let q: int = qt_quantize(values[i], scale, zp);
+        let back: float = qt_dequantize(q, scale, zp);
+        let err: float = qt_absf(back - values[i]);
+        if err > worst {
+            worst = err;
+        }
+        i = i + 1;
+    }
+    return worst;
+}

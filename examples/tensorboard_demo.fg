@@ -1,0 +1,11 @@
+import "tensorboard.fg";
+
+fn main() -> int {
+    let losses: [float] = [1.0, 0.8, 0.9, 0.6, 0.7, 0.5, 0.4, 0.45];
+    let ema: [float] = tb_ema(losses, 0.5);
+    println(ema[0], ema[1], ema[2], ema[3], ema[4], ema[5], ema[6], ema[7]);
+    println(tb_min(losses), tb_max(losses), tb_mean(losses));
+    let down: [float] = tb_downsample(losses, 2);
+    println(down[0], down[1], down[2], down[3]);
+    return 0;
+}

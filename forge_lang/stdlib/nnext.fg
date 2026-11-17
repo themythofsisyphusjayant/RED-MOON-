@@ -1,0 +1,119 @@
+// Qasida — nn-extended library (AI/ML program item 16).
+// Import with: import "nnext.fg";
+// Conv1d/2d-lite, Embedding, Dropout, BatchNorm-lite, and SiLU, in
+// pure Qasida. Distinct from nn.fg (Linear, LayerNorm, GELU, Adam,
+// schedules, sampling): none of these layers exist there. Dropout
+// uses a fixed deterministic mask (keep even indices, scale
+// 1/(1-p)) so results are reproducible without RNG.
+fn nnx_conv1d(x: [float], kernel: [float]) -> [float] {
+    if len(x) < len(kernel) {
+        fail("nnx_conv1d: input shorter than kernel");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i <= len(x) - len(kernel) {
+        let mut s: float = 0.0;
+        let mut j: int = 0;
+        while j < len(kernel) {
+            s = s + x[i + j] * kernel[j];
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn nnx_conv2d(x: [float], rows: int, cols: int, kernel: [float], krows: int, kcols: int) -> [float] {
+    if rows < krows {
+        fail("nnx_conv2d: input shorter than kernel");
+    }
+    if cols < kcols {
+        fail("nnx_conv2d: input narrower than kernel");
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r <= rows - krows {
+        let mut c: int = 0;
+        while c <= cols - kcols {
+            let mut s: float = 0.0;
+            let mut kr: int = 0;
+            while kr < krows {
+                let mut kc: int = 0;
+                while kc < kcols {
+                    s = s + x[(r + kr) * cols + (c + kc)] * kernel[kr * kcols + kc];
+                    kc = kc + 1;
+                }
+                kr = kr + 1;
+            }
+            push(out, s);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn nnx_embedding(table: [float], n_cols: int, row: int) -> [float] {
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < n_cols {
+        push(out, table[row * n_cols + j]);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn nnx_dropout(x: [float], p: float) -> [float] {
+    if p < 0.0 {
+        fail("nnx_dropout: p must be >= 0");
+    }
+    if p >= 1.0 {
+        fail("nnx_dropout: p must be < 1");
+    }
+    let scale: float = 1.0 / (1.0 - p);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(x) {
+        if i % 2 == 0 {
+            push(out, x[i] * scale);
+        } else {
+            push(out, 0.0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn nnx_batchnorm(x: [float], gamma: float, beta: float) -> [float] {
+    if len(x) == 0 {
+        fail("nnx_batchnorm: empty input");
+    }
+    let mut mean: float = 0.0;
+    let mut i: int = 0;
+    while i < len(x) {
+        mean = mean + x[i];
+        i = i + 1;
+    }
+    mean = mean / (len(x) as float);
+    let mut var: float = 0.0;
+    let mut j: int = 0;
+    while j < len(x) {
+        let d: float = x[j] - mean;
+        var = var + d * d;
+        j = j + 1;
+    }
+    var = var / (len(x) as float);
+    let std: float = sqrt(var);
+    let mut out: [float] = [];
+    let mut k: int = 0;
+    while k < len(x) {
+        push(out, (x[k] - mean) / std * gamma + beta);
+        k = k + 1;
+    }
+    return out;
+}
+
+fn nnx_silu(x: float) -> float {
+    return x / (1.0 + exp(0.0 - x));
+}

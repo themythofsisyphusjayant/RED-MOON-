@@ -1,0 +1,91 @@
+// Qasida — autograd-extended library (AI/ML program item 15).
+// Import with: import "autogradext.fg";
+// Grows the tensor tape in tensor_autograd.fg with value-level
+// backward formulas the tape does not yet cover, in pure Qasida:
+// softmax backward, 2x2 matmul gradients (w.r.t. both inputs),
+// exp / log backward, sum-reduce backward, gather, and
+// scatter-add. These are analytic gradient helpers; the tape in
+// tensor_autograd.fg (t_backward) remains the graph engine.
+fn agx_softmax_backward(probs: [float], grad_out: [float]) -> [float] {
+    if len(probs) != len(grad_out) {
+        fail("agx_softmax_backward: length mismatch");
+    }
+    let mut dot: float = 0.0;
+    let mut i: int = 0;
+    while i < len(probs) {
+        dot = dot + probs[i] * grad_out[i];
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(probs) {
+        push(out, probs[j] * (grad_out[j] - dot));
+        j = j + 1;
+    }
+    return out;
+}
+
+fn agx_matmul_grads(a: [float], b: [float], dc: [float]) -> [float] {
+    if len(a) != 4 {
+        fail("agx_matmul_grads: 2x2 only");
+    }
+    if len(b) != 4 {
+        fail("agx_matmul_grads: 2x2 only");
+    }
+    if len(dc) != 4 {
+        fail("agx_matmul_grads: 2x2 only");
+    }
+    let mut out: [float] = [];
+    push(out, dc[0] * b[0] + dc[1] * b[2]);
+    push(out, dc[0] * b[1] + dc[1] * b[3]);
+    push(out, dc[2] * b[0] + dc[3] * b[2]);
+    push(out, dc[2] * b[1] + dc[3] * b[3]);
+    push(out, a[0] * dc[0] + a[2] * dc[2]);
+    push(out, a[0] * dc[1] + a[2] * dc[3]);
+    push(out, a[1] * dc[0] + a[3] * dc[2]);
+    push(out, a[1] * dc[1] + a[3] * dc[3]);
+    return out;
+}
+
+fn agx_exp_backward(x: float, grad: float) -> float {
+    return grad * exp(x);
+}
+
+fn agx_log_backward(x: float, grad: float) -> float {
+    return grad / x;
+}
+
+fn agx_sum_backward(n: int, grad: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, grad);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn agx_gather(values: [float], idx: int) -> float {
+    return values[idx];
+}
+
+fn agx_scatter_add(size: int, idxs: [int], vals: [float]) -> [float] {
+    if len(idxs) != len(vals) {
+        fail("agx_scatter_add: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < size {
+        let mut s: float = 0.0;
+        let mut j: int = 0;
+        while j < len(idxs) {
+            if idxs[j] == i {
+                s = s + vals[j];
+            }
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}

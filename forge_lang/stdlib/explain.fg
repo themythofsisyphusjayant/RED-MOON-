@@ -1,0 +1,75 @@
+// Qasida — explain-lite library (AI/ML program item 46).
+// Import with: import "explain.fg";
+// Permutation importance, attention-weight visualisation, and
+// argmax, in pure Qasida. The model here is the fixed 2-feature
+// linear model yhat = w0*x0 + w1*x1 + b; importance is the MSE
+// increase when one feature's order is reversed (a deterministic
+// permutation, no RNG needed).
+fn ex_mse(x0: [float], x1: [float], ys: [float], w0: float, w1: float, b: float) -> float {
+    if len(x0) != len(x1) {
+        fail("ex_mse: length mismatch");
+    }
+    if len(x0) != len(ys) {
+        fail("ex_mse: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(x0) {
+        let pred: float = w0 * x0[i] + w1 * x1[i] + b;
+        let err: float = pred - ys[i];
+        s = s + err * err;
+        i = i + 1;
+    }
+    return s / (len(x0) as float);
+}
+
+fn ex_reverse(values: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = len(values) - 1;
+    while i >= 0 {
+        push(out, values[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+fn ex_importance(x0: [float], x1: [float], ys: [float], w0: float, w1: float, b: float, which: int) -> float {
+    let base: float = ex_mse(x0, x1, ys, w0, w1, b);
+    if which == 0 {
+        let perm: [float] = ex_reverse(x0);
+        return ex_mse(perm, x1, ys, w0, w1, b) - base;
+    }
+    let perm: [float] = ex_reverse(x1);
+    return ex_mse(x0, perm, ys, w0, w1, b) - base;
+}
+
+fn ex_softmax(scores: [float]) -> [float] {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(scores) {
+        s = s + exp(scores[i]);
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(scores) {
+        push(out, exp(scores[j]) / s);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn ex_argmax(x: [float]) -> int {
+    if len(x) == 0 {
+        fail("ex_argmax: empty input");
+    }
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(x) {
+        if x[i] > x[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

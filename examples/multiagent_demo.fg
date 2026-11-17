@@ -1,0 +1,12 @@
+import "multiagent.fg";
+
+fn main() -> int {
+    let step1: [int] = ma_step(0, 4);
+    println(step1[0], step1[1]);
+    println(ma_reward(0, 4));
+    let sim2: [int] = ma_simulate(0, 4, 2);
+    println(sim2[0], sim2[1], sim2[2]);
+    let sim5: [int] = ma_simulate(0, 4, 5);
+    println(sim5[0], sim5[1], sim5[2]);
+    return 0;
+}

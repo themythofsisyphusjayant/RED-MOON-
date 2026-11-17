@@ -1,0 +1,11 @@
+import "optuna.fg";
+
+fn main() -> int {
+    let best: [float] = opt_random_search(0.0, 4.0, 5, 42);
+    println(best[0], best[1]);
+    let grid: [float] = opt_grid_search(0.0, 4.0, 5);
+    println(grid[0], grid[1]);
+    let good: [float] = [1.5, 2.5];
+    println(opt_tpe_suggest(good, 1.0, 7));
+    return 0;
+}

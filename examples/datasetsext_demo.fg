@@ -1,0 +1,18 @@
+import "datasetsext.fg";
+
+fn main() -> int {
+    let csv: str = "1.0,2.0\n3.0,4.0\n5.0,6.0";
+    println(dsext_csv_col_sum(csv, 0), dsext_csv_col_sum(csv, 1));
+    println(dsext_word_count("the quick brown fox"));
+    let vals: [float] = [1.0, 2.0, 3.0];
+    let norm: [float] = dsext_normalize(vals);
+    println(norm[0], norm[1], norm[2]);
+    let pix: [float] = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0];
+    let means: [float] = dsext_image_means(pix, 2, 3);
+    println(means[0], means[1]);
+    let seq: SeqData = dsext_seq_from_csv(csv, 0, 2);
+    println(seq.count);
+    let win: [int] = seq_get_x(seq, 0);
+    println(win[0], win[1]);
+    return 0;
+}

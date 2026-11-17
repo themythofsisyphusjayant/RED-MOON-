@@ -1,0 +1,56 @@
+// Qasida — onnx-lite library (AI/ML program item 48).
+// Import with: import "onnx.fg";
+// Graph export for MLP / attention-lite, in pure Qasida: parameter
+// counts, node counts, attention FLOPs, and the op-name list of the
+// graph (the text form of the export; a binary protobuf writer is
+// a later slice, not faked here).
+fn onnx_linear_params(in_f: int, out_f: int) -> int {
+    return in_f * out_f + out_f;
+}
+
+fn onnx_mlp_params(sizes: [int]) -> int {
+    if len(sizes) < 2 {
+        fail("onnx_mlp_params: need at least 2 sizes");
+    }
+    let mut total: int = 0;
+    let mut i: int = 0;
+    while i < len(sizes) - 1 {
+        total = total + onnx_linear_params(sizes[i], sizes[i + 1]);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn onnx_mlp_nodes(sizes: [int]) -> int {
+    if len(sizes) < 2 {
+        fail("onnx_mlp_nodes: need at least 2 sizes");
+    }
+    let layers: int = len(sizes) - 1;
+    return 3 * layers - 1;
+}
+
+fn onnx_mlp_ops(sizes: [int]) -> [str] {
+    if len(sizes) < 2 {
+        fail("onnx_mlp_ops: need at least 2 sizes");
+    }
+    let mut ops: [str] = [];
+    let mut i: int = 0;
+    while i < len(sizes) - 1 {
+        push(ops, "MatMul");
+        push(ops, "Add");
+        if i < len(sizes) - 2 {
+            push(ops, "Relu");
+        }
+        i = i + 1;
+    }
+    return ops;
+}
+
+fn onnx_graph_text(sizes: [int]) -> str {
+    let ops: [str] = onnx_mlp_ops(sizes);
+    return join(ops, ",");
+}
+
+fn onnx_attn_flops(seq: int, dim: int) -> int {
+    return 4 * seq * seq * dim;
+}

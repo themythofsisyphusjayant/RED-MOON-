@@ -1,0 +1,10 @@
+import "onnx.fg";
+
+fn main() -> int {
+    let sizes: [int] = [4, 8, 2];
+    println(onnx_mlp_params(sizes));
+    println(onnx_mlp_nodes(sizes));
+    println(onnx_attn_flops(4, 8));
+    println(onnx_graph_text(sizes));
+    return 0;
+}

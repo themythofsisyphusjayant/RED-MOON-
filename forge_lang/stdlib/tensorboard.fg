@@ -1,0 +1,75 @@
+// Qasida — tensorboard-lite library (AI/ML program item 44).
+// Import with: import "tensorboard.fg";
+// Local scalar logs + chart data, in pure Qasida: exponential moving
+// average smoothing, min/max/mean summaries, and downsampling for
+// chart series. No files, no SVG yet — values only, chart-ready.
+fn tb_ema(values: [float], alpha: float) -> [float] {
+    if len(values) == 0 {
+        fail("tb_ema: empty series");
+    }
+    let mut out: [float] = [];
+    push(out, values[0]);
+    let mut i: int = 1;
+    while i < len(values) {
+        let prev: float = out[i - 1];
+        push(out, alpha * values[i] + (1.0 - alpha) * prev);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn tb_min(values: [float]) -> float {
+    if len(values) == 0 {
+        fail("tb_min: empty series");
+    }
+    let mut m: float = values[0];
+    let mut i: int = 1;
+    while i < len(values) {
+        if values[i] < m {
+            m = values[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn tb_max(values: [float]) -> float {
+    if len(values) == 0 {
+        fail("tb_max: empty series");
+    }
+    let mut m: float = values[0];
+    let mut i: int = 1;
+    while i < len(values) {
+        if values[i] > m {
+            m = values[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn tb_mean(values: [float]) -> float {
+    if len(values) == 0 {
+        fail("tb_mean: empty series");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(values) {
+        s = s + values[i];
+        i = i + 1;
+    }
+    return s / (len(values) as float);
+}
+
+fn tb_downsample(values: [float], step: int) -> [float] {
+    if step < 1 {
+        fail("tb_downsample: step must be >= 1");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(values) {
+        push(out, values[i]);
+        i = i + step;
+    }
+    return out;
+}
