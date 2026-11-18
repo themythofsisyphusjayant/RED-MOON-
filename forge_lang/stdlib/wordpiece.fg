@@ -1,0 +1,67 @@
+// Qasida — WordPiece-lite library (AI/ML program item 21, ext).
+// Import with: import "wordpiece.fg";
+// WordPiece greedy longest-match tokenization over a small fixed
+// vocab (## continuations), token count, and decode back to a
+// string. Pure Qasida; the vocab is a toy table, not a trained
+// one — the algorithm is the point, matching the textbook greedy
+// longest-match-first rule.
+
+fn wp_vocab() -> [str] {
+    return ["hello", "world", "play", "##ing", "##ed", "un", "##known", "##able", "##s", "test", "##er"];
+}
+
+fn wp_tokenize(text: str) -> [str] {
+    let vocab: [str] = wp_vocab();
+    let mut toks: [str] = [];
+    let mut pos: int = 0;
+    while pos < len(text) {
+        let mut best: str = "";
+        let mut best_len: int = 0;
+        let mut vi: int = 0;
+        while vi < len(vocab) {
+            let v: str = vocab[vi];
+            if substr(v, 0, 2) == "##" {
+                let stem: str = substr(v, 2, len(v) - 2);
+                if pos > 0 {
+                    if substr(text, pos, len(stem)) == stem {
+                        if len(stem) > best_len {
+                            best = v;
+                            best_len = len(stem);
+                        }
+                    }
+                }
+            } else {
+                if substr(text, pos, len(v)) == v {
+                    if len(v) > best_len {
+                        best = v;
+                        best_len = len(v);
+                    }
+                }
+            }
+            vi = vi + 1;
+        }
+        if best_len == 0 {
+            push(toks, "[UNK]");
+            pos = pos + 1;
+        } else {
+            push(toks, best);
+            pos = pos + best_len;
+        }
+    }
+    return toks;
+}
+
+fn wp_decode(toks: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(toks) {
+        let t: str = toks[i];
+        if substr(t, 0, 2) == "##" {
+            out = out + substr(t, 2, len(t) - 2);
+        } else {
+            out = out + t;
+        }
+        i = i + 1;
+    }
+    return out;
+}

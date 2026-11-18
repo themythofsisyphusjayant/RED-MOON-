@@ -1,0 +1,94 @@
+// Qasida — tar-data-blocks library (library program item 56, v2).
+// Import with: import "tardata.fg";
+// Tar data blocks in pure Qasida, on top of archive.fg (which
+// did the 512-byte header layer only): write a 512-byte data
+// block for fixed content, read it back, verify the header's
+// checksum field, and report how many data blocks a size needs.
+
+import "archive.fg";
+
+fn td_data_block(content: [int]) -> [int] {
+    if len(content) > 512 {
+        fail("td_data_block: content must fit in one 512-byte block");
+    }
+    let mut block: [int] = [];
+    let mut i: int = 0;
+    while i < 512 {
+        if i < len(content) {
+            push(block, content[i]);
+        } else {
+            push(block, 0);
+        }
+        i = i + 1;
+    }
+    return block;
+}
+
+fn td_read_block(block: [int], n: int) -> [int] {
+    if n > len(block) {
+        fail("td_read_block: n is larger than the block");
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, block[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn td_blocks_for(size: int) -> int {
+    return (size + 511) / 512;
+}
+
+fn td_oct_value(bytes: [int], start: int, n: int) -> int {
+    let mut v: int = 0;
+    let mut i: int = 0;
+    while i < n {
+        let b: int = bytes[start + i];
+        if b >= 48 {
+            if b <= 55 {
+                v = v * 8 + (b - 48);
+            }
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn td_verify_header(h: [int]) -> int {
+    let stored: int = td_oct_value(h, 148, 6);
+    let mut copy: [int] = [];
+    let mut i: int = 0;
+    while i < len(h) {
+        push(copy, h[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        copy[148 + i] = 32;
+        i = i + 1;
+    }
+    if tar_checksum(copy) == stored {
+        return 1;
+    }
+    return 0;
+}
+
+fn td_store_checksum(h: [int]) -> [int] {
+    let field: [int] = tar_octal_bytes(tar_checksum(h), 6);
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(h) {
+        push(out, h[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(field) {
+        out[148 + i] = field[i];
+        i = i + 1;
+    }
+    out[154] = 0;
+    out[155] = 32;
+    return out;
+}

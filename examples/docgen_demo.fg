@@ -1,0 +1,11 @@
+import "docgen.fg";
+
+fn main() -> int {
+    println(doc_fn_markdown("add", "add(a: int, b: int) -> int", "Adds two numbers."));
+    println(doc_api_index("add", "add(a: int, b: int) -> int"));
+    println(doc_summary("add", "Adds two numbers."));
+    println(doc_fn_markdown("greet", "greet(name: str) -> str", "Greets a person by name."));
+    println(doc_api_index("greet", "greet(name: str) -> str"));
+    println(doc_summary("greet", "Greets a person by name."));
+    return 0;
+}

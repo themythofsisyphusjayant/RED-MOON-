@@ -1,0 +1,87 @@
+// Qasida — parallel-lite library (library program item 72).
+// Import with: import "parallel.fg";
+// pmap / preduce / pfilter with chunked sequential semantics.
+// Honest note: Qasida has no true threads yet, so these run the
+// chunks one after another in order — the chunking shape (split
+// the input into `chunks` contiguous ranges, combine the partial
+// results) is exactly what a threaded version would do, and the
+// results are identical to the single-pass versions. Same honesty
+// rule as the existing parallel_dot / matmul precedent.
+
+fn pmap_affine(xs: [int], a: int, b: int, chunks: int) -> [int] {
+    if chunks < 1 {
+        fail("pmap_affine: need at least 1 chunk");
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, 0);
+        i = i + 1;
+    }
+    let chunk_len: int = (len(xs) + chunks - 1) / chunks;
+    let mut c: int = 0;
+    while c < chunks {
+        let start: int = c * chunk_len;
+        let mut end: int = (c + 1) * chunk_len;
+        if end > len(xs) {
+            end = len(xs);
+        }
+        let mut j: int = start;
+        while j < end {
+            out[j] = a * xs[j] + b;
+            j = j + 1;
+        }
+        c = c + 1;
+    }
+    return out;
+}
+
+fn preduce_sum(xs: [int], chunks: int) -> int {
+    if chunks < 1 {
+        fail("preduce_sum: need at least 1 chunk");
+    }
+    let chunk_len: int = (len(xs) + chunks - 1) / chunks;
+    let mut total: int = 0;
+    let mut c: int = 0;
+    while c < chunks {
+        let start: int = c * chunk_len;
+        let mut end: int = (c + 1) * chunk_len;
+        if end > len(xs) {
+            end = len(xs);
+        }
+        let mut part: int = 0;
+        let mut j: int = start;
+        while j < end {
+            part = part + xs[j];
+            j = j + 1;
+        }
+        total = total + part;
+        c = c + 1;
+    }
+    return total;
+}
+
+fn pfilter_even(xs: [int], chunks: int) -> [int] {
+    if chunks < 1 {
+        fail("pfilter_even: need at least 1 chunk");
+    }
+    let chunk_len: int = (len(xs) + chunks - 1) / chunks;
+    let mut out: [int] = [];
+    let mut c: int = 0;
+    while c < chunks {
+        let start: int = c * chunk_len;
+        let mut end: int = (c + 1) * chunk_len;
+        if end > len(xs) {
+            end = len(xs);
+        }
+        let mut j: int = start;
+        while j < end {
+            if xs[j] % 2 == 0 {
+                push(out, xs[j]);
+            }
+            j = j + 1;
+        }
+        c = c + 1;
+    }
+    return out;
+}

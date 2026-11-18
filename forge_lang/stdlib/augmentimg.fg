@@ -1,0 +1,81 @@
+// Qasida — image-augmentation-lite library (AI/ML program item 32).
+// Import with: import "augmentimg.fg";
+// Image augmentation on flat [int] images (row-major, values
+// 0-255): horizontal / vertical flips, crop, brightness shift
+// with clamping, and salt noise at fixed positions. Distinct
+// from augment.fg, which is word-level ops — this is the image
+// half of augmentation. Deterministic: no randomness anywhere.
+
+fn ai_hflip(img: [int], w: int, h: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut c: int = 0;
+        while c < w {
+            push(out, img[r * w + (w - 1 - c)]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn ai_vflip(img: [int], w: int, h: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut c: int = 0;
+        while c < w {
+            push(out, img[(h - 1 - r) * w + c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn ai_crop(img: [int], w: int, h: int, x: int, y: int, cw: int, ch: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < ch {
+        let mut c: int = 0;
+        while c < cw {
+            push(out, img[(y + r) * w + (x + c)]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn ai_brightness(img: [int], delta: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        let mut v: int = img[i] + delta;
+        if v > 255 {
+            v = 255;
+        }
+        if v < 0 {
+            v = 0;
+        }
+        push(out, v);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ai_salt(img: [int], positions: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        push(out, img[i]);
+        i = i + 1;
+    }
+    let mut p: int = 0;
+    while p < len(positions) {
+        out[positions[p]] = 255;
+        p = p + 1;
+    }
+    return out;
+}

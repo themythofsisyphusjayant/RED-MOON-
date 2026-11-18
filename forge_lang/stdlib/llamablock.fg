@@ -1,0 +1,55 @@
+// Qasida — llama-block-lite library (AI/ML program item 22, ext).
+// Import with: import "llamablock.fg";
+// One LLaMA decoder block's core math in pure Qasida: RMSNorm,
+// SwiGLU (silu(a) * b), a 2D RoPE rotation of one (x0, x1) pair,
+// and one greedy-decode step (argmax over logits). Fixed toy
+// values in the demo; no weights are loaded.
+
+fn ll_rmsnorm(x: [float]) -> [float] {
+    if len(x) == 0 {
+        fail("ll_rmsnorm: need at least 1 value");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(x) {
+        s = s + x[i] * x[i];
+        i = i + 1;
+    }
+    let rms: float = sqrt(s / (len(x) as float));
+    let mut out: [float] = [];
+    i = 0;
+    while i < len(x) {
+        push(out, x[i] / rms);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ll_swiglu(a: float, b: float) -> float {
+    let silu: float = a / (1.0 + exp(-a));
+    return silu * b;
+}
+
+fn ll_rope(x0: float, x1: float, theta: float) -> [float] {
+    let c: float = cos(theta);
+    let s: float = sin(theta);
+    let mut out: [float] = [];
+    push(out, x0 * c - x1 * s);
+    push(out, x0 * s + x1 * c);
+    return out;
+}
+
+fn ll_argmax(logits: [float]) -> int {
+    if len(logits) == 0 {
+        fail("ll_argmax: need at least 1 logit");
+    }
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(logits) {
+        if logits[i] > logits[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return best;
+}

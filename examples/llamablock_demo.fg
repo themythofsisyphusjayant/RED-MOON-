@@ -1,0 +1,13 @@
+import "llamablock.fg";
+
+fn main() -> int {
+    let x: [float] = [1.0, 2.0, 3.0, 4.0];
+    let norm: [float] = ll_rmsnorm(x);
+    println(norm[0], norm[1], norm[2], norm[3]);
+    println(ll_swiglu(1.0, 2.0));
+    let rot: [float] = ll_rope(1.0, 2.0, 0.5);
+    println(rot[0], rot[1]);
+    let logits: [float] = [0.1, 2.5, 1.0, -0.5];
+    println(ll_argmax(logits));
+    return 0;
+}

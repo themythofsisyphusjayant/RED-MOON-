@@ -1,0 +1,55 @@
+// Qasida — translation-lite library (AI/ML program item 29).
+// Import with: import "translation.fg";
+// Phrase-table-lite EN->FR translation, in pure Qasida. A small
+// fixed phrase table; any phrase not in the table falls back to
+// the phrase itself (unknown-word fallback). Round-trip score
+// counts how many phrases survive EN->FR->EN unchanged.
+
+fn tr_translate(phrase: str) -> str {
+    if phrase == "hello" {
+        return "bonjour";
+    } else if phrase == "good morning" {
+        return "bonjour";
+    } else if phrase == "thank you" {
+        return "merci";
+    } else if phrase == "goodbye" {
+        return "au revoir";
+    } else if phrase == "yes" {
+        return "oui";
+    } else if phrase == "no" {
+        return "non";
+    }
+    return phrase;
+}
+
+fn tr_translate_back(fr: str) -> str {
+    if fr == "bonjour" {
+        return "hello";
+    } else if fr == "merci" {
+        return "thank you";
+    } else if fr == "au revoir" {
+        return "goodbye";
+    } else if fr == "oui" {
+        return "yes";
+    } else if fr == "non" {
+        return "no";
+    }
+    return fr;
+}
+
+fn tr_word_count(s: str) -> int {
+    let parts: [str] = split(s, " ");
+    return len(parts);
+}
+
+fn tr_roundtrip_matches(phrases: [str]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(phrases) {
+        if tr_translate_back(tr_translate(phrases[i])) == phrases[i] {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

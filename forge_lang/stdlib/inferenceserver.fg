@@ -1,0 +1,99 @@
+// Qasida — inference-server-lite library (AI/ML program item 50).
+// Import with: import "inferenceserver.fg";
+// A tiny HTTP predict endpoint in pure Qasida: parse a request
+// line (method/path), run a small linear model, build a JSON
+// response string, and batch-predict. No socket is opened here —
+// the serving loop lives in http_server.fg; this is the request
+// handling + model half, tested without a network.
+
+fn is_parse_method(request: str) -> str {
+    let lines: [str] = split(request, "\r\n");
+    if len(lines) == 0 {
+        return "";
+    }
+    let parts: [str] = split(lines[0], " ");
+    if len(parts) < 1 {
+        return "";
+    }
+    return parts[0];
+}
+
+fn is_parse_path(request: str) -> str {
+    let lines: [str] = split(request, "\r\n");
+    if len(lines) == 0 {
+        return "/";
+    }
+    let parts: [str] = split(lines[0], " ");
+    if len(parts) < 2 {
+        return "/";
+    }
+    return parts[1];
+}
+
+fn is_predict(x: [float], w: [float], b: float) -> float {
+    if len(x) != len(w) {
+        fail("is_predict: x and w must have the same length");
+    }
+    let mut s: float = b;
+    let mut i: int = 0;
+    while i < len(x) {
+        s = s + x[i] * w[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn is_int_to_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = -x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        let d: int = x % 10;
+        out = substr(digits, d, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn is_float_to_fixed(f: float, decimals: int) -> str {
+    if f < 0.0 {
+        return "-" + is_float_to_fixed(-f, decimals);
+    }
+    let mut scale: int = 1;
+    let mut i: int = 0;
+    while i < decimals {
+        scale = scale * 10;
+        i = i + 1;
+    }
+    let scaled: int = (f * scale as float) as int;
+    let whole: int = scaled / scale;
+    let frac: int = scaled % scale;
+    let mut frac_str: str = is_int_to_str(frac);
+    while len(frac_str) < decimals {
+        frac_str = "0" + frac_str;
+    }
+    return is_int_to_str(whole) + "." + frac_str;
+}
+
+fn is_json_response(pred: float) -> str {
+    return "{\"prediction\": " + is_float_to_fixed(pred, 2) + "}";
+}
+
+fn is_batch3(x1: [float], x2: [float], x3: [float], w: [float], b: float) -> [float] {
+    let mut out: [float] = [];
+    push(out, is_predict(x1, w, b));
+    push(out, is_predict(x2, w, b));
+    push(out, is_predict(x3, w, b));
+    return out;
+}

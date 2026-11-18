@@ -1,0 +1,11 @@
+import "vision2.fg";
+
+fn main() -> int {
+    let img: [int] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+    println(v2_sobel_x_center(img));
+    println(v2_box_blur_center(img));
+    let thr: [int] = v2_threshold(img, 50);
+    println(thr[4]);
+    println(v2_count_ones(thr));
+    return 0;
+}

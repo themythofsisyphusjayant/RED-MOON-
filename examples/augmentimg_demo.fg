@@ -1,0 +1,17 @@
+import "augmentimg.fg";
+
+fn main() -> int {
+    let img: [int] = [1, 2, 3, 4, 5, 6];
+    let hf: [int] = ai_hflip(img, 3, 2);
+    println(hf[0], hf[1], hf[2], hf[3], hf[4], hf[5]);
+    let vf: [int] = ai_vflip(img, 3, 2);
+    println(vf[0], vf[1], vf[2], vf[3], vf[4], vf[5]);
+    let cr: [int] = ai_crop(img, 3, 2, 1, 0, 2, 1);
+    println(cr[0], cr[1]);
+    let br: [int] = ai_brightness(img, 10);
+    println(br[0], br[1], br[2], br[3], br[4], br[5]);
+    let pos: [int] = [0, 5];
+    let sn: [int] = ai_salt(img, pos);
+    println(sn[0], sn[1], sn[2], sn[3], sn[4], sn[5]);
+    return 0;
+}

@@ -1,0 +1,19 @@
+import "wordpiece.fg";
+
+fn main() -> int {
+    let t1: [str] = wp_tokenize("playing");
+    println(len(t1));
+    println(t1[0]);
+    println(t1[1]);
+    println(wp_decode(t1));
+    let t2: [str] = wp_tokenize("hello");
+    println(len(t2));
+    println(t2[0]);
+    println(wp_decode(t2));
+    let t3: [str] = wp_tokenize("unknown");
+    println(len(t3));
+    println(t3[0]);
+    println(t3[1]);
+    println(wp_decode(t3));
+    return 0;
+}

@@ -1,0 +1,17 @@
+import "inferenceserver.fg";
+
+fn main() -> int {
+    let req: str = "POST /predict HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+    println(is_parse_method(req));
+    println(is_parse_path(req));
+    let w: [float] = [0.5, -1.0, 2.0];
+    let x1: [float] = [1.0, 2.0, 3.0];
+    let p1: float = is_predict(x1, w, 0.25);
+    println(p1);
+    println(is_json_response(p1));
+    let x2: [float] = [0.0, 1.0, -1.0];
+    let x3: [float] = [2.0, 0.5, 0.5];
+    let batch: [float] = is_batch3(x1, x2, x3, w, 0.25);
+    println(batch[0], batch[1], batch[2]);
+    return 0;
+}

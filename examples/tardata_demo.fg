@@ -1,0 +1,18 @@
+import "tardata.fg";
+
+fn main() -> int {
+    let name: [int] = [104, 101, 108, 108, 111, 46, 116, 120, 116];
+    let h: [int] = tar_header(name, 5);
+    println(tar_checksum_field(h));
+    let stored: [int] = td_store_checksum(h);
+    println(td_verify_header(stored));
+    let content: [int] = [104, 101, 108, 108, 111];
+    let block: [int] = td_data_block(content);
+    let back: [int] = td_read_block(block, 5);
+    println(back[0], back[1], back[2], back[3], back[4]);
+    println(block[5]);
+    println(td_blocks_for(5));
+    println(td_blocks_for(512));
+    println(td_blocks_for(513));
+    return 0;
+}

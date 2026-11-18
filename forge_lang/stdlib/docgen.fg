@@ -1,0 +1,19 @@
+// Qasida — docgen-lite library (library program item 81).
+// Import with: import "docgen.fg";
+// Documentation output formats in pure Qasida: a markdown
+// function doc (name + signature + description), an API index
+// line, and a one-line summary. This is a stdlib string library;
+// forge_lang/docgen.py is a separate compiler tool, not this
+// module — no overlap.
+
+fn doc_fn_markdown(name: str, sig: str, desc: str) -> str {
+    return "# " + name + "\n\n`" + sig + "`\n\n" + desc;
+}
+
+fn doc_api_index(name: str, sig: str) -> str {
+    return "- " + sig;
+}
+
+fn doc_summary(name: str, desc: str) -> str {
+    return name + ": " + desc;
+}

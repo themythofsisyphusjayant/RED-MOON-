@@ -1,0 +1,46 @@
+// Qasida — gzip-lite library (library program item 58).
+// Import with: import "gzip.fg";
+// Stored-block gzip writer in pure Qasida: a 10-byte header,
+// one stored DEFLATE block, CRC32 (checksum.fg) and ISIZE.
+// Output is byte-exact against Python gzip.compress(data,
+// compresslevel=0, mtime=0) for inputs up to 65535 bytes
+// (a single stored block); the demo verifies "hello".
+
+import "checksum.fg";
+
+fn gz_stored(data: [int]) -> [int] {
+    if len(data) > 65535 {
+        fail("gz_stored: single stored block holds at most 65535 bytes");
+    }
+    let mut out: [int] = [];
+    push(out, 31);
+    push(out, 139);
+    push(out, 8);
+    push(out, 0);
+    push(out, 0);
+    push(out, 0);
+    push(out, 0);
+    push(out, 0);
+    push(out, 4);
+    push(out, 3);
+    push(out, 1);
+    push(out, len(data) & 255);
+    push(out, (len(data) >> 8) & 255);
+    push(out, (65535 - len(data)) & 255);
+    push(out, ((65535 - len(data)) >> 8) & 255);
+    let mut i: int = 0;
+    while i < len(data) {
+        push(out, data[i]);
+        i = i + 1;
+    }
+    let crc: int = crc32_bytes(data);
+    push(out, crc & 255);
+    push(out, (crc >> 8) & 255);
+    push(out, (crc >> 16) & 255);
+    push(out, (crc >> 24) & 255);
+    push(out, len(data) & 255);
+    push(out, (len(data) >> 8) & 255);
+    push(out, 0);
+    push(out, 0);
+    return out;
+}

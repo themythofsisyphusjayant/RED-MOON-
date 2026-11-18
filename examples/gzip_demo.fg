@@ -1,0 +1,12 @@
+import "gzip.fg";
+
+fn main() -> int {
+    let data: [int] = [104, 101, 108, 108, 111];
+    let g: [int] = gz_stored(data);
+    for b in g {
+        println(b);
+    }
+    println(len(g));
+    println(crc32_bytes(data));
+    return 0;
+}

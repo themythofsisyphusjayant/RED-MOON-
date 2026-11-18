@@ -1,0 +1,11 @@
+import "translation.fg";
+
+fn main() -> int {
+    println(tr_translate("hello"));
+    println(tr_translate("thank you"));
+    println(tr_translate("xyzzy"));
+    println(tr_word_count("good morning"));
+    let phrases: [str] = ["hello", "thank you", "goodbye"];
+    println(tr_roundtrip_matches(phrases), 3);
+    return 0;
+}

@@ -1,0 +1,63 @@
+// Qasida — vision2-lite library (AI/ML program item 30, ext).
+// Import with: import "vision2.fg";
+// Second vision slice in pure Qasida, on flat [int] images
+// (row-major, values 0-255): Sobel-X edge magnitude at the
+// centre of a 3x3 image, 3x3 box blur at the centre, and binary
+// thresholding. Distinct from vision.fg (which covers resize /
+// crop / colour basics) — this is the edge + blur half.
+
+fn v2_sobel_x_center(img: [int]) -> int {
+    if len(img) != 9 {
+        fail("v2_sobel_x_center: need a 3x3 image (9 values)");
+    }
+    let k: [int] = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < 9 {
+        s = s + k[i] * img[i];
+        i = i + 1;
+    }
+    if s < 0 {
+        return -s;
+    }
+    return s;
+}
+
+fn v2_box_blur_center(img: [int]) -> int {
+    if len(img) != 9 {
+        fail("v2_box_blur_center: need a 3x3 image (9 values)");
+    }
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < 9 {
+        s = s + img[i];
+        i = i + 1;
+    }
+    return s / 9;
+}
+
+fn v2_threshold(img: [int], t: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        if img[i] >= t {
+            push(out, 1);
+        } else {
+            push(out, 0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn v2_count_ones(img: [int]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(img) {
+        if img[i] == 1 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
