@@ -1,0 +1,10 @@
+import "docgenhtml.fg";
+
+fn main() -> int {
+    let sig: str = "add(a: int, b: int) -> int";
+    let body: str = dh_fn_page("add", sig, "Adds two numbers.");
+    println(body);
+    println(dh_index_item("add", sig));
+    println(dh_page("API", body));
+    return 0;
+}

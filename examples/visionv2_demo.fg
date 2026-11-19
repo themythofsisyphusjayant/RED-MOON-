@@ -1,0 +1,17 @@
+import "visionv2.fg";
+
+fn main() -> int {
+    let small: [int] = [10, 20, 30, 40];
+    let up: [int] = vv_upscale_2x2(small);
+    println(up[0], up[1], up[2], up[3], up[4], up[5], up[6], up[7], up[8], up[9], up[10], up[11], up[12], up[13], up[14], up[15]);
+    let img: [int] = [1, 2, 3, 4, 5, 6];
+    let rot: [int] = vv_rotate90_2x3(img);
+    println(rot[0], rot[1], rot[2], rot[3], rot[4], rot[5]);
+    let rgb: [int] = [255, 0, 0, 0, 255, 0, 0, 0, 255, 100, 150, 200];
+    let gray: [int] = vv_grayscale(rgb);
+    println(gray[0], gray[1], gray[2], gray[3]);
+    let vals: [int] = [0, 127, 255];
+    let norm: [float] = vv_normalize(vals);
+    println(norm[0], norm[1], norm[2]);
+    return 0;
+}

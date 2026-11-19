@@ -1,0 +1,65 @@
+// Qasida — autograd-extended v2 (AI/ML program item 15, v2).
+// Import with: import "autogradextv2.fg";
+// More value-level backward formulas in pure Qasida, growing the
+// coverage of autogradext.fg (softmax / matmul / exp / log /
+// gather / scatter-add): ReLU backward, sigmoid backward,
+// sum backward (broadcast), mean backward, and the matmul
+// gradient w.r.t. the left input via the transposed right input
+// (dA = dC @ B^T, 2x2).
+
+fn ax_relu_bwd(x: [float], gout: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(x) {
+        if x[i] > 0.0 {
+            push(out, gout[i]);
+        } else {
+            push(out, 0.0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ax_sigmoid(x: float) -> float {
+    return 1.0 / (1.0 + exp(0.0 - x));
+}
+
+fn ax_sigmoid_bwd(x: float, gout: float) -> float {
+    let s: float = ax_sigmoid(x);
+    return gout * s * (1.0 - s);
+}
+
+fn ax_sum_bwd(n: int, gout: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, gout);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ax_mean_bwd(n: int, gout: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, gout / n as float);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ax_matmul_t_bwd(dc: [float], b: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < 2 {
+        let mut j: int = 0;
+        while j < 2 {
+            push(out, dc[i * 2] * b[j * 2] + dc[i * 2 + 1] * b[j * 2 + 1]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

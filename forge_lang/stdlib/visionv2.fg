@@ -1,0 +1,52 @@
+// Qasida — vision-lite v2 (AI/ML program item 30, v2).
+// Import with: import "visionv2.fg";
+// Third vision slice in pure Qasida, on flat [int] images
+// (row-major, values 0-255), on top of vision.fg (resize / crop
+// / colour basics) and vision2.fg (Sobel / blur / threshold):
+// nearest-neighbour 2x2 -> 4x4 upscale, 90-degree clockwise
+// rotation of a 2x3 image, RGB-to-grayscale by channel average,
+// and normalisation to [0, 1] floats.
+
+fn vv_upscale_2x2(img: [int]) -> [int] {
+    if len(img) != 4 {
+        fail("vv_upscale_2x2: need a 2x2 image (4 values)");
+    }
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < 4 {
+        let mut c: int = 0;
+        while c < 4 {
+            push(out, img[(r / 2) * 2 + (c / 2)]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn vv_rotate90_2x3(img: [int]) -> [int] {
+    if len(img) != 6 {
+        fail("vv_rotate90_2x3: need a 2x3 image (6 values)");
+    }
+    return [img[3], img[0], img[4], img[1], img[5], img[2]];
+}
+
+fn vv_grayscale(rgb: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(rgb) {
+        push(out, (rgb[i] + rgb[i + 1] + rgb[i + 2]) / 3);
+        i = i + 3;
+    }
+    return out;
+}
+
+fn vv_normalize(img: [int]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        push(out, img[i] as float / 255.0);
+        i = i + 1;
+    }
+    return out;
+}

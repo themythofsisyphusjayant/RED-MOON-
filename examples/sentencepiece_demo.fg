@@ -1,0 +1,25 @@
+import "sentencepiece.fg";
+
+fn main() -> int {
+    let t0: [str] = sp_encode("hello world");
+    println(len(t0));
+    println(t0[0]);
+    println(t0[1]);
+    println(sp_decode(t0));
+    let t1: [str] = sp_encode("playing");
+    println(len(t1));
+    println(t1[0]);
+    println(t1[1]);
+    println(sp_decode(t1));
+    let t2: [str] = sp_encode("unknown");
+    println(len(t2));
+    println(t2[0]);
+    println(t2[1]);
+    println(sp_decode(t2));
+    let t3: [str] = sp_encode("tests");
+    println(len(t3));
+    println(t3[0]);
+    println(t3[1]);
+    println(sp_decode(t3));
+    return 0;
+}

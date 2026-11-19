@@ -1,0 +1,58 @@
+// Qasida — quant-lite v2 (AI/ML program item 49, v2).
+// Import with: import "quantv2.fg";
+// Second quantisation slice in pure Qasida, on top of quant.fg
+// (asymmetric per-channel int8 with calibration ranges):
+// symmetric int8 quantisation (scale = max_abs / 127, zero
+// point 0), fake quantisation (quantise then dequantise), and a
+// calibration histogram over fixed buckets.
+
+import "quant.fg";
+
+fn qv_sym_scale(max_abs: float) -> float {
+    if max_abs <= 0.0 {
+        fail("qv_sym_scale: max_abs must be positive");
+    }
+    return max_abs / 127.0;
+}
+
+fn qv_sym_quantize(x: float, scale: float) -> int {
+    let q: int = qt_round_half_up(x / scale);
+    return qt_clamp_int(q, -127, 127);
+}
+
+fn qv_sym_dequantize(q: int, scale: float) -> float {
+    return q as float * scale;
+}
+
+fn qv_fake_quant(x: float, scale: float) -> float {
+    return qv_sym_dequantize(qv_sym_quantize(x, scale), scale);
+}
+
+fn qv_hist(values: [float], lo: float, hi: float, nb: int) -> [int] {
+    if nb <= 0 {
+        fail("qv_hist: need at least 1 bucket");
+    }
+    if hi <= lo {
+        fail("qv_hist: hi must exceed lo");
+    }
+    let width: float = (hi - lo) / nb as float;
+    let mut counts: [int] = [];
+    let mut b: int = 0;
+    while b < nb {
+        push(counts, 0);
+        b = b + 1;
+    }
+    let mut i: int = 0;
+    while i < len(values) {
+        let mut bi: int = ((values[i] - lo) / width) as int;
+        if bi < 0 {
+            bi = 0;
+        }
+        if bi >= nb {
+            bi = nb - 1;
+        }
+        counts[bi] = counts[bi] + 1;
+        i = i + 1;
+    }
+    return counts;
+}

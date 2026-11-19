@@ -1,0 +1,19 @@
+import "autogradextv2.fg";
+
+fn main() -> int {
+    let xs: [float] = [-1.0, 2.0];
+    let gout: [float] = [3.0, 4.0];
+    let rb: [float] = ax_relu_bwd(xs, gout);
+    println(rb[0] as int, rb[1] as int);
+    println(ax_sigmoid_bwd(0.0, 4.0));
+    println(ax_sigmoid_bwd(1.0, 2.0));
+    let sb: [float] = ax_sum_bwd(3, 2.5);
+    println(sb[0], sb[1], sb[2]);
+    let mb: [float] = ax_mean_bwd(4, 2.0);
+    println(mb[0], mb[1], mb[2], mb[3]);
+    let dc: [float] = [1.0, 2.0, 3.0, 4.0];
+    let b: [float] = [5.0, 6.0, 7.0, 8.0];
+    let da: [float] = ax_matmul_t_bwd(dc, b);
+    println(da[0] as int, da[1] as int, da[2] as int, da[3] as int);
+    return 0;
+}

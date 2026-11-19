@@ -1,0 +1,15 @@
+import "sklearnv2.fg";
+
+fn main() -> int {
+    let xs: [int] = [1, 2, 3, 4, 5, 6];
+    let ys: [int] = [0, 0, 0, 1, 1, 1];
+    let t: float = sk2_stump_threshold(xs, ys);
+    println(t, sk2_stump_errors(xs, ys, t));
+    let vals: [float] = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let sc: [float] = sk2_scale(vals);
+    println(sk2_mean(vals), sk2_std(vals));
+    println(sc[0], sc[1], sc[2], sc[3], sc[4]);
+    println(sk2_nb_predict(2.5, 2.0, 1.0, 6.0, 1.0), sk2_nb_predict(5.5, 2.0, 1.0, 6.0, 1.0));
+    println(sk2_split_train_count(10, 3), sk2_split_test_count(10, 3));
+    return 0;
+}

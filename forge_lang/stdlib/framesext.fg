@@ -1,0 +1,74 @@
+// Qasida — frames-fast extended (library program item 14, ext).
+// Import with: import "framesext.fg";
+// More columnar ops over pandas.fg's flat Frame, in pure Qasida,
+// on top of frames.fg (filter / project / head): group-by sum
+// over an int-valued key column, an inner-join match count over
+// a shared key column, and a column sum.
+
+import "frames.fg";
+
+fn fx_group_sum(f: Frame, group_col: str, val_col: str, ngroups: int) -> [float] {
+    let gi: int = df_col_index(f, group_col);
+    let vi: int = df_col_index(f, val_col);
+    if gi < 0 {
+        fail("fx_group_sum: unknown group column");
+    }
+    if vi < 0 {
+        fail("fx_group_sum: unknown value column");
+    }
+    let mut sums: [float] = [];
+    let mut g: int = 0;
+    while g < ngroups {
+        let mut s: float = 0.0;
+        let mut r: int = 0;
+        while r < f.nrows {
+            let key: int = df_get(f, r, gi) as int;
+            if key == g {
+                s = s + df_get(f, r, vi);
+            }
+            r = r + 1;
+        }
+        push(sums, s);
+        g = g + 1;
+    }
+    return sums;
+}
+
+fn fx_inner_join_count(a: Frame, b: Frame, key_col: str) -> int {
+    let ai: int = df_col_index(a, key_col);
+    let bi: int = df_col_index(b, key_col);
+    if ai < 0 {
+        fail("fx_inner_join_count: unknown key column in left frame");
+    }
+    if bi < 0 {
+        fail("fx_inner_join_count: unknown key column in right frame");
+    }
+    let mut n: int = 0;
+    let mut r: int = 0;
+    while r < a.nrows {
+        let ka: float = df_get(a, r, ai);
+        let mut s: int = 0;
+        while s < b.nrows {
+            if df_get(b, s, bi) == ka {
+                n = n + 1;
+            }
+            s = s + 1;
+        }
+        r = r + 1;
+    }
+    return n;
+}
+
+fn fx_col_sum(f: Frame, name: str) -> float {
+    let ci: int = df_col_index(f, name);
+    if ci < 0 {
+        fail("fx_col_sum: unknown column");
+    }
+    let mut s: float = 0.0;
+    let mut r: int = 0;
+    while r < f.nrows {
+        s = s + df_get(f, r, ci);
+        r = r + 1;
+    }
+    return s;
+}

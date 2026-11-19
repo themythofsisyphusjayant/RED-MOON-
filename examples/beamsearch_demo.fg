@@ -1,0 +1,11 @@
+import "beamsearch.fg";
+
+fn main() -> int {
+    let beam: [float] = bs_beam_all();
+    println(beam[0] as int, beam[1] as int, beam[2] as int);
+    println(beam[3]);
+    let greedy: [float] = bs_greedy_all();
+    println(greedy[0] as int, greedy[1] as int, greedy[2] as int);
+    println(greedy[3]);
+    return 0;
+}

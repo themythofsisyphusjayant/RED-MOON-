@@ -1,0 +1,15 @@
+import "zlib.fg";
+import "checksum.fg";
+
+fn main() -> int {
+    let data: [int] = [104, 101, 108, 108, 111];
+    let s: [int] = zl_stream(data);
+    let mut i: int = 0;
+    while i < len(s) {
+        println(s[i]);
+        i = i + 1;
+    }
+    println(zl_verify(s, data));
+    println(adler32_bytes(data));
+    return 0;
+}

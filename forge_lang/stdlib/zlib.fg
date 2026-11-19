@@ -1,0 +1,67 @@
+// Qasida — zlib-lite library (library program item 58, ext).
+// Import with: import "zlib.fg";
+// A zlib stream (RFC 1950) in pure Qasida: the 2-byte header
+// [120, 1], one stored DEFLATE block (the same layout as
+// gzip.fg), and a big-endian Adler-32 trailer (checksum.fg).
+// Output is byte-exact against Python zlib.compress(data,
+// level=0) for inputs up to 65535 bytes (a single stored block).
+
+import "checksum.fg";
+
+fn zl_stream(data: [int]) -> [int] {
+    if len(data) > 65535 {
+        fail("zl_stream: single stored block holds at most 65535 bytes");
+    }
+    let mut out: [int] = [120, 1, 1];
+    push(out, len(data) & 255);
+    push(out, (len(data) >> 8) & 255);
+    push(out, (65535 - len(data)) & 255);
+    push(out, ((65535 - len(data)) >> 8) & 255);
+    let mut i: int = 0;
+    while i < len(data) {
+        push(out, data[i]);
+        i = i + 1;
+    }
+    let adler: int = adler32_bytes(data);
+    push(out, (adler >> 24) & 255);
+    push(out, (adler >> 16) & 255);
+    push(out, (adler >> 8) & 255);
+    push(out, adler & 255);
+    return out;
+}
+
+fn zl_verify(stream: [int], data: [int]) -> int {
+    if len(stream) != 7 + len(data) + 4 {
+        return 0;
+    }
+    if stream[0] != 120 {
+        return 0;
+    }
+    if stream[1] != 1 {
+        return 0;
+    }
+    if stream[2] != 1 {
+        return 0;
+    }
+    let n: int = stream[3] + stream[4] * 256;
+    if n != len(data) {
+        return 0;
+    }
+    let nlen: int = stream[5] + stream[6] * 256;
+    if nlen != 65535 - n {
+        return 0;
+    }
+    let mut i: int = 0;
+    while i < len(data) {
+        if stream[7 + i] != data[i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    let adler: int = adler32_bytes(data);
+    let stored: int = stream[7 + len(data)] * 16777216 + stream[8 + len(data)] * 65536 + stream[9 + len(data)] * 256 + stream[10 + len(data)];
+    if stored != adler {
+        return 0;
+    }
+    return 1;
+}

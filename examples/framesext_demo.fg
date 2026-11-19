@@ -1,0 +1,11 @@
+import "framesext.fg";
+
+fn main() -> int {
+    let a: Frame = Frame { names: ["g", "v"], data: [0.0, 10.0, 1.0, 20.0, 0.0, 30.0, 1.0, 40.0, 2.0, 50.0], nrows: 5, ncols: 2 };
+    let sums: [float] = fx_group_sum(a, "g", "v", 3);
+    println(sums[0], sums[1], sums[2]);
+    let b: Frame = Frame { names: ["g", "w"], data: [1.0, 7.0, 2.0, 8.0, 4.0, 9.0], nrows: 3, ncols: 2 };
+    println(fx_inner_join_count(a, b, "g"));
+    println(fx_col_sum(a, "v"));
+    return 0;
+}

@@ -1,0 +1,20 @@
+// Qasida — docgen-html library (library program item 81, ext).
+// Import with: import "docgenhtml.fg";
+// HTML documentation output formats in pure Qasida, the HTML
+// half of docgen.fg (which covers markdown / index / summary):
+// a function doc page, an API index list item, and a full HTML
+// page wrapper. This is a stdlib string library;
+// forge_lang/docgen.py is a separate compiler tool, not this
+// module — no overlap.
+
+fn dh_fn_page(name: str, sig: str, desc: str) -> str {
+    return "<h1>" + name + "</h1>\n<pre>" + sig + "</pre>\n<p>" + desc + "</p>";
+}
+
+fn dh_index_item(name: str, sig: str) -> str {
+    return "<li><code>" + sig + "</code></li>";
+}
+
+fn dh_page(title: str, body: str) -> str {
+    return "<html>\n<head><title>" + title + "</title></head>\n<body>\n" + body + "\n</body>\n</html>";
+}

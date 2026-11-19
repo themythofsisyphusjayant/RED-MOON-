@@ -1,0 +1,97 @@
+// Qasida — sklearn-lite v2 (AI/ML program item 6, v2).
+// Import with: import "sklearnv2.fg";
+// Second classical-ML slice in pure Qasida, on top of sklearn.fg
+// (linear/logistic regression, kNN, k-means, metrics): a 1D
+// decision stump (best midpoint split by error count), an
+// equal-variance Gaussian naive-Bayes classifier (1D, compared
+// by |z| — exact when the class sds are equal, as in the demo),
+// standard scaling (population std), and a train/test split
+// count helper.
+
+fn sk2_stump_threshold(xs: [int], ys: [int]) -> float {
+    let mut best_t: float = 0.0;
+    let mut best_e: int = 1000000000;
+    let mut i: int = 0;
+    while i < len(xs) - 1 {
+        let t: float = (xs[i] + xs[i + 1]) as float / 2.0;
+        let err: int = sk2_stump_errors(xs, ys, t);
+        if err < best_e {
+            best_e = err;
+            best_t = t;
+        }
+        i = i + 1;
+    }
+    return best_t;
+}
+
+fn sk2_stump_errors(xs: [int], ys: [int], t: float) -> int {
+    let mut err: int = 0;
+    let mut j: int = 0;
+    while j < len(xs) {
+        let mut pred: int = 0;
+        if (xs[j] as float) >= t {
+            pred = 1;
+        }
+        if pred != ys[j] {
+            err = err + 1;
+        }
+        j = j + 1;
+    }
+    return err;
+}
+
+fn sk2_mean(xs: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        s = s + xs[i];
+        i = i + 1;
+    }
+    return s / (len(xs) as float);
+}
+
+fn sk2_std(xs: [float]) -> float {
+    let m: float = sk2_mean(xs);
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        let d: float = xs[i] - m;
+        s = s + d * d;
+        i = i + 1;
+    }
+    return sqrt(s / (len(xs) as float));
+}
+
+fn sk2_scale(xs: [float]) -> [float] {
+    let m: float = sk2_mean(xs);
+    let sd: float = sk2_std(xs);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, (xs[i] - m) / sd);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sk2_absf(x: float) -> float {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+fn sk2_nb_predict(x: float, m0: float, sd0: float, m1: float, sd1: float) -> int {
+    if sk2_absf((x - m0) / sd0) <= sk2_absf((x - m1) / sd1) {
+        return 0;
+    }
+    return 1;
+}
+
+fn sk2_split_train_count(n: int, n_test: int) -> int {
+    return n - n_test;
+}
+
+fn sk2_split_test_count(n: int, n_test: int) -> int {
+    return n_test;
+}

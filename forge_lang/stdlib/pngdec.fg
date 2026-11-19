@@ -1,0 +1,81 @@
+// Qasida — png-decode-lite library (library program item 106).
+// Import with: import "pngdec.fg";
+// Decodes the 1x1 RGB stored-block PNGs written by png.fg
+// (filter 0, one stored DEFLATE block) in pure Qasida: signature
+// + IHDR + IDAT chunk walk, zlib header + stored-block checks,
+// Adler-32 verification (checksum.fg). Returns
+// [w, h, r, g, b, ok]; ok is 0 for a short input, a bad
+// signature, bad chunk types, a non-zero filter byte, a wrong
+// block length, or a bad Adler-32. Only filter-0 single-pixel
+// RGB is covered in v1 (documented limit).
+
+import "checksum.fg";
+
+fn pd_be32(b: [int], o: int) -> int {
+    return b[o] * 16777216 + b[o + 1] * 65536 + b[o + 2] * 256 + b[o + 3];
+}
+
+fn pd_decode(png: [int]) -> [int] {
+    let mut out: [int] = [0, 0, 0, 0, 0, 0];
+    if len(png) < 60 {
+        return out;
+    }
+    let mut ok: int = 1;
+    let sig: [int] = [137, 80, 78, 71, 13, 10, 26, 10];
+    let mut i: int = 0;
+    while i < 8 {
+        if png[i] != sig[i] {
+            ok = 0;
+        }
+        i = i + 1;
+    }
+    if png[12] != 73 {
+        ok = 0;
+    }
+    if png[13] != 72 {
+        ok = 0;
+    }
+    if png[14] != 68 {
+        ok = 0;
+    }
+    if png[15] != 82 {
+        ok = 0;
+    }
+    let w: int = pd_be32(png, 16);
+    let h: int = pd_be32(png, 20);
+    if png[37] != 73 {
+        ok = 0;
+    }
+    if png[38] != 68 {
+        ok = 0;
+    }
+    if png[39] != 65 {
+        ok = 0;
+    }
+    if png[40] != 84 {
+        ok = 0;
+    }
+    if png[41] != 120 {
+        ok = 0;
+    }
+    if png[42] != 1 {
+        ok = 0;
+    }
+    if png[43] != 1 {
+        ok = 0;
+    }
+    let n: int = png[44] + png[45] * 256;
+    if n != 4 {
+        ok = 0;
+    }
+    let raw: [int] = [png[48], png[49], png[50], png[51]];
+    if raw[0] != 0 {
+        ok = 0;
+    }
+    let stored: int = pd_be32(png, 52);
+    if stored != adler32_bytes(raw) {
+        ok = 0;
+    }
+    out = [w, h, raw[1], raw[2], raw[3], ok];
+    return out;
+}

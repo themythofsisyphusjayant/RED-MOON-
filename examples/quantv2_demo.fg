@@ -1,0 +1,12 @@
+import "quantv2.fg";
+
+fn main() -> int {
+    let values: [float] = [0.0, 0.5, -0.5, 1.0, -1.0];
+    let scale: float = qv_sym_scale(1.0);
+    println(scale);
+    println(qv_sym_quantize(values[0], scale), qv_sym_quantize(values[1], scale), qv_sym_quantize(values[2], scale), qv_sym_quantize(values[3], scale), qv_sym_quantize(values[4], scale));
+    println(qv_fake_quant(0.5, scale));
+    let hist: [int] = qv_hist(values, -1.0, 1.0, 4);
+    println(hist[0], hist[1], hist[2], hist[3]);
+    return 0;
+}

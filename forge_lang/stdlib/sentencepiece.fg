@@ -1,0 +1,83 @@
+// Qasida — sentencepiece-lite library (AI/ML program item 21, ext).
+// Import with: import "sentencepiece.fg";
+// Unigram-lite greedy longest-match tokenization in pure Qasida.
+// "_" is the ASCII stand-in for SentencePiece's U+2581 boundary
+// marker: sp_encode prepends "_" and turns spaces into "_", then
+// greedily matches the longest vocab entry (the same rule as
+// wordpiece.fg, but boundary-marked). The vocab is a toy table,
+// not a trained one — the algorithm is the point.
+
+fn sp_vocab() -> [str] {
+    return ["_hello", "_world", "_play", "ing", "_un", "known", "_test", "er", "s", "_the", "_a", "hello", "world"];
+}
+
+fn sp_normalize(text: str) -> str {
+    let mut out: str = "_";
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c == " " {
+            out = out + "_";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sp_encode(text: str) -> [str] {
+    let norm: str = sp_normalize(text);
+    let vocab: [str] = sp_vocab();
+    let mut toks: [str] = [];
+    let mut pos: int = 0;
+    while pos < len(norm) {
+        let mut best: str = "";
+        let mut best_len: int = 0;
+        let mut vi: int = 0;
+        while vi < len(vocab) {
+            let v: str = vocab[vi];
+            if substr(norm, pos, len(v)) == v {
+                if len(v) > best_len {
+                    best = v;
+                    best_len = len(v);
+                }
+            }
+            vi = vi + 1;
+        }
+        if best_len == 0 {
+            push(toks, "[UNK]");
+            pos = pos + 1;
+        } else {
+            push(toks, best);
+            pos = pos + best_len;
+        }
+    }
+    return toks;
+}
+
+fn sp_decode(toks: [str]) -> str {
+    let mut joined: str = "";
+    let mut i: int = 0;
+    while i < len(toks) {
+        joined = joined + toks[i];
+        i = i + 1;
+    }
+    let mut out: str = "";
+    let mut j: int = 0;
+    while j < len(joined) {
+        let c: str = substr(joined, j, 1);
+        if c == "_" {
+            out = out + " ";
+        } else {
+            out = out + c;
+        }
+        j = j + 1;
+    }
+    if len(out) > 0 {
+        if substr(out, 0, 1) == " " {
+            return substr(out, 1, len(out) - 1);
+        }
+    }
+    return out;
+}
