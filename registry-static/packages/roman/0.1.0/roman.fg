@@ -1,0 +1,44 @@
+// roman: int <-> Roman numerals, range 1..3999. Out of range input to
+// int_to_roman returns "" (documented, not a crash).
+fn int_to_roman(n: int) -> str {
+    if n <= 0 { return ""; }
+    if n > 3999 { return ""; }
+    let mut s: str = "";
+    let mut v: int = n;
+    while v >= 1000 { s = s + "M"; v = v - 1000; }
+    while v >= 900 { s = s + "CM"; v = v - 900; }
+    while v >= 500 { s = s + "D"; v = v - 500; }
+    while v >= 400 { s = s + "CD"; v = v - 400; }
+    while v >= 100 { s = s + "C"; v = v - 100; }
+    while v >= 90 { s = s + "XC"; v = v - 90; }
+    while v >= 50 { s = s + "L"; v = v - 50; }
+    while v >= 40 { s = s + "XL"; v = v - 40; }
+    while v >= 10 { s = s + "X"; v = v - 10; }
+    while v >= 9 { s = s + "IX"; v = v - 9; }
+    while v >= 5 { s = s + "V"; v = v - 5; }
+    while v >= 4 { s = s + "IV"; v = v - 4; }
+    while v >= 1 { s = s + "I"; v = v - 1; }
+    return s;
+}
+fn roman_char_value(c: str) -> int {
+    if c == "I" { return 1; }
+    if c == "V" { return 5; }
+    if c == "X" { return 10; }
+    if c == "L" { return 50; }
+    if c == "C" { return 100; }
+    if c == "D" { return 500; }
+    if c == "M" { return 1000; }
+    return 0;
+}
+fn roman_to_int(s: str) -> int {
+    let mut total: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        let v: int = roman_char_value(substr(s, i, 1));
+        let mut nv: int = 0;
+        if i + 1 < len(s) { nv = roman_char_value(substr(s, i + 1, 1)); }
+        if v < nv { total = total - v; } else { total = total + v; }
+        i = i + 1;
+    }
+    return total;
+}

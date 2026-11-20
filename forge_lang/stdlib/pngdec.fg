@@ -1,81 +1,459 @@
-// Qasida — png-decode-lite library (library program item 106).
+// Qasida — png-decode library (library program item 106, v2 — 21 Nov 2026).
 // Import with: import "pngdec.fg";
-// Decodes the 1x1 RGB stored-block PNGs written by png.fg
-// (filter 0, one stored DEFLATE block) in pure Qasida: signature
-// + IHDR + IDAT chunk walk, zlib header + stored-block checks,
-// Adler-32 verification (checksum.fg). Returns
-// [w, h, r, g, b, ok]; ok is 0 for a short input, a bad
-// signature, bad chunk types, a non-zero filter byte, a wrong
-// block length, or a bad Adler-32. Only filter-0 single-pixel
-// RGB is covered in v1 (documented limit).
+// A general PNG decoder in pure Qasida: signature + chunk walk
+// (IHDR/PLTE/tRNS/IDAT), zlib inflate via zl_inflate (zlib.fg —
+// stored, fixed-Huffman and dynamic-Huffman DEFLATE blocks),
+// all five filters (None, Sub, Up, Average, Paeth), color types
+// 0 (grayscale), 2 (RGB), 3 (palette), 4 (gray+alpha), 6 (RGBA)
+// at bit depth 8, and Adam7 interlace. Bit depths 1/2/4 are
+// supported for grayscale and palette (packed pixels are
+// unpacked after unfiltering); bit depth 16 is out of scope.
+//   png_decode_rgba(png) -> [w, h, 4, ok, r, g, b, a, ...]
+//     RGBA pixels, row-major, 4 per pixel. [0, 0, 0, 0] on any
+//     bad input (bad signature, bad IHDR, unsupported bit depth
+//     or color type, corrupt inflate, bad filter, short data).
+//   png_decode_file(path) -> [int]: read_bytes + png_decode_rgba.
+//   png_info(png) -> [w, h, bitdepth, colortype, interlace, ok].
+//   pd_decode(png) -> [w, h, r, g, b, ok]: the v1 signature,
+//     kept working — 1x1 RGB bit-depth-8 only, but now any
+//     DEFLATE block type, not just stored blocks (v1 accepted
+//     stored-block 1x1 RGB only; the old inline stored-block
+//     check is superseded by zl_inflate — see zlib.fg).
+// Out of scope (stated, not hidden): bit depth 16,
+// APNG animation chunks (an APNG decodes to its default image),
+// chunk CRC verification (Adler-32 of the zlib stream IS
+// verified).
 
 import "checksum.fg";
+import "zlib.fg";
 
 fn pd_be32(b: [int], o: int) -> int {
     return b[o] * 16777216 + b[o + 1] * 65536 + b[o + 2] * 256 + b[o + 3];
 }
 
-fn pd_decode(png: [int]) -> [int] {
-    let mut out: [int] = [0, 0, 0, 0, 0, 0];
-    if len(png) < 60 {
-        return out;
+fn pd_is_type(png: [int], p: int, a: int, b: int, c: int, d: int) -> bool {
+    return png[p] == a && png[p + 1] == b && png[p + 2] == c && png[p + 3] == d;
+}
+
+fn pd_abs(x: int) -> int {
+    if x < 0 {
+        return 0 - x;
     }
-    let mut ok: int = 1;
+    return x;
+}
+
+// Unfilter rows: raw bytes starting at off, h rows of rb bytes
+// each (one filter byte + rb data bytes per row), bpp = filter
+// bytes-per-pixel (1 for bit depths below 8). Returns
+// unfiltered bytes (h*rb), [] on an unknown filter byte.
+fn pd_unfilter(raw: [int], off: int, h: int, rb: int, bpp: int) -> [int] {
+    let mut out: [int] = [];
+    let mut prior: [int] = [];
+    let mut i: int = 0;
+    while i < rb {
+        push(prior, 0);
+        i = i + 1;
+    }
+    let row_len: int = 1 + rb;
+    let mut r: int = 0;
+    while r < h {
+        let ftype: int = raw[off + r * row_len];
+        let mut row: [int] = [];
+        let mut j: int = 0;
+        while j < rb {
+            let filt: int = raw[off + r * row_len + 1 + j];
+            let mut a: int = 0;
+            let mut b: int = 0;
+            let mut c: int = 0;
+            if j >= bpp {
+                a = row[j - bpp];
+            }
+            if r > 0 {
+                b = prior[j];
+                if j >= bpp {
+                    c = prior[j - bpp];
+                }
+            }
+            let mut v: int = 0;
+            if ftype == 0 {
+                v = filt;
+            } else if ftype == 1 {
+                v = filt + a;
+            } else if ftype == 2 {
+                v = filt + b;
+            } else if ftype == 3 {
+                v = filt + (a + b) / 2;
+            } else if ftype == 4 {
+                let p: int = a + b - c;
+                let pa: int = pd_abs(p - a);
+                let pb: int = pd_abs(p - b);
+                let pc: int = pd_abs(p - c);
+                let mut pr: int = c;
+                if pa <= pb && pa <= pc {
+                    pr = a;
+                } else if pb <= pc {
+                    pr = b;
+                }
+                v = filt + pr;
+            } else {
+                return [];
+            }
+            push(row, v % 256);
+            j = j + 1;
+        }
+        let mut k: int = 0;
+        while k < len(row) {
+            push(out, row[k]);
+            k = k + 1;
+        }
+        prior = row;
+        r = r + 1;
+    }
+    return out;
+}
+
+// Unpack sub-byte pixels (bit depth 1/2/4): raw holds h rows of
+// rb packed bytes each; returns one byte per pixel (h*w bytes).
+fn pd_unpack(raw: [int], w: int, h: int, bd: int, rb: int) -> [int] {
+    let mut out: [int] = [];
+    let per: int = 8 / bd;
+    let mut mask: int = 15;
+    if bd == 1 {
+        mask = 1;
+    } else if bd == 2 {
+        mask = 3;
+    }
+    let mut r: int = 0;
+    while r < h {
+        let mut x: int = 0;
+        while x < w {
+            let byte: int = raw[r * rb + x / per];
+            let shift: int = 8 - bd - (x % per) * bd;
+            push(out, (byte >> shift) & mask);
+            x = x + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+// Convert unfiltered bytes (w*h*bpp) to RGBA (w*h*4).
+// plte/trns are the raw PLTE/tRNS chunk bytes (may be empty).
+// Returns [] when a palette index is out of range.
+fn pd_to_rgba(raw: [int], w: int, h: int, ctype: int, plte: [int], trns: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut px: int = 0;
+    let n: int = w * h;
+    while px < n {
+        if ctype == 0 {
+            let g: int = raw[px];
+            let mut a: int = 255;
+            if len(trns) >= 2 {
+                let tg: int = trns[0] * 256 + trns[1];
+                if g == tg {
+                    a = 0;
+                }
+            }
+            push(out, g);
+            push(out, g);
+            push(out, g);
+            push(out, a);
+        } else if ctype == 2 {
+            let r: int = raw[px * 3];
+            let g: int = raw[px * 3 + 1];
+            let b: int = raw[px * 3 + 2];
+            let mut a: int = 255;
+            if len(trns) >= 6 {
+                if r == trns[0] * 256 + trns[1] && g == trns[2] * 256 + trns[3] && b == trns[4] * 256 + trns[5] {
+                    a = 0;
+                }
+            }
+            push(out, r);
+            push(out, g);
+            push(out, b);
+            push(out, a);
+        } else if ctype == 3 {
+            let idx: int = raw[px];
+            if idx * 3 + 2 >= len(plte) {
+                return [];
+            }
+            let r: int = plte[idx * 3];
+            let g: int = plte[idx * 3 + 1];
+            let b: int = plte[idx * 3 + 2];
+            let mut a: int = 255;
+            if idx < len(trns) {
+                a = trns[idx];
+            }
+            push(out, r);
+            push(out, g);
+            push(out, b);
+            push(out, a);
+        } else if ctype == 4 {
+            let g: int = raw[px * 2];
+            let a: int = raw[px * 2 + 1];
+            push(out, g);
+            push(out, g);
+            push(out, g);
+            push(out, a);
+        } else {
+            push(out, raw[px * 4]);
+            push(out, raw[px * 4 + 1]);
+            push(out, raw[px * 4 + 2]);
+            push(out, raw[px * 4 + 3]);
+        }
+        px = px + 1;
+    }
+    return out;
+}
+
+// [w, h, bitdepth, colortype, interlace, ok] from the IHDR.
+// ok is 0 for a short input, a bad signature, a non-IHDR first
+// chunk, or a non-zero compression/filter method.
+fn png_info(png: [int]) -> [int] {
+    let err: [int] = [0, 0, 0, 0, 0, 0];
+    if len(png) < 29 {
+        return err;
+    }
     let sig: [int] = [137, 80, 78, 71, 13, 10, 26, 10];
     let mut i: int = 0;
     while i < 8 {
         if png[i] != sig[i] {
-            ok = 0;
+            return err;
         }
         i = i + 1;
     }
-    if png[12] != 73 {
-        ok = 0;
+    if pd_be32(png, 8) != 13 {
+        return err;
     }
-    if png[13] != 72 {
-        ok = 0;
+    if pd_is_type(png, 12, 73, 72, 68, 82) == false {
+        return err;
     }
-    if png[14] != 68 {
-        ok = 0;
-    }
-    if png[15] != 82 {
-        ok = 0;
+    if png[26] != 0 || png[27] != 0 {
+        return err;
     }
     let w: int = pd_be32(png, 16);
     let h: int = pd_be32(png, 20);
-    if png[37] != 73 {
-        ok = 0;
+    return [w, h, png[24], png[25], png[28], 1];
+}
+
+// Decode a PNG to RGBA: [w, h, 4, ok, r, g, b, a, ...].
+// [0, 0, 0, 0] on any bad input (see the header).
+fn png_decode_rgba(png: [int]) -> [int] {
+    let err: [int] = [0, 0, 0, 0];
+    if len(png) < 8 {
+        return err;
     }
-    if png[38] != 68 {
-        ok = 0;
+    let sig: [int] = [137, 80, 78, 71, 13, 10, 26, 10];
+    let mut i: int = 0;
+    while i < 8 {
+        if png[i] != sig[i] {
+            return err;
+        }
+        i = i + 1;
     }
-    if png[39] != 65 {
-        ok = 0;
+    let mut w: int = 0;
+    let mut h: int = 0;
+    let mut bitdepth: int = 0;
+    let mut ctype: int = 0;
+    let mut interlace: int = 0;
+    let mut plte: [int] = [];
+    let mut trns: [int] = [];
+    let mut idat: [int] = [];
+    let mut have_ihdr: bool = false;
+    let mut p: int = 8;
+    while p + 8 <= len(png) {
+        let clen: int = pd_be32(png, p);
+        if p + 12 + clen > len(png) {
+            return err;
+        }
+        let dtype: int = p + 4;
+        if pd_is_type(png, dtype, 73, 72, 68, 82) {
+            if clen != 13 || have_ihdr {
+                return err;
+            }
+            w = pd_be32(png, p + 8);
+            h = pd_be32(png, p + 12);
+            bitdepth = png[p + 16];
+            ctype = png[p + 17];
+            if png[p + 18] != 0 || png[p + 19] != 0 {
+                return err;
+            }
+            interlace = png[p + 20];
+            have_ihdr = true;
+        } else if pd_is_type(png, dtype, 80, 76, 84, 69) {
+            let mut k: int = 0;
+            while k < clen {
+                push(plte, png[p + 8 + k]);
+                k = k + 1;
+            }
+        } else if pd_is_type(png, dtype, 116, 82, 78, 83) {
+            let mut k: int = 0;
+            while k < clen {
+                push(trns, png[p + 8 + k]);
+                k = k + 1;
+            }
+        } else if pd_is_type(png, dtype, 73, 68, 65, 84) {
+            let mut k: int = 0;
+            while k < clen {
+                push(idat, png[p + 8 + k]);
+                k = k + 1;
+            }
+        } else if pd_is_type(png, dtype, 73, 69, 78, 68) {
+            break;
+        }
+        p = p + 12 + clen;
     }
-    if png[40] != 84 {
-        ok = 0;
+    if have_ihdr == false || w < 1 || h < 1 {
+        return err;
     }
-    if png[41] != 120 {
-        ok = 0;
+    if bitdepth != 8 {
+        if bitdepth != 1 && bitdepth != 2 && bitdepth != 4 {
+            return err;
+        }
+        if ctype != 0 && ctype != 3 {
+            return err;
+        }
     }
-    if png[42] != 1 {
-        ok = 0;
+    if ctype != 0 && ctype != 2 && ctype != 3 && ctype != 4 && ctype != 6 {
+        return err;
     }
-    if png[43] != 1 {
-        ok = 0;
+    if interlace != 0 && interlace != 1 {
+        return err;
     }
-    let n: int = png[44] + png[45] * 256;
-    if n != 4 {
-        ok = 0;
+    if ctype == 3 && len(plte) == 0 {
+        return err;
     }
-    let raw: [int] = [png[48], png[49], png[50], png[51]];
-    if raw[0] != 0 {
-        ok = 0;
+    let mut bpp: int = 1;
+    if ctype == 2 {
+        bpp = 3;
+    } else if ctype == 4 {
+        bpp = 2;
+    } else if ctype == 6 {
+        bpp = 4;
     }
-    let stored: int = pd_be32(png, 52);
-    if stored != adler32_bytes(raw) {
-        ok = 0;
+    // Bytes per row in the raw stream (excluding the filter byte):
+    // w*bpp at bit depth 8, packed at bit depths 1/2/4.
+    let mut rb: int = w * bpp;
+    if bitdepth < 8 {
+        rb = (w * bitdepth + 7) / 8;
     }
-    out = [w, h, raw[1], raw[2], raw[3], ok];
+    let raw: [int] = zl_inflate(idat);
+    if len(raw) == 0 {
+        return err;
+    }
+    let mut img: [int] = [];
+    if interlace == 0 {
+        if len(raw) != h * (1 + rb) {
+            return err;
+        }
+        let packed: [int] = pd_unfilter(raw, 0, h, rb, bpp);
+        if len(packed) == 0 {
+            return err;
+        }
+        if bitdepth < 8 {
+            img = pd_unpack(packed, w, h, bitdepth, rb);
+        } else {
+            img = packed;
+        }
+    } else {
+        // Adam7: x0, y0, dx, dy per pass.
+        let px0: [int] = [0, 4, 0, 2, 0, 1, 0];
+        let py0: [int] = [0, 0, 4, 0, 2, 0, 1];
+        let pdx: [int] = [8, 8, 4, 4, 2, 2, 1];
+        let pdy: [int] = [8, 8, 8, 4, 4, 2, 2];
+        let mut off: int = 0;
+        let mut q: int = 0;
+        while q < w * h * bpp {
+            push(img, 0);
+            q = q + 1;
+        }
+        let mut pass: int = 0;
+        while pass < 7 {
+            let x0: int = px0[pass];
+            let y0: int = py0[pass];
+            let dx: int = pdx[pass];
+            let dy: int = pdy[pass];
+            let mut pw: int = 0;
+            let mut ph: int = 0;
+            if w > x0 {
+                pw = (w - x0 + dx - 1) / dx;
+            }
+            if h > y0 {
+                ph = (h - y0 + dy - 1) / dy;
+            }
+            if pw > 0 && ph > 0 {
+                let mut prb: int = pw * bpp;
+                if bitdepth < 8 {
+                    prb = (pw * bitdepth + 7) / 8;
+                }
+                if off + ph * (1 + prb) > len(raw) {
+                    return err;
+                }
+                let packed: [int] = pd_unfilter(raw, off, ph, prb, bpp);
+                if len(packed) == 0 {
+                    return err;
+                }
+                off = off + ph * (1 + prb);
+                let mut prow: [int] = packed;
+                if bitdepth < 8 {
+                    prow = pd_unpack(packed, pw, ph, bitdepth, prb);
+                }
+                let mut py: int = 0;
+                while py < ph {
+                    let mut px: int = 0;
+                    while px < pw {
+                        let mut k: int = 0;
+                        while k < bpp {
+                            img[((y0 + py * dy) * w + (x0 + px * dx)) * bpp + k] = prow[(py * pw + px) * bpp + k];
+                            k = k + 1;
+                        }
+                        px = px + 1;
+                    }
+                    py = py + 1;
+                }
+            }
+            pass = pass + 1;
+        }
+        if off != len(raw) {
+            return err;
+        }
+    }
+    let rgba: [int] = pd_to_rgba(img, w, h, ctype, plte, trns);
+    if len(rgba) == 0 {
+        return err;
+    }
+    let mut out: [int] = [w, h, 4, 1];
+    let mut m: int = 0;
+    while m < len(rgba) {
+        push(out, rgba[m]);
+        m = m + 1;
+    }
+    return out;
+}
+
+// Decode a PNG file to RGBA (see png_decode_rgba).
+fn png_decode_file(path: str) -> [int] {
+    let bytes: [int] = read_bytes(path);
+    return png_decode_rgba(bytes);
+}
+
+// v1 signature, kept: [w, h, r, g, b, ok] for a 1x1 RGB
+// bit-depth-8 PNG. ok is 0 for anything else (other sizes,
+// other color types, bad input). v1 accepted stored-block
+// 1x1 RGB only; v2 accepts any DEFLATE block type.
+fn pd_decode(png: [int]) -> [int] {
+    let mut out: [int] = [0, 0, 0, 0, 0, 0];
+    let info: [int] = png_info(png);
+    if info[5] != 1 {
+        return out;
+    }
+    if info[0] != 1 || info[1] != 1 || info[3] != 2 {
+        return out;
+    }
+    let dec: [int] = png_decode_rgba(png);
+    if dec[3] != 1 {
+        return out;
+    }
+    out = [dec[0], dec[1], dec[4], dec[5], dec[6], 1];
     return out;
 }

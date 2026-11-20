@@ -1,0 +1,7 @@
+// speed: speed conversions. Pure functions, no dependencies.
+fn kmh_to_ms(kmh: float) -> float { return kmh / 3.6; }
+fn ms_to_kmh(ms: float) -> float { return ms * 3.6; }
+fn kmh_to_mph(kmh: float) -> float { return kmh * 0.621371; }
+fn mph_to_kmh(mph: float) -> float { return mph * 1.609344; }
+fn ms_to_mph(ms: float) -> float { return ms * 2.23694; }
+fn mph_to_ms(mph: float) -> float { return mph * 0.44704; }

@@ -1,0 +1,11 @@
+// angle: angle conversions and normalization. Pure functions, no dependencies.
+fn deg_to_rad(d: float) -> float { return d * 3.14159265358979 / 180.0; }
+fn rad_to_deg(r: float) -> float { return r * 180.0 / 3.14159265358979; }
+fn deg_to_turns(d: float) -> float { return d / 360.0; }
+fn turns_to_deg(t: float) -> float { return t * 360.0; }
+fn normalize_deg(d: float) -> float {
+    let mut x: float = d;
+    while x < 0.0 { x = x + 360.0; }
+    while x >= 360.0 { x = x - 360.0; }
+    return x;
+}

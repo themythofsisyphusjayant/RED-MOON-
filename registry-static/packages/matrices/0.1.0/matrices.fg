@@ -1,0 +1,57 @@
+// matrices: small dense matrix math on nested arrays. Pure functions, no dependencies.
+fn mat_rows(m: [[float]]) -> int { return len(m); }
+fn mat_cols(m: [[float]]) -> int { return len(m[0]); }
+fn mat_add(a: [[float]], b: [[float]]) -> [[float]] {
+    let mut out: [[float]] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut row: [float] = [];
+        let mut j: int = 0;
+        while j < len(a[i]) { push(row, a[i][j] + b[i][j]); j = j + 1; }
+        push(out, row);
+        i = i + 1;
+    }
+    return out;
+}
+fn mat_transpose(m: [[float]]) -> [[float]] {
+    let mut out: [[float]] = [];
+    let mut j: int = 0;
+    while j < len(m[0]) {
+        let mut row: [float] = [];
+        let mut i: int = 0;
+        while i < len(m) { push(row, m[i][j]); i = i + 1; }
+        push(out, row);
+        j = j + 1;
+    }
+    return out;
+}
+fn mat_mul(a: [[float]], b: [[float]]) -> [[float]] {
+    let mut out: [[float]] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut row: [float] = [];
+        let mut j: int = 0;
+        while j < len(b[0]) {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < len(b) { s = s + a[i][k] * b[k][j]; k = k + 1; }
+            push(row, s);
+            j = j + 1;
+        }
+        push(out, row);
+        i = i + 1;
+    }
+    return out;
+}
+fn mat_scale(m: [[float]], s: float) -> [[float]] {
+    let mut out: [[float]] = [];
+    let mut i: int = 0;
+    while i < len(m) {
+        let mut row: [float] = [];
+        let mut j: int = 0;
+        while j < len(m[i]) { push(row, m[i][j] * s); j = j + 1; }
+        push(out, row);
+        i = i + 1;
+    }
+    return out;
+}

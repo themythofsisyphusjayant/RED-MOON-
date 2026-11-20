@@ -1,0 +1,24 @@
+// factors: GCD, LCM, divisors. Pure functions, no dependencies.
+fn gcd(a: int, b: int) -> int {
+    let mut x: int = a;
+    let mut y: int = b;
+    if x < 0 { x = 0 - x; }
+    if y < 0 { y = 0 - y; }
+    while y != 0 {
+        let t: int = y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+fn lcm(a: int, b: int) -> int { return a / gcd(a, b) * b; }
+fn divisors(n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut d: int = 1;
+    while d <= n {
+        if n % d == 0 { push(out, d); }
+        d = d + 1;
+    }
+    return out;
+}
+fn divisor_count(n: int) -> int { return len(divisors(n)); }

@@ -1,0 +1,35 @@
+// money: integer-paise money math. Amounts are paise (or cents) so there
+// is no float rounding anywhere. Formatting builds the string by hand
+// because the language has no int-to-string builtin yet.
+fn int_to_str(n: int) -> str {
+    if n == 0 { return "0"; }
+    let min_int: int = 0 - 9223372036854775807 - 1;
+    if n == min_int { return "-9223372036854775808"; }
+    let mut neg: bool = false;
+    let mut v: int = n;
+    if v < 0 { neg = true; v = 0 - v; }
+    let mut s: str = "";
+    while v > 0 {
+        let d: int = v % 10;
+        s = substr("0123456789", d, 1) + s;
+        v = v / 10;
+    }
+    if neg { s = "-" + s; }
+    return s;
+}
+fn format_paise(paise: int) -> str {
+    let min_int: int = 0 - 9223372036854775807 - 1;
+    if paise == min_int { return "-92233720368547758.08"; }
+    let mut sign: str = "";
+    let mut v: int = paise;
+    if v < 0 { sign = "-"; v = 0 - v; }
+    let whole: int = v / 100;
+    let frac: int = v % 100;
+    let mut frac_str: str = int_to_str(frac);
+    if frac < 10 { frac_str = "0" + frac_str; }
+    return sign + int_to_str(whole) + "." + frac_str;
+}
+fn add_paise(a: int, b: int) -> int { return a + b; }
+fn sub_paise(a: int, b: int) -> int { return a - b; }
+fn percent_of(amount_paise: int, pct: int) -> int { return amount_paise * pct / 100; }
+fn split_bill(total_paise: int, people: int) -> int { return total_paise / people; }

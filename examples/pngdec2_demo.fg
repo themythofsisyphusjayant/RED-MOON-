@@ -1,0 +1,36 @@
+// Qasida — PNG decode demo (pngdec v2).
+// Decodes a real photo-type PNG (64x64 RGB, real DEFLATE) with
+// png_decode_file, prints width, height, channels, ok, and the
+// sum of all RGBA bytes, and writes the RGBA bytes to
+// /tmp/pngdec2_demo.rgba for the byte-exact test comparison.
+// Run from the repo root:
+// python3 forge.py run examples/pngdec2_demo.fg
+
+import "pngdec.fg";
+
+fn main() -> int {
+    let dec: [int] = png_decode_file("tests/fixtures_png/photo_64x64.png");
+    println(dec[0]);
+    println(dec[1]);
+    println(dec[2]);
+    println(dec[3]);
+    let mut sum: int = 0;
+    let mut i: int = 4;
+    while i < len(dec) {
+        sum = sum + dec[i];
+        i = i + 1;
+    }
+    println(sum);
+    let mut px: [int] = [];
+    let mut j: int = 4;
+    while j < len(dec) {
+        push(px, dec[j]);
+        j = j + 1;
+    }
+    if write_bytes("/tmp/pngdec2_demo.rgba", px) {
+        println(1);
+    } else {
+        println(0);
+    }
+    return 0;
+}

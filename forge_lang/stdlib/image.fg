@@ -5,9 +5,11 @@
 //   BMP 24-bit uncompressed: parsed from bytes
 //     with the read_bytes builtin (0.7.0).
 // Pixels are RGB triples, row-major, top row
-// first, values 0-255. PNG/JPEG are NOT supported
-// (they need inflate/DCT decoders) — that limit is
-// stated here, not hidden behind the word "image".
+// first, values 0-255. PNG is decoded by pngdec.fg
+// (png_decode_rgba / png_decode_file — inflate, filters,
+// all color types, Adam7); JPEG is NOT supported (it needs
+// a DCT decoder) — that limit is stated here, not hidden
+// behind the word "image".
 
 struct Image {
     w: int;

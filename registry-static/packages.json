@@ -1,0 +1,334 @@
+{
+  "packages": [
+    {
+      "name": "angle",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "angle.fg"
+        ]
+      }
+    },
+    {
+      "name": "bases",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "bases.fg"
+        ]
+      }
+    },
+    {
+      "name": "bmi",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "bmi.fg"
+        ]
+      }
+    },
+    {
+      "name": "budget",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "budget.fg"
+        ]
+      }
+    },
+    {
+      "name": "checks",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "checks.fg"
+        ]
+      }
+    },
+    {
+      "name": "colors",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "colors.fg"
+        ]
+      }
+    },
+    {
+      "name": "cooking",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "cooking.fg"
+        ]
+      }
+    },
+    {
+      "name": "data",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "data.fg"
+        ]
+      }
+    },
+    {
+      "name": "dice",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "dice.fg"
+        ]
+      }
+    },
+    {
+      "name": "factors",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "factors.fg"
+        ]
+      }
+    },
+    {
+      "name": "fractions",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "fractions.fg"
+        ]
+      }
+    },
+    {
+      "name": "geometry",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "geometry.fg"
+        ]
+      }
+    },
+    {
+      "name": "grades",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "grades.fg"
+        ]
+      }
+    },
+    {
+      "name": "interest",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "interest.fg"
+        ]
+      }
+    },
+    {
+      "name": "loans",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "loans.fg"
+        ]
+      }
+    },
+    {
+      "name": "matrices",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "matrices.fg"
+        ]
+      }
+    },
+    {
+      "name": "money",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "money.fg"
+        ]
+      }
+    },
+    {
+      "name": "morse",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "morse.fg"
+        ]
+      }
+    },
+    {
+      "name": "percentages",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "percentages.fg"
+        ]
+      }
+    },
+    {
+      "name": "polynomials",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "polynomials.fg"
+        ]
+      }
+    },
+    {
+      "name": "primes",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "primes.fg"
+        ]
+      }
+    },
+    {
+      "name": "roman",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "roman.fg"
+        ]
+      }
+    },
+    {
+      "name": "search",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "search.fg"
+        ]
+      }
+    },
+    {
+      "name": "sorting",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "sorting.fg"
+        ]
+      }
+    },
+    {
+      "name": "speed",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "speed.fg"
+        ]
+      }
+    },
+    {
+      "name": "statistics",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "statistics.fg"
+        ]
+      }
+    },
+    {
+      "name": "tax",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "tax.fg"
+        ]
+      }
+    },
+    {
+      "name": "textstats",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "textstats.fg"
+        ]
+      }
+    },
+    {
+      "name": "units",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "units.fg"
+        ]
+      }
+    },
+    {
+      "name": "vectors",
+      "versions": [
+        "0.1.0"
+      ],
+      "files": {
+        "0.1.0": [
+          "vectors.fg"
+        ]
+      }
+    }
+  ]
+}

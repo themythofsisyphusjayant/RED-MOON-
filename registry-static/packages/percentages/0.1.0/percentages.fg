@@ -1,0 +1,9 @@
+// percentages: everyday percent math. Pure functions, no dependencies.
+fn percent_of(pct: float, total: float) -> float { return total * pct / 100.0; }
+fn percent_change(old: float, new: float) -> float { return (new - old) / old * 100.0; }
+fn add_percent(amount: float, pct: float) -> float { return amount * (1.0 + pct / 100.0); }
+fn discount_price(price: float, pct: float) -> float { return price * (1.0 - pct / 100.0); }
+fn discount_amount(price: float, pct: float) -> float { return price * pct / 100.0; }
+fn markup_price(cost: float, pct: float) -> float { return cost * (1.0 + pct / 100.0); }
+fn margin_pct(price: float, cost: float) -> float { return (price - cost) / price * 100.0; }
+fn tip_amount(bill: float, pct: float) -> float { return bill * pct / 100.0; }

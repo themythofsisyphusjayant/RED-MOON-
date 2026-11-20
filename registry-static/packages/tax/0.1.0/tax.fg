@@ -1,0 +1,8 @@
+// tax: tax amounts, inclusive/exclusive prices. Pure functions, no dependencies.
+fn tax_amount(amount: float, rate_pct: float) -> float { return amount * rate_pct / 100.0; }
+fn add_tax(amount: float, rate_pct: float) -> float { return amount + tax_amount(amount, rate_pct); }
+fn remove_tax(inclusive: float, rate_pct: float) -> float { return inclusive / (1.0 + rate_pct / 100.0); }
+fn tax_split(inclusive: float, rate_pct: float) -> [float] {
+    let net: float = remove_tax(inclusive, rate_pct);
+    return [net, inclusive - net];
+}

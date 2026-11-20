@@ -1,0 +1,31 @@
+// Qasida — zlib inflate demo.
+// Inflates five zlib streams from tests/fixtures_png/ (stored,
+// fixed-Huffman, dynamic-Huffman level 6, dynamic-Huffman level
+// 9 on repetitive data, empty input) and prints the inflated
+// length and byte sum of each. Run from the repo root:
+// python3 forge.py run examples/zlinflate_demo.fg
+
+import "zlib.fg";
+
+fn zlinf_print(path: str) -> int {
+    let s: [int] = read_bytes(path);
+    let out: [int] = zl_inflate(s);
+    println(len(out));
+    let mut sum: int = 0;
+    let mut i: int = 0;
+    while i < len(out) {
+        sum = sum + out[i];
+        i = i + 1;
+    }
+    println(sum);
+    return 0;
+}
+
+fn main() -> int {
+    zlinf_print("tests/fixtures_png/inf_stored.bin");
+    zlinf_print("tests/fixtures_png/inf_fixed.bin");
+    zlinf_print("tests/fixtures_png/inf_dynamic.bin");
+    zlinf_print("tests/fixtures_png/inf_dynamic9.bin");
+    zlinf_print("tests/fixtures_png/inf_empty.bin");
+    return 0;
+}

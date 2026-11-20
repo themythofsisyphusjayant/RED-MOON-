@@ -1,0 +1,37 @@
+// search: linear and binary search, counting. Pure functions, no dependencies.
+fn linear_search_int(xs: [int], target: int) -> int {
+    let mut i: int = 0;
+    while i < len(xs) {
+        if xs[i] == target { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+fn linear_search_str(xs: [str], target: str) -> int {
+    let mut i: int = 0;
+    while i < len(xs) {
+        if xs[i] == target { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+fn binary_search_int(xs: [int], target: int) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs) - 1;
+    while lo <= hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] == target { return mid; }
+        if xs[mid] < target { lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return -1;
+}
+fn count_int(xs: [int], target: int) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        if xs[i] == target { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+fn contains_int(xs: [int], target: int) -> bool { return linear_search_int(xs, target) != -1; }

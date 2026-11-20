@@ -1,0 +1,39 @@
+// primes: primality, primes up to a limit, prime factors. Pure functions, no dependencies.
+fn is_prime(n: int) -> bool {
+    if n < 2 { return false; }
+    if n == 2 { return true; }
+    if n % 2 == 0 { return false; }
+    let mut d: int = 3;
+    while d * d <= n {
+        if n % d == 0 { return false; }
+        d = d + 2;
+    }
+    return true;
+}
+fn primes_up_to(limit: int) -> [int] {
+    let mut out: [int] = [];
+    let mut n: int = 2;
+    while n <= limit {
+        if is_prime(n) { push(out, n); }
+        n = n + 1;
+    }
+    return out;
+}
+fn prime_factors(n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut m: int = n;
+    while m % 2 == 0 {
+        push(out, 2);
+        m = m / 2;
+    }
+    let mut d: int = 3;
+    while d * d <= m {
+        while m % d == 0 {
+            push(out, d);
+            m = m / d;
+        }
+        d = d + 2;
+    }
+    if m > 1 { push(out, m); }
+    return out;
+}

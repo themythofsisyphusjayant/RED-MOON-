@@ -1,0 +1,27 @@
+// grades: letter grades, grade points, GPA. Pure functions, no dependencies.
+fn letter_grade(pct: float) -> str {
+    if pct >= 90.0 { return "A"; }
+    if pct >= 80.0 { return "B"; }
+    if pct >= 70.0 { return "C"; }
+    if pct >= 60.0 { return "D"; }
+    return "F";
+}
+fn grade_point(letter: str) -> float {
+    if letter == "A" { return 4.0; }
+    if letter == "B" { return 3.0; }
+    if letter == "C" { return 2.0; }
+    if letter == "D" { return 1.0; }
+    return 0.0;
+}
+fn gpa(points: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(points) { s = s + points[i]; i = i + 1; }
+    return s / (len(points) as float);
+}
+fn gpa_from_percents(pcts: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(pcts) { s = s + grade_point(letter_grade(pcts[i])); i = i + 1; }
+    return s / (len(pcts) as float);
+}

@@ -1,0 +1,22 @@
+// dice: rolls on the stdlib LCG (rand_next). There are no tuples, so
+// the caller threads the seed: seed = rand_next(seed) advances it.
+// Seeds must be non-negative; rand_next of a non-negative seed stays
+// non-negative (modulo a positive prime), so roll stays in range.
+import "rand.fg";
+fn roll(seed: int, sides: int) -> int {
+    return rand_next(seed) % sides + 1;
+}
+fn roll_n(seed: int, sides: int, n: int) -> int {
+    let mut total: int = 0;
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        s = rand_next(s);
+        total = total + (s % sides + 1);
+        i = i + 1;
+    }
+    return total;
+}
+fn coin_flip(seed: int) -> bool {
+    return rand_next(seed) % 2 == 0;
+}

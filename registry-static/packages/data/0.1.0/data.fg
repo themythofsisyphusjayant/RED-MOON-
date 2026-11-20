@@ -1,0 +1,7 @@
+// data: data size conversions (binary, 1024-based). Pure functions, no dependencies.
+fn bytes_to_kb(b: float) -> float { return b / 1024.0; }
+fn bytes_to_mb(b: float) -> float { return b / 1048576.0; }
+fn bytes_to_gb(b: float) -> float { return b / 1073741824.0; }
+fn kb_to_bytes(kb: float) -> float { return kb * 1024.0; }
+fn mb_to_bytes(mb: float) -> float { return mb * 1048576.0; }
+fn gb_to_bytes(gb: float) -> float { return gb * 1073741824.0; }

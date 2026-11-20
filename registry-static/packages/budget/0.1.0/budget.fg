@@ -1,0 +1,19 @@
+// budget: income, expenses, remaining money. Pure functions, no dependencies.
+fn total_expenses(expenses: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(expenses) { s = s + expenses[i]; i = i + 1; }
+    return s;
+}
+fn remaining(income: float, expenses: [float]) -> float { return income - total_expenses(expenses); }
+fn savings_rate(income: float, expenses: [float]) -> float { return remaining(income, expenses) / income * 100.0; }
+fn expense_ratio(income: float, expenses: [float]) -> float { return total_expenses(expenses) / income * 100.0; }
+fn biggest_expense(expenses: [float]) -> float {
+    let mut m: float = expenses[0];
+    let mut i: int = 1;
+    while i < len(expenses) {
+        if expenses[i] > m { m = expenses[i]; }
+        i = i + 1;
+    }
+    return m;
+}

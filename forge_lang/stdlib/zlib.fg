@@ -1,10 +1,17 @@
-// Qasida — zlib-lite library (library program item 58, ext).
+// Qasida — zlib-lite library (library program item 58, ext; inflate added 21 Nov 2026).
 // Import with: import "zlib.fg";
 // A zlib stream (RFC 1950) in pure Qasida: the 2-byte header
 // [120, 1], one stored DEFLATE block (the same layout as
 // gzip.fg), and a big-endian Adler-32 trailer (checksum.fg).
 // Output is byte-exact against Python zlib.compress(data,
 // level=0) for inputs up to 65535 bytes (a single stored block).
+// Decoder: zl_inflate(stream) decodes any zlib stream — stored,
+// fixed-Huffman and dynamic-Huffman DEFLATE blocks — and returns
+// the decompressed bytes, [] on corrupt input (bad header, bad
+// block, bad Huffman code, bad Adler-32) instead of failing, so
+// callers can report ok=0. The stored-block decode lives here
+// and only here: zlib.fg has no other decoder, and pngdec.fg's
+// old inline stored-block check is superseded by zl_inflate.
 
 import "checksum.fg";
 
@@ -64,4 +71,421 @@ fn zl_verify(stream: [int], data: [int]) -> int {
         return 0;
     }
     return 1;
+}
+
+// ---- DEFLATE inflate (RFC 1951) ----
+// Bit-reader state is threaded as [pos, bit] (pos = next byte
+// index, bit = next bit index within that byte, 0..7, LSB-first).
+// Every helper returns [pos, bit, value, err] (err 0 = ok,
+// 1 = corrupt input) and propagates err; zl_inflate returns []
+// on any corrupt input instead of failing.
+
+// Read one bit (LSB-first within the byte).
+fn zl_bit(data: [int], st: [int]) -> [int] {
+    let mut pos: int = st[0];
+    let mut bit: int = st[1];
+    if pos >= len(data) {
+        return [pos, bit, 0, 1];
+    }
+    let v: int = (data[pos] >> bit) & 1;
+    bit = bit + 1;
+    if bit == 8 {
+        bit = 0;
+        pos = pos + 1;
+    }
+    return [pos, bit, v, 0];
+}
+
+// Read n bits, LSB-first (first bit read is the low bit).
+fn zl_bits(data: [int], st: [int], n: int) -> [int] {
+    let mut pos: int = st[0];
+    let mut bit: int = st[1];
+    let mut v: int = 0;
+    let mut m: int = 1;
+    let mut i: int = 0;
+    while i < n {
+        let r: [int] = zl_bit(data, [pos, bit]);
+        pos = r[0];
+        bit = r[1];
+        if r[3] != 0 {
+            return [pos, bit, 0, 1];
+        }
+        v = v + r[2] * m;
+        m = m * 2;
+        i = i + 1;
+    }
+    return [pos, bit, v, 0];
+}
+
+// Build a canonical Huffman table from per-symbol code lengths.
+// Returns tab = [count0..count15, symbols...]: counts at 0..15,
+// symbols (canonical order) from 16. Returns [] when the code
+// is over-subscribed; an incomplete code is allowed (the decoder
+// fails if it ever reads an invalid code).
+fn zl_huff_build(lens: [int]) -> [int] {
+    let mut tab: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(tab, 0);
+        i = i + 1;
+    }
+    let mut s: int = 0;
+    while s < len(lens) {
+        if lens[s] > 0 && lens[s] < 16 {
+            tab[lens[s]] = tab[lens[s]] + 1;
+        }
+        s = s + 1;
+    }
+    let mut left: int = 1;
+    let mut l: int = 1;
+    while l < 16 {
+        left = left * 2 - tab[l];
+        if left < 0 {
+            return [];
+        }
+        l = l + 1;
+    }
+    let mut ln: int = 1;
+    while ln < 16 {
+        let mut sym: int = 0;
+        while sym < len(lens) {
+            if lens[sym] == ln {
+                push(tab, sym);
+            }
+            sym = sym + 1;
+        }
+        ln = ln + 1;
+    }
+    return tab;
+}
+
+// Decode one Huffman symbol. Returns [pos, bit, symbol, err].
+fn zl_huff(data: [int], st: [int], tab: [int]) -> [int] {
+    let mut pos: int = st[0];
+    let mut bit: int = st[1];
+    let mut code: int = 0;
+    let mut first: int = 0;
+    let mut index: int = 0;
+    let mut len: int = 1;
+    while len < 16 {
+        let r: [int] = zl_bit(data, [pos, bit]);
+        pos = r[0];
+        bit = r[1];
+        if r[3] != 0 {
+            return [pos, bit, 0, 1];
+        }
+        code = code * 2 + r[2];
+        let count: int = tab[len];
+        if code - first < count {
+            let sym: int = tab[16 + index + code - first];
+            return [pos, bit, sym, 0];
+        }
+        index = index + count;
+        first = (first + count) * 2;
+        len = len + 1;
+    }
+    return [pos, bit, 0, 1];
+}
+
+// Fixed literal/length table: 0-143: 8, 144-255: 9, 256-279: 7,
+// 280-287: 8. Fixed distance table: 32 codes of 5 bits.
+fn zl_fixed_lit() -> [int] {
+    let mut lens: [int] = [];
+    let mut i: int = 0;
+    while i < 288 {
+        if i < 144 {
+            push(lens, 8);
+        } else if i < 256 {
+            push(lens, 9);
+        } else if i < 280 {
+            push(lens, 7);
+        } else {
+            push(lens, 8);
+        }
+        i = i + 1;
+    }
+    return zl_huff_build(lens);
+}
+
+fn zl_fixed_dist() -> [int] {
+    let mut lens: [int] = [];
+    let mut i: int = 0;
+    while i < 32 {
+        push(lens, 5);
+        i = i + 1;
+    }
+    return zl_huff_build(lens);
+}
+
+// Decode a zlib stream (RFC 1950): 2-byte header, DEFLATE blocks,
+// Adler-32 trailer. Returns the decompressed bytes, [] on any
+// corrupt input (bad header check, preset dictionary, bad block
+// type, bad Huffman code, distance too far back, bad Adler-32).
+fn zl_inflate(stream: [int]) -> [int] {
+    let empty: [int] = [];
+    if len(stream) < 2 {
+        return empty;
+    }
+    let cmf: int = stream[0];
+    let flg: int = stream[1];
+    if (cmf * 256 + flg) % 31 != 0 {
+        return empty;
+    }
+    if cmf % 16 != 8 {
+        return empty;
+    }
+    if ((flg >> 5) & 1) == 1 {
+        return empty;
+    }
+    let len_base: [int] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+    let len_extra: [int] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+    let dist_base: [int] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+    let dist_extra: [int] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+    let mut pos: int = 2;
+    let mut bit: int = 0;
+    let mut out: [int] = [];
+    let mut done: bool = false;
+    while done == false {
+        let rb: [int] = zl_bit(stream, [pos, bit]);
+        pos = rb[0];
+        bit = rb[1];
+        if rb[3] != 0 {
+            return empty;
+        }
+        let bfinal: int = rb[2];
+        let rt: [int] = zl_bits(stream, [pos, bit], 2);
+        pos = rt[0];
+        bit = rt[1];
+        if rt[3] != 0 {
+            return empty;
+        }
+        let btype: int = rt[2];
+        if btype == 0 {
+            // Stored block: align to a byte boundary, then LEN/NLEN.
+            if bit != 0 {
+                bit = 0;
+                pos = pos + 1;
+            }
+            if pos + 4 > len(stream) {
+                return empty;
+            }
+            let blen: int = stream[pos] + stream[pos + 1] * 256;
+            let bnlen: int = stream[pos + 2] + stream[pos + 3] * 256;
+            if blen + bnlen != 65535 {
+                return empty;
+            }
+            pos = pos + 4;
+            if pos + blen > len(stream) {
+                return empty;
+            }
+            let mut k: int = 0;
+            while k < blen {
+                push(out, stream[pos + k]);
+                k = k + 1;
+            }
+            pos = pos + blen;
+        } else if btype == 1 || btype == 2 {
+            let mut lit_tab: [int] = [];
+            let mut dist_tab: [int] = [];
+            if btype == 1 {
+                lit_tab = zl_fixed_lit();
+                dist_tab = zl_fixed_dist();
+            } else {
+                // Dynamic block header.
+                let r1: [int] = zl_bits(stream, [pos, bit], 5);
+                pos = r1[0];
+                bit = r1[1];
+                if r1[3] != 0 {
+                    return empty;
+                }
+                let hlit: int = r1[2] + 257;
+                let r2: [int] = zl_bits(stream, [pos, bit], 5);
+                pos = r2[0];
+                bit = r2[1];
+                if r2[3] != 0 {
+                    return empty;
+                }
+                let hdist: int = r2[2] + 1;
+                let r3: [int] = zl_bits(stream, [pos, bit], 4);
+                pos = r3[0];
+                bit = r3[1];
+                if r3[3] != 0 {
+                    return empty;
+                }
+                let hclen: int = r3[2] + 4;
+                let order: [int] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+                let mut cl_lens: [int] = [];
+                let mut z: int = 0;
+                while z < 19 {
+                    push(cl_lens, 0);
+                    z = z + 1;
+                }
+                let mut k: int = 0;
+                while k < hclen {
+                    let rk: [int] = zl_bits(stream, [pos, bit], 3);
+                    pos = rk[0];
+                    bit = rk[1];
+                    if rk[3] != 0 {
+                        return empty;
+                    }
+                    cl_lens[order[k]] = rk[2];
+                    k = k + 1;
+                }
+                let cl_tab: [int] = zl_huff_build(cl_lens);
+                if len(cl_tab) == 0 {
+                    return empty;
+                }
+                let total: int = hlit + hdist;
+                let mut lens: [int] = [];
+                while len(lens) < total {
+                    let rs: [int] = zl_huff(stream, [pos, bit], cl_tab);
+                    pos = rs[0];
+                    bit = rs[1];
+                    if rs[3] != 0 {
+                        return empty;
+                    }
+                    let sym: int = rs[2];
+                    if sym < 16 {
+                        push(lens, sym);
+                    } else if sym == 16 {
+                        if len(lens) == 0 {
+                            return empty;
+                        }
+                        let prev: int = lens[len(lens) - 1];
+                        let rr: [int] = zl_bits(stream, [pos, bit], 2);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return empty;
+                        }
+                        let rep: int = rr[2] + 3;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, prev);
+                            j = j + 1;
+                        }
+                    } else if sym == 17 {
+                        let rr: [int] = zl_bits(stream, [pos, bit], 3);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return empty;
+                        }
+                        let rep: int = rr[2] + 3;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, 0);
+                            j = j + 1;
+                        }
+                    } else if sym == 18 {
+                        let rr: [int] = zl_bits(stream, [pos, bit], 7);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return empty;
+                        }
+                        let rep: int = rr[2] + 11;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, 0);
+                            j = j + 1;
+                        }
+                    } else {
+                        return empty;
+                    }
+                }
+                if len(lens) != total {
+                    return empty;
+                }
+                let mut lit_lens: [int] = [];
+                let mut dist_lens: [int] = [];
+                let mut m: int = 0;
+                while m < hlit {
+                    push(lit_lens, lens[m]);
+                    m = m + 1;
+                }
+                let mut n: int = 0;
+                while n < hdist {
+                    push(dist_lens, lens[hlit + n]);
+                    n = n + 1;
+                }
+                lit_tab = zl_huff_build(lit_lens);
+                dist_tab = zl_huff_build(dist_lens);
+                if len(lit_tab) == 0 || len(dist_tab) == 0 {
+                    return empty;
+                }
+            }
+            // Decode symbols until end-of-block (256).
+            let mut block_done: bool = false;
+            while block_done == false {
+                let rs: [int] = zl_huff(stream, [pos, bit], lit_tab);
+                pos = rs[0];
+                bit = rs[1];
+                if rs[3] != 0 {
+                    return empty;
+                }
+                let sym: int = rs[2];
+                if sym < 256 {
+                    push(out, sym);
+                } else if sym == 256 {
+                    block_done = true;
+                } else {
+                    let idx: int = sym - 257;
+                    if idx < 0 || idx > 28 {
+                        return empty;
+                    }
+                    let rl: [int] = zl_bits(stream, [pos, bit], len_extra[idx]);
+                    pos = rl[0];
+                    bit = rl[1];
+                    if rl[3] != 0 {
+                        return empty;
+                    }
+                    let length: int = len_base[idx] + rl[2];
+                    let rd: [int] = zl_huff(stream, [pos, bit], dist_tab);
+                    pos = rd[0];
+                    bit = rd[1];
+                    if rd[3] != 0 {
+                        return empty;
+                    }
+                    let dsym: int = rd[2];
+                    if dsym < 0 || dsym > 29 {
+                        return empty;
+                    }
+                    let rb2: [int] = zl_bits(stream, [pos, bit], dist_extra[dsym]);
+                    pos = rb2[0];
+                    bit = rb2[1];
+                    if rb2[3] != 0 {
+                        return empty;
+                    }
+                    let dist: int = dist_base[dsym] + rb2[2];
+                    if dist < 1 || dist > len(out) {
+                        return empty;
+                    }
+                    let mut k: int = 0;
+                    while k < length {
+                        push(out, out[len(out) - dist]);
+                        k = k + 1;
+                    }
+                }
+            }
+        } else {
+            return empty;
+        }
+        if bfinal == 1 {
+            done = true;
+        }
+    }
+    // Align to a byte boundary, then verify the Adler-32 trailer.
+    if bit != 0 {
+        bit = 0;
+        pos = pos + 1;
+    }
+    if pos + 4 > len(stream) {
+        return empty;
+    }
+    let adler: int = stream[pos] * 16777216 + stream[pos + 1] * 65536 + stream[pos + 2] * 256 + stream[pos + 3];
+    if adler != adler32_bytes(out) {
+        return empty;
+    }
+    return out;
 }

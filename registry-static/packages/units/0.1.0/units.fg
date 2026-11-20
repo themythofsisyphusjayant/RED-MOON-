@@ -1,0 +1,13 @@
+// units: everyday unit conversions. Pure functions, no dependencies.
+fn km_to_miles(km: float) -> float { return km * 0.621371; }
+fn miles_to_km(mi: float) -> float { return mi * 1.609344; }
+fn cm_to_inches(cm: float) -> float { return cm * 0.393701; }
+fn inches_to_cm(inch: float) -> float { return inch * 2.54; }
+fn kg_to_lb(kg: float) -> float { return kg * 2.20462; }
+fn lb_to_kg(lb: float) -> float { return lb * 0.453592; }
+fn celsius_to_fahrenheit(c: float) -> float { return c * 9.0 / 5.0 + 32.0; }
+fn fahrenheit_to_celsius(f: float) -> float { return (f - 32.0) * 5.0 / 9.0; }
+fn hours_to_minutes(h: float) -> float { return h * 60.0; }
+fn minutes_to_seconds(m: float) -> float { return m * 60.0; }
+fn litres_to_gallons(l: float) -> float { return l * 0.264172; }
+fn gallons_to_litres(g: float) -> float { return g * 3.78541; }

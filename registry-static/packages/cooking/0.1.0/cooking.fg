@@ -1,0 +1,8 @@
+// cooking: kitchen volume conversions and recipe scaling. Pure functions, no dependencies.
+fn tsp_to_ml(tsp: float) -> float { return tsp * 5.0; }
+fn tbsp_to_ml(tbsp: float) -> float { return tbsp * 15.0; }
+fn cup_to_ml(cups: float) -> float { return cups * 240.0; }
+fn ml_to_tsp(ml: float) -> float { return ml / 5.0; }
+fn ml_to_tbsp(ml: float) -> float { return ml / 15.0; }
+fn ml_to_cup(ml: float) -> float { return ml / 240.0; }
+fn scale_qty(qty: float, from_servings: float, to_servings: float) -> float { return qty * to_servings / from_servings; }

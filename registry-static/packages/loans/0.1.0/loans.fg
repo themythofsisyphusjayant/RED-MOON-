@@ -1,0 +1,9 @@
+// loans: fixed-rate loan math (EMI). Pure functions, no dependencies.
+fn emi(principal: float, annual_rate_pct: float, months: int) -> float {
+    let r: float = annual_rate_pct / 12.0 / 100.0;
+    if r == 0.0 { return principal / (months as float); }
+    let f: float = pow(1.0 + r, months as float);
+    return principal * r * f / (f - 1.0);
+}
+fn total_payment(monthly: float, months: int) -> float { return monthly * (months as float); }
+fn total_interest(monthly: float, months: int, principal: float) -> float { return monthly * (months as float) - principal; }

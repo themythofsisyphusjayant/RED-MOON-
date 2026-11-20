@@ -1,0 +1,58 @@
+// morse: Morse code encode and decode. Pure functions, no dependencies.
+fn morse_letters() -> [str] {
+    return ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+}
+fn morse_uppers() -> [str] {
+    return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+}
+fn morse_codes() -> [str] {
+    return [".-", "-...", "-.-.", "-..", ".", "..-.", "--.", "....", "..", ".---", "-.-", ".-..", "--", "-.", "---", ".--.", "--.-", ".-.", "...", "-", "..-", "...-", ".--", "-..-", "-.--", "--..", "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----."];
+}
+fn find_str(xs: [str], target: str) -> int {
+    let mut i: int = 0;
+    while i < len(xs) {
+        if xs[i] == target { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+fn morse_of(ch: str) -> str {
+    let i: int = find_str(morse_letters(), ch);
+    if i >= 0 { return morse_codes()[i]; }
+    let j: int = find_str(morse_uppers(), ch);
+    if j >= 0 { return morse_codes()[j]; }
+    if ch == " " { return "/"; }
+    return "?";
+}
+fn morse_encode(text: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(text) {
+        let code: str = morse_of(text[i]);
+        if out == "" { out = code; } else { out = out + " " + code; }
+        i = i + 1;
+    }
+    return out;
+}
+fn morse_letter_of(code: str) -> str {
+    let i: int = find_str(morse_codes(), code);
+    if i >= 0 { return morse_letters()[i]; }
+    if code == "/" { return " "; }
+    return "?";
+}
+fn morse_decode(code: str) -> str {
+    let mut out: str = "";
+    let mut tok: str = "";
+    let mut i: int = 0;
+    while i < len(code) {
+        if code[i] == " " {
+            out = out + morse_letter_of(tok);
+            tok = "";
+        } else {
+            tok = tok + code[i];
+        }
+        i = i + 1;
+    }
+    if tok != "" { out = out + morse_letter_of(tok); }
+    return out;
+}

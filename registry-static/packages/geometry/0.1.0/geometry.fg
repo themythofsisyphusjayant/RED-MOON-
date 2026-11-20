@@ -1,0 +1,9 @@
+// geometry: areas, perimeters, volumes. pi to 15 digits.
+fn circle_area(r: float) -> float { return 3.141592653589793 * r * r; }
+fn circle_circumference(r: float) -> float { return 2.0 * 3.141592653589793 * r; }
+fn rect_area(w: float, h: float) -> float { return w * h; }
+fn rect_perimeter(w: float, h: float) -> float { return 2.0 * (w + h); }
+fn triangle_area(base: float, height: float) -> float { return base * height / 2.0; }
+fn sphere_volume(r: float) -> float { return 4.0 / 3.0 * 3.141592653589793 * r * r * r; }
+fn cylinder_volume(r: float, h: float) -> float { return 3.141592653589793 * r * r * h; }
+fn hypotenuse(a: float, b: float) -> float { return sqrt(a * a + b * b); }

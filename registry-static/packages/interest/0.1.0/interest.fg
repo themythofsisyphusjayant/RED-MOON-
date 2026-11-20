@@ -1,0 +1,14 @@
+// interest: simple interest, compound interest (pow), EMI (pow form).
+// Rates are percent per year; months for EMI is a float because pow
+// takes floats (the language has no implicit int-to-float conversion).
+fn simple_interest(principal: float, rate_pct: float, years: float) -> float {
+    return principal * rate_pct * years / 100.0;
+}
+fn compound_amount(principal: float, rate_pct: float, years: float) -> float {
+    return principal * pow(1.0 + rate_pct / 100.0, years);
+}
+fn emi(principal: float, annual_rate_pct: float, months: float) -> float {
+    let r: float = annual_rate_pct / 12.0 / 100.0;
+    let f: float = pow(1.0 + r, months);
+    return principal * r * f / (f - 1.0);
+}

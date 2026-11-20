@@ -1,0 +1,12 @@
+// vectors: 2D vector math. Pure functions, no dependencies.
+struct Vec2 {
+    x: float;
+    y: float;
+}
+fn vec2(x: float, y: float) -> Vec2 { return Vec2 { x: x, y: y }; }
+fn vec_add(a: Vec2, b: Vec2) -> Vec2 { return Vec2 { x: a.x + b.x, y: a.y + b.y }; }
+fn vec_sub(a: Vec2, b: Vec2) -> Vec2 { return Vec2 { x: a.x - b.x, y: a.y - b.y }; }
+fn vec_scale(v: Vec2, s: float) -> Vec2 { return Vec2 { x: v.x * s, y: v.y * s }; }
+fn vec_dot(a: Vec2, b: Vec2) -> float { return a.x * b.x + a.y * b.y; }
+fn vec_mag(v: Vec2) -> float { return sqrt(v.x * v.x + v.y * v.y); }
+fn vec_dist(a: Vec2, b: Vec2) -> float { return vec_mag(vec_sub(a, b)); }

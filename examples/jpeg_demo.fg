@@ -1,0 +1,41 @@
+// JPEG demo — daily-ten gap item (README.md:383).
+// Decodes a baseline JPEG and prints dimensions, the pixel
+// checksum (sum of all RGB values) and the first pixel.
+// With a second argument, it also streams every pixel as
+// "r g b", one per line, so tests can compare against PIL.
+// (Pixels are streamed with println, not saved as PPM:
+// building a whole PPM by repeated string concat is
+// quadratic and OOMs on a photo; println streams instead.)
+// Usage: forge.py run examples/jpeg_demo.fg <photo.jpg> [pixels]
+// Expected stdout for data/jpeg_photo_320x240.jpg is checked
+// by tests/test_jpeg.py against PIL (dims exact, checksum
+// within rounding tolerance, max pixel diff reported).
+import "jpeg.fg";
+
+fn main() {
+    let a: [str] = args();
+    if len(a) < 1 {
+        println("usage: jpeg_demo <photo.jpg> [pixels]");
+    } else {
+        let img: Image = jpeg_decode(a[0]);
+        println(img.w);
+        println(img.h);
+        let mut sum: int = 0;
+        let mut i: int = 0;
+        while i < len(img.pixels) {
+            sum = sum + img.pixels[i];
+            i = i + 1;
+        }
+        println(sum);
+        println(img.pixels[0]);
+        println(img.pixels[1]);
+        println(img.pixels[2]);
+        if len(a) > 1 {
+            let mut p: int = 0;
+            while p * 3 + 2 < len(img.pixels) {
+                println(img_int_str(img.pixels[p * 3]) + " " + img_int_str(img.pixels[p * 3 + 1]) + " " + img_int_str(img.pixels[p * 3 + 2]));
+                p = p + 1;
+            }
+        }
+    }
+}

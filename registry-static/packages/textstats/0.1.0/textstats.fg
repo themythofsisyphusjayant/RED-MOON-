@@ -1,0 +1,36 @@
+// textstats: word, character, sentence counts, reading time. Pure functions, no dependencies.
+fn word_count(text: str) -> int {
+    let mut n: int = 0;
+    let mut in_word: bool = false;
+    let mut i: int = 0;
+    while i < len(text) {
+        if text[i] == " " { in_word = false; } else {
+            if !in_word { n = n + 1; in_word = true; }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+fn char_count(text: str) -> int { return len(text); }
+fn char_count_no_spaces(text: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(text) {
+        if text[i] != " " { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+fn sentence_count(text: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(text) {
+        if text[i] == "." { n = n + 1; }
+        if text[i] == "!" { n = n + 1; }
+        if text[i] == "?" { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+fn avg_word_len(text: str) -> float { return (char_count_no_spaces(text) as float) / (word_count(text) as float); }
+fn reading_minutes(text: str) -> float { return (word_count(text) as float) / 200.0; }

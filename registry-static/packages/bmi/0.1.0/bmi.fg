@@ -1,0 +1,8 @@
+// bmi: body-mass index and category. Pure functions, no dependencies.
+fn bmi(weight_kg: float, height_m: float) -> float { return weight_kg / (height_m * height_m); }
+fn bmi_category(value: float) -> str {
+    if value < 18.5 { return "underweight"; }
+    if value < 25.0 { return "normal"; }
+    if value < 30.0 { return "overweight"; }
+    return "obese";
+}

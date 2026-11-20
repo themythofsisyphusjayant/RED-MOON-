@@ -1,0 +1,55 @@
+// checks: Luhn, ISBN-10, ISBN-13 check digits. Pure functions, no dependencies.
+fn digit_value(ch: str) -> int {
+    if ch == "0" { return 0; }
+    if ch == "1" { return 1; }
+    if ch == "2" { return 2; }
+    if ch == "3" { return 3; }
+    if ch == "4" { return 4; }
+    if ch == "5" { return 5; }
+    if ch == "6" { return 6; }
+    if ch == "7" { return 7; }
+    if ch == "8" { return 8; }
+    if ch == "9" { return 9; }
+    return -1;
+}
+fn luhn_sum(num: str) -> int {
+    let mut s: int = 0;
+    let mut i: int = len(num) - 1;
+    while i >= 0 {
+        let pos: int = len(num) - 1 - i;
+        let mut d: int = digit_value(num[i]);
+        if pos % 2 == 1 {
+            d = d * 2;
+            if d > 9 { d = d - 9; }
+        }
+        s = s + d;
+        i = i - 1;
+    }
+    return s;
+}
+fn luhn_valid(num: str) -> bool { return luhn_sum(num) % 10 == 0; }
+fn luhn_check_digit(partial: str) -> int {
+    let s: int = luhn_sum(partial + "0");
+    return (10 - s % 10) % 10;
+}
+fn isbn13_valid(isbn: str) -> bool {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < 13 {
+        let d: int = digit_value(isbn[i]);
+        if i % 2 == 0 { s = s + d; } else { s = s + d * 3; }
+        i = i + 1;
+    }
+    return s % 10 == 0;
+}
+fn isbn10_valid(isbn: str) -> bool {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < 10 {
+        let mut d: int = digit_value(isbn[i]);
+        if i == 9 { if isbn[i] == "X" { d = 10; } }
+        s = s + (10 - i) * d;
+        i = i + 1;
+    }
+    return s % 11 == 0;
+}

@@ -1,0 +1,826 @@
+// jpeg.fg — baseline JPEG decoder in pure Qasida.
+// Import with: import "jpeg.fg";
+// Decodes baseline DCT JPEGs (SOF0, 8-bit, Huffman-coded) and
+// returns an Image (flat RGB [int], row-major, 0-255) — the
+// same Image struct image.fg uses, so the decoder plugs
+// straight into the existing image code (grayscale, PPM save).
+//
+// Supported: SOI/APPn/DQT/SOF0/DHT/DRI/SOS, 1 or 3 components,
+// 4:4:4, 4:2:2 and 4:2:0 subsampling, 8- and 16-bit quant
+// tables, restart markers (DRI + RSTn), grayscale JPEGs.
+// NOT supported (stated, not hidden): progressive JPEG (SOF2),
+// arithmetic coding, 12-bit precision, CMYK / 4-component
+// files, lossless JPEG. Those fail with a clear message.
+//
+// Method: canonical Huffman decode (first-code tables),
+// dequantize, separable fixed-point IDCT (cosine table built
+// from cos() at scale 2^14, rounding shift), libjpeg-style
+// fancy (triangle, 3:1) chroma upsampling, integer YCbCr
+// to RGB (JFIF, scale 2^16, libjpeg-style rounding).
+// Pixel values are exact integers; vs libjpeg/PIL the max
+// per-channel difference is a few units (IDCT rounding),
+// never a wrong image — the test reports the real max diff.
+
+import "image.fg";
+
+// ---- zigzag order: position k in the stream -> raster index ----
+fn jpg_zigzag() -> [int] {
+    let mut z: [int] = [];
+    push(z, 0);
+    push(z, 1);
+    push(z, 8);
+    push(z, 16);
+    push(z, 9);
+    push(z, 2);
+    push(z, 3);
+    push(z, 10);
+    push(z, 17);
+    push(z, 24);
+    push(z, 32);
+    push(z, 25);
+    push(z, 18);
+    push(z, 11);
+    push(z, 4);
+    push(z, 5);
+    push(z, 12);
+    push(z, 19);
+    push(z, 26);
+    push(z, 33);
+    push(z, 40);
+    push(z, 48);
+    push(z, 41);
+    push(z, 34);
+    push(z, 27);
+    push(z, 20);
+    push(z, 13);
+    push(z, 6);
+    push(z, 7);
+    push(z, 14);
+    push(z, 21);
+    push(z, 28);
+    push(z, 35);
+    push(z, 42);
+    push(z, 49);
+    push(z, 56);
+    push(z, 57);
+    push(z, 50);
+    push(z, 43);
+    push(z, 36);
+    push(z, 29);
+    push(z, 22);
+    push(z, 15);
+    push(z, 23);
+    push(z, 30);
+    push(z, 37);
+    push(z, 44);
+    push(z, 51);
+    push(z, 58);
+    push(z, 59);
+    push(z, 52);
+    push(z, 45);
+    push(z, 38);
+    push(z, 31);
+    push(z, 39);
+    push(z, 46);
+    push(z, 53);
+    push(z, 60);
+    push(z, 61);
+    push(z, 54);
+    push(z, 47);
+    push(z, 55);
+    push(z, 62);
+    push(z, 63);
+    return z;
+}
+
+// ---- fixed-point cosine table, ct[u*8+x] ----
+// ct = round(C(u) * cos((2x+1)*u*pi/16) * 16384),
+// C(0) = 1/sqrt(2), C(u>0) = 1.
+fn jpg_cos_table() -> [int] {
+    let pi: float = 3.141592653589793;
+    let mut ct: [int] = [];
+    let mut u: int = 0;
+    while u < 8 {
+        let mut cu: float = 1.0;
+        if u == 0 {
+            cu = 0.7071067811865476;
+        }
+        let mut x: int = 0;
+        while x < 8 {
+            let ang: float = (2.0 * (x as float) + 1.0) * (u as float) * pi / 16.0;
+            let v: float = cu * cos(ang) * 16384.0;
+            let mut iv: int = 0;
+            if v >= 0.0 {
+                iv = (v + 0.5) as int;
+            } else {
+                iv = (v - 0.5) as int;
+            }
+            push(ct, iv);
+            x = x + 1;
+        }
+        u = u + 1;
+    }
+    return ct;
+}
+
+// ---- Huffman table (canonical codes) ----
+struct Huff {
+    counts: [int],
+    syms: [int],
+    first: [int],
+    off: [int],
+}
+
+fn jpg_empty_huff() -> Huff {
+    let mut counts: [int] = [];
+    let mut first: [int] = [];
+    let mut off: [int] = [];
+    let mut i: int = 0;
+    while i < 16 {
+        push(counts, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 17 {
+        push(first, 0);
+        push(off, 0);
+        i = i + 1;
+    }
+    let syms: [int] = [];
+    return Huff { counts: counts, syms: syms, first: first, off: off };
+}
+
+// Build first-code / first-symbol tables from DHT counts+symbols.
+// counts[l-1] = number of codes of length l (l = 1..16).
+fn huff_build(counts: [int], syms: [int]) -> Huff {
+    let mut first: [int] = [];
+    let mut off: [int] = [];
+    let mut i: int = 0;
+    while i < 17 {
+        push(first, 0);
+        push(off, 0);
+        i = i + 1;
+    }
+    let mut code: int = 0;
+    let mut sym: int = 0;
+    let mut l: int = 1;
+    while l <= 16 {
+        first[l] = code;
+        off[l] = sym;
+        sym = sym + counts[l - 1];
+        code = (code + counts[l - 1]) << 1;
+        l = l + 1;
+    }
+    return Huff { counts: counts, syms: syms, first: first, off: off };
+}
+
+// ---- bit reader: MSB first, 0xFF00 stuffing skipped ----
+struct Bits {
+    pos: int,
+    acc: int,
+    cnt: int,
+}
+
+struct BitOut {
+    st: Bits,
+    v: int,
+}
+
+fn bits_next(st: Bits, data: [int]) -> BitOut {
+    let mut s: Bits = st;
+    if s.cnt == 0 {
+        if s.pos >= len(data) {
+            fail("jpeg: unexpected end of scan data");
+        }
+        let b: int = data[s.pos];
+        s.pos = s.pos + 1;
+        if b == 255 {
+            if s.pos >= len(data) {
+                fail("jpeg: truncated marker in scan data");
+            }
+            let nb: int = data[s.pos];
+            if nb != 0 {
+                fail("jpeg: unexpected marker in scan data (restart markers are only valid at MCU boundaries)");
+            }
+            s.pos = s.pos + 1;
+        }
+        s.acc = b;
+        s.cnt = 8;
+    }
+    let v: int = (s.acc >> 7) & 1;
+    s.acc = (s.acc << 1) & 255;
+    s.cnt = s.cnt - 1;
+    return BitOut { st: s, v: v };
+}
+
+fn bits_read(st: Bits, data: [int], n: int) -> BitOut {
+    let mut s: Bits = st;
+    let mut v: int = 0;
+    let mut i: int = 0;
+    while i < n {
+        let nb: BitOut = bits_next(s, data);
+        s = nb.st;
+        v = (v << 1) | nb.v;
+        i = i + 1;
+    }
+    return BitOut { st: s, v: v };
+}
+
+// ---- canonical Huffman decode ----
+fn huff_decode(st: Bits, data: [int], h: Huff) -> BitOut {
+    let mut s: Bits = st;
+    let mut code: int = 0;
+    let mut first: int = 0;
+    let mut index: int = 0;
+    let mut l: int = 1;
+    while l <= 16 {
+        let nb: BitOut = bits_next(s, data);
+        s = nb.st;
+        code = (code << 1) | nb.v;
+        let cnt: int = h.counts[l - 1];
+        if code - first < cnt {
+            let sym: int = h.syms[index + (code - first)];
+            return BitOut { st: s, v: sym };
+        }
+        index = index + cnt;
+        first = (first + cnt) << 1;
+        l = l + 1;
+    }
+    fail("jpeg: bad Huffman code");
+    return BitOut { st: s, v: 0 };
+}
+
+// ---- receive-and-extend (JPEG value decoding) ----
+fn jpg_extend(v: int, s: int) -> int {
+    if s == 0 {
+        return 0;
+    }
+    if v < (1 << (s - 1)) {
+        return v + 1 - (1 << s);
+    }
+    return v;
+}
+
+// ---- separable fixed-point 1D IDCT ----
+// d[x] = (1/2) * sum_u C(u) * s[u] * cos((2x+1)*u*pi/16),
+// with the cosine table scaled by 2^14, so the divisor
+// is 2^15 (the extra 1/2 folded in), rounded.
+fn jpg_idct_row(inp: [int], ct: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut x: int = 0;
+    while x < 8 {
+        let mut s: int = 0;
+        let mut u: int = 0;
+        while u < 8 {
+            s = s + inp[u] * ct[u * 8 + x];
+            u = u + 1;
+        }
+        push(out, (s + 16384) >> 15);
+        x = x + 1;
+    }
+    return out;
+}
+
+// 2D IDCT on one 8x8 block of dequantized coefficients
+// (raster order). Rows first, then columns; each pass
+// carries its own 1/2 factor, for 1/4 total.
+fn jpg_idct_block(coef: [int], ct: [int]) -> [int] {
+    let mut tmp: [int] = [];
+    let mut r: int = 0;
+    while r < 8 {
+        let mut row: [int] = [];
+        let mut i: int = 0;
+        while i < 8 {
+            push(row, coef[r * 8 + i]);
+            i = i + 1;
+        }
+        let done: [int] = jpg_idct_row(row, ct);
+        let mut x: int = 0;
+        while x < 8 {
+            push(tmp, done[x]);
+            x = x + 1;
+        }
+        r = r + 1;
+    }
+    let mut out: [int] = [];
+    let mut oi: int = 0;
+    while oi < 64 {
+        push(out, 0);
+        oi = oi + 1;
+    }
+    let mut c: int = 0;
+    while c < 8 {
+        let mut col: [int] = [];
+        let mut i: int = 0;
+        while i < 8 {
+            push(col, tmp[i * 8 + c]);
+            i = i + 1;
+        }
+        let done: [int] = jpg_idct_row(col, ct);
+        let mut y: int = 0;
+        while y < 8 {
+            out[y * 8 + c] = done[y];
+            y = y + 1;
+        }
+        c = c + 1;
+    }
+    return out;
+}
+
+// ---- one 8x8 block: Huffman decode + dequantize ----
+struct DecOut {
+    st: Bits,
+    coef: [int],
+    pred: int,
+}
+
+fn jpg_decode_block(st: Bits, data: [int], dct: Huff, act: Huff, qt: [int], tq: int, pred: int, zz: [int]) -> DecOut {
+    let mut s: Bits = st;
+    let mut coef: [int] = [];
+    let mut i: int = 0;
+    while i < 64 {
+        push(coef, 0);
+        i = i + 1;
+    }
+    // DC: category, then the difference value.
+    let d: BitOut = huff_decode(s, data, dct);
+    s = d.st;
+    let cat: int = d.v;
+    let mut diff: int = 0;
+    if cat > 0 {
+        let rb: BitOut = bits_read(s, data, cat);
+        s = rb.st;
+        diff = jpg_extend(rb.v, cat);
+    }
+    let dcval: int = pred + diff;
+    coef[0] = dcval * qt[tq * 64];
+    // AC: (run, size) pairs until EOB (0x00) or ZRL (0xF0).
+    let mut k: int = 1;
+    while k < 64 {
+        let a: BitOut = huff_decode(s, data, act);
+        s = a.st;
+        let rs: int = a.v;
+        let run: int = rs >> 4;
+        let sz: int = rs & 15;
+        if sz == 0 {
+            if run == 15 {
+                k = k + 16;
+            } else {
+                k = 64;
+            }
+        } else {
+            k = k + run;
+            if k >= 64 {
+                fail("jpeg: AC run overruns block");
+            }
+            let rb: BitOut = bits_read(s, data, sz);
+            s = rb.st;
+            let v: int = jpg_extend(rb.v, sz);
+            let zi: int = zz[k];
+            coef[zi] = v * qt[tq * 64 + zi];
+            k = k + 1;
+        }
+    }
+    return DecOut { st: s, coef: coef, pred: dcval };
+}
+
+// ---- YCbCr -> RGB (JFIF, fixed point, scale 2^16) ----
+fn jpg_clamp(v: int) -> int {
+    if v < 0 {
+        return 0;
+    }
+    if v > 255 {
+        return 255;
+    }
+    return v;
+}
+
+fn jpg_comp_index(ids: [int], n: int, want: int) -> int {
+    let mut i: int = 0;
+    while i < n {
+        if ids[i] == want {
+            return i;
+        }
+        i = i + 1;
+    }
+    fail("jpeg: component missing from SOS");
+    return 0;
+}
+
+// ---- fancy (triangle, 3:1) chroma upsampling ----
+// One chroma plane (pwc x phc) -> full resolution (w x h),
+// matching libjpeg's default upsampler. For a direction with
+// factor 2, output x uses 3/4 of sample i and 1/4 of the
+// neighbour (i-1 for even x, i+1 for odd x), edge-replicated
+// at the valid-sample boundary. Directions with no
+// subsampling are copied; other factors fall back to
+// nearest neighbour (documented, not hidden).
+fn jpg_upsample(plane: [int], poff: int, pwc: int, phc: int, w: int, h: int, hf: int, vf: int, hmax: int, vmax: int) -> [int] {
+    let hfac2: bool = hf * 2 == hmax;
+    let vfac2: bool = vf * 2 == vmax;
+    let vcols: int = (w * hf + hmax - 1) / hmax;
+    let vrows: int = (h * vf + vmax - 1) / vmax;
+    // Horizontal pass -> mid (phc rows x w cols).
+    let mut mid: [int] = [];
+    let mut t: int = 0;
+    while t < phc * w {
+        push(mid, 0);
+        t = t + 1;
+    }
+    let mut j: int = 0;
+    while j < phc {
+        let mut x: int = 0;
+        while x < w {
+            if hf == hmax {
+                mid[j * w + x] = plane[poff + j * pwc + x];
+            } else if hfac2 {
+                let i: int = x * hf / hmax;
+                let a: int = plane[poff + j * pwc + i];
+                let mut b: int = a;
+                if x % 2 == 0 {
+                    if i > 0 {
+                        b = plane[poff + j * pwc + (i - 1)];
+                    }
+                } else {
+                    if i + 1 < vcols {
+                        b = plane[poff + j * pwc + (i + 1)];
+                    }
+                }
+                mid[j * w + x] = (3 * a + b + 2) >> 2;
+            } else {
+                let i: int = x * hf / hmax;
+                mid[j * w + x] = plane[poff + j * pwc + i];
+            }
+            x = x + 1;
+        }
+        j = j + 1;
+    }
+    // Vertical pass -> out (h rows x w cols).
+    let mut out: [int] = [];
+    let mut y: int = 0;
+    while y < h {
+        let mut x: int = 0;
+        while x < w {
+            if vf == vmax {
+                push(out, mid[y * w + x]);
+            } else if vfac2 {
+                let jj: int = y * vf / vmax;
+                let a: int = mid[jj * w + x];
+                let mut b: int = a;
+                if y % 2 == 0 {
+                    if jj > 0 {
+                        b = mid[(jj - 1) * w + x];
+                    }
+                } else {
+                    if jj + 1 < vrows {
+                        b = mid[(jj + 1) * w + x];
+                    }
+                }
+                push(out, (3 * a + b + 2) >> 2);
+            } else {
+                let jj: int = y * vf / vmax;
+                push(out, mid[jj * w + x]);
+            }
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return out;
+}
+
+// ---- the decoder ----
+fn jpeg_decode(path: str) -> Image {
+    let data: [int] = read_bytes(path);
+    if len(data) < 2 || data[0] != 255 || data[1] != 216 {
+        fail("jpeg_decode: not a JPEG (missing SOI)");
+    }
+    let zz: [int] = jpg_zigzag();
+    let ct: [int] = jpg_cos_table();
+    // Quant tables: 4 tables x 64, flat, raster order.
+    let mut qt: [int] = [];
+    let mut qi: int = 0;
+    while qi < 256 {
+        push(qt, 0);
+        qi = qi + 1;
+    }
+    let mut dc0: Huff = jpg_empty_huff();
+    let mut dc1: Huff = jpg_empty_huff();
+    let mut ac0: Huff = jpg_empty_huff();
+    let mut ac1: Huff = jpg_empty_huff();
+    // Component tables (max 4 components, only 1 or 3 used).
+    let mut comp_id: [int] = [0, 0, 0, 0];
+    let mut comp_h: [int] = [0, 0, 0, 0];
+    let mut comp_v: [int] = [0, 0, 0, 0];
+    let mut comp_tq: [int] = [0, 0, 0, 0];
+    let mut comp_dc: [int] = [0, 0, 0, 0];
+    let mut comp_ac: [int] = [0, 0, 0, 0];
+    let mut w: int = 0;
+    let mut h: int = 0;
+    let mut ncomp: int = 0;
+    let mut rst_interval: int = 0;
+    // ---- marker loop ----
+    let mut pos: int = 2;
+    let mut scan_pos: int = 0;
+    let mut done: bool = false;
+    while done == false {
+        if pos + 1 >= len(data) {
+            fail("jpeg_decode: truncated file in marker loop");
+        }
+        let mut b: int = data[pos];
+        pos = pos + 1;
+        while b != 255 {
+            b = data[pos];
+            pos = pos + 1;
+        }
+        let mut m: int = data[pos];
+        pos = pos + 1;
+        while m == 255 {
+            m = data[pos];
+            pos = pos + 1;
+        }
+        if m == 217 {
+            fail("jpeg_decode: EOI before SOS (no scan data)");
+        }
+        if m == 218 {
+            // SOS: length, then scan header, then entropy data.
+            pos = pos + 2;
+            let ns: int = data[pos];
+            pos = pos + 1;
+            let mut s: int = 0;
+            while s < ns {
+                let cid: int = data[pos];
+                pos = pos + 1;
+                let tt: int = data[pos];
+                pos = pos + 1;
+                let ci: int = jpg_comp_index(comp_id, ncomp, cid);
+                comp_dc[ci] = tt >> 4;
+                comp_ac[ci] = tt & 15;
+                s = s + 1;
+            }
+            let ss: int = data[pos];
+            pos = pos + 1;
+            let se: int = data[pos];
+            pos = pos + 1;
+            let ax: int = data[pos];
+            pos = pos + 1;
+            if ss != 0 || se != 63 || ax != 0 {
+                fail("jpeg_decode: only baseline sequential scans (Ss=0, Se=63, Ah/Al=0)");
+            }
+            scan_pos = pos;
+            done = true;
+        } else {
+            // Length-delimited segment.
+            if pos + 1 >= len(data) {
+                fail("jpeg_decode: truncated segment length");
+            }
+            let seglen: int = data[pos] * 256 + data[pos + 1];
+            pos = pos + 2;
+            let segend: int = pos + seglen - 2;
+            if segend > len(data) {
+                fail("jpeg_decode: segment overruns file");
+            }
+            if m == 219 {
+                // DQT
+                while pos < segend {
+                    let pq: int = data[pos] >> 4;
+                    let tq: int = data[pos] & 15;
+                    pos = pos + 1;
+                    let mut i: int = 0;
+                    while i < 64 {
+                        let mut v: int = 0;
+                        if pq == 0 {
+                            v = data[pos];
+                            pos = pos + 1;
+                        } else {
+                            v = data[pos] * 256 + data[pos + 1];
+                            pos = pos + 2;
+                        }
+                        qt[tq * 64 + zz[i]] = v;
+                        i = i + 1;
+                    }
+                }
+            } else if m == 192 {
+                // SOF0 (baseline DCT)
+                let prec: int = data[pos];
+                pos = pos + 1;
+                if prec != 8 {
+                    fail("jpeg_decode: only 8-bit precision supported");
+                }
+                h = data[pos] * 256 + data[pos + 1];
+                pos = pos + 2;
+                w = data[pos] * 256 + data[pos + 1];
+                pos = pos + 2;
+                ncomp = data[pos];
+                pos = pos + 1;
+                if ncomp != 1 && ncomp != 3 {
+                    fail("jpeg_decode: only 1 or 3 components supported");
+                }
+                let mut c: int = 0;
+                while c < ncomp {
+                    comp_id[c] = data[pos];
+                    pos = pos + 1;
+                    let hv: int = data[pos];
+                    pos = pos + 1;
+                    comp_h[c] = hv >> 4;
+                    comp_v[c] = hv & 15;
+                    comp_tq[c] = data[pos];
+                    pos = pos + 1;
+                    c = c + 1;
+                }
+            } else if m == 194 || m == 195 || m == 197 || m == 198 || m == 199 || m == 200 || m == 201 || m == 202 || m == 203 || m == 205 || m == 206 || m == 207 {
+                fail("jpeg_decode: progressive JPEG (SOF2 etc.) not supported");
+            } else if m == 196 {
+                // DHT
+                while pos < segend {
+                    let tc: int = data[pos] >> 4;
+                    let th: int = data[pos] & 15;
+                    pos = pos + 1;
+                    let mut counts: [int] = [];
+                    let mut total: int = 0;
+                    let mut i: int = 0;
+                    while i < 16 {
+                        push(counts, data[pos]);
+                        total = total + data[pos];
+                        pos = pos + 1;
+                        i = i + 1;
+                    }
+                    let mut syms: [int] = [];
+                    i = 0;
+                    while i < total {
+                        push(syms, data[pos]);
+                        pos = pos + 1;
+                        i = i + 1;
+                    }
+                    let tab: Huff = huff_build(counts, syms);
+                    if tc == 0 {
+                        if th == 0 {
+                            dc0 = tab;
+                        } else {
+                            dc1 = tab;
+                        }
+                    } else {
+                        if th == 0 {
+                            ac0 = tab;
+                        } else {
+                            ac1 = tab;
+                        }
+                    }
+                }
+            } else if m == 221 {
+                // DRI: restart interval in MCUs.
+                rst_interval = data[pos] * 256 + data[pos + 1];
+                pos = pos + 2;
+            } else {
+                // APPn, COM, DNL, DHP, EXP, JPGn: skip.
+                pos = segend;
+            }
+        }
+    }
+    if w == 0 || h == 0 || ncomp == 0 {
+        fail("jpeg_decode: no SOF0 frame found");
+    }
+    // ---- MCU geometry ----
+    let mut hmax: int = 1;
+    let mut vmax: int = 1;
+    let mut c: int = 0;
+    while c < ncomp {
+        if comp_h[c] > hmax {
+            hmax = comp_h[c];
+        }
+        if comp_v[c] > vmax {
+            vmax = comp_v[c];
+        }
+        c = c + 1;
+    }
+    let mcux: int = (w + hmax * 8 - 1) / (hmax * 8);
+    let mcuy: int = (h + vmax * 8 - 1) / (vmax * 8);
+    // Per-component planes (flat, one array, offsets per comp).
+    let mut pw: [int] = [0, 0, 0, 0];
+    let mut ph: [int] = [0, 0, 0, 0];
+    let mut poff: [int] = [0, 0, 0, 0];
+    let mut total: int = 0;
+    c = 0;
+    while c < ncomp {
+        pw[c] = mcux * comp_h[c] * 8;
+        ph[c] = mcuy * comp_v[c] * 8;
+        poff[c] = total;
+        total = total + pw[c] * ph[c];
+        c = c + 1;
+    }
+    let mut planes: [int] = [];
+    let mut pi: int = 0;
+    while pi < total {
+        push(planes, 0);
+        pi = pi + 1;
+    }
+    // ---- entropy decode, MCU by MCU ----
+    let mut s: Bits = Bits { pos: scan_pos, acc: 0, cnt: 0 };
+    let mut pred: [int] = [0, 0, 0, 0];
+    let mut rst_num: int = 0;
+    let mut mcu: int = 0;
+    let mut my: int = 0;
+    while my < mcuy {
+        let mut mx: int = 0;
+        while mx < mcux {
+            if rst_interval > 0 && mcu > 0 && mcu % rst_interval == 0 {
+                // Byte-align, then expect RSTn.
+                s.cnt = 0;
+                s.acc = 0;
+                if s.pos + 1 >= len(data) {
+                    fail("jpeg_decode: truncated restart marker");
+                }
+                let rb0: int = data[s.pos];
+                let rb1: int = data[s.pos + 1];
+                s.pos = s.pos + 2;
+                if rb0 != 255 || rb1 != 208 + (rst_num % 8) {
+                    fail("jpeg_decode: expected restart marker");
+                }
+                rst_num = rst_num + 1;
+                pred[0] = 0;
+                pred[1] = 0;
+                pred[2] = 0;
+                pred[3] = 0;
+            }
+            c = 0;
+            while c < ncomp {
+                let mut dct: Huff = dc0;
+                if comp_dc[c] == 1 {
+                    dct = dc1;
+                }
+                let mut act: Huff = ac0;
+                if comp_ac[c] == 1 {
+                    act = ac1;
+                }
+                let mut bv: int = 0;
+                while bv < comp_v[c] {
+                    let mut bh: int = 0;
+                    while bh < comp_h[c] {
+                        let dout: DecOut = jpg_decode_block(s, data, dct, act, qt, comp_tq[c], pred[c], zz);
+                        s = dout.st;
+                        pred[c] = dout.pred;
+                        let blk: [int] = jpg_idct_block(dout.coef, ct);
+                        let bx: int = (mx * comp_h[c] + bh) * 8;
+                        let by: int = (my * comp_v[c] + bv) * 8;
+                        let mut yy: int = 0;
+                        while yy < 8 {
+                            let mut xx: int = 0;
+                            while xx < 8 {
+                                let mut v: int = blk[yy * 8 + xx] + 128;
+                                v = jpg_clamp(v);
+                                planes[poff[c] + (by + yy) * pw[c] + (bx + xx)] = v;
+                                xx = xx + 1;
+                            }
+                            yy = yy + 1;
+                        }
+                        bh = bh + 1;
+                    }
+                    bv = bv + 1;
+                }
+                c = c + 1;
+            }
+            mcu = mcu + 1;
+            mx = mx + 1;
+        }
+        my = my + 1;
+    }
+    // ---- upsample + YCbCr -> RGB ----
+    let mut pixels: [int] = [];
+    if ncomp == 1 {
+        let mut y: int = 0;
+        while y < h {
+            let mut x: int = 0;
+            while x < w {
+                let g: int = planes[y * pw[0] + x];
+                push(pixels, g);
+                push(pixels, g);
+                push(pixels, g);
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+    } else {
+        // Chroma upsampled with libjpeg-style fancy filtering
+        // (nearest neighbour differs from libjpeg by up to ~95
+        // at sharp chroma edges; fancy brings it to IDCT level).
+        let up_cb: [int] = jpg_upsample(planes, poff[1], pw[1], ph[1], w, h, comp_h[1], comp_v[1], hmax, vmax);
+        let up_cr: [int] = jpg_upsample(planes, poff[2], pw[2], ph[2], w, h, comp_h[2], comp_v[2], hmax, vmax);
+        let mut y: int = 0;
+        while y < h {
+            let mut x: int = 0;
+            while x < w {
+                let yy: int = planes[y * pw[0] + x];
+                let cb: int = up_cb[y * w + x] - 128;
+                let cr: int = up_cr[y * w + x] - 128;
+                let r: int = jpg_clamp(yy + ((91881 * cr + 32768) >> 16));
+                let g: int = jpg_clamp(yy - ((22554 * cb + 46802 * cr + 32768) >> 16));
+                let b: int = jpg_clamp(yy + ((116130 * cb + 32768) >> 16));
+                push(pixels, r);
+                push(pixels, g);
+                push(pixels, b);
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+    }
+    return Image { w: w, h: h, pixels: pixels };
+}
