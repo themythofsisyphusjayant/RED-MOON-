@@ -9,7 +9,7 @@ Supported subset (v1, everything else raises a clear ForgeError):
   str literals / str variables (pointer to null-terminated static data),
   [int]/[bool]/[str] arrays, let/assign, if/else, while, for over an
   array or over range(n), functions/calls (<= 8 args, recursion works),
-  return, print/println (int, bool, str), len (array or str),
+  return, print/println (int, bool, str, float), len (array or str),
   assert/fail (print message, halt with a0 = 1).
 Floats (0.7.0, soft-float v1): float literals/variables,
   [float] arrays, + - * (IEEE-754 single precision via
@@ -24,13 +24,38 @@ Floats (0.7.0, soft-float v1): float literals/variables,
   3 bits), so subtraction borrows correctly; the
   carry shift folds the shifted-out bit into the
   sticky position. fmul extracts guard/round/sticky
-  from the full dropped field. NOT yet: float
-  division, ordered comparisons (<, >, ...), float
-  printing, int<->float casts, subnormal results
-  (flushed to signed zero) and subnormal inputs
-  (treated as normals — do not rely on them),
-  NaN/Inf inputs. Each gap raises a clear ForgeError
-  instead of silently miscompiling.
+  from the full dropped field.
+Floats (0.7.1, soft-float v2): + float division
+  (forge_fdiv, correctly rounded via a 52-step
+  restoring division on the mantissas), ordered
+  comparisons < <= > >= (forge_fcmp, IEEE: NaN is
+  unordered, -0.0 == +0.0) and == / != now also
+  go through forge_fcmp, so they are IEEE-correct
+  too (NaN != NaN, -0.0 == +0.0); float printing
+  (forge_print_float, C %.6g on the f32 value);
+  int<->float casts (forge_i2f round-to-nearest-even;
+  forge_f2i truncates toward zero and fails with
+  "float to int cast out of range" + halt when the
+  value is outside i32 range, NaN or infinite --
+  matching native safe mode; the i64-range values
+  that fit native int but not i32 fail here, which
+  is the documented 32-bit-int deviation).
+  v2 helpers are emitted only when used, so a kernel
+  without floats grows by 0 words. Verified:
+  examples/big32_float_demo.fg 12/12 (unchanged),
+  probes bf_div/bf_cmp/bf_print/bf_cast vs the
+  native backend, plus randomized differential
+  tests vs Python float32 (fdiv 5000/5000 exact;
+  print matches %.6g on all probe values, ~93% on
+  random values -- the last digit can differ by 1
+  where f32 scaling noise crosses a rounding
+  boundary; see forge_print_float). NOT yet:
+  subnormal results (flushed to signed zero) and
+  subnormal inputs (treated as normals -- do not
+  rely on them), NaN/Inf inputs to + - * (v1
+  helpers pass them through unchecked). Each gap
+  raises a clear ForgeError instead of silently
+  miscompiling.
 Structs (0.7.0): local struct variables as consecutive
   frame slots (int/bool/str fields), field reads/writes,
   struct copies. Struct function params/returns are
@@ -97,6 +122,16 @@ class RVGen:
         self.next_static = STATIC_BASE
         self.true_addr = None
         self.false_addr = None
+        # Soft-float v2 (0.7.1) usage flags: the v2 helpers are
+        # emitted only when used, so a program (or kernel)
+        # without floats grows by 0 words. Set during gen_*,
+        # read by helpers() (which runs after all gen_func).
+        self.float_cmp = False     # helper forge_fcmp used
+        self.float_div = False     # helper forge_fdiv used
+        self.float_i2f = False     # helper forge_i2f used
+        self.float_f2i = False     # helper forge_f2i used
+        self.float_fprint = False  # helper forge_print_float used
+        self.f2i_fail_addr = 0     # str_addr of the f2i failure message
 
     # ---------- utilities ----------
     def label(self, prefix):
@@ -707,6 +742,7 @@ class RVGen:
         h.append("fm_zero_signed:")
         h.append("    mv a0, s2")
         h.append("    ret")
+        self._float_v2_helpers(h)
         if self.has_trap_handler:
             # Trap entry: save every register the handler could
             # touch on the stack (sp is always valid at a trap in
@@ -739,6 +775,611 @@ class RVGen:
             h.append(f"    addi sp, sp, {4 * len(regs)}")
             h.append("    mret")
         return h
+
+    def _float_v2_helpers(self, h):
+        # Soft-float v2 (0.7.1): division, comparisons, casts,
+        # printing. Each helper is emitted only when used (see
+        # the float_* flags), so a kernel without floats grows
+        # by 0 words. Conventions (same as v1): args in a0/a1
+        # (+a2 = op code for forge_fcmp), result in a0; helpers
+        # may use t0-t6 and s2-s11 freely, and never touch s0,
+        # s1, sp or a3-a7 -- forge_print_float keeps its state
+        # in s1/a3-a7 across nested helper calls. Subnormal
+        # results are flushed to signed zero, matching fadd/
+        # fmul; subnormal inputs are treated as normals
+        # (documented, do not rely on them).
+        if self.float_div or self.float_fprint:
+            # forge_fdiv: a0/a1 -> a0, correctly rounded.
+            # (Also emitted when the printer needs it: the
+            # printer scales with fdiv.)
+            # 52-step restoring division on the mantissas:
+            # q = floor(mx * 2^27 / my), 28 bits; sig = q>>4,
+            # guard = bit 3, round = bit 2, sticky = bits 1..0
+            # or the remainder. Verified 5000/5000 vs an exact
+            # rational reference (f32 operands, single rounding).
+            h.append("forge_fdiv:")
+            h.append("    srli t0, a0, 31")
+            h.append("    slli t0, t0, 31")
+            h.append("    srli t1, a1, 31")
+            h.append("    slli t1, t1, 31")
+            h.append("    xor s2, t0, t1")
+            h.append("    srli t2, a0, 23")
+            h.append("    andi t2, t2, 255")
+            h.append("    srli t3, a1, 23")
+            h.append("    andi t3, t3, 255")
+            h.append("    li t6, 8388607")
+            h.append("    and t4, a0, t6")
+            h.append("    and t5, a1, t6")
+            h.append("    li t6, 255")
+            h.append("    bne t2, t6, fd_xnan_no")
+            h.append("    bne t4, zero, fd_nan")
+            h.append("fd_xnan_no:")
+            h.append("    bne t3, t6, fd_ynan_no")
+            h.append("    bne t5, zero, fd_nan")
+            h.append("fd_ynan_no:")
+            h.append("    or t6, t3, t5")
+            h.append("    bne t6, zero, fd_ynz")
+            h.append("    or t6, t2, t4")
+            h.append("    beq t6, zero, fd_nan")
+            h.append("    li t6, 2139095040")
+            h.append("    or a0, s2, t6")
+            h.append("    ret")
+            h.append("fd_ynz:")
+            h.append("    or t6, t2, t4")
+            h.append("    beq t6, zero, fd_xzero")
+            h.append("    li t6, 255")
+            h.append("    bne t2, t6, fd_xinf_no")
+            h.append("    li t6, 2139095040")
+            h.append("    bne t3, t6, fd_inf")
+            h.append("    j fd_nan")
+            h.append("fd_xinf_no:")
+            h.append("    li t6, 255")
+            h.append("    bne t3, t6, fd_finite")
+            h.append("fd_xzero:")
+            h.append("    mv a0, s2")
+            h.append("    ret")
+            h.append("fd_inf:")
+            h.append("    li t6, 2139095040")
+            h.append("    or a0, s2, t6")
+            h.append("    ret")
+            h.append("fd_nan:")
+            h.append("    li a0, -4194304")
+            h.append("    ret")
+            h.append("fd_finite:")
+            h.append("    li t6, 8388608")
+            h.append("    or t4, t4, t6")
+            h.append("    or t5, t5, t6")
+            h.append("    sub s3, t2, t3")
+            h.append("    addi s3, s3, 127")
+            h.append("    bltu t4, t5, fd_shift")
+            h.append("    j fd_div")
+            h.append("fd_shift:")
+            h.append("    slli t4, t4, 1")
+            h.append("    addi s3, s3, -1")
+            h.append("fd_div:")
+            h.append("    slli t4, t4, 7")
+            h.append("    li s4, 0")
+            h.append("    li s5, 0")
+            h.append("    li s6, 52")
+            h.append("fd_loop:")
+            h.append("    srli t6, t4, 31")
+            h.append("    slli t4, t4, 1")
+            h.append("    slli s4, s4, 1")
+            h.append("    or s4, s4, t6")
+            h.append("    slli s5, s5, 1")
+            h.append("    bltu s4, t5, fd_nosub")
+            h.append("    sub s4, s4, t5")
+            h.append("    ori s5, s5, 1")
+            h.append("fd_nosub:")
+            h.append("    addi s6, s6, -1")
+            h.append("    bne s6, zero, fd_loop")
+            h.append("    srli s7, s5, 4")
+            h.append("    srli t6, s5, 3")
+            h.append("    andi s8, t6, 1")
+            h.append("    beq s8, zero, fd_assemble")
+            h.append("    srli t6, s5, 2")
+            h.append("    andi t6, t6, 1")
+            h.append("    andi s9, s5, 3")
+            h.append("    or t6, t6, s9")
+            h.append("    sltu s9, zero, s4")
+            h.append("    or t6, t6, s9")
+            h.append("    andi s9, s7, 1")
+            h.append("    or t6, t6, s9")
+            h.append("    beq t6, zero, fd_assemble")
+            h.append("    addi s7, s7, 1")
+            h.append("    li t6, 16777216")
+            h.append("    and t6, s7, t6")
+            h.append("    beq t6, zero, fd_assemble")
+            h.append("    srli s7, s7, 1")
+            h.append("    addi s3, s3, 1")
+            h.append("fd_assemble:")
+            h.append("    li t6, 255")
+            h.append("    bge s3, t6, fd_inf")
+            h.append("    bge zero, s3, fd_flush")
+            h.append("    slli t6, s3, 23")
+            h.append("    or a0, s2, t6")
+            h.append("    li t6, 8388607")
+            h.append("    and t6, s7, t6")
+            h.append("    or a0, a0, t6")
+            h.append("    ret")
+            h.append("fd_flush:")
+            h.append("    mv a0, s2")
+            h.append("    ret")
+        if self.float_cmp or self.float_fprint:
+            # forge_fcmp: a0, a1, a2 (op) -> a0 (0/1). Op codes:
+            # (Also emitted when the printer needs it: the
+            # printer scales with fcmp.)
+            # 0=< 1=<= 2=> 3=>= 4=== 5=!=. NaN on either side is
+            # unordered: every ordered op and == are false, !=
+            # is true. +-0 canonicalize to +0, so -0.0 == +0.0.
+            # Order-preserving transform: negative values flip
+            # all bits, positive values flip the sign bit; then
+            # an unsigned compare gives the order.
+            h.append("forge_fcmp:")
+            h.append("    srli t0, a0, 23")
+            h.append("    andi t0, t0, 255")
+            h.append("    srli t1, a1, 23")
+            h.append("    andi t1, t1, 255")
+            h.append("    li t6, 8388607")
+            h.append("    and t2, a0, t6")
+            h.append("    and t3, a1, t6")
+            h.append("    li t6, 255")
+            h.append("    bne t0, t6, fc_xnan_no")
+            h.append("    bne t2, zero, fc_unord")
+            h.append("fc_xnan_no:")
+            h.append("    bne t1, t6, fc_ynan_no")
+            h.append("    bne t3, zero, fc_unord")
+            h.append("fc_ynan_no:")
+            h.append("    or t6, t0, t2")
+            h.append("    bne t6, zero, fc_xnz")
+            h.append("    li a0, 0")
+            h.append("fc_xnz:")
+            h.append("    or t6, t1, t3")
+            h.append("    bne t6, zero, fc_ynz")
+            h.append("    li a1, 0")
+            h.append("fc_ynz:")
+            h.append("    srli t6, a0, 31")
+            h.append("    beq t6, zero, fc_xpos")
+            h.append("    xori a0, a0, -1")
+            h.append("    j fc_ydone")
+            h.append("fc_xpos:")
+            h.append("    li t6, -2147483648")
+            h.append("    xor a0, a0, t6")
+            h.append("fc_ydone:")
+            h.append("    srli t6, a1, 31")
+            h.append("    beq t6, zero, fc_ypos")
+            h.append("    xori a1, a1, -1")
+            h.append("    j fc_cmp")
+            h.append("fc_ypos:")
+            h.append("    li t6, -2147483648")
+            h.append("    xor a1, a1, t6")
+            h.append("fc_cmp:")
+            h.append("    li s2, 2")
+            h.append("    bltu a0, a1, fc_lt")
+            h.append("    beq a0, a1, fc_eq")
+            h.append("    j fc_dispatch")
+            h.append("fc_lt:")
+            h.append("    li s2, 0")
+            h.append("    j fc_dispatch")
+            h.append("fc_eq:")
+            h.append("    li s2, 1")
+            h.append("fc_dispatch:")
+            h.append("    beq a2, zero, fc_op_lt")
+            h.append("    li t6, 1")
+            h.append("    beq a2, t6, fc_op_le")
+            h.append("    li t6, 2")
+            h.append("    beq a2, t6, fc_op_gt")
+            h.append("    li t6, 3")
+            h.append("    beq a2, t6, fc_op_ge")
+            h.append("    li t6, 4")
+            h.append("    beq a2, t6, fc_op_eq")
+            h.append("    li t6, 1")
+            h.append("    bne s2, t6, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_op_lt:")
+            h.append("    beq s2, zero, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_op_le:")
+            h.append("    li t6, 2")
+            h.append("    bltu s2, t6, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_op_gt:")
+            h.append("    li t6, 2")
+            h.append("    beq s2, t6, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_op_ge:")
+            h.append("    li t6, 1")
+            h.append("    bge s2, t6, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_op_eq:")
+            h.append("    li t6, 1")
+            h.append("    beq s2, t6, fc_true")
+            h.append("    j fc_false")
+            h.append("fc_true:")
+            h.append("    li a0, 1")
+            h.append("    ret")
+            h.append("fc_false:")
+            h.append("    li a0, 0")
+            h.append("    ret")
+            h.append("fc_unord:")
+            h.append("    li t6, 5")
+            h.append("    beq a2, t6, fc_true")
+            h.append("    j fc_false")
+        if self.float_i2f or self.float_fprint:
+            # forge_i2f: a0 (int32) -> a0 (f32 bits),
+            # (Also emitted when the printer needs it: digit
+            # extraction converts each digit with i2f.)
+            # round-to-nearest-even, matching native (double)
+            # cast for every int32 (the f64 result is exact
+            # for the rounded f32 value here: int32 -> f32
+            # needs at most one rounding, and both round the
+            # same way).
+            h.append("forge_i2f:")
+            h.append("    beq a0, zero, fi_zero")
+            h.append("    srli t0, a0, 31")
+            h.append("    slli s2, t0, 31")
+            h.append("    beq t0, zero, fi_pos")
+            h.append("    sub t1, zero, a0")
+            h.append("    j fi_mag")
+            h.append("fi_pos:")
+            h.append("    mv t1, a0")
+            h.append("fi_mag:")
+            h.append("    li s3, 0")
+            h.append("fi_loop:")
+            h.append("    srli t6, t1, 31")
+            h.append("    bne t6, zero, fi_found")
+            h.append("    slli t1, t1, 1")
+            h.append("    addi s3, s3, 1")
+            h.append("    j fi_loop")
+            h.append("fi_found:")
+            h.append("    li t6, 158")
+            h.append("    sub s3, t6, s3")
+            h.append("    srli s4, t1, 8")
+            h.append("    srli t6, t1, 7")
+            h.append("    andi s5, t6, 1")
+            h.append("    beq s5, zero, fi_assemble")
+            h.append("    srli t6, t1, 6")
+            h.append("    andi t6, t6, 1")
+            h.append("    li s6, 63")
+            h.append("    and s6, t1, s6")
+            h.append("    sltu s6, zero, s6")
+            h.append("    or t6, t6, s6")
+            h.append("    andi s6, s4, 1")
+            h.append("    or t6, t6, s6")
+            h.append("    beq t6, zero, fi_assemble")
+            h.append("    addi s4, s4, 1")
+            h.append("    li t6, 16777216")
+            h.append("    and t6, s4, t6")
+            h.append("    beq t6, zero, fi_assemble")
+            h.append("    srli s4, s4, 1")
+            h.append("    addi s3, s3, 1")
+            h.append("fi_assemble:")
+            h.append("    slli t6, s3, 23")
+            h.append("    or a0, s2, t6")
+            h.append("    li t6, 8388607")
+            h.append("    and t6, s4, t6")
+            h.append("    or a0, a0, t6")
+            h.append("    ret")
+            h.append("fi_zero:")
+            h.append("    li a0, 0")
+            h.append("    ret")
+        if self.float_f2i or self.float_fprint:
+            # forge_f2i: a0 (f32 bits) -> a0 (int32), truncating
+            # toward zero. (Also emitted when the printer needs
+            # it: digit extraction truncates the scaled value.
+            # The printer only ever passes values in [1, 10),
+            # so the fail path is unreachable there; when no
+            # cast allocated a message, f2i_fail_addr is 0 and
+            # the dead fail branch loads address 0 -- never
+            # executed.) Fails (message + halt, a0 = 1, like
+            # assert/fail) when the value is outside i32 range
+            # [-2^31, 2^31), NaN or infinite -- matching native
+            # safe mode. The message address is allocated during
+            # gen_func (helpers must not allocate strings).
+            h.append("forge_f2i:")
+            h.append("    srli t0, a0, 31")
+            h.append("    srli t1, a0, 23")
+            h.append("    andi t1, t1, 255")
+            h.append("    li t6, 8388607")
+            h.append("    and t2, a0, t6")
+            h.append("    li t6, 255")
+            h.append("    beq t1, t6, f2_fail")
+            h.append("    li t6, 127")
+            h.append("    bltu t1, t6, f2_zero")
+            h.append("    li t6, 158")
+            h.append("    bge t1, t6, f2_fail")
+            h.append("    li t6, 8388608")
+            h.append("    or t2, t2, t6")
+            h.append("    addi t3, t1, -127")
+            h.append("    li t6, 23")
+            h.append("    bge t3, t6, f2_left")
+            h.append("    sub t4, t6, t3")
+            h.append("    srl t2, t2, t4")
+            h.append("    j f2_sign")
+            h.append("f2_left:")
+            h.append("    sub t4, t3, t6")
+            h.append("    sll t2, t2, t4")
+            h.append("f2_sign:")
+            h.append("    beq t0, zero, f2_done")
+            h.append("    sub t2, zero, t2")
+            h.append("f2_done:")
+            h.append("    mv a0, t2")
+            h.append("    ret")
+            h.append("f2_zero:")
+            h.append("    li a0, 0")
+            h.append("    ret")
+            h.append("f2_fail:")
+            h.append(f"    li a0, {self.f2i_fail_addr}")
+            h.append("    jal ra, forge_print_str")
+            h.append("    li a0, 1")
+            if self.has_trap_handler:
+                h.append("    csrw 773, zero")
+            h.append("    ecall")
+        if self.float_fprint:
+            # forge_print_float: a0 (f32 bits) -> prints the C
+            # %.6g spelling of the f32 value to the UART.
+            # State lives in s1 (scaled value) and a3-a7 (e,
+            # digit accumulator, counters, sign), which no
+            # nested helper touches; ra is saved on entry.
+            # Method: scale into [1, 10) with fdiv/fmul by 10
+            # (counting the decimal exponent), extract 7 digits
+            # with forge_f2i / forge_i2f / forge_fsub /
+            # forge_fmul, round the 6th digit half-even on the
+            # 7th, strip trailing zeros, then format fixed
+            # iff -4 <= e < 6, else scientific with a 2-digit
+            # exponent. Accuracy: the scaling and extraction
+            # round in f32, so the last digit can differ by 1
+            # from C's %.6g when the true value sits within
+            # f32 noise of a rounding boundary (measured
+            # ~93% exact on random values; all curated probe
+            # values match). Subnormal inputs print as 0.
+            h.append("forge_print_float:")
+            h.append("    addi sp, sp, -4")
+            h.append("    sw ra, 0(sp)")
+            h.append("    mv s1, a0")
+            h.append("    srli t0, s1, 31")
+            h.append("    mv a6, t0")
+            h.append("    srli t0, s1, 23")
+            h.append("    andi t0, t0, 255")
+            h.append("    li t6, 8388607")
+            h.append("    and t1, s1, t6")
+            h.append("    li t6, 255")
+            h.append("    beq t0, t6, fp_special")
+            h.append("    or t6, t0, t1")
+            h.append("    beq t6, zero, fp_zero")
+            h.append("    li t6, 2147483647")
+            h.append("    and s1, s1, t6")
+            h.append("    li a3, 0")
+            h.append("    li a5, 0")
+            h.append("fp_scale_down:")
+            h.append("    mv a0, s1")
+            h.append(f"    li a1, 1092616192")
+            h.append("    li a2, 3")
+            h.append("    jal ra, forge_fcmp")
+            h.append("    beq a0, zero, fp_scale_up")
+            h.append("    mv a0, s1")
+            h.append(f"    li a1, 1092616192")
+            h.append("    jal ra, forge_fdiv")
+            h.append("    mv s1, a0")
+            h.append("    addi a3, a3, 1")
+            h.append("    addi a5, a5, 1")
+            h.append("    li t6, 64")
+            h.append("    bltu a5, t6, fp_scale_down")
+            h.append("    j fp_flush0")
+            h.append("fp_scale_up:")
+            h.append("    mv a0, s1")
+            h.append(f"    li a1, 1065353216")
+            h.append("    li a2, 0")
+            h.append("    jal ra, forge_fcmp")
+            h.append("    beq a0, zero, fp_digits")
+            h.append("    mv a0, s1")
+            h.append(f"    li a1, 1092616192")
+            h.append("    jal ra, forge_fmul")
+            h.append("    mv s1, a0")
+            h.append("    addi a3, a3, -1")
+            h.append("    addi a5, a5, 1")
+            h.append("    li t6, 64")
+            h.append("    bltu a5, t6, fp_scale_up")
+            h.append("    j fp_flush0")
+            h.append("fp_digits:")
+            h.append("    li a4, 0")
+            h.append("    li a5, 7")
+            h.append("fp_digit_loop:")
+            h.append("    mv a0, s1")
+            h.append("    jal ra, forge_f2i")
+            h.append("    li t6, 10")
+            h.append("    mul a4, a4, t6")
+            h.append("    add a4, a4, a0")
+            h.append("    mv a7, a0")
+            h.append("    jal ra, forge_i2f")
+            h.append("    mv a7, a0")
+            h.append("    mv a0, s1")
+            h.append("    mv a1, a7")
+            h.append("    jal ra, forge_fsub")
+            h.append(f"    li a1, 1092616192")
+            h.append("    jal ra, forge_fmul")
+            h.append("    mv s1, a0")
+            h.append("    addi a5, a5, -1")
+            h.append("    bne a5, zero, fp_digit_loop")
+            h.append("    li t6, 10")
+            h.append("    remu t0, a4, t6")
+            h.append("    divu a4, a4, t6")
+            h.append("    li t6, 5")
+            h.append("    bltu t0, t6, fp_round_done")
+            h.append("    bne t0, t6, fp_round_up")
+            h.append("    andi t6, a4, 1")
+            h.append("    beq t6, zero, fp_round_done")
+            h.append("fp_round_up:")
+            h.append("    addi a4, a4, 1")
+            h.append("    li t6, 1000000")
+            h.append("    bne a4, t6, fp_round_done")
+            h.append("    li a4, 100000")
+            h.append("    addi a3, a3, 1")
+            h.append("fp_round_done:")
+            h.append("    li a5, 6")
+            h.append("fp_strip:")
+            h.append("    li t6, 1")
+            h.append("    bge t6, a5, fp_format")
+            h.append("    li t6, 10")
+            h.append("    remu t0, a4, t6")
+            h.append("    bne t0, zero, fp_format")
+            h.append("    divu a4, a4, t6")
+            h.append("    addi a5, a5, -1")
+            h.append("    j fp_strip")
+            h.append("fp_format:")
+            h.append("    beq a6, zero, fp_nosign")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 45")
+            h.append("    sb t1, 0(t0)")
+            h.append("fp_nosign:")
+            h.append("    li t6, -4")
+            h.append("    blt a3, t6, fp_sci")
+            h.append("    li t6, 6")
+            h.append("    bge a3, t6, fp_sci")
+            h.append("    blt a3, zero, fp_fixed_small")
+            h.append("    addi a7, a3, 1")
+            h.append("    blt a5, a7, fp_fixed_pad")
+            h.append("    li s1, 0")
+            h.append("    li a2, 0")
+            h.append("    j fp_digits_go")
+            h.append("fp_fixed_pad:")
+            h.append("    mv a7, a5")
+            h.append("    sub s1, a3, a5")
+            h.append("    addi s1, s1, 1")
+            h.append("    li a2, 0")
+            h.append("    j fp_digits_go")
+            h.append("fp_fixed_small:")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 48")
+            h.append("    sb t1, 0(t0)")
+            h.append("    li t1, 46")
+            h.append("    sb t1, 0(t0)")
+            h.append("    sub t1, zero, a3")
+            h.append("    addi t1, t1, -1")
+            h.append("fp_small_zeros:")
+            h.append("    beq t1, zero, fp_small_go")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t2, 48")
+            h.append("    sb t2, 0(t0)")
+            h.append("    addi t1, t1, -1")
+            h.append("    j fp_small_zeros")
+            h.append("fp_small_go:")
+            h.append("    mv a7, a5")
+            h.append("    li s1, 0")
+            h.append("    li a2, 0")
+            h.append("    j fp_digits_go")
+            h.append("fp_sci:")
+            h.append("    li a7, 1")
+            h.append("    li s1, 0")
+            h.append("    li a2, 1")
+            h.append("    j fp_digits_go")
+            h.append("fp_digits_go:")
+            h.append("    li t0, 1")
+            h.append("    li t1, 1")
+            h.append("fp_pow10:")
+            h.append("    bge t1, a5, fp_pow10_done")
+            h.append("    li t2, 10")
+            h.append("    mul t0, t0, t2")
+            h.append("    addi t1, t1, 1")
+            h.append("    j fp_pow10")
+            h.append("fp_pow10_done:")
+            h.append("    li t1, 0")
+            h.append("    li t3, 10")
+            h.append("fp_digit_out:")
+            h.append("    bge t1, a5, fp_digits_done")
+            h.append("    divu t2, a4, t0")
+            h.append("    remu a4, a4, t0")
+            h.append("    divu t0, t0, t3")
+            h.append("    addi t2, t2, 48")
+            h.append(f"    li t4, {UART}")
+            h.append("    sb t2, 0(t4)")
+            h.append("    addi t1, t1, 1")
+            h.append("    bne t1, a7, fp_digit_out")
+            h.append("    bge t1, a5, fp_digit_out")
+            h.append("    li t2, 46")
+            h.append(f"    li t4, {UART}")
+            h.append("    sb t2, 0(t4)")
+            h.append("    j fp_digit_out")
+            h.append("fp_digits_done:")
+            h.append("    beq s1, zero, fp_pad_done")
+            h.append("fp_pad:")
+            h.append(f"    li t4, {UART}")
+            h.append("    li t2, 48")
+            h.append("    sb t2, 0(t4)")
+            h.append("    addi s1, s1, -1")
+            h.append("    bne s1, zero, fp_pad")
+            h.append("fp_pad_done:")
+            h.append("    beq a2, zero, fp_done")
+            h.append(f"    li t4, {UART}")
+            h.append("    li t2, 101")
+            h.append("    sb t2, 0(t4)")
+            h.append("    blt a3, zero, fp_exp_neg")
+            h.append("    li t2, 43")
+            h.append("    sb t2, 0(t4)")
+            h.append("    mv t1, a3")
+            h.append("    j fp_exp_digits")
+            h.append("fp_exp_neg:")
+            h.append("    li t2, 45")
+            h.append("    sb t2, 0(t4)")
+            h.append("    sub t1, zero, a3")
+            h.append("fp_exp_digits:")
+            h.append("    li t3, 10")
+            h.append("    divu t2, t1, t3")
+            h.append("    remu t1, t1, t3")
+            h.append("    addi t2, t2, 48")
+            h.append("    sb t2, 0(t4)")
+            h.append("    addi t1, t1, 48")
+            h.append("    sb t1, 0(t4)")
+            h.append("    j fp_done")
+            h.append("fp_special:")
+            h.append("    sltu t2, zero, t1")
+            h.append("    beq a6, zero, fp_sp_nosign")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 45")
+            h.append("    sb t1, 0(t0)")
+            h.append("fp_sp_nosign:")
+            h.append("    bne t2, zero, fp_nan")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 105")
+            h.append("    sb t1, 0(t0)")
+            h.append("    li t1, 110")
+            h.append("    sb t1, 0(t0)")
+            h.append("    li t1, 102")
+            h.append("    sb t1, 0(t0)")
+            h.append("    j fp_done")
+            h.append("fp_nan:")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 110")
+            h.append("    sb t1, 0(t0)")
+            h.append("    li t1, 97")
+            h.append("    sb t1, 0(t0)")
+            h.append("    li t1, 110")
+            h.append("    sb t1, 0(t0)")
+            h.append("    j fp_done")
+            h.append("fp_zero:")
+            h.append("    beq a6, zero, fp_zero_pos")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 45")
+            h.append("    sb t1, 0(t0)")
+            h.append("fp_zero_pos:")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 48")
+            h.append("    sb t1, 0(t0)")
+            h.append("    j fp_done")
+            h.append("fp_flush0:")
+            h.append("    beq a6, zero, fp_flush0_pos")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 45")
+            h.append("    sb t1, 0(t0)")
+            h.append("fp_flush0_pos:")
+            h.append(f"    li t0, {UART}")
+            h.append("    li t1, 48")
+            h.append("    sb t1, 0(t0)")
+            h.append("    j fp_done")
+            h.append("fp_done:")
+            h.append("    lw ra, 0(sp)")
+            h.append("    addi sp, sp, 4")
+            h.append("    ret")
 
     # ---------- functions ----------
     def gen_func(self, fn):
@@ -1085,6 +1726,13 @@ class RVGen:
             if t == "int":
                 self.emit(f"    mv a0, {r}")
                 self.emit("    jal ra, forge_print_int")
+            elif t == "float":
+                # Soft-float v2: %.6g of the f32 value. The only
+                # live temp here is r itself (statement level),
+                # and its value is already in a0.
+                self.float_fprint = True
+                self.emit(f"    mv a0, {r}")
+                self.emit("    jal ra, forge_print_float")
             elif t == "bool":
                 true_l = self.label("istrue")
                 done_l = self.label("bool_done")
@@ -1207,9 +1855,33 @@ class RVGen:
             self.free_reg(idx)
             return addr
         if isinstance(expr, A.Cast):
-            if expr.target == "float" or self.expr_type(expr.expr) == "float":
+            src = self.expr_type(expr.expr)
+            if expr.target == "float" and src == "float":
+                return self.gen_expr(expr.expr)
+            if expr.target == "float" and src == "int":
+                # Soft-float v2: int -> float, round-to-nearest-even.
+                r = self.gen_expr(expr.expr)
+                self.float_i2f = True
+                self.gen_float_call("forge_i2f", r)
+                return r
+            if expr.target == "int" and src == "float":
+                # Soft-float v2: float -> int, truncating toward
+                # zero; fails (message + halt) out of i32 range
+                # or on NaN/Inf, matching native safe mode. The
+                # message is allocated here, during gen_func, so
+                # its init code lands in _start (helpers must
+                # not allocate strings).
+                r = self.gen_expr(expr.expr)
+                self.float_f2i = True
+                if not self.f2i_fail_addr:
+                    self.f2i_fail_addr = self.str_addr(
+                        "float to int cast out of range")
+                self.gen_float_call("forge_f2i", r)
+                return r
+            if expr.target == "float" or src == "float":
                 raise ForgeError(
-                    "int<->float casts are not supported on big32 (v1)")
+                    f"cast from {src} to {expr.target} is not supported "
+                    f"on big32 (v1)")
             return self.gen_expr(expr.expr)
         if isinstance(expr, A.UnaryOp):
             r = self.gen_expr(expr.expr)
@@ -1236,6 +1908,36 @@ class RVGen:
             return self.gen_call(expr)
         raise ForgeError(f"unsupported expression {type(expr).__name__} on big32")
 
+    def gen_float_call(self, helper, left, right=None, op_code=None):
+        # Call a soft-float helper (a0 = left, a1 = right when
+        # given, a2 = op_code for forge_fcmp) with every other
+        # live temp spilled -- helpers use t/s registers freely,
+        # s0/sp/ra are untouched and the frame is s0-based.
+        # Result lands in a0 and is moved back into `left`.
+        saved = [r for r in self.live if r not in (left, right)]
+        if saved:
+            self.emit(f"    addi sp, sp, -{4 * len(saved)}")
+            for i, r in enumerate(saved):
+                self.emit(f"    sw {r}, {4 * i}(sp)")
+            for r in saved:
+                self.live.remove(r)
+        self.emit(f"    mv a0, {left}")
+        if right is not None:
+            self.emit(f"    mv a1, {right}")
+        if op_code is not None:
+            self.emit(f"    li a2, {op_code}")
+        self.emit(f"    jal ra, {helper}")
+        self.emit(f"    mv {left}, a0")
+        if right is not None:
+            self.free_reg(right)
+        if saved:
+            for i, r in enumerate(saved):
+                self.emit(f"    lw {r}, {4 * i}(sp)")
+            self.emit(f"    addi sp, sp, {4 * len(saved)}")
+            for r in saved:
+                self.live.append(r)
+        return left
+
     def gen_binop(self, expr):
         # Short-circuit && / || with branches.
         if expr.op in ("&&", "||"):
@@ -1260,38 +1962,24 @@ class RVGen:
             raise ForgeError("string comparison/concatenation is not supported on big32 (v1)")
         op = expr.op
         if lt == "float":
-            if op in ("/", "%", "<", ">", "<=", ">=", "&", "|", "^",
-                      "<<", ">>"):
+            if op in ("%", "&", "|", "^", "<<", ">>"):
                 raise ForgeError(
                     f"float operator {op} is not supported on big32 (v1)")
-            if op in ("+", "-", "*"):
-                # Soft-float helper call. Spill every live
-                # temp except the operands (helpers use
-                # t/s registers freely; s0/sp/ra are
-                # untouched and the frame is s0-based).
-                saved = [r for r in self.live if r not in (left, right)]
-                if saved:
-                    self.emit(f"    addi sp, sp, -{4 * len(saved)}")
-                    for i, r in enumerate(saved):
-                        self.emit(f"    sw {r}, {4 * i}(sp)")
-                    for r in saved:
-                        self.live.remove(r)
-                self.emit(f"    mv a0, {left}")
-                self.emit(f"    mv a1, {right}")
+            if op in ("+", "-", "*", "/"):
+                # Soft-float helper call (forge_fdiv is v2).
+                if op == "/":
+                    self.float_div = True
                 helper = {"+": "forge_fadd", "-": "forge_fsub",
-                          "*": "forge_fmul"}[op]
-                self.emit(f"    jal ra, {helper}")
-                self.emit(f"    mv {left}, a0")
-                self.free_reg(right)
-                if saved:
-                    for i, r in enumerate(saved):
-                        self.emit(f"    lw {r}, {4 * i}(sp)")
-                    self.emit(f"    addi sp, sp, {4 * len(saved)}")
-                    for r in saved:
-                        self.live.append(r)
-                return left
-            # == / != fall through to the int compare
-            # below: bitwise equality on the patterns.
+                          "*": "forge_fmul", "/": "forge_fdiv"}[op]
+                return self.gen_float_call(helper, left, right)
+            if op in ("<", "<=", ">", ">=", "==", "!="):
+                # Soft-float v2: IEEE comparisons via forge_fcmp.
+                # Op codes: 0=< 1=<= 2=> 3=>= 4=== 5=!=.
+                self.float_cmp = True
+                op_code = {"<": 0, "<=": 1, ">": 2, ">=": 3,
+                           "==": 4, "!=": 5}[op]
+                return self.gen_float_call("forge_fcmp", left, right,
+                                           op_code=op_code)
         if op == "+":
             self.emit(f"    add {left}, {left}, {right}")
         elif op == "-":
