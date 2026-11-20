@@ -1844,6 +1844,142 @@ fn fix1_ring_body_facts(stmt: Node, stmts: [Node], pos: int, env_outer: Fix1Env,
     return env;
 }
 
+// O2: trip bound for a counted While loop, read off the INSTALLED
+// counter interval in the body env — its existence already encodes
+// the installation gates, so both mirrors agree. Returns [has, T].
+// "<": T = max(hi, lo) - lo + 1; ">": T = hi - min(lo, hi) + 1
+// (the max/min mirror the install clamps for never-running loops).
+fn fix1_trip_bound(stmt: Node, env_body: Fix1Env) -> [int] {
+    if stmt.kind != 15 {
+        return [0, 0];
+    }
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || (cond.name != "<" && cond.name != ">") || cond.kids[0].kind != 34 {
+        return [0, 0];
+    }
+    let ctr: str = cond.kids[0].name;
+    let iv: [int] = fix1_env_interval(env_body, ctr);
+    if iv[0] == 0 || iv[2] == 0 {
+        return [0, 0];
+    }
+    let lo: int = iv[1];
+    let hi: int = iv[3];
+    let mut t: int = 0;
+    if cond.name == "<" {
+        let mut him: int = hi;
+        if him < lo {
+            him = lo;
+        }
+        t = him - lo + 1;
+    } else {
+        let mut lom: int = lo;
+        if lom > hi {
+            lom = hi;
+        }
+        t = hi - lom + 1;
+    }
+    if t < 1 {
+        return [0, 0];
+    }
+    return [1, t];
+}
+
+// O2: number of `acc = acc + 1` Assign sites in `node`'s subtree
+// that are NOT inside a nested While/For/Defer/Spawn.
+fn fix1_acc_inc_count(node: Node, acc: str) -> int {
+    if node.kind == 15 || node.kind == 16 || node.kind == 21 || node.kind == 23 {
+        return 0;
+    }
+    let mut c: int = 0;
+    if node.kind == 11 && node.kids[0].kind == 40 && node.kids[0].name == "+" && node.kids[0].kids[0].kind == 34 && node.kids[0].kids[0].name == acc && node.kids[0].kids[1].kind == 25 && node.kids[0].kids[1].ival == 1 && node.name == acc {
+        c = 1;
+    }
+    let mut i: int = 0;
+    while i < len(node.kids) {
+        c = c + fix1_acc_inc_count(node.kids[i], acc);
+        i = i + 1;
+    }
+    return c;
+}
+
+// O2: loop-bounded accumulator facts. For each candidate acc in a
+// counted While loop's body — exactly one non-nested `acc = acc + 1`
+// site, no other write to acc, no continue, no spawn/defer in the
+// body, entry value known and not stale, E_hi + T <= INT64_MAX —
+// install the loop-top interval [E_lo, E_hi + T - 1] in the body
+// env. The existing O1 scan then narrows the acc + 1 site(s).
+// Hosted arithmetic never traps the compiler itself: the INT64
+// check is T <= INT64_MAX - E_hi (E_hi >= 0; automatic when
+// E_hi < 0) and the cap check is T - 1 <= 2^40 - E_hi, computed
+// BEFORE top_hi = E_hi + T - 1.
+fn fix1_acc_body_facts(stmt: Node, stmts: [Node], pos: int, env_outer: Fix1Env, env_body0: Fix1Env) -> Fix1Env {
+    let mut env: Fix1Env = env_body0;
+    if stmt.kind != 15 {
+        return env;
+    }
+    let cond: Node = stmt.kids[0];
+    if cond.kind != 40 || (cond.name != "<" && cond.name != ">") || cond.kids[0].kind != 34 {
+        return env;
+    }
+    let ctr: str = cond.kids[0].name;
+    let tb: [int] = fix1_trip_bound(stmt, env_body0);
+    if tb[0] == 0 {
+        return env;
+    }
+    let t: int = tb[1];
+    let body: Node = stmt.kids[1];
+    if fix1_has_continue(body) {
+        return env;
+    }
+    if fix1_has_spawn_defer(body) {
+        return env;
+    }
+    let names: [str] = fix1_written_names(body);
+    let mut i: int = 0;
+    while i < len(names) {
+        let acc: str = names[i];
+        i = i + 1;
+        if acc == ctr {
+            continue;
+        }
+        if fix1_acc_inc_count(body, acc) != 1 {
+            continue;
+        }
+        if fix1_write_count(body, acc) != 1 {
+            continue;
+        }
+        let ty: str = fix1_env_type(env_outer, acc);
+        if ty != "" && ty != "int" {
+            continue;
+        }
+        let k: int = fix1_nearest_entry(stmts, pos, acc);
+        if k < 0 {
+            continue;
+        }
+        let w: Node = stmts[k];
+        if w.kind != 10 && w.kind != 11 {
+            continue;
+        }
+        if fix1_entry_stale(stmts, k, pos, acc) {
+            continue;
+        }
+        let eiv: [int] = fix1_interval(w.kids[0], env_outer);
+        if eiv[0] == 0 || eiv[2] == 0 {
+            continue;
+        }
+        let elo: int = eiv[1];
+        let ehi: int = eiv[3];
+        if ehi >= 0 && t > fix1_int_max() - ehi {
+            continue;
+        }
+        if t - 1 > 1099511627776 - ehi {
+            continue;
+        }
+        env = fix1_env_set_interval(env, acc, [1, elo, 1, ehi + t - 1]);
+    }
+    return env;
+}
+
 fn fix1_body_env(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env {
     let mut env: Fix1Env = fix1_env_deep_copy(env0);
     let body: Node = stmt.kids[1];
@@ -1993,6 +2129,9 @@ fn fix1_body_env(stmt: Node, stmts: [Node], pos: int, env0: Fix1Env) -> Fix1Env 
     // B3 (O1-S2): ring-reset facts, read on the outer env (env0)
     // and applied to the body env after the counter facts.
     env = fix1_ring_body_facts(stmt, stmts, pos, env0, env);
+    // O2: loop-bounded accumulator facts, read on the outer env
+    // (env0) and applied to the body env after the ring facts.
+    env = fix1_acc_body_facts(stmt, stmts, pos, env0, env);
     return env;
 }
 
@@ -2540,7 +2679,31 @@ fn fix1_try_r3(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
         return res;
     }
     let ncode: str = fix1_c_expr(n_node);
-    let guard: str = "if (" + ncode + " * " + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    // R3-GUARD (O2 fix): the guard uses the tight interval bound
+    // ihi*n + khi >= len when both hi's are known with lo >= 0
+    // and hi < nhi; otherwise it falls back to the coarse n*n
+    // bound. The coarse bound traps correct programs whose true
+    // max index is below len but n*n exceeds it (beamsearch:
+    // nseq in [1,3], k in [0,1] -> true max 7 < 8, but
+    // 4*4 = 16 > 8). The < nhi gate also keeps the guard's own C
+    // arithmetic inside INT64 via the P3 sqrt bound.
+    let iiv: [int] = fix1_env_interval(env, i_node.name);
+    let kiv: [int] = fix1_env_interval(env, other.name);
+    let mut nhi2: int = 0;
+    let mut nhi_known: bool = false;
+    if n_node.kind == 25 {
+        nhi2 = n_node.ival;
+        nhi_known = true;
+    } else {
+        if niv[2] == 1 {
+            nhi2 = niv[3];
+            nhi_known = true;
+        }
+    }
+    let mut guard: str = "if (" + ncode + " * " + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    if nhi_known && iiv[0] == 1 && iiv[1] >= 0 && iiv[2] == 1 && kiv[0] == 1 && kiv[1] >= 0 && kiv[2] == 1 && iiv[3] < nhi2 && kiv[3] < nhi2 {
+        guard = "if (" + itoa(iiv[3]) + " * " + ncode + " + " + itoa(kiv[3]) + " >= (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    }
     // Fix 2 (b): record the guard on the move target.
     let mut free_vars: [str] = [];
     if n_node.kind == 34 {

@@ -641,6 +641,114 @@ def _loop_counter_facts(stmt, stmts, pos, env):
     return None
 
 
+def _trip_bound(stmt, stmts, pos, env):
+    """O2: (counter, T) for a counted While loop, or None. T is
+    the trip-count bound: the number of distinct counter values.
+    The max/min clamps mirror the hosted counter-fact install
+    clamps (never-running loops), so both mirrors compute the same
+    T. The bound-kind gates mirror the hosted counter-fact
+    installation exactly: a trip bound exists only when the hosted
+    mirror also installs a counter fact. `for` loops are CUT in
+    v1 (different `continue` semantics)."""
+    if not isinstance(stmt, A.While):
+        return None
+    cond = stmt.cond
+    if not (isinstance(cond, A.BinOp)
+            and cond.op in ("<", ">")
+            and isinstance(cond.left, A.Var)):
+        return None
+    facts = _loop_counter_facts(stmt, stmts, pos, env)
+    if facts is None:
+        return None
+    _ctr, (lo, hi), _rel = facts
+    if hi is None:
+        return None
+    if cond.op == "<":
+        b = cond.right
+        if _is_intlit(b):
+            pass
+        elif isinstance(b, A.Var):
+            _blo, bhi = env.interval_of(b.name)
+            if bhi is None or bhi < 1:
+                return None
+        elif isinstance(b, A.BinOp):
+            _blo, bhi = _interval(b, env)
+            if bhi is None:
+                return None
+        else:
+            return None  # len(a) bound: no counter fact anyway
+        return (_ctr, max(hi, lo) - lo + 1)
+    lexpr = cond.right
+    if _is_intlit(lexpr):
+        pass
+    elif isinstance(lexpr, A.Var):
+        llo, lhi = env.interval_of(lexpr.name)
+        if llo is None or lhi is None or llo < 0 or lhi < 0:
+            return None
+    else:
+        return None
+    return (_ctr, hi - min(lo, hi) + 1)
+
+
+def _acc_inc_count(node, acc):
+    """O2: number of `acc = acc + 1` Assign sites in `node`'s
+    subtree that are NOT inside a nested While/For/Defer/Spawn
+    (such a site could fire many times per outer iteration)."""
+    if isinstance(node, (A.While, A.For, A.Defer, A.Spawn)):
+        return 0
+    c = 0
+    if isinstance(node, A.Assign) and isinstance(node.expr, A.BinOp) \
+            and node.expr.op == "+" and _is_var(node.expr.left, acc) \
+            and _is_intlit(node.expr.right, 1) and node.name == acc:
+        c = 1
+    for ch in _children(node):
+        c += _acc_inc_count(ch, acc)
+    return c
+
+
+def _acc_candidates(stmt, stmts, pos, env, trip):
+    """O2: [(acc, (E_lo, top_hi))] for accumulators in a counted
+    While loop with trip bound `trip` = (ctr, T). The loop-top
+    interval bounds acc at the start of every iteration: acc starts
+    in [E_lo, E_hi] and gains at most one increment per iteration,
+    so at loop top acc <= E_hi + T - 1."""
+    if trip is None:
+        return []
+    ctr, T = trip
+    body = stmt.body
+    if _has_continue(body):
+        return []
+    if _has_spawn_or_defer(body):
+        return []
+    out = []
+    for acc in {n.name for n in _walk(body)
+                if isinstance(n, A.Assign)}:
+        if acc == ctr:
+            continue
+        if _acc_inc_count(body, acc) != 1:
+            continue
+        if len(_write_sites(body, acc)) != 1:
+            continue
+        t = env.type_of(acc)
+        if t and t != "int":
+            continue
+        _k, w = _nearest_entry(stmts, pos, acc)
+        if w is None or not isinstance(w, (A.Let, A.Assign)):
+            continue
+        if _entry_stale(stmts, _k, pos, acc):
+            continue
+        elo, ehi = _interval(w.expr, env)
+        if elo is None or ehi is None:
+            continue
+        if ehi + T > INT64_MAX:
+            continue
+        top_hi = _cap(ehi + T - 1)
+        if top_hi is None:
+            continue
+        out.append((acc, (elo, top_hi)))
+    return out
+
+
 def _body_env(stmt, stmts, pos, env):
     """B2: the environment at the top of a loop body for the R-scan.
     The outer env with intervals + rel-facts DROPPED for every var
@@ -678,6 +786,12 @@ def _body_env(stmt, stmts, pos, env):
         if nhi < nlo:
             continue
         benv.set_interval(idx, (nlo, nhi))
+    # O2: loop-bounded accumulator facts — acc in
+    # [E_lo, E_hi + T - 1] at loop top when the trip bound holds.
+    # The existing O1 scan narrows the acc + 1 site(s) from this.
+    for acc, iv in _acc_candidates(stmt, stmts, pos, env,
+                                   _trip_bound(stmt, stmts, pos, env)):
+        benv.set_interval(acc, iv)
     return benv
 
 
@@ -1409,11 +1523,29 @@ def _try_r3(ix, env, loops, covered, guards, plain, idx_guards,
     ncode = _c_expr(nnode)
     if ncode is None:
         return False
+    # R3-GUARD (O2 fix): the guard uses the tight interval bound
+    # ihi*n + khi >= len when both hi's are known with lo >= 0
+    # and hi < nhi; otherwise it falls back to the coarse n*n
+    # bound. The coarse bound traps correct programs whose true
+    # max index is below len but n*n exceeds it (beamsearch:
+    # nseq in [1,3], k in [0,1] -> true max 7 < 8, but
+    # 4*4 = 16 > 8). The < nhi gate also keeps the guard's own C
+    # arithmetic inside INT64 via the P3 sqrt bound
+    # (ihi,khi < nhi <= 3037000499, so ihi*n + khi < nhi^2).
+    ilo, ihi = env.interval_of(iname)
+    klo, khi = env.interval_of(kname)
+    if (ihi is not None and khi is not None
+            and ilo is not None and ilo >= 0
+            and klo is not None and klo >= 0
+            and nhi is not None and ihi < nhi and khi < nhi):
+        guard = (f"if ({ihi} * {ncode} + {khi} >= ({arr}).len) "
+                 f"{FAIL_MSG};")
+    else:
+        guard = f"if ({ncode} * {ncode} > ({arr}).len) {FAIL_MSG};"
     covered.add(id(ix))
     free_vars = [nnode.name] if isinstance(nnode, A.Var) else []
     target = _guard_move_target(loops, arr, free_vars, loop_runs)
-    guards.setdefault(id(target), []).append(
-        f"if ({ncode} * {ncode} > ({arr}).len) {FAIL_MSG};")
+    guards.setdefault(id(target), []).append(guard)
     plain.add(id(mul))
     plain.add(id(idx))
     return True
