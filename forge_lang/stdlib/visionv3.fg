@@ -1,0 +1,84 @@
+// Qasida — vision-lite v3 (AI/ML program item 30, v3).
+// Import with: import "visionv3.fg";
+// Fourth vision slice in pure Qasida, on flat [int] images
+// (row-major, values 0-255), on top of vision.fg, vision2.fg
+// and visionv2.fg: horizontal flip, rectangular crop, 3x3 box
+// blur (mean of in-bounds neighbours, integer division), and
+// thresholding (>= t -> 255, else 0).
+fn vv3_flip_h(img: [int], w: int, h: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut c: int = 0;
+        while c < w {
+            push(out, img[r * w + (w - 1 - c)]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn vv3_crop(img: [int], w: int, x0: int, y0: int, cw: int, ch: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < ch {
+        let mut c: int = 0;
+        while c < cw {
+            push(out, img[(y0 + r) * w + (x0 + c)]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn vv3_blur3(img: [int], w: int, h: int) -> [int] {
+    let mut out: [int] = [];
+    let mut r: int = 0;
+    while r < h {
+        let mut c: int = 0;
+        while c < w {
+            let mut s: int = 0;
+            let mut n: int = 0;
+            let mut dr: int = -1;
+            while dr <= 1 {
+                let mut dc: int = -1;
+                while dc <= 1 {
+                    let rr: int = r + dr;
+                    let cc: int = c + dc;
+                    if rr >= 0 {
+                        if rr < h {
+                            if cc >= 0 {
+                                if cc < w {
+                                    s = s + img[rr * w + cc];
+                                    n = n + 1;
+                                }
+                            }
+                        }
+                    }
+                    dc = dc + 1;
+                }
+                dr = dr + 1;
+            }
+            push(out, s / n);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn vv3_threshold(img: [int], t: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(img) {
+        if img[i] >= t {
+            push(out, 255);
+        } else {
+            push(out, 0);
+        }
+        i = i + 1;
+    }
+    return out;
+}

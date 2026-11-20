@@ -1,0 +1,93 @@
+// Qasida — nn-extensions v2 (AI/ML program item 89, v2).
+// Import with: import "nnextv2.fg";
+// More neural-network helpers in pure Qasida, on top of nn.fg
+// and nnext.fg: GELU with the tanh approximation, softmax with
+// a temperature, layer normalisation, and inverted dropout with
+// a caller-supplied deterministic mask (0/1 ints, scaled by
+// 1 / (1 - p) so the expected value is unchanged).
+fn nn2_tanh(x: float) -> float {
+    let e2: float = exp(2.0 * x);
+    return (e2 - 1.0) / (e2 + 1.0);
+}
+
+fn nn2_gelu(x: float) -> float {
+    let x3: float = x * x * x;
+    let inner: float = 0.7978845608 * (x + 0.044715 * x3);
+    return 0.5 * x * (1.0 + nn2_tanh(inner));
+}
+
+fn nn2_softmax_temp(xs: [float], temp: float) -> [float] {
+    if temp <= 0.0 {
+        fail("nn2_softmax_temp: temp must be positive");
+    }
+    let mut m: float = xs[0];
+    let mut i: int = 1;
+    while i < len(xs) {
+        if xs[i] > m {
+            m = xs[i];
+        }
+        i = i + 1;
+    }
+    let mut exps: [float] = [];
+    let mut total: float = 0.0;
+    let mut j: int = 0;
+    while j < len(xs) {
+        let e: float = exp((xs[j] - m) / temp);
+        push(exps, e);
+        total = total + e;
+        j = j + 1;
+    }
+    let mut out: [float] = [];
+    let mut k: int = 0;
+    while k < len(exps) {
+        push(out, exps[k] / total);
+        k = k + 1;
+    }
+    return out;
+}
+
+fn nn2_layernorm(xs: [float], eps: float) -> [float] {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        s = s + xs[i];
+        i = i + 1;
+    }
+    let mean: float = s / len(xs) as float;
+    let mut vs: float = 0.0;
+    let mut j: int = 0;
+    while j < len(xs) {
+        let d: float = xs[j] - mean;
+        vs = vs + d * d;
+        j = j + 1;
+    }
+    let var: float = vs / len(xs) as float;
+    let denom: float = sqrt(var + eps);
+    let mut out: [float] = [];
+    let mut k: int = 0;
+    while k < len(xs) {
+        push(out, (xs[k] - mean) / denom);
+        k = k + 1;
+    }
+    return out;
+}
+
+fn nn2_dropout(xs: [float], mask: [int], p: float) -> [float] {
+    if len(mask) != len(xs) {
+        fail("nn2_dropout: mask length must match xs");
+    }
+    if p < 0.0 {
+        fail("nn2_dropout: p must be >= 0");
+    }
+    if p >= 1.0 {
+        fail("nn2_dropout: p must be < 1");
+    }
+    let scale: float = 1.0 / (1.0 - p);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, xs[i] * (mask[i] as float) * scale);
+        i = i + 1;
+    }
+    return out;
+}

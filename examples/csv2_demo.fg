@@ -1,0 +1,12 @@
+import "csv2.fg";
+
+fn main() -> int {
+    let fields: [str] = cv_parse_line("a,\"b,c\",\"d\"\"e\",f");
+    println(len(fields));
+    println(fields[0]);
+    println(fields[1]);
+    println(fields[2]);
+    println(fields[3]);
+    println(cv_write_row(["a", "b,c", "d\"e", "f"]));
+    return 0;
+}

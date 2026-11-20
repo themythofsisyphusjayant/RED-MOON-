@@ -1,0 +1,93 @@
+// Qasida — csv-lite v2 (library program item 15, v2).
+// Import with: import "csv2.fg";
+// Quoted-field CSV handling in pure Qasida, on top of csv.fg
+// (header rows, numeric data, label column): cv_parse_line
+// parses one line honouring double-quoted fields — commas
+// inside quotes are data, and a doubled "" inside quotes is
+// one literal quote. cv_quote_field quotes a field only when
+// it contains a comma or a quote (doubling inner quotes), and
+// cv_write_row joins fields with commas, quoting as needed.
+// No newline handling: one line in, one line out.
+fn cv_parse_line(line: str) -> [str] {
+    let mut fields: [str] = [];
+    let mut cur: str = "";
+    let mut in_q: bool = false;
+    let mut i: int = 0;
+    while i < len(line) {
+        let c: str = substr(line, i, 1);
+        if in_q {
+            if c == "\"" {
+                if i + 1 < len(line) {
+                    if substr(line, i + 1, 1) == "\"" {
+                        cur = cur + "\"";
+                        i = i + 1;
+                    } else {
+                        in_q = false;
+                    }
+                } else {
+                    in_q = false;
+                }
+            } else {
+                cur = cur + c;
+            }
+        } else {
+            if c == "\"" {
+                in_q = true;
+            } else {
+                if c == "," {
+                    push(fields, cur);
+                    cur = "";
+                } else {
+                    cur = cur + c;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    push(fields, cur);
+    return fields;
+}
+
+fn cv_quote_field(f: str) -> str {
+    let mut need: bool = false;
+    let mut i: int = 0;
+    while i < len(f) {
+        let c: str = substr(f, i, 1);
+        if c == "," {
+            need = true;
+        }
+        if c == "\"" {
+            need = true;
+        }
+        i = i + 1;
+    }
+    if !need {
+        return f;
+    }
+    let mut out: str = "\"";
+    let mut j: int = 0;
+    while j < len(f) {
+        let c: str = substr(f, j, 1);
+        if c == "\"" {
+            out = out + "\"\"";
+        } else {
+            out = out + c;
+        }
+        j = j + 1;
+    }
+    out = out + "\"";
+    return out;
+}
+
+fn cv_write_row(fields: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(fields) {
+        if i > 0 {
+            out = out + ",";
+        }
+        out = out + cv_quote_field(fields[i]);
+        i = i + 1;
+    }
+    return out;
+}

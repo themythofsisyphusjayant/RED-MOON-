@@ -1,0 +1,113 @@
+// Qasida — graph-lite v2 (library program item 92, ext).
+// Import with: import "graphv2.fg";
+// Graph traversals in pure Qasida, on top of graph.fg: breadth-
+// first search and depth-first search over a flat row-major
+// 0/1 adjacency matrix (neighbours visited in ascending index
+// order), and Dijkstra shortest paths over a flat row-major
+// weight matrix (0 = no edge). All three take the node count
+// and a source node and return flat [int] results.
+fn gv_bfs(adj: [int], n: int, src: int) -> [int] {
+    let mut seen: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(seen, 0);
+        i = i + 1;
+    }
+    let mut q: [int] = [src];
+    seen[src] = 1;
+    let mut order: [int] = [];
+    let mut head: int = 0;
+    while head < len(q) {
+        let u: int = q[head];
+        head = head + 1;
+        push(order, u);
+        let mut v: int = 0;
+        while v < n {
+            if adj[u * n + v] == 1 {
+                if seen[v] == 0 {
+                    seen[v] = 1;
+                    push(q, v);
+                }
+            }
+            v = v + 1;
+        }
+    }
+    return order;
+}
+
+fn gv_dfs(adj: [int], n: int, src: int) -> [int] {
+    let mut seen: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(seen, 0);
+        i = i + 1;
+    }
+    let mut stack: [int] = [src];
+    seen[src] = 1;
+    let mut order: [int] = [];
+    while len(stack) > 0 {
+        let u: int = stack[len(stack) - 1];
+        let mut rest: [int] = [];
+        let mut pi: int = 0;
+        while pi < len(stack) - 1 {
+            push(rest, stack[pi]);
+            pi = pi + 1;
+        }
+        stack = rest;
+        push(order, u);
+        let mut v: int = n - 1;
+        while v >= 0 {
+            if adj[u * n + v] == 1 {
+                if seen[v] == 0 {
+                    seen[v] = 1;
+                    push(stack, v);
+                }
+            }
+            v = v - 1;
+        }
+    }
+    return order;
+}
+
+fn gv_dijkstra(w: [int], n: int, src: int) -> [int] {
+    let inf: int = 1000000000;
+    let mut dist: [int] = [];
+    let mut done: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(dist, inf);
+        push(done, 0);
+        i = i + 1;
+    }
+    dist[src] = 0;
+    let mut step: int = 0;
+    while step < n {
+        let mut u: int = -1;
+        let mut best: int = inf;
+        let mut j: int = 0;
+        while j < n {
+            if done[j] == 0 {
+                if dist[j] < best {
+                    best = dist[j];
+                    u = j;
+                }
+            }
+            j = j + 1;
+        }
+        if u < 0 {
+            break;
+        }
+        done[u] = 1;
+        let mut v: int = 0;
+        while v < n {
+            if w[u * n + v] > 0 {
+                if dist[u] + w[u * n + v] < dist[v] {
+                    dist[v] = dist[u] + w[u * n + v];
+                }
+            }
+            v = v + 1;
+        }
+        step = step + 1;
+    }
+    return dist;
+}

@@ -1,0 +1,13 @@
+import "graphv2.fg";
+
+fn main() -> int {
+    let adj: [int] = [0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0];
+    let bfs: [int] = gv_bfs(adj, 4, 0);
+    println(bfs[0], bfs[1], bfs[2], bfs[3]);
+    let dfs: [int] = gv_dfs(adj, 4, 0);
+    println(dfs[0], dfs[1], dfs[2], dfs[3]);
+    let w: [int] = [0, 4, 1, 0, 4, 0, 0, 1, 1, 0, 0, 5, 0, 1, 5, 0];
+    let dist: [int] = gv_dijkstra(w, 4, 0);
+    println(dist[0], dist[1], dist[2], dist[3]);
+    return 0;
+}

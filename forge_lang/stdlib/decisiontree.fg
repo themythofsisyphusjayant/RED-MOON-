@@ -1,0 +1,218 @@
+// Qasida — decision-tree-lite (library program item 92, ext).
+// Import with: import "decisiontree.fg";
+// Depth-2 decision tree in pure Qasida, on top of sklearn.fg /
+// sklearnv2.fg (stump, scaling, naive Bayes): Gini impurity,
+// best-split search over midpoint thresholds of both features
+// (feature 0 = x, feature 1 = y; ties keep the first candidate
+// found, features in order, thresholds ascending), majority-vote
+// leaves, and a flat 10-float tree [root_feat, root_t, left_feat,
+// left_t, right_feat, right_t, ll, lr, rl, rr] with dt_predict.
+// Pure leaves still split (both children keep the same label),
+// so predictions stay correct; a subset of size < 2 is not split.
+fn dt_gini(n0: int, n1: int) -> float {
+    let n: int = n0 + n1;
+    if n == 0 {
+        return 0.0;
+    }
+    let p0: float = n0 as float / n as float;
+    let p1: float = n1 as float / n as float;
+    return 1.0 - p0 * p0 - p1 * p1;
+}
+
+fn dt_sorted_unique(vals: [int]) -> [int] {
+    let mut s: [int] = [];
+    let mut i: int = 0;
+    while i < len(vals) {
+        push(s, vals[i]);
+        i = i + 1;
+    }
+    let mut a: int = 1;
+    while a < len(s) {
+        let v: int = s[a];
+        let mut b: int = a - 1;
+        while b >= 0 {
+            if s[b] > v {
+                s[b + 1] = s[b];
+                b = b - 1;
+            } else {
+                break;
+            }
+        }
+        s[b + 1] = v;
+        a = a + 1;
+    }
+    let mut out: [int] = [];
+    let mut k: int = 0;
+    while k < len(s) {
+        if k == 0 {
+            push(out, s[k]);
+        } else {
+            if s[k] != s[k - 1] {
+                push(out, s[k]);
+            }
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn dt_feature_vals(xs: [int], ys: [int], feat: int, i: int) -> int {
+    if feat == 0 {
+        return xs[i];
+    }
+    return ys[i];
+}
+
+fn dt_gather(arr: [int], idx: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(idx) {
+        push(out, arr[idx[i]]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dt_best_split(xs: [int], ys: [int], labels: [int]) -> [float] {
+    let n: int = len(labels);
+    let mut best_f: float = 0.0;
+    let mut best_t: float = 0.0;
+    let mut best_g: float = 1000000.0;
+    let mut feat: int = 0;
+    while feat < 2 {
+        let mut vals: [int] = [];
+        let mut i: int = 0;
+        while i < n {
+            push(vals, dt_feature_vals(xs, ys, feat, i));
+            i = i + 1;
+        }
+        let uniq: [int] = dt_sorted_unique(vals);
+        let mut k: int = 0;
+        while k < len(uniq) - 1 {
+            let t: float = (uniq[k] + uniq[k + 1]) as float / 2.0;
+            let mut l0: int = 0;
+            let mut l1: int = 0;
+            let mut r0: int = 0;
+            let mut r1: int = 0;
+            let mut j: int = 0;
+            while j < n {
+                let v: int = dt_feature_vals(xs, ys, feat, j);
+                if v as float <= t {
+                    if labels[j] == 0 {
+                        l0 = l0 + 1;
+                    } else {
+                        l1 = l1 + 1;
+                    }
+                } else {
+                    if labels[j] == 0 {
+                        r0 = r0 + 1;
+                    } else {
+                        r1 = r1 + 1;
+                    }
+                }
+                j = j + 1;
+            }
+            let gl: float = dt_gini(l0, l1);
+            let gr: float = dt_gini(r0, r1);
+            let wl: float = (l0 + l1) as float / n as float;
+            let wr: float = (r0 + r1) as float / n as float;
+            let g: float = wl * gl + wr * gr;
+            if g < best_g {
+                best_g = g;
+                best_f = feat as float;
+                best_t = t;
+            }
+            k = k + 1;
+        }
+        feat = feat + 1;
+    }
+    if best_g >= 1000000.0 {
+        return [0.0, 0.0, 0.0];
+    }
+    return [best_f, best_t, best_g];
+}
+
+fn dt_majority(labels: [int]) -> int {
+    let mut ones: int = 0;
+    let mut i: int = 0;
+    while i < len(labels) {
+        if labels[i] == 1 {
+            ones = ones + 1;
+        }
+        i = i + 1;
+    }
+    if ones * 2 > len(labels) {
+        return 1;
+    }
+    return 0;
+}
+
+fn dt_child(xs: [int], ys: [int], labels: [int]) -> [float] {
+    if len(labels) < 2 {
+        let m: float = dt_majority(labels) as float;
+        return [0.0, 0.0, m, m];
+    }
+    let s: [float] = dt_best_split(xs, ys, labels);
+    let f: int = s[0] as int;
+    let t: float = s[1];
+    let mut l0: [int] = [];
+    let mut l1: [int] = [];
+    let mut i: int = 0;
+    while i < len(labels) {
+        if dt_feature_vals(xs, ys, f, i) as float <= t {
+            push(l0, labels[i]);
+        } else {
+            push(l1, labels[i]);
+        }
+        i = i + 1;
+    }
+    return [s[0], s[1], dt_majority(l0) as float, dt_majority(l1) as float];
+}
+
+fn dt_fit(xs: [int], ys: [int], labels: [int]) -> [float] {
+    let root: [float] = dt_best_split(xs, ys, labels);
+    let rf: int = root[0] as int;
+    let rt: float = root[1];
+    let mut li: [int] = [];
+    let mut ri: [int] = [];
+    let mut i: int = 0;
+    while i < len(labels) {
+        if dt_feature_vals(xs, ys, rf, i) as float <= rt {
+            push(li, i);
+        } else {
+            push(ri, i);
+        }
+        i = i + 1;
+    }
+    let left: [float] = dt_child(dt_gather(xs, li), dt_gather(ys, li), dt_gather(labels, li));
+    let right: [float] = dt_child(dt_gather(xs, ri), dt_gather(ys, ri), dt_gather(labels, ri));
+    return [root[0], root[1], left[0], left[1], right[0], right[1], left[2], left[3], right[2], right[3]];
+}
+
+fn dt_predict(tree: [float], x: int, y: int) -> int {
+    let rf: int = tree[0] as int;
+    let mut v: int = x;
+    if rf == 1 {
+        v = y;
+    }
+    if v as float <= tree[1] {
+        let lf: int = tree[2] as int;
+        let mut lv: int = x;
+        if lf == 1 {
+            lv = y;
+        }
+        if lv as float <= tree[3] {
+            return tree[6] as int;
+        }
+        return tree[7] as int;
+    }
+    let rf2: int = tree[4] as int;
+    let mut rv: int = x;
+    if rf2 == 1 {
+        rv = y;
+    }
+    if rv as float <= tree[5] {
+        return tree[8] as int;
+    }
+    return tree[9] as int;
+}

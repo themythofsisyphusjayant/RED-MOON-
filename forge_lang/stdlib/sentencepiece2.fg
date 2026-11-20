@@ -1,0 +1,55 @@
+// Qasida — sentencepiece-lite BPE extension (AI/ML program item 21, ext).
+// Import with: import "sentencepiece2.fg";
+// Byte-pair-encoding merge passes in pure Qasida, on top of
+// sentencepiece.fg (greedy longest-match unigram tokenization):
+// sp2_bpe applies an ordered list of merges, given as parallel
+// [str] arrays of left / right pieces, to a token list; each
+// pass scans left to right and replaces every adjacent
+// (left, right) pair with left + right. sp2_join concatenates
+// tokens with a separator.
+fn sp2_bpe(toks: [str], lefts: [str], rights: [str]) -> [str] {
+    let mut cur: [str] = toks;
+    let mut m: int = 0;
+    while m < len(lefts) {
+        let l: str = lefts[m];
+        let r: str = rights[m];
+        let merged: str = l + r;
+        let mut out: [str] = [];
+        let mut i: int = 0;
+        while i < len(cur) {
+            if i + 1 < len(cur) {
+                if cur[i] == l {
+                    if cur[i + 1] == r {
+                        push(out, merged);
+                        i = i + 2;
+                    } else {
+                        push(out, cur[i]);
+                        i = i + 1;
+                    }
+                } else {
+                    push(out, cur[i]);
+                    i = i + 1;
+                }
+            } else {
+                push(out, cur[i]);
+                i = i + 1;
+            }
+        }
+        cur = out;
+        m = m + 1;
+    }
+    return cur;
+}
+
+fn sp2_join(toks: [str], sep: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(toks) {
+        if i > 0 {
+            out = out + sep;
+        }
+        out = out + toks[i];
+        i = i + 1;
+    }
+    return out;
+}

@@ -1,0 +1,12 @@
+import "numpyv2.fg";
+
+fn main() -> int {
+    let cs: [int] = np2_cumsum([1, 2, 3, 4]);
+    println(cs[0], cs[1], cs[2], cs[3]);
+    let ord: [int] = np2_argsort([30, 10, 20]);
+    println(ord[0], ord[1], ord[2]);
+    let ad: [float] = np2_add_scalar([1.5, 2.5], 0.5);
+    println(ad[0], ad[1]);
+    println(np2_dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]));
+    return 0;
+}

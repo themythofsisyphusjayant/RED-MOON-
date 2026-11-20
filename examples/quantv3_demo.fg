@@ -1,0 +1,15 @@
+import "quantv3.fg";
+
+fn main() -> int {
+    let scale: float = q3_asym_scale(-1.0, 2.0);
+    let zp: int = q3_zero_point(-1.0, scale);
+    println(scale);
+    println(zp);
+    println(q3_quantize(-1.0, scale, zp), q3_quantize(-0.25, scale, zp), q3_quantize(0.0, scale, zp), q3_quantize(0.25, scale, zp), q3_quantize(2.0, scale, zp));
+    println(q3_dequantize(64, scale, zp), q3_dequantize(106, scale, zp));
+    let sc_a: float = q3_asym_scale(-2.0, 1.0);
+    println(sc_a, q3_zero_point(-2.0, sc_a));
+    let sc_b: float = q3_asym_scale(0.0, 5.0);
+    println(sc_b, q3_zero_point(0.0, sc_b));
+    return 0;
+}

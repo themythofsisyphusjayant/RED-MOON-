@@ -1,0 +1,14 @@
+import "decisiontree.fg";
+
+fn main() -> int {
+    let xs: [int] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let ys: [int] = [1, 1, 2, 2, 2, 3, 3, 3];
+    let labels: [int] = [0, 0, 0, 1, 0, 1, 1, 1];
+    let root: [float] = dt_best_split(xs, ys, labels);
+    println(root[0] as int, root[1], root[2]);
+    let tree: [float] = dt_fit(xs, ys, labels);
+    println(tree[2] as int, tree[3]);
+    println(tree[4] as int, tree[5]);
+    println(dt_predict(tree, 2, 1), dt_predict(tree, 5, 2), dt_predict(tree, 7, 3), dt_predict(tree, 4, 2));
+    return 0;
+}

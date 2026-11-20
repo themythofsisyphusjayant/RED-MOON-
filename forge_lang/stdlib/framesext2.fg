@@ -1,0 +1,92 @@
+// Qasida — frames-fast extended v2 (library program item 14, ext v2).
+// Import with: import "framesext2.fg";
+// More columnar ops over pandas.fg's flat Frame, in pure Qasida,
+// on top of frames.fg and framesext.fg (group-by sum, inner-join
+// count, column sum): an inner join that returns flat triples
+// [key, left_val, right_val], a pivot count of rows per group
+// whose value equals a target, and a rolling mean over a plain
+// float column (full windows only).
+import "frames.fg";
+
+fn fx2_inner_join(a: Frame, b: Frame, key_col: str, val_a_col: str, val_b_col: str) -> [float] {
+    let ai: int = df_col_index(a, key_col);
+    let bi: int = df_col_index(b, key_col);
+    let av: int = df_col_index(a, val_a_col);
+    let bv: int = df_col_index(b, val_b_col);
+    if ai < 0 {
+        fail("fx2_inner_join: unknown key column in left frame");
+    }
+    if bi < 0 {
+        fail("fx2_inner_join: unknown key column in right frame");
+    }
+    if av < 0 {
+        fail("fx2_inner_join: unknown value column in left frame");
+    }
+    if bv < 0 {
+        fail("fx2_inner_join: unknown value column in right frame");
+    }
+    let mut out: [float] = [];
+    let mut r: int = 0;
+    while r < a.nrows {
+        let ka: float = df_get(a, r, ai);
+        let mut s: int = 0;
+        while s < b.nrows {
+            if df_get(b, s, bi) == ka {
+                push(out, ka);
+                push(out, df_get(a, r, av));
+                push(out, df_get(b, s, bv));
+            }
+            s = s + 1;
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+fn fx2_pivot_count(f: Frame, group_col: str, val_col: str, target: float, ngroups: int) -> [int] {
+    let gi: int = df_col_index(f, group_col);
+    let vi: int = df_col_index(f, val_col);
+    if gi < 0 {
+        fail("fx2_pivot_count: unknown group column");
+    }
+    if vi < 0 {
+        fail("fx2_pivot_count: unknown value column");
+    }
+    let mut out: [int] = [];
+    let mut g: int = 0;
+    while g < ngroups {
+        let mut n: int = 0;
+        let mut r: int = 0;
+        while r < f.nrows {
+            let key: int = df_get(f, r, gi) as int;
+            if key == g {
+                if df_get(f, r, vi) == target {
+                    n = n + 1;
+                }
+            }
+            r = r + 1;
+        }
+        push(out, n);
+        g = g + 1;
+    }
+    return out;
+}
+
+fn fx2_rolling_mean(col: [float], w: int) -> [float] {
+    if w <= 0 {
+        fail("fx2_rolling_mean: window must be positive");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i + w <= len(col) {
+        let mut s: float = 0.0;
+        let mut k: int = 0;
+        while k < w {
+            s = s + col[i + k];
+            k = k + 1;
+        }
+        push(out, s / w as float);
+        i = i + 1;
+    }
+    return out;
+}

@@ -1,0 +1,12 @@
+import "sentencepiece2.fg";
+
+fn main() -> int {
+    let low: [str] = sp2_bpe(["l", "o", "w"], ["l", "lo"], ["o", "w"]);
+    println(len(low));
+    println(low[0]);
+    let tst: [str] = sp2_bpe(["t", "e", "s", "t"], ["e", "t", "tes"], ["s", "es", "t"]);
+    println(len(tst));
+    println(tst[0]);
+    println(sp2_join(low, " ") + " " + sp2_join(tst, " "));
+    return 0;
+}

@@ -1,0 +1,66 @@
+// Qasida — numpy-lite v2 (library program item 1, v2).
+// Import with: import "numpyv2.fg";
+// More array helpers in pure Qasida, on top of numpy.fg
+// (element-wise ops, matmul, reductions, reshape, slicing):
+// cumulative sum, argsort (indices that sort ascending, ties
+// keep the lower index first), scalar broadcast addition over
+// floats, and the float dot product.
+fn np2_cumsum(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i];
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np2_argsort(a: [int]) -> [int] {
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut x: int = 1;
+    while x < len(idx) {
+        let v: int = idx[x];
+        let mut y: int = x - 1;
+        while y >= 0 {
+            if a[idx[y]] > a[v] {
+                idx[y + 1] = idx[y];
+                y = y - 1;
+            } else {
+                break;
+            }
+        }
+        idx[y + 1] = v;
+        x = x + 1;
+    }
+    return idx;
+}
+
+fn np2_add_scalar(a: [float], s: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] + s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn np2_dot(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("np2_dot: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}

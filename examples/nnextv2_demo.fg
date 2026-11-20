@@ -1,0 +1,12 @@
+import "nnextv2.fg";
+
+fn main() -> int {
+    println(nn2_gelu(-1.0), nn2_gelu(0.0), nn2_gelu(1.0), nn2_gelu(2.0));
+    let sm: [float] = nn2_softmax_temp([2.0, 1.0, 0.0], 2.0);
+    println(sm[0], sm[1], sm[2]);
+    let ln: [float] = nn2_layernorm([1.0, 2.0, 3.0, 4.0], 0.00001);
+    println(ln[0], ln[1], ln[2], ln[3]);
+    let dr: [float] = nn2_dropout([1.0, 2.0, 3.0, 4.0], [1, 0, 1, 0], 0.5);
+    println(dr[0], dr[1], dr[2], dr[3]);
+    return 0;
+}

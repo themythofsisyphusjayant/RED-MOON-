@@ -1,0 +1,33 @@
+// Qasida — quant-lite v3 (AI/ML program item 49, v3).
+// Import with: import "quantv3.fg";
+// Asymmetric int8 quantisation in pure Qasida, on top of
+// quant.fg (asymmetric per-channel ranges) and quantv2.fg
+// (symmetric int8): a single shared [lo, hi] range with
+// scale = (hi - lo) / 255 and zero point = round(-lo / scale),
+// plus per-channel scales / zero points. Rounding is
+// qt_round_half_up from quant.fg (half away from zero).
+import "quant.fg";
+
+fn q3_asym_scale(lo: float, hi: float) -> float {
+    if hi <= lo {
+        fail("q3_asym_scale: hi must exceed lo");
+    }
+    return (hi - lo) / 255.0;
+}
+
+fn q3_zero_point(lo: float, scale: float) -> int {
+    return qt_round_half_up(0.0 - lo / scale);
+}
+
+fn q3_quantize(x: float, scale: float, zp: int) -> int {
+    let q: int = qt_round_half_up(x / scale) + zp;
+    return qt_clamp_int(q, 0, 255);
+}
+
+fn q3_dequantize(q: int, scale: float, zp: int) -> float {
+    return (q - zp) as float * scale;
+}
+
+fn q3_fake_quant(x: float, scale: float, zp: int) -> float {
+    return q3_dequantize(q3_quantize(x, scale, zp), scale, zp);
+}

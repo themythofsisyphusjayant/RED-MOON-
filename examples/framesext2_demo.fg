@@ -1,0 +1,14 @@
+import "framesext2.fg";
+
+fn main() -> int {
+    let a: Frame = Frame { names: ["id", "val"], data: [1.0, 10.0, 2.0, 20.0, 3.0, 30.0], nrows: 3, ncols: 2 };
+    let b: Frame = Frame { names: ["id", "amt"], data: [2.0, 200.0, 3.0, 300.0, 4.0, 400.0], nrows: 3, ncols: 2 };
+    let joined: [float] = fx2_inner_join(a, b, "id", "val", "amt");
+    println(joined[0], joined[1], joined[2], joined[3], joined[4], joined[5]);
+    let c: Frame = Frame { names: ["g", "v"], data: [0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 0.0, 2.0, 1.0], nrows: 6, ncols: 2 };
+    let pc: [int] = fx2_pivot_count(c, "g", "v", 1.0, 3);
+    println(pc[0], pc[1], pc[2]);
+    let rm: [float] = fx2_rolling_mean([1.0, 2.0, 3.0, 4.0, 5.0], 3);
+    println(rm[0], rm[1], rm[2]);
+    return 0;
+}
