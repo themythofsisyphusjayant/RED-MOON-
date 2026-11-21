@@ -1,0 +1,87 @@
+// Qasida — numeric generics: numeric-trait registry (Top-500 #119).
+// Import with: import "numtrait.fg";
+// Generics exist; numeric traits for math code arrive as a
+// registry: a NumVal carries a kind ("int" / "float") plus
+// both payloads, and nt_add/sub/mul/div/neg/abs dispatch on
+// the kind. Both sides must share a kind; int division
+// truncates toward zero, float division is the usual one.
+// v1 limits: int and float only; no checked-overflow error
+// values (int overflow is the language's checked arithmetic).
+
+struct NumVal {
+    kind: str;
+    ival: int;
+    fval: float;
+}
+
+fn nt_int(v: int) -> NumVal {
+    return NumVal { kind: "int", ival: v, fval: 0.0 };
+}
+
+fn nt_float(v: float) -> NumVal {
+    return NumVal { kind: "float", ival: 0, fval: v };
+}
+
+fn nt_kind(a: NumVal) -> str {
+    return a.kind;
+}
+
+fn nt_is_int(a: NumVal) -> bool {
+    return a.kind == "int";
+}
+
+fn nt_ival(a: NumVal) -> int {
+    return a.ival;
+}
+
+fn nt_fval(a: NumVal) -> float {
+    return a.fval;
+}
+
+fn nt_add(a: NumVal, b: NumVal) -> NumVal {
+    if a.kind == "float" {
+        return nt_float(a.fval + b.fval);
+    }
+    return nt_int(a.ival + b.ival);
+}
+
+fn nt_sub(a: NumVal, b: NumVal) -> NumVal {
+    if a.kind == "float" {
+        return nt_float(a.fval - b.fval);
+    }
+    return nt_int(a.ival - b.ival);
+}
+
+fn nt_mul(a: NumVal, b: NumVal) -> NumVal {
+    if a.kind == "float" {
+        return nt_float(a.fval * b.fval);
+    }
+    return nt_int(a.ival * b.ival);
+}
+
+fn nt_div(a: NumVal, b: NumVal) -> NumVal {
+    if a.kind == "float" {
+        return nt_float(a.fval / b.fval);
+    }
+    return nt_int(a.ival / b.ival);
+}
+
+fn nt_neg(a: NumVal) -> NumVal {
+    if a.kind == "float" {
+        return nt_float(0.0 - a.fval);
+    }
+    return nt_int(0 - a.ival);
+}
+
+fn nt_abs(a: NumVal) -> NumVal {
+    if a.kind == "float" {
+        if a.fval < 0.0 {
+            return nt_float(0.0 - a.fval);
+        }
+        return nt_float(a.fval);
+    }
+    if a.ival < 0 {
+        return nt_int(0 - a.ival);
+    }
+    return nt_int(a.ival);
+}

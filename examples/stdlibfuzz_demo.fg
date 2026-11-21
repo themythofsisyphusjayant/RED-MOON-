@@ -1,0 +1,13 @@
+import "stdlibfuzz.fg";
+
+fn main() {
+    println(sf_fuzz("int", 20, 42));
+    println(sf_fuzz("bool", 20, 42));
+    println(sf_fuzz("paren", 20, 42));
+    println(sf_int_ok("-42"));
+    println(sf_int_ok("12a"));
+    println(sf_int_val("-42"));
+    println(sf_bool_val("true"));
+    println(sf_balanced("(()())"));
+    println(sf_balanced("(()"));
+}

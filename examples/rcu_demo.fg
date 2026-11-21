@@ -1,0 +1,26 @@
+import "rcu.fg";
+
+fn main() {
+    let mut r: Rcu = rcu_new();
+    r = rcu_read_lock(r);
+    r = rcu_read_lock(r);
+    println(rcu_readers(r));
+    r = rcu_defer(r);
+    r = rcu_defer(r);
+    println(rcu_deferred(r));
+    r = rcu_synchronize(r);
+    println(rcu_reclaimed(r));
+    println(rcu_deferred(r));
+    println(rcu_epoch(r));
+    r = rcu_read_unlock(r);
+    r = rcu_read_unlock(r);
+    println(rcu_readers(r));
+    println(rcu_reclaimed(r));
+    println(rcu_deferred(r));
+    println(rcu_epoch(r));
+    r = rcu_read_lock(r);
+    r = rcu_defer(r);
+    r = rcu_read_unlock(r);
+    println(rcu_reclaimed(r));
+    println(rcu_epoch(r));
+}

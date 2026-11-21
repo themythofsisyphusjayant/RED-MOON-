@@ -1,0 +1,77 @@
+// Qasida — format via LSP (Top-500 #369, PARTIAL close).
+// Import with: import "lspfmt.fg";
+// fmt exists; the missing half was wiring it into the LSP.
+// This is the formatting half as a library: given source
+// lines, lf_format() produces the formatted lines (trailing
+// spaces trimmed, leading indent rounded down to a multiple
+// of 4 spaces) and lf_edit_count() counts the lines that
+// changed, which is exactly the text-edit list an LSP
+// formatting response carries, one edit per changed line.
+// v1 limits: indentation only (no brace or spacing rules);
+// tabs are not expanded (a tab counts as one column).
+
+fn lf_indent_of(line: str) -> int {
+    let mut n: int = 0;
+    while n < len(line) {
+        if substr(line, n, 1) == " " {
+            n = n + 1;
+        } else {
+            return n;
+        }
+    }
+    return n;
+}
+
+fn lf_trim_end(line: str) -> str {
+    let mut end: int = len(line);
+    while end > 0 {
+        if substr(line, end - 1, 1) == " " {
+            end = end - 1;
+        } else {
+            return substr(line, 0, end);
+        }
+    }
+    return "";
+}
+
+fn lf_normalize_indent(line: str) -> str {
+    let ind: int = lf_indent_of(line);
+    let keep: int = (ind / 4) * 4;
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < keep {
+        out = out + " ";
+        i = i + 1;
+    }
+    return out + substr(line, ind, len(line) - ind);
+}
+
+fn lf_format_line(line: str) -> str {
+    return lf_normalize_indent(lf_trim_end(line));
+}
+
+fn lf_format(lines: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        push(out, lf_format_line(lines[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn lf_edit_count(before: [str], after: [str]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(before) {
+        if before[i] != after[i] {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn lf_is_formatted(lines: [str]) -> bool {
+    return lf_edit_count(lines, lf_format(lines)) == 0;
+}

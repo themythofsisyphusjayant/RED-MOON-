@@ -1,0 +1,58 @@
+// Qasida — condition variables (Top-500 #257).
+// Import with: import "condvar.fg";
+// Wait and notify, as a table over the mutex model: a
+// CondVar is (name, waiters). cv_wait() enqueues a thread,
+// cv_notify_one_name() reports the first waiter ("" when
+// nobody waits) and cv_notify_one() drops it, while
+// cv_notify_all_count() / cv_notify_all() wake and clear
+// everybody. The two-function shape (name query + state
+// change) is deliberate: Qasida has no multi-value return.
+// v1 limits: no spurious wakeups modelled; waiters are
+// plain thread names, not handles.
+
+struct CondVar {
+    name: str;
+    waiters: [str];
+}
+
+fn cv_new(name: str) -> CondVar {
+    return CondVar { name: name, waiters: [] };
+}
+
+fn cv_wait(cv: CondVar, thread: str) -> CondVar {
+    let mut n: CondVar = cv;
+    push(n.waiters, thread);
+    return n;
+}
+
+fn cv_waiters(cv: CondVar) -> int {
+    return len(cv.waiters);
+}
+
+fn cv_notify_one_name(cv: CondVar) -> str {
+    if len(cv.waiters) == 0 {
+        return "";
+    }
+    return cv.waiters[0];
+}
+
+fn cv_notify_one(cv: CondVar) -> CondVar {
+    if len(cv.waiters) == 0 {
+        return cv;
+    }
+    let mut rest: [str] = [];
+    let mut i: int = 1;
+    while i < len(cv.waiters) {
+        push(rest, cv.waiters[i]);
+        i = i + 1;
+    }
+    return CondVar { name: cv.name, waiters: rest };
+}
+
+fn cv_notify_all_count(cv: CondVar) -> int {
+    return len(cv.waiters);
+}
+
+fn cv_notify_all(cv: CondVar) -> CondVar {
+    return CondVar { name: cv.name, waiters: [] };
+}

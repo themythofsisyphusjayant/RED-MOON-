@@ -1,0 +1,23 @@
+import "sampleprof.fg";
+
+fn main() {
+    let mut s: Samples = sp_new();
+    s = sp_sample(s, "parse");
+    s = sp_sample(s, "parse");
+    s = sp_sample(s, "parse");
+    s = sp_sample(s, "parse");
+    s = sp_sample(s, "parse");
+    s = sp_sample(s, "main");
+    s = sp_sample(s, "main");
+    s = sp_sample(s, "main");
+    s = sp_sample(s, "render");
+    s = sp_sample(s, "render");
+    println(sp_total(s));
+    println(sp_top(s));
+    println(sp_top_count(s));
+    println(sp_count(s, "main"));
+    println(sp_self_pct(s, "parse"));
+    println(sp_self_pct(s, "render"));
+    println(sp_fn_count(s));
+    println(sp_count(s, "missing"));
+}

@@ -1,0 +1,63 @@
+// Qasida — read-copy-update (Top-500 #254).
+// Import with: import "rcu.fg";
+// Lock-free reads, as a table: readers hold the current
+// epoch, writers defer reclamation, and a grace period
+// ends when the reader count drops to zero — only then do
+// deferred callbacks run and the epoch advance. Both the
+// explicit synchronize and the last read-unlock reclaim.
+// v1 limits: no per-object versions (one global epoch);
+// deferred work is counted, not executed.
+
+struct Rcu {
+    readers: int;
+    epoch: int;
+    deferred: int;
+    reclaimed: int;
+}
+
+fn rcu_new() -> Rcu {
+    return Rcu { readers: 0, epoch: 0, deferred: 0, reclaimed: 0 };
+}
+
+fn rcu_read_lock(r: Rcu) -> Rcu {
+    return Rcu { readers: r.readers + 1, epoch: r.epoch, deferred: r.deferred, reclaimed: r.reclaimed };
+}
+
+fn rcu_reclaim(r: Rcu) -> Rcu {
+    if r.readers > 0 {
+        return r;
+    }
+    if r.deferred == 0 {
+        return r;
+    }
+    return Rcu { readers: 0, epoch: r.epoch + 1, deferred: 0, reclaimed: r.reclaimed + r.deferred };
+}
+
+fn rcu_read_unlock(r: Rcu) -> Rcu {
+    let n: Rcu = Rcu { readers: r.readers - 1, epoch: r.epoch, deferred: r.deferred, reclaimed: r.reclaimed };
+    return rcu_reclaim(n);
+}
+
+fn rcu_defer(r: Rcu) -> Rcu {
+    return Rcu { readers: r.readers, epoch: r.epoch, deferred: r.deferred + 1, reclaimed: r.reclaimed };
+}
+
+fn rcu_synchronize(r: Rcu) -> Rcu {
+    return rcu_reclaim(r);
+}
+
+fn rcu_readers(r: Rcu) -> int {
+    return r.readers;
+}
+
+fn rcu_epoch(r: Rcu) -> int {
+    return r.epoch;
+}
+
+fn rcu_deferred(r: Rcu) -> int {
+    return r.deferred;
+}
+
+fn rcu_reclaimed(r: Rcu) -> int {
+    return r.reclaimed;
+}

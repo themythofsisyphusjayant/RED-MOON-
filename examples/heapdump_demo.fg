@@ -1,0 +1,20 @@
+import "heapdump.fg";
+
+fn main() {
+    let mut h: HeapSnap = hd_new();
+    h = hd_add(h, 100, 64, "User");
+    h = hd_add(h, 200, 128, "Post");
+    h = hd_add(h, 300, 32, "Tag");
+    h = hd_add(h, 400, 256, "Image");
+    h = hd_edge(h, 100, 200);
+    h = hd_edge(h, 200, 300);
+    h = hd_root(h, 100);
+    println(hd_total_bytes(h));
+    println(hd_count(h));
+    println(hd_largest(h));
+    println(hd_reachable(h, 100));
+    println(hd_reachable(h, 300));
+    println(hd_reachable(h, 400));
+    println(hd_leak_bytes(h));
+    println(hd_leak_count(h));
+}

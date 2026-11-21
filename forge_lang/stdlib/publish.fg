@@ -1,0 +1,140 @@
+// Qasida — registry publishes (Top-500 #332).
+// Import with: import "publish.fg";
+// The one-click publishes (PyPI, Marketplace, Pages), as
+// a record table: a publish is (registry, package,
+// version, status). pb_valid_version() accepts dotted
+// digits only (at least one dot, no leading/trailing dot,
+// no ".."); pb_publish() records "published" for a valid,
+// not-yet-published triple and "rejected" otherwise, and
+// pb_retract() moves a published record to "retracted".
+// relbin.fg (batch 12) manifests the artifacts; this one
+// is the publish step itself.
+// v1 limits: version strings only (no pre-release tags);
+// retract is a status change, not a deletion.
+
+struct PubRec {
+    registry: str;
+    pkg: str;
+    version: str;
+    status: str;
+}
+
+struct PubReg {
+    recs: [PubRec];
+}
+
+fn pb_new() -> PubReg {
+    return PubReg { recs: [] };
+}
+
+fn pb_is_digit(c: str) -> bool {
+    let digits: str = "0123456789";
+    let mut j: int = 0;
+    while j < len(digits) {
+        if substr(digits, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn pb_valid_version(v: str) -> bool {
+    if len(v) == 0 {
+        return false;
+    }
+    if substr(v, 0, 1) == "." {
+        return false;
+    }
+    if substr(v, len(v) - 1, 1) == "." {
+        return false;
+    }
+    let mut dots: int = 0;
+    let mut prev_dot: bool = false;
+    let mut i: int = 0;
+    while i < len(v) {
+        let c: str = substr(v, i, 1);
+        if c == "." {
+            if prev_dot {
+                return false;
+            }
+            prev_dot = true;
+            dots = dots + 1;
+        } else {
+            prev_dot = false;
+            if !pb_is_digit(c) {
+                return false;
+            }
+        }
+        i = i + 1;
+    }
+    if dots == 0 {
+        return false;
+    }
+    return true;
+}
+
+fn pb_find(r: PubReg, registry: str, pkg: str, version: str) -> int {
+    let mut i: int = 0;
+    while i < len(r.recs) {
+        let rec: PubRec = r.recs[i];
+        if rec.registry == registry && rec.pkg == pkg && rec.version == version {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn pb_publish(r: PubReg, registry: str, pkg: str, version: str) -> PubReg {
+    let mut n: PubReg = r;
+    let at: int = pb_find(n, registry, pkg, version);
+    if at >= 0 && n.recs[at].status == "published" {
+        push(n.recs, PubRec { registry: registry, pkg: pkg, version: version, status: "rejected" });
+        return n;
+    }
+    if !pb_valid_version(version) {
+        push(n.recs, PubRec { registry: registry, pkg: pkg, version: version, status: "rejected" });
+        return n;
+    }
+    push(n.recs, PubRec { registry: registry, pkg: pkg, version: version, status: "published" });
+    return n;
+}
+
+fn pb_status(r: PubReg, registry: str, pkg: str, version: str) -> str {
+    let at: int = pb_find(r, registry, pkg, version);
+    if at < 0 {
+        return "absent";
+    }
+    return r.recs[at].status;
+}
+
+fn pb_count(r: PubReg) -> int {
+    return len(r.recs);
+}
+
+fn pb_published_count(r: PubReg) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(r.recs) {
+        if r.recs[i].status == "published" {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn pb_retract(r: PubReg, registry: str, pkg: str, version: str) -> PubReg {
+    let mut n: PubReg = r;
+    let at: int = pb_find(n, registry, pkg, version);
+    if at < 0 {
+        return n;
+    }
+    if n.recs[at].status != "published" {
+        return n;
+    }
+    let rec: PubRec = n.recs[at];
+    n.recs[at] = PubRec { registry: rec.registry, pkg: rec.pkg, version: rec.version, status: "retracted" };
+    return n;
+}

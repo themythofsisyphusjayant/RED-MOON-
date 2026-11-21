@@ -1,0 +1,110 @@
+// Qasida — M:N lightweight tasks: a scheduler over spawn
+// (Top-500 #241, PARTIAL close).
+// Import with: import "mntask.fg";
+// spawn exists; the missing half was a real scheduler over
+// it. Tasks are rows (name, priority, steps done/total);
+// mt_step runs one step of the next ready task in
+// round-robin order after the last-run task. This is the
+// scheduling table — task bodies themselves still run via
+// spawn; the table decides the order.
+// v1 limits: cooperative steps only (no preemption, no
+// blocking waits); priorities are recorded, not enforced
+// (round-robin follows arrival order).
+
+struct MTask {
+    name: str;
+    prio: int;
+    done: int;
+    total: int;
+}
+
+struct MSched {
+    tasks: [MTask];
+    current: int;
+}
+
+fn mt_task_new(name: str, prio: int, total: int) -> MTask {
+    return MTask { name: name, prio: prio, done: 0, total: total };
+}
+
+fn mt_new() -> MSched {
+    return MSched { tasks: [], current: -1 };
+}
+
+fn mt_add(s: MSched, t: MTask) -> MSched {
+    let mut n: MSched = s;
+    push(n.tasks, t);
+    return n;
+}
+
+fn mt_state(s: MSched, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(s.tasks) {
+        if s.tasks[i].name == name {
+            if s.tasks[i].done >= s.tasks[i].total {
+                return "done";
+            }
+            return "ready";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn mt_step(s: MSched) -> MSched {
+    let count: int = len(s.tasks);
+    if count == 0 {
+        return s;
+    }
+    let mut k: int = 0;
+    while k < count {
+        let idx: int = (s.current + 1 + k) % count;
+        if s.tasks[idx].done < s.tasks[idx].total {
+            let mut tasks: [MTask] = [];
+            let mut i: int = 0;
+            while i < count {
+                if i == idx {
+                    let t: MTask = s.tasks[i];
+                    push(tasks, MTask { name: t.name, prio: t.prio, done: t.done + 1, total: t.total });
+                } else {
+                    push(tasks, s.tasks[i]);
+                }
+                i = i + 1;
+            }
+            return MSched { tasks: tasks, current: idx };
+        }
+        k = k + 1;
+    }
+    return s;
+}
+
+fn mt_run_name(s: MSched) -> str {
+    if s.current < 0 {
+        return "";
+    }
+    return s.tasks[s.current].name;
+}
+
+fn mt_done_count(s: MSched) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(s.tasks) {
+        if s.tasks[i].done >= s.tasks[i].total {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn mt_ready_count(s: MSched) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(s.tasks) {
+        if s.tasks[i].done < s.tasks[i].total {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}

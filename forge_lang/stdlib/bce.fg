@@ -1,0 +1,63 @@
+// Qasida — bounds-check elimination analysis (Top-500 #402).
+// Import with: import "bce.fg";
+// Checks exist everywhere; the missing half was proving
+// safe indexing and removing them. This is the proof
+// table: for a loop var i over [lo, hi) stepping by step,
+// the index i + k is safe iff its smallest value (lo + k)
+// is >= 0 and its largest value (last_i + k) is < len,
+// where last_i = lo + ((hi - 1 - lo) / step) * step.
+// bce_index_ok proves one offset, bce_const_ok proves a
+// constant index, bce_count_removable counts the provable
+// offsets in a list, bce_first_bad gives the position of
+// the first unprovable one (-1 when all prove).
+// v1 limits: affine indices of the form i + k only (no
+// products, no two-variable indices); step must be > 0.
+
+fn bce_last_i(lo: int, hi: int, step: int) -> int {
+    return lo + ((hi - 1 - lo) / step) * step;
+}
+
+fn bce_index_ok(len: int, lo: int, hi: int, step: int, k: int) -> bool {
+    let first: int = lo + k;
+    if first < 0 {
+        return false;
+    }
+    let last: int = bce_last_i(lo, hi, step) + k;
+    if last >= len {
+        return false;
+    }
+    return true;
+}
+
+fn bce_const_ok(len: int, c: int) -> bool {
+    if c < 0 {
+        return false;
+    }
+    if c >= len {
+        return false;
+    }
+    return true;
+}
+
+fn bce_count_removable(len: int, lo: int, hi: int, step: int, ks: [int]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(ks) {
+        if bce_index_ok(len, lo, hi, step, ks[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn bce_first_bad(len: int, lo: int, hi: int, step: int, ks: [int]) -> int {
+    let mut i: int = 0;
+    while i < len(ks) {
+        if !bce_index_ok(len, lo, hi, step, ks[i]) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}

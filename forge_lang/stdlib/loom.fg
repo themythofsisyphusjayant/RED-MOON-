@@ -1,0 +1,73 @@
+// Qasida — deterministic concurrency testing (Top-500 #260).
+// Import with: import "loom.fg";
+// Explore schedules on purpose, like Rust's loom: two
+// threads are op sequences over one shared counter, and
+// lm_outcomes() enumerates every interleaving (each
+// thread's order preserved) and collects the distinct
+// final values, in discovery order (thread A's op first
+// at each branch). Ops: "inc" (+1), "dec" (-1), "set0"
+// (=0), "set5" (=5). Two interleavings that differ only
+// in commuting ops land on the same value, so the count
+// of distinct outcomes is the real measure of schedule
+// sensitivity.
+// v1 limits: two threads only, one shared counter, four
+// op kinds; no happens-before or lock modelling.
+
+fn lm_apply(op: str, v: int) -> int {
+    if op == "inc" {
+        return v + 1;
+    }
+    if op == "dec" {
+        return v - 1;
+    }
+    if op == "set0" {
+        return 0;
+    }
+    if op == "set5" {
+        return 5;
+    }
+    return v;
+}
+
+fn lm_contains(outs: [int], v: int) -> bool {
+    let mut i: int = 0;
+    while i < len(outs) {
+        if outs[i] == v {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn lm_walk(a: [str], b: [str], i: int, j: int, v: int, outs: [int]) -> [int] {
+    if i >= len(a) && j >= len(b) {
+        if lm_contains(outs, v) {
+            return outs;
+        }
+        let mut n: [int] = outs;
+        push(n, v);
+        return n;
+    }
+    let mut cur: [int] = outs;
+    if i < len(a) {
+        cur = lm_walk(a, b, i + 1, j, lm_apply(a[i], v), cur);
+    }
+    if j < len(b) {
+        cur = lm_walk(a, b, i, j + 1, lm_apply(b[j], v), cur);
+    }
+    return cur;
+}
+
+fn lm_outcomes(a: [str], b: [str], start: int) -> [int] {
+    let empty: [int] = [];
+    return lm_walk(a, b, 0, 0, start, empty);
+}
+
+fn lm_outcome_count(a: [str], b: [str], start: int) -> int {
+    return len(lm_outcomes(a, b, start));
+}
+
+fn lm_has_outcome(a: [str], b: [str], start: int, v: int) -> bool {
+    return lm_contains(lm_outcomes(a, b, start), v);
+}

@@ -1,0 +1,26 @@
+import "stm.fg";
+
+fn main() {
+    let mut s: StmStore = st_new();
+    s = st_put(s, "x", 10);
+    let mut tx1: StmTx = tx_begin();
+    tx1 = tx_read(s, tx1, "x");
+    tx1 = tx_write(s, tx1, "x", 20);
+    let mut tx2: StmTx = tx_begin();
+    tx2 = tx_read(s, tx2, "x");
+    tx2 = tx_write(s, tx2, "x", 30);
+    println(tx_can_commit(s, tx1));
+    s = tx_commit(s, tx1);
+    println(tx_can_commit(s, tx2));
+    println(st_get(s, "x"));
+    println(st_version(s, "x"));
+    let mut tx3: StmTx = tx_begin();
+    tx3 = tx_read(s, tx3, "x");
+    tx3 = tx_write(s, tx3, "x", 25);
+    println(tx_can_commit(s, tx3));
+    s = tx_commit(s, tx3);
+    println(st_get(s, "x"));
+    println(st_version(s, "x"));
+    println(tx_read_count(tx3));
+    println(tx_write_count(tx3));
+}

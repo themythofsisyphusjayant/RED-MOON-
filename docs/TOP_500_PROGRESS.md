@@ -1116,3 +1116,49 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (310 + 19 + 171 = 500). HAVE 310 of 500 = 62%. Next: sprint batch 13,
   same libs-only rule, target 20/day (the running count is the honest
   measure).
+
+- Sprint batch 13 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121m.py (80/80 PASS — 20
+  demos) with an independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch13/replica_20261121m.py):
+  triple.fg (#326 sysroot registry closes the PARTIAL:
+  (triple, path) rows, lookup, host sysroot, count),
+  numtrait.fg (#119 numeric-trait registry, NumVal kind
+  dispatch), mntask.fg (#241 task table with a round-robin
+  scheduler over it, closes the PARTIAL), rtimer.fg (#263
+  clock-driven timer table, closes the PARTIAL), bce.fg
+  (#402 bounds-proof analysis, i + k provable iff lo + k >=
+  0 and last_i + k < len, closes the PARTIAL), lspfmt.fg
+  (#369 LSP formatting as a library, formatted lines plus
+  per-line edit count, closes the PARTIAL), condvar.fg
+  (#257 wait/notify-one/notify-all), stm.fg (#253
+  transaction table, commit holds while recorded versions
+  match), rcu.fg (#254 readers/epoch/deferred/reclaimed,
+  grace-period reclaim), racedet.fg (#259 lockset race
+  detection), loom.fg (#260 interleaving explorer,
+  distinct final counter values), select.fg (#266
+  first-ready select over single-slot channels),
+  sampleprof.fg (#386 sample aggregation, hottest function,
+  self-percentages), heapdump.fg (#389 heap snapshot
+  analysis, reachable walk, leak bytes/count), revdbg.fg
+  (#392 execution trace, clamped step-back/step-forward),
+  crashrep.fg (#395 symbol table plus crash frames,
+  symbolication), repldbg.fg (#399 live variable table,
+  one-op eval, watch list), publish.fg (#332 publish
+  records with version validation, publish/retract),
+  devshell.fg (#336 dev-shell spec with an FNV-1a
+  derivation hash), stdlibfuzz.fg (#442 LCG fuzz driver
+  over three toy parsers, exact reproducible ok-counts).
+  No #42/#43/#53 work (#42 resolved: helper-function slice).
+  Skipped per brief: #273, #129, #302 (need function values);
+  #122/#164 not flipped (known stale notes). #181/#187/#188/
+  #189/#190 not buildable in pure Qasida (no mkdir/readdir/
+  rename builtins exist). #326's sysroots half now CLOSED.
+  Counts after sprint batch 13: HAVE 330, PARTIAL 13, GAP 157, to build
+  170. Arithmetic from sprint batch 12 (HAVE 310, PARTIAL 19, GAP 171,
+  to build 190): 14 GAP-to-HAVE + 6 PARTIAL-to-HAVE = 20 flips;
+  310 + 20 = 330; 19 - 6 = 13; 171 - 14 = 157; 190 - 20 = 170
+  (330 + 13 + 157 = 500). HAVE 330 of 500 = 66%. Next: sprint batch 14,
+  same libs-only rule, target 20/day (the running count is the honest
+  measure).

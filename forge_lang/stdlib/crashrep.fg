@@ -1,0 +1,71 @@
+// Qasida — structured crash reports (Top-500 #395).
+// Import with: import "crashrep.fg";
+// Symbolicated reports, as a table: a symbol table maps
+// addresses to function names, frames are the crashed
+// stack, and cr_lookup() symbolication turns an address
+// into a name ("???" when the address has no symbol).
+// cr_has_unknown() flags a report that still needs
+// symbols; adding the missing symbol clears it.
+// v1 limits: addresses are plain ints (no hex parsing);
+// no inlining info, no source lines.
+
+struct CrashRep {
+    sym_addrs: [int];
+    sym_fns: [str];
+    frames: [int];
+    signal: str;
+}
+
+fn cr_new(signal: str) -> CrashRep {
+    return CrashRep { sym_addrs: [], sym_fns: [], frames: [], signal: signal };
+}
+
+fn cr_symbol(r: CrashRep, addr: int, fn_name: str) -> CrashRep {
+    let mut n: CrashRep = r;
+    push(n.sym_addrs, addr);
+    push(n.sym_fns, fn_name);
+    return n;
+}
+
+fn cr_frame(r: CrashRep, addr: int) -> CrashRep {
+    let mut n: CrashRep = r;
+    push(n.frames, addr);
+    return n;
+}
+
+fn cr_lookup(r: CrashRep, addr: int) -> str {
+    let mut i: int = 0;
+    while i < len(r.sym_addrs) {
+        if r.sym_addrs[i] == addr {
+            return r.sym_fns[i];
+        }
+        i = i + 1;
+    }
+    return "???";
+}
+
+fn cr_frame_count(r: CrashRep) -> int {
+    return len(r.frames);
+}
+
+fn cr_top_fn(r: CrashRep) -> str {
+    if len(r.frames) == 0 {
+        return "";
+    }
+    return cr_lookup(r, r.frames[0]);
+}
+
+fn cr_has_unknown(r: CrashRep) -> bool {
+    let mut i: int = 0;
+    while i < len(r.frames) {
+        if cr_lookup(r, r.frames[i]) == "???" {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cr_signal(r: CrashRep) -> str {
+    return r.signal;
+}

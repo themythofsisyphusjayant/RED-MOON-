@@ -10,4 +10,14 @@ fn main() {
     println(tr_os("wasm32-unknown-unknown"));
     println(tr_known("wasm32-unknown-unknown"));
     println(tr_known("mips-foo-bar"));
+    let mut roots: Sysroots = tr_roots_new();
+    roots = tr_roots_add(roots, "x86_64-unknown-linux-gnu", "/opt/sysroot/x86_64");
+    roots = tr_roots_add(roots, "aarch64-unknown-linux-gnu", "/opt/sysroot/aarch64");
+    roots = tr_roots_add(roots, "wasm32-unknown-unknown", "/opt/sysroot/wasm32");
+    println(tr_sysroot_for(roots, "aarch64-unknown-linux-gnu"));
+    println(tr_sysroot_for(roots, "riscv64-unknown-none"));
+    println(tr_sysroot_has(roots, "wasm32-unknown-unknown"));
+    println(tr_sysroot_has(roots, "mips-foo-bar"));
+    println(tr_sysroot_host(roots, "x86_64-unknown-linux-gnu"));
+    println(tr_sysroot_count(roots));
 }

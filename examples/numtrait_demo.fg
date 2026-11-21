@@ -1,0 +1,20 @@
+import "numtrait.fg";
+
+fn main() {
+    let a: NumVal = nt_int(6);
+    let b: NumVal = nt_int(7);
+    println(nt_ival(nt_add(a, b)));
+    println(nt_ival(nt_mul(a, b)));
+    println(nt_ival(nt_sub(a, b)));
+    println(nt_ival(nt_div(a, b)));
+    println(nt_ival(nt_neg(a)));
+    println(nt_ival(nt_abs(nt_neg(a))));
+    let c: NumVal = nt_float(2.5);
+    let d: NumVal = nt_float(0.5);
+    println(nt_fval(nt_add(c, d)));
+    println(nt_fval(nt_mul(c, d)));
+    println(nt_fval(nt_div(c, d)));
+    println(nt_fval(nt_sub(c, d)));
+    println(nt_kind(a));
+    println(nt_kind(c));
+}

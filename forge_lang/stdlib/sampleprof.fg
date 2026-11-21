@@ -1,0 +1,89 @@
+// Qasida — CPU profiling by sampling (Top-500 #386).
+// Import with: import "sampleprof.fg";
+// A sampling profiler, as an aggregation table: each
+// sp_sample() records one observed function, sp_top()
+// names the hottest function, sp_self_pct() gives its
+// integer share of all samples. profiler.fg (batch 5)
+// times whole runs; this one answers "where does the
+// time go" from sampled stacks.
+// v1 limits: samples are recorded by the caller (no
+// timer-interrupt sampler); integer percents only.
+
+struct Samples {
+    fns: [str];
+    counts: [int];
+    total: int;
+}
+
+fn sp_new() -> Samples {
+    return Samples { fns: [], counts: [], total: 0 };
+}
+
+fn sp_find(s: Samples, fn_name: str) -> int {
+    let mut i: int = 0;
+    while i < len(s.fns) {
+        if s.fns[i] == fn_name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn sp_sample(s: Samples, fn_name: str) -> Samples {
+    let mut n: Samples = s;
+    let at: int = sp_find(n, fn_name);
+    if at >= 0 {
+        n.counts[at] = n.counts[at] + 1;
+    } else {
+        push(n.fns, fn_name);
+        push(n.counts, 1);
+    }
+    n.total = n.total + 1;
+    return n;
+}
+
+fn sp_count(s: Samples, fn_name: str) -> int {
+    let at: int = sp_find(s, fn_name);
+    if at < 0 {
+        return 0;
+    }
+    return s.counts[at];
+}
+
+fn sp_total(s: Samples) -> int {
+    return s.total;
+}
+
+fn sp_top(s: Samples) -> str {
+    let mut best: str = "";
+    let mut best_c: int = 0;
+    let mut i: int = 0;
+    while i < len(s.fns) {
+        if s.counts[i] > best_c {
+            best_c = s.counts[i];
+            best = s.fns[i];
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn sp_top_count(s: Samples) -> int {
+    let at: int = sp_find(s, sp_top(s));
+    if at < 0 {
+        return 0;
+    }
+    return s.counts[at];
+}
+
+fn sp_self_pct(s: Samples, fn_name: str) -> int {
+    if s.total == 0 {
+        return 0;
+    }
+    return sp_count(s, fn_name) * 100 / s.total;
+}
+
+fn sp_fn_count(s: Samples) -> int {
+    return len(s.fns);
+}

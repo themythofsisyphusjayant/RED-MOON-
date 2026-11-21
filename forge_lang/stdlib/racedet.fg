@@ -1,0 +1,82 @@
+// Qasida — data-race detector (Top-500 #259).
+// Import with: import "racedet.fg";
+// Find races in tests, as a lockset analysis over an
+// access log: each access records (variable, thread, is
+// a write, the one lock held or "" for none). Two accesses
+// race when they touch the same variable from different
+// threads, at least one is a write, and the locks do not
+// match (or neither holds a lock). Two reads never race,
+// and the same lock on both sides never races.
+// v1 limits: one lock per access (no lock sets); only
+// pairs of accesses are checked, not whole schedules.
+
+struct RaceLog {
+    vars: [str];
+    threads: [str];
+    writes: [bool];
+    locks: [str];
+}
+
+fn rd_new() -> RaceLog {
+    return RaceLog { vars: [], threads: [], writes: [], locks: [] };
+}
+
+fn rd_access(l: RaceLog, var: str, thread: str, is_write: bool, lock: str) -> RaceLog {
+    let mut n: RaceLog = l;
+    push(n.vars, var);
+    push(n.threads, thread);
+    push(n.writes, is_write);
+    push(n.locks, lock);
+    return n;
+}
+
+fn rd_pair_races(l: RaceLog, i: int, j: int) -> bool {
+    if l.vars[i] != l.vars[j] {
+        return false;
+    }
+    if l.threads[i] == l.threads[j] {
+        return false;
+    }
+    if !l.writes[i] && !l.writes[j] {
+        return false;
+    }
+    if l.locks[i] != "" && l.locks[i] == l.locks[j] {
+        return false;
+    }
+    return true;
+}
+
+fn rd_race_count(l: RaceLog) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(l.vars) {
+        let mut j: int = i + 1;
+        while j < len(l.vars) {
+            if rd_pair_races(l, i, j) {
+                c = c + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn rd_has_race(l: RaceLog, var: str) -> bool {
+    let mut i: int = 0;
+    while i < len(l.vars) {
+        let mut j: int = i + 1;
+        while j < len(l.vars) {
+            if l.vars[i] == var && rd_pair_races(l, i, j) {
+                return true;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn rd_access_count(l: RaceLog) -> int {
+    return len(l.vars);
+}

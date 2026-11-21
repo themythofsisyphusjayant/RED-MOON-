@@ -1,0 +1,15 @@
+import "lspfmt.fg";
+
+fn main() {
+    let before: [str] = ["  fn main() {", "    let x = 1;   ", "       println(x);", "}"];
+    let after: [str] = lf_format(before);
+    println(after[0]);
+    println(after[1]);
+    println(after[2]);
+    println(after[3]);
+    println(lf_edit_count(before, after));
+    println(lf_is_formatted(before));
+    println(lf_is_formatted(after));
+    println(lf_indent_of("       println(x);"));
+    println(lf_trim_end("abc   "));
+}

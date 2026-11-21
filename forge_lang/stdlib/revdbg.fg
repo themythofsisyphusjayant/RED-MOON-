@@ -1,0 +1,84 @@
+// Qasida — reverse debugging (Top-500 #392).
+// Import with: import "revdbg.fg";
+// Record and replay execution, as a trace table: each
+// step records (variable, value) and rd_step_back() /
+// rd_step_fwd() move the current position through the
+// trace, clamped at both ends. replay.fg (batch 6) replays
+// seeded inputs; this one replays recorded state, one
+// step at a time, backwards as well as forwards.
+// v1 limits: one integer value per step (no whole-state
+// snapshots); no branching timelines.
+
+struct RevTrace {
+    vars: [str];
+    vals: [int];
+    pos: int;
+}
+
+fn rd_new() -> RevTrace {
+    return RevTrace { vars: [], vals: [], pos: -1 };
+}
+
+fn rd_record(t: RevTrace, var: str, val: int) -> RevTrace {
+    let mut n: RevTrace = t;
+    push(n.vars, var);
+    push(n.vals, val);
+    n.pos = len(n.vars) - 1;
+    return n;
+}
+
+fn rd_step_back(t: RevTrace) -> RevTrace {
+    if t.pos <= 0 {
+        return RevTrace { vars: t.vars, vals: t.vals, pos: 0 };
+    }
+    return RevTrace { vars: t.vars, vals: t.vals, pos: t.pos - 1 };
+}
+
+fn rd_step_fwd(t: RevTrace) -> RevTrace {
+    if t.pos >= len(t.vars) - 1 {
+        return RevTrace { vars: t.vars, vals: t.vals, pos: len(t.vars) - 1 };
+    }
+    return RevTrace { vars: t.vars, vals: t.vals, pos: t.pos + 1 };
+}
+
+fn rd_pos(t: RevTrace) -> int {
+    return t.pos;
+}
+
+fn rd_len(t: RevTrace) -> int {
+    return len(t.vars);
+}
+
+fn rd_current_var(t: RevTrace) -> str {
+    if t.pos < 0 {
+        return "";
+    }
+    return t.vars[t.pos];
+}
+
+fn rd_current_val(t: RevTrace) -> int {
+    if t.pos < 0 {
+        return -1;
+    }
+    return t.vals[t.pos];
+}
+
+fn rd_value_at(t: RevTrace, i: int) -> int {
+    if i < 0 {
+        return -1;
+    }
+    if i >= len(t.vals) {
+        return -1;
+    }
+    return t.vals[i];
+}
+
+fn rd_var_at(t: RevTrace, i: int) -> str {
+    if i < 0 {
+        return "";
+    }
+    if i >= len(t.vars) {
+        return "";
+    }
+    return t.vars[i];
+}

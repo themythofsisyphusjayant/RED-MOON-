@@ -1,0 +1,136 @@
+// Qasida — software transactional memory (Top-500 #253).
+// Import with: import "stm.fg";
+// Atomic multi-value updates, as a table over the store:
+// a transaction records the version of every key it reads
+// or writes, and tx_can_commit() holds only while every
+// recorded version still matches the store — a concurrent
+// commit bumps the version, so the second writer aborts.
+// tx_commit() applies the writes and bumps each written
+// key's version by one. New keys start at version 0.
+// v1 limits: single store, no nested transactions, no
+// retry loop (the caller re-runs an aborted transaction).
+
+struct StmStore {
+    keys: [str];
+    vals: [int];
+    versions: [int];
+}
+
+struct StmTx {
+    reads: [str];
+    read_vers: [int];
+    writes: [str];
+    write_vals: [int];
+    write_vers: [int];
+}
+
+fn st_new() -> StmStore {
+    return StmStore { keys: [], vals: [], versions: [] };
+}
+
+fn st_find(s: StmStore, k: str) -> int {
+    let mut i: int = 0;
+    while i < len(s.keys) {
+        if s.keys[i] == k {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn st_put(s: StmStore, k: str, v: int) -> StmStore {
+    let mut n: StmStore = s;
+    let at: int = st_find(n, k);
+    if at >= 0 {
+        n.vals[at] = v;
+        n.versions[at] = n.versions[at] + 1;
+    } else {
+        push(n.keys, k);
+        push(n.vals, v);
+        push(n.versions, 0);
+    }
+    return n;
+}
+
+fn st_get(s: StmStore, k: str) -> int {
+    let at: int = st_find(s, k);
+    if at < 0 {
+        return 0;
+    }
+    return s.vals[at];
+}
+
+fn st_version(s: StmStore, k: str) -> int {
+    let at: int = st_find(s, k);
+    if at < 0 {
+        return 0;
+    }
+    return s.versions[at];
+}
+
+fn tx_begin() -> StmTx {
+    return StmTx { reads: [], read_vers: [], writes: [], write_vals: [], write_vers: [] };
+}
+
+fn tx_read(s: StmStore, tx: StmTx, k: str) -> StmTx {
+    let mut n: StmTx = tx;
+    push(n.reads, k);
+    push(n.read_vers, st_version(s, k));
+    return n;
+}
+
+fn tx_read_val(s: StmStore, tx: StmTx, k: str) -> int {
+    let mut i: int = 0;
+    while i < len(tx.writes) {
+        if tx.writes[i] == k {
+            return tx.write_vals[i];
+        }
+        i = i + 1;
+    }
+    return st_get(s, k);
+}
+
+fn tx_write(s: StmStore, tx: StmTx, k: str, v: int) -> StmTx {
+    let mut n: StmTx = tx;
+    push(n.writes, k);
+    push(n.write_vals, v);
+    push(n.write_vers, st_version(s, k));
+    return n;
+}
+
+fn tx_can_commit(s: StmStore, tx: StmTx) -> bool {
+    let mut i: int = 0;
+    while i < len(tx.reads) {
+        if st_version(s, tx.reads[i]) != tx.read_vers[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(tx.writes) {
+        if st_version(s, tx.writes[j]) != tx.write_vers[j] {
+            return false;
+        }
+        j = j + 1;
+    }
+    return true;
+}
+
+fn tx_commit(s: StmStore, tx: StmTx) -> StmStore {
+    let mut n: StmStore = s;
+    let mut i: int = 0;
+    while i < len(tx.writes) {
+        n = st_put(n, tx.writes[i], tx.write_vals[i]);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn tx_read_count(tx: StmTx) -> int {
+    return len(tx.reads);
+}
+
+fn tx_write_count(tx: StmTx) -> int {
+    return len(tx.writes);
+}

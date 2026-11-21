@@ -1,0 +1,17 @@
+import "loom.fg";
+
+fn main() {
+    let o1: [int] = lm_outcomes(["inc", "set5"], ["inc", "set0"], 0);
+    println(len(o1));
+    println(o1[0]);
+    println(o1[1]);
+    println(lm_has_outcome(["inc", "set5"], ["inc", "set0"], 0, 5));
+    println(lm_has_outcome(["inc", "set5"], ["inc", "set0"], 0, 3));
+    let o2: [int] = lm_outcomes(["inc", "inc"], ["inc", "inc"], 0);
+    println(len(o2));
+    println(o2[0]);
+    let o3: [int] = lm_outcomes(["set5"], ["set0"], 0);
+    println(len(o3));
+    println(o3[0]);
+    println(o3[1]);
+}

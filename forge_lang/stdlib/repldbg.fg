@@ -1,0 +1,88 @@
+// Qasida — REPL-driven debugging (Top-500 #399).
+// Import with: import "repldbg.fg";
+// Inspect live program state, as a table: variables are
+// (name, value) rows, rb_get()/rb_has() inspect them, and
+// rb_eval() evaluates one tiny expression — variable op
+// constant, with op "+", "-" or "*" — against the live
+// table. rb_watch() marks variables to keep an eye on.
+// bp.fg (batch 10) stops execution; dap.fg (batch 12)
+// answers protocol requests; this one is the interactive
+// inspector itself.
+// v1 limits: integer variables only; one op per eval;
+// unknown names evaluate to -1.
+
+struct ReplDbg {
+    names: [str];
+    vals: [int];
+    watched: [str];
+}
+
+fn rb_new() -> ReplDbg {
+    return ReplDbg { names: [], vals: [], watched: [] };
+}
+
+fn rb_find(d: ReplDbg, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(d.names) {
+        if d.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rb_set(d: ReplDbg, name: str, val: int) -> ReplDbg {
+    let mut n: ReplDbg = d;
+    let at: int = rb_find(n, name);
+    if at >= 0 {
+        n.vals[at] = val;
+    } else {
+        push(n.names, name);
+        push(n.vals, val);
+    }
+    return n;
+}
+
+fn rb_get(d: ReplDbg, name: str) -> int {
+    let at: int = rb_find(d, name);
+    if at < 0 {
+        return -1;
+    }
+    return d.vals[at];
+}
+
+fn rb_has(d: ReplDbg, name: str) -> bool {
+    return rb_find(d, name) >= 0;
+}
+
+fn rb_watch(d: ReplDbg, name: str) -> ReplDbg {
+    let mut n: ReplDbg = d;
+    push(n.watched, name);
+    return n;
+}
+
+fn rb_eval(d: ReplDbg, name: str, op: str, k: int) -> int {
+    let v: int = rb_get(d, name);
+    if v == -1 && !rb_has(d, name) {
+        return -1;
+    }
+    if op == "+" {
+        return v + k;
+    }
+    if op == "-" {
+        return v - k;
+    }
+    if op == "*" {
+        return v * k;
+    }
+    return -1;
+}
+
+fn rb_watch_count(d: ReplDbg) -> int {
+    return len(d.watched);
+}
+
+fn rb_var_count(d: ReplDbg) -> int {
+    return len(d.names);
+}

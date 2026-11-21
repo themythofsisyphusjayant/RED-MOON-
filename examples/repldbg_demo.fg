@@ -1,0 +1,18 @@
+import "repldbg.fg";
+
+fn main() {
+    let mut d: ReplDbg = rb_new();
+    d = rb_set(d, "x", 10);
+    d = rb_set(d, "y", 20);
+    d = rb_set(d, "z", 5);
+    println(rb_get(d, "x"));
+    println(rb_has(d, "w"));
+    println(rb_eval(d, "x", "+", 5));
+    println(rb_eval(d, "y", "*", 2));
+    println(rb_eval(d, "z", "-", 5));
+    println(rb_eval(d, "w", "+", 1));
+    d = rb_watch(d, "x");
+    d = rb_watch(d, "y");
+    println(rb_watch_count(d));
+    println(rb_var_count(d));
+}

@@ -1,0 +1,14 @@
+import "bce.fg";
+
+fn main() {
+    println(bce_index_ok(10, 0, 10, 1, 0));
+    println(bce_index_ok(10, 0, 10, 1, -1));
+    println(bce_index_ok(10, 0, 10, 1, 1));
+    println(bce_index_ok(10, 2, 8, 2, 3));
+    println(bce_index_ok(10, 2, 8, 2, 4));
+    println(bce_const_ok(10, 9));
+    println(bce_const_ok(10, 10));
+    println(bce_const_ok(10, -1));
+    println(bce_count_removable(10, 0, 10, 1, [0, -1, 1]));
+    println(bce_first_bad(10, 0, 10, 1, [0, -1, 1]));
+}

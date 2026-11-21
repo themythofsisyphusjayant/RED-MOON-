@@ -1,0 +1,117 @@
+// Qasida — reproducible dev shells (Top-500 #336).
+// Import with: import "devshell.fg";
+// Flake-style environments, as a spec table: packages plus
+// environment variables, with an FNV-1a derivation hash
+// over the spec in order. Two shells with the same spec
+// hash the same (ds_same), so a rebuild from the same
+// spec is bit-identical by construction. The rank table
+// holds the 93 printable ASCII characters except '"' and
+// '\\' (which need no escaping this way); a character
+// outside the table contributes 0.
+// v1 limits: packages and env vars only (no services, no
+// hooks); the hash is a 32-bit FNV-1a, not a cryptographic
+// digest.
+
+fn ds_rank(c: str) -> int {
+    let table: str = " !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(table) {
+        if substr(table, j, 1) == c {
+            return j + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+fn ds_hash_str(h: int, s: str) -> int {
+    let mut cur: int = h;
+    let mut i: int = 0;
+    while i < len(s) {
+        cur = ((cur ^ ds_rank(substr(s, i, 1))) * 16777619) % 4294967296;
+        i = i + 1;
+    }
+    return cur;
+}
+
+struct DevShell {
+    pkgs: [str];
+    env_names: [str];
+    env_vals: [str];
+}
+
+fn ds_new() -> DevShell {
+    return DevShell { pkgs: [], env_names: [], env_vals: [] };
+}
+
+fn ds_pkg(s: DevShell, pkg: str) -> DevShell {
+    let mut n: DevShell = s;
+    push(n.pkgs, pkg);
+    return n;
+}
+
+fn ds_env(s: DevShell, name: str, val: str) -> DevShell {
+    let mut n: DevShell = s;
+    push(n.env_names, name);
+    push(n.env_vals, val);
+    return n;
+}
+
+fn ds_has_pkg(s: DevShell, pkg: str) -> bool {
+    let mut i: int = 0;
+    while i < len(s.pkgs) {
+        if s.pkgs[i] == pkg {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ds_env_get(s: DevShell, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(s.env_names) {
+        if s.env_names[i] == name {
+            return s.env_vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn ds_pkg_count(s: DevShell) -> int {
+    return len(s.pkgs);
+}
+
+fn ds_env_count(s: DevShell) -> int {
+    return len(s.env_names);
+}
+
+fn ds_hash(s: DevShell) -> int {
+    let mut h: int = 2166136261;
+    let mut i: int = 0;
+    while i < len(s.pkgs) {
+        h = ds_hash_str(h, s.pkgs[i]);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(s.env_names) {
+        h = ds_hash_str(h, s.env_names[j]);
+        h = ds_hash_str(h, s.env_vals[j]);
+        j = j + 1;
+    }
+    return h;
+}
+
+fn ds_same(a: DevShell, b: DevShell) -> bool {
+    if ds_hash(a) != ds_hash(b) {
+        return false;
+    }
+    if len(a.pkgs) != len(b.pkgs) {
+        return false;
+    }
+    if len(a.env_names) != len(b.env_names) {
+        return false;
+    }
+    return true;
+}

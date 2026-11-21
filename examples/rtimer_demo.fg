@@ -1,0 +1,23 @@
+import "rtimer.fg";
+
+fn main() {
+    let mut ts: RTimers = rt_new();
+    ts = rt_schedule(ts, "a", 1000);
+    ts = rt_schedule(ts, "b", 2000);
+    ts = rt_schedule(ts, "c", 3000);
+    println(len(rt_due(ts, 1500)));
+    println(rt_due(ts, 1500)[0]);
+    ts = rt_fire(ts, 1500);
+    println(rt_fired_count(ts));
+    println(rt_pending_count(ts));
+    println(rt_next_due(ts));
+    ts = rt_cancel(ts, "c");
+    println(rt_pending_count(ts));
+    println(len(rt_due(ts, 5000)));
+    let mut live: RTimers = rt_new();
+    live = rt_schedule(live, "past", rt_now_us() - 1000);
+    println(len(rt_due(live, rt_now_us())));
+    let mut far: RTimers = rt_new();
+    far = rt_schedule(far, "far", rt_now_us() + 3600000000);
+    println(len(rt_due(far, rt_now_us())));
+}

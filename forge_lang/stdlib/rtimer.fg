@@ -1,0 +1,128 @@
+// Qasida — runtime timers (Top-500 #263, PARTIAL close).
+// Import with: import "rtimer.fg";
+// timers.fg is pure arithmetic over caller-supplied stamps;
+// the missing half was real runtime timers. A timer is a
+// row (name, due_us, fired, cancelled) and the table is
+// driven by the live clock: rt_now_us() wraps clock_micros,
+// rt_due() lists what is due at a stamp, rt_fire() marks
+// due timers fired, rt_cancel() drops one. The demo drives
+// the table with explicit stamps (exact output) and checks
+// two live-clock facts that hold for any stamp: a timer due
+// 1ms in the past is due, one due an hour ahead is not.
+// v1 limits: single-shot timers only (no periodic repeat);
+// one due list per stamp (no callback dispatch).
+
+struct RTimer {
+    name: str;
+    due_us: int;
+    fired: bool;
+    cancelled: bool;
+}
+
+struct RTimers {
+    timers: [RTimer];
+}
+
+fn rt_empty_names() -> [str] {
+    return [];
+}
+
+fn rt_new() -> RTimers {
+    return RTimers { timers: [] };
+}
+
+fn rt_now_us() -> int {
+    return clock_micros();
+}
+
+fn rt_schedule(ts: RTimers, name: str, due_us: int) -> RTimers {
+    let mut n: RTimers = ts;
+    push(n.timers, RTimer { name: name, due_us: due_us, fired: false, cancelled: false });
+    return n;
+}
+
+fn rt_due(ts: RTimers, now_us: int) -> [str] {
+    let mut out: [str] = rt_empty_names();
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        let t: RTimer = ts.timers[i];
+        if !t.fired && !t.cancelled && t.due_us <= now_us {
+            push(out, t.name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn rt_fire(ts: RTimers, now_us: int) -> RTimers {
+    let mut timers: [RTimer] = [];
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        let t: RTimer = ts.timers[i];
+        if !t.fired && !t.cancelled && t.due_us <= now_us {
+            push(timers, RTimer { name: t.name, due_us: t.due_us, fired: true, cancelled: false });
+        } else {
+            push(timers, t);
+        }
+        i = i + 1;
+    }
+    return RTimers { timers: timers };
+}
+
+fn rt_cancel(ts: RTimers, name: str) -> RTimers {
+    let mut timers: [RTimer] = [];
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        let t: RTimer = ts.timers[i];
+        if t.name == name {
+            push(timers, RTimer { name: t.name, due_us: t.due_us, fired: t.fired, cancelled: true });
+        } else {
+            push(timers, t);
+        }
+        i = i + 1;
+    }
+    return RTimers { timers: timers };
+}
+
+fn rt_fired_count(ts: RTimers) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        if ts.timers[i].fired {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn rt_pending_count(ts: RTimers) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        if !ts.timers[i].fired && !ts.timers[i].cancelled {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn rt_next_due(ts: RTimers) -> int {
+    let mut best: int = -1;
+    let mut i: int = 0;
+    while i < len(ts.timers) {
+        let t: RTimer = ts.timers[i];
+        if !t.fired && !t.cancelled {
+            if best < 0 {
+                best = t.due_us;
+            } else {
+                if t.due_us < best {
+                    best = t.due_us;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return best;
+}

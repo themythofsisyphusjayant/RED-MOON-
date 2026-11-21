@@ -439,3 +439,22 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   build log), rename.fg (rename-all symbol table), codeact.fg
   (code-action table), dap.fg (DAP request/response table),
   watchpt.fg (watchpoints, always/eq:N). HAVE 290 -> 310 (62% of 500).
+- Sprint batch 13 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 (80/80 checks, 20 demos): triple.fg
+  (sysroot registry closes #326 PARTIAL), numtrait.fg
+  (numeric-trait registry), mntask.fg (round-robin scheduler
+  over the task table, closes #241 PARTIAL), rtimer.fg
+  (clock-driven timers, closes #263 PARTIAL), bce.fg
+  (bounds-proof analysis, closes #402 PARTIAL), lspfmt.fg
+  (LSP formatting as a library, closes #369 PARTIAL),
+  condvar.fg (wait/notify), stm.fg (transaction table,
+  version-checked commit), rcu.fg (grace-period reclaim),
+  racedet.fg (lockset race detection), loom.fg
+  (interleaving explorer, distinct finals), select.fg
+  (first-ready select), sampleprof.fg (sample aggregation),
+  heapdump.fg (reachable walk, leak bytes/count), revdbg.fg
+  (clamped step-back/step-forward), crashrep.fg
+  (symbolication), repldbg.fg (live variable table, one-op
+  eval), publish.fg (publish records, version validation),
+  devshell.fg (FNV-1a derivation hash), stdlibfuzz.fg (LCG
+  fuzz driver, exact ok-counts). HAVE 310 -> 330 (66% of 500).

@@ -1,0 +1,24 @@
+import "mntask.fg";
+
+fn main() {
+    let mut s: MSched = mt_new();
+    s = mt_add(s, mt_task_new("fetch", 1, 2));
+    s = mt_add(s, mt_task_new("parse", 2, 1));
+    s = mt_add(s, mt_task_new("write", 1, 3));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    s = mt_step(s);
+    println(mt_run_name(s));
+    println(mt_done_count(s));
+    println(mt_ready_count(s));
+    println(mt_state(s, "parse"));
+    println(mt_state(s, "fetch"));
+}

@@ -1,0 +1,33 @@
+import "revdbg.fg";
+
+fn main() {
+    let mut t: RevTrace = rd_new();
+    t = rd_record(t, "x", 1);
+    t = rd_record(t, "x", 2);
+    t = rd_record(t, "y", 10);
+    t = rd_record(t, "x", 3);
+    println(rd_pos(t));
+    println(rd_current_var(t));
+    println(rd_current_val(t));
+    t = rd_step_back(t);
+    println(rd_pos(t));
+    println(rd_current_var(t));
+    println(rd_current_val(t));
+    t = rd_step_back(t);
+    println(rd_pos(t));
+    println(rd_current_var(t));
+    println(rd_current_val(t));
+    t = rd_step_fwd(t);
+    println(rd_pos(t));
+    println(rd_current_var(t));
+    println(rd_current_val(t));
+    t = rd_step_back(t);
+    t = rd_step_back(t);
+    t = rd_step_back(t);
+    println(rd_pos(t));
+    println(rd_current_var(t));
+    println(rd_current_val(t));
+    println(rd_len(t));
+    println(rd_value_at(t, 2));
+    println(rd_var_at(t, 3));
+}

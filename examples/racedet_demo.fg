@@ -1,0 +1,20 @@
+import "racedet.fg";
+
+fn main() {
+    let mut l: RaceLog = rd_new();
+    l = rd_access(l, "x", "t1", true, "m");
+    l = rd_access(l, "x", "t2", false, "m");
+    l = rd_access(l, "y", "t1", true, "");
+    l = rd_access(l, "y", "t2", true, "");
+    l = rd_access(l, "z", "t1", false, "");
+    l = rd_access(l, "z", "t2", false, "");
+    l = rd_access(l, "w", "t1", true, "m");
+    l = rd_access(l, "w", "t2", true, "n");
+    println(rd_race_count(l));
+    println(rd_has_race(l, "x"));
+    println(rd_has_race(l, "y"));
+    println(rd_has_race(l, "z"));
+    println(rd_has_race(l, "w"));
+    println(rd_has_race(l, "missing"));
+    println(rd_access_count(l));
+}

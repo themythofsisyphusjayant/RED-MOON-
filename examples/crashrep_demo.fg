@@ -1,0 +1,19 @@
+import "crashrep.fg";
+
+fn main() {
+    let mut r: CrashRep = cr_new("SIGSEGV");
+    r = cr_symbol(r, 4096, "main");
+    r = cr_symbol(r, 8192, "parse");
+    r = cr_symbol(r, 12288, "render");
+    r = cr_frame(r, 12288);
+    r = cr_frame(r, 8192);
+    r = cr_frame(r, 16384);
+    println(cr_frame_count(r));
+    println(cr_top_fn(r));
+    println(cr_lookup(r, 8192));
+    println(cr_lookup(r, 16384));
+    println(cr_has_unknown(r));
+    println(cr_signal(r));
+    r = cr_symbol(r, 16384, "libc");
+    println(cr_has_unknown(r));
+}

@@ -1,0 +1,21 @@
+import "condvar.fg";
+
+fn main() {
+    let mut full: CondVar = cv_new("full");
+    full = cv_wait(full, "t1");
+    full = cv_wait(full, "t2");
+    let mut empty: CondVar = cv_new("empty");
+    empty = cv_wait(empty, "t3");
+    println(cv_waiters(full));
+    println(cv_waiters(empty));
+    println(cv_notify_one_name(full));
+    full = cv_notify_one(full);
+    println(cv_waiters(full));
+    println(cv_notify_all_count(full));
+    full = cv_notify_all(full);
+    println(cv_waiters(full));
+    println(cv_notify_one_name(empty));
+    empty = cv_notify_one(empty);
+    println(cv_waiters(empty));
+    println(cv_notify_one_name(full));
+}

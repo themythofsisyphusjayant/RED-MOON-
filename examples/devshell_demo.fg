@@ -1,0 +1,29 @@
+import "devshell.fg";
+
+fn main() {
+    let mut a: DevShell = ds_new();
+    a = ds_pkg(a, "gcc");
+    a = ds_pkg(a, "qasida");
+    a = ds_pkg(a, "make");
+    a = ds_env(a, "CC", "gcc");
+    a = ds_env(a, "MODE", "safe");
+    let mut b: DevShell = ds_new();
+    b = ds_pkg(b, "gcc");
+    b = ds_pkg(b, "qasida");
+    b = ds_pkg(b, "make");
+    b = ds_env(b, "CC", "gcc");
+    b = ds_env(b, "MODE", "safe");
+    let mut c: DevShell = ds_new();
+    c = ds_pkg(c, "gcc");
+    c = ds_pkg(c, "qasida");
+    println(ds_pkg_count(a));
+    println(ds_env_count(a));
+    println(ds_has_pkg(a, "make"));
+    println(ds_has_pkg(a, "rust"));
+    println(ds_env_get(a, "CC"));
+    println(ds_env_get(a, "XX"));
+    println(ds_hash(a));
+    println(ds_hash(b));
+    println(ds_same(a, b));
+    println(ds_same(a, c));
+}

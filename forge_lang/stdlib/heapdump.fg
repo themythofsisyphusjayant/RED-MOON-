@@ -1,0 +1,143 @@
+// Qasida — heap dumps (Top-500 #389).
+// Import with: import "heapdump.fg";
+// Snapshot analysis over a heap table: objects are rows
+// (address, size, type), edges are (from, to) pairs, and
+// roots are the live set. hd_reachable() walks from the
+// roots, hd_leak_bytes() / hd_leak_count() total the
+// objects no root can reach — the leak candidates.
+// memprof.fg (batch 6) counts allocations; this one
+// analyses one snapshot for what survived and why.
+// v1 limits: one ref edge list (no per-object ref counts);
+// reachability is a plain worklist walk.
+
+struct HeapSnap {
+    addrs: [int];
+    sizes: [int];
+    types: [str];
+    edge_from: [int];
+    edge_to: [int];
+    roots: [int];
+}
+
+fn hd_new() -> HeapSnap {
+    return HeapSnap { addrs: [], sizes: [], types: [], edge_from: [], edge_to: [], roots: [] };
+}
+
+fn hd_add(h: HeapSnap, addr: int, size: int, ty: str) -> HeapSnap {
+    let mut n: HeapSnap = h;
+    push(n.addrs, addr);
+    push(n.sizes, size);
+    push(n.types, ty);
+    return n;
+}
+
+fn hd_edge(h: HeapSnap, from: int, to: int) -> HeapSnap {
+    let mut n: HeapSnap = h;
+    push(n.edge_from, from);
+    push(n.edge_to, to);
+    return n;
+}
+
+fn hd_root(h: HeapSnap, addr: int) -> HeapSnap {
+    let mut n: HeapSnap = h;
+    push(n.roots, addr);
+    return n;
+}
+
+fn hd_total_bytes(h: HeapSnap) -> int {
+    let mut t: int = 0;
+    let mut i: int = 0;
+    while i < len(h.sizes) {
+        t = t + h.sizes[i];
+        i = i + 1;
+    }
+    return t;
+}
+
+fn hd_count(h: HeapSnap) -> int {
+    return len(h.addrs);
+}
+
+fn hd_largest(h: HeapSnap) -> int {
+    let mut best: int = 0;
+    let mut i: int = 0;
+    while i < len(h.sizes) {
+        if h.sizes[i] > best {
+            best = h.sizes[i];
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn hd_seen(seen: [int], addr: int) -> bool {
+    let mut i: int = 0;
+    while i < len(seen) {
+        if seen[i] == addr {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn hd_reachable_set(h: HeapSnap) -> [int] {
+    let mut seen: [int] = [];
+    let mut stack: [int] = [];
+    let mut i: int = 0;
+    while i < len(h.roots) {
+        push(stack, h.roots[i]);
+        i = i + 1;
+    }
+    while len(stack) > 0 {
+        let cur: int = stack[len(stack) - 1];
+        let mut rest: [int] = [];
+        let mut k: int = 0;
+        while k < len(stack) - 1 {
+            push(rest, stack[k]);
+            k = k + 1;
+        }
+        stack = rest;
+        if !hd_seen(seen, cur) {
+            push(seen, cur);
+            let mut e: int = 0;
+            while e < len(h.edge_from) {
+                if h.edge_from[e] == cur {
+                    push(stack, h.edge_to[e]);
+                }
+                e = e + 1;
+            }
+        }
+    }
+    return seen;
+}
+
+fn hd_reachable(h: HeapSnap, addr: int) -> bool {
+    return hd_seen(hd_reachable_set(h), addr);
+}
+
+fn hd_leak_bytes(h: HeapSnap) -> int {
+    let seen: [int] = hd_reachable_set(h);
+    let mut t: int = 0;
+    let mut i: int = 0;
+    while i < len(h.addrs) {
+        if !hd_seen(seen, h.addrs[i]) {
+            t = t + h.sizes[i];
+        }
+        i = i + 1;
+    }
+    return t;
+}
+
+fn hd_leak_count(h: HeapSnap) -> int {
+    let seen: [int] = hd_reachable_set(h);
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(h.addrs) {
+        if !hd_seen(seen, h.addrs[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}

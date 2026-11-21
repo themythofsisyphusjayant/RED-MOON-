@@ -1,0 +1,22 @@
+import "select.fg";
+
+fn main() {
+    let mut c: SelChans = sc_new();
+    c = sc_add(c, "a");
+    c = sc_add(c, "b");
+    c = sc_add(c, "c");
+    c = sc_send(c, "a", 10);
+    c = sc_send(c, "c", 30);
+    println(sc_ready_count(c));
+    println(sc_first_ready(c));
+    println(sc_value(c, "a"));
+    c = sc_recv(c, "a");
+    println(sc_ready_count(c));
+    println(sc_first_ready(c));
+    println(sc_value(c, "c"));
+    c = sc_recv(c, "c");
+    println(sc_ready_count(c));
+    println(sc_first_ready(c));
+    println(sc_has(c, "b"));
+    println(sc_value(c, "b"));
+}

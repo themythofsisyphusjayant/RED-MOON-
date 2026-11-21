@@ -1,0 +1,20 @@
+import "publish.fg";
+
+fn main() {
+    let mut r: PubReg = pb_new();
+    r = pb_publish(r, "pypi", "qasida", "2.3.0");
+    r = pb_publish(r, "pypi", "qasida", "2.3.0");
+    r = pb_publish(r, "pages", "RED-MOON-", "bad..ver");
+    r = pb_publish(r, "npm", "qasida", "1.0.0");
+    println(pb_count(r));
+    println(pb_published_count(r));
+    println(pb_status(r, "pypi", "qasida", "2.3.0"));
+    println(pb_status(r, "pages", "RED-MOON-", "bad..ver"));
+    println(pb_status(r, "npm", "missing", "9.9.9"));
+    r = pb_retract(r, "pypi", "qasida", "2.3.0");
+    println(pb_status(r, "pypi", "qasida", "2.3.0"));
+    println(pb_published_count(r));
+    println(pb_valid_version("1.2.3"));
+    println(pb_valid_version("1..2"));
+    println(pb_valid_version("v1.2"));
+}

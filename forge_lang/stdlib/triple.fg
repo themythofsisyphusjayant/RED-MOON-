@@ -7,9 +7,11 @@
 // split one out, tr_known() checks it against the
 // supported list, and tr_is_host() compares it with
 // the host triple.
-// v1 limits: known-triple list only (no sysroot paths
-// yet — that is the remaining half of this item), no
-// parsing of the os into kernel plus ABI parts.
+// v1 limits: no parsing of the os into kernel plus ABI
+// parts. Sysroots landed 21 Nov 2026 (sprint batch 13):
+// tr_roots_add() records a sysroot path per triple and
+// tr_sysroot_for() looks it up ("" when absent) — that
+// closes #326 PARTIAL.
 
 fn tr_parts(triple: str) -> [str] {
     return split(triple, "-");
@@ -48,4 +50,49 @@ fn tr_known(triple: str) -> bool {
 
 fn tr_is_host(triple: str, host: str) -> bool {
     return triple == host;
+}
+
+// Sysroots (Top-500 #326, second half — closes PARTIAL).
+// A sysroot is the per-triple root directory a cross
+// toolchain searches for headers and libraries. Roots are
+// plain data (triple -> path); no filesystem access happens
+// here, so lookup stays pure and testable.
+
+struct Sysroots {
+    triples: [str];
+    paths: [str];
+}
+
+fn tr_roots_new() -> Sysroots {
+    return Sysroots { triples: [], paths: [] };
+}
+
+fn tr_roots_add(r: Sysroots, triple: str, path: str) -> Sysroots {
+    let mut n: Sysroots = r;
+    push(n.triples, triple);
+    push(n.paths, path);
+    return n;
+}
+
+fn tr_sysroot_for(r: Sysroots, triple: str) -> str {
+    let mut i: int = 0;
+    while i < len(r.triples) {
+        if r.triples[i] == triple {
+            return r.paths[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn tr_sysroot_has(r: Sysroots, triple: str) -> bool {
+    return tr_sysroot_for(r, triple) != "";
+}
+
+fn tr_sysroot_host(r: Sysroots, host: str) -> str {
+    return tr_sysroot_for(r, host);
+}
+
+fn tr_sysroot_count(r: Sysroots) -> int {
+    return len(r.triples);
 }
