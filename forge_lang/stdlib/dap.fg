@@ -1,0 +1,84 @@
+// Qasida — debugger protocol support (Top-500 #378).
+// Import with: import "dap.fg";
+// A DAP session: requests carry a sequence number, a
+// command and an argument; responses mark a request ok.
+// dp_pending() counts requests still awaiting a response;
+// dp_state() is "running" or "paused". v1 limits: the
+// message table only — no real debugger attaches; stepping
+// is not simulated (see bp.fg, #381).
+
+struct Dap {
+    seqs: [int];
+    cmds: [str];
+    args: [str];
+    oks: [bool];
+    state: str;
+    next_seq: int;
+}
+
+fn dp_new() -> Dap {
+    return Dap { seqs: [], cmds: [], args: [], oks: [], state: "running", next_seq: 1 };
+}
+
+fn dp_request(d: Dap, cmd: str, arg: str) -> Dap {
+    let mut n: Dap = d;
+    push(n.seqs, n.next_seq);
+    push(n.cmds, cmd);
+    push(n.args, arg);
+    push(n.oks, false);
+    n.next_seq = n.next_seq + 1;
+    return n;
+}
+
+fn dp_respond(d: Dap, seq: int, ok: bool) -> Dap {
+    let mut n: Dap = d;
+    let mut i: int = 0;
+    while i < len(n.seqs) {
+        if n.seqs[i] == seq {
+            n.oks[i] = ok;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn dp_last_seq(d: Dap) -> int {
+    return d.next_seq - 1;
+}
+
+fn dp_count(d: Dap) -> int {
+    return len(d.seqs);
+}
+
+fn dp_ok(d: Dap, seq: int) -> bool {
+    let mut i: int = 0;
+    while i < len(d.seqs) {
+        if d.seqs[i] == seq {
+            return d.oks[i];
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn dp_pending(d: Dap) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(d.oks) {
+        if !d.oks[i] {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn dp_set_state(d: Dap, state: str) -> Dap {
+    let mut n: Dap = d;
+    n.state = state;
+    return n;
+}
+
+fn dp_state(d: Dap) -> str {
+    return d.state;
+}

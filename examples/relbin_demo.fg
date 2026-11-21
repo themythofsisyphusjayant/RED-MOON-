@@ -1,0 +1,15 @@
+import "relbin.fg";
+
+fn main() {
+    let mut r: RelBin = rb_new();
+    r = rb_add(r, "linux-x86_64", "qasida-linux-x86_64.tar.gz", 48234496, "a1b2");
+    r = rb_add(r, "darwin-arm64", "qasida-darwin-arm64.tar.gz", 47123456, "c3d4");
+    r = rb_add(r, "windows-x86_64", "qasida-windows-x86_64.zip", 50123456, "e5f6");
+    println(rb_artifact(r, "linux-x86_64"));
+    println(rb_size(r, "darwin-arm64"));
+    println(rb_has(r, "windows-x86_64"));
+    println(rb_has(r, "linux-arm64"));
+    println(rb_count(r));
+    println(rb_total_size(r));
+    println(rb_sha(r, "linux-x86_64"));
+}

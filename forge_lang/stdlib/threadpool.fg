@@ -1,0 +1,76 @@
+// Qasida — thread pools (Top-500 #245).
+// Import with: import "threadpool.fg";
+// A worker pool: tasks are submitted with a duration, then
+// tp_run() assigns them round-robin to workers and reports
+// the makespan (the busiest worker's total) and each worker's
+// busy time. v1 limits: simulation only — no real threads;
+// round-robin assignment, not work-stealing (see worksteal.fg).
+
+struct Pool {
+    workers: int;
+    qnames: [str];
+    qdurs: [int];
+    done: int;
+    makespan: int;
+    busy: [int];
+}
+
+fn tp_new(workers: int) -> Pool {
+    let mut b: [int] = [];
+    let mut i: int = 0;
+    while i < workers {
+        push(b, 0);
+        i = i + 1;
+    }
+    return Pool { workers: workers, qnames: [], qdurs: [], done: 0, makespan: 0, busy: b };
+}
+
+fn tp_submit(p: Pool, name: str, dur: int) -> Pool {
+    let mut n: Pool = p;
+    push(n.qnames, name);
+    push(n.qdurs, dur);
+    return n;
+}
+
+fn tp_run(p: Pool) -> Pool {
+    let mut n: Pool = p;
+    let mut i: int = 0;
+    while i < len(n.qnames) {
+        let w: int = i % n.workers;
+        n.busy[w] = n.busy[w] + n.qdurs[i];
+        i = i + 1;
+    }
+    let mut ms: int = 0;
+    let mut w: int = 0;
+    while w < n.workers {
+        if n.busy[w] > ms {
+            ms = n.busy[w];
+        }
+        w = w + 1;
+    }
+    n.makespan = ms;
+    n.done = len(n.qnames);
+    return n;
+}
+
+fn tp_queued(p: Pool) -> int {
+    return len(p.qnames);
+}
+
+fn tp_done(p: Pool) -> int {
+    return p.done;
+}
+
+fn tp_makespan(p: Pool) -> int {
+    return p.makespan;
+}
+
+fn tp_busy(p: Pool, w: int) -> int {
+    if w < 0 {
+        return -1;
+    }
+    if w >= len(p.busy) {
+        return -1;
+    }
+    return p.busy[w];
+}

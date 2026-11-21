@@ -1,0 +1,19 @@
+import "svcdisc.fg";
+
+fn main() {
+    let mut s: SvcDisc = sd_new();
+    s = sd_register(s, "web", "10.0.0.1", 8080, true);
+    s = sd_register(s, "web", "10.0.0.2", 8080, true);
+    s = sd_register(s, "db", "10.0.0.5", 5432, true);
+    s = sd_register(s, "cache", "10.0.0.9", 6379, false);
+    println(sd_host(s, "web"));
+    println(sd_port(s, "web"));
+    println(sd_count(s, "web"));
+    println(sd_count(s, "db"));
+    println(sd_count(s, "missing"));
+    println(sd_healthy(s, "cache"));
+    s = sd_set_health(s, "cache", "10.0.0.9", true);
+    println(sd_healthy(s, "cache"));
+    println(sd_host(s, "cache"));
+    println(sd_names_count(s));
+}

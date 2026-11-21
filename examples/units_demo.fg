@@ -4,5 +4,16 @@ fn main() -> int {
     println("c_to_f =", c_to_f(0.0), "f_to_c =", f_to_c(32.0));
     println("km_to_mi =", km_to_mi(10.0));
     println("kg_to_lb =", kg_to_lb(1.0));
+    let vel: Dim = un_div(un_dim(1, 0, 0), un_dim(0, 0, 1));
+    println(vel.l);
+    println(vel.m);
+    println(vel.t);
+    let force: Dim = un_mul(un_dim(0, 1, 0), un_dim(1, 0, -2));
+    println(force.l);
+    println(force.m);
+    println(force.t);
+    println(un_add_ok(vel, vel));
+    println(un_add_ok(vel, force));
+    println(un_eq(force, force));
     return 0;
 }

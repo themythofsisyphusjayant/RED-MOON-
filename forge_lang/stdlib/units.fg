@@ -41,3 +41,36 @@ fn cm_to_in(cm: float) -> float {
 fn in_to_cm(i: float) -> float {
     return i * 2.54;
 }
+
+// Dimensions for compile-time unit checking (Top-500 #177,
+// second half): a dimension is (length, mass, time)
+// exponents. un_add_ok() is true only for identical
+// dimensions; un_mul() adds exponents and un_div()
+// subtracts them. v1 limits: the three base dimensions
+// only; no named-unit registry.
+
+struct Dim {
+    l: int;
+    m: int;
+    t: int;
+}
+
+fn un_dim(l: int, m: int, t: int) -> Dim {
+    return Dim { l: l, m: m, t: t };
+}
+
+fn un_mul(a: Dim, b: Dim) -> Dim {
+    return Dim { l: a.l + b.l, m: a.m + b.m, t: a.t + b.t };
+}
+
+fn un_div(a: Dim, b: Dim) -> Dim {
+    return Dim { l: a.l - b.l, m: a.m - b.m, t: a.t - b.t };
+}
+
+fn un_eq(a: Dim, b: Dim) -> bool {
+    return a.l == b.l && a.m == b.m && a.t == b.t;
+}
+
+fn un_add_ok(a: Dim, b: Dim) -> bool {
+    return un_eq(a, b);
+}

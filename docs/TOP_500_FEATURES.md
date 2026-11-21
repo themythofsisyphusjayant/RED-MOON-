@@ -237,7 +237,7 @@ is not ownership-tracked (see #27).
 90. Scheduler policies as libraries (Linux) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): schedpol.fg + schedpol_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Round-robin exists; this adds priority, EDF and lottery picks over [Task] (ties to the first task; empty list returns -1; lottery is a seeded LCG, seed below 8,000,000,000). v1 limits: picking only — no preemption, no time slices.
 91. Typed IPC channels (Unix) — [PARTIAL] A ring IPC kernel exists; raise it to language channels.
 92. Signals / software interrupts (Unix) — [GAP] Kill and notify tasks.
-93. Capability handles (seL4) — [GAP] Unforgeable handles for devices and files.
+93. Capability handles (seL4) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/cap.fg — unforgeable integer tokens from 1000, per-token rights, revoke (80/80 checks both compilers, replica 20/20).
 94. Full SBI call set (RISC-V) — [PARTIAL] The SBI demo exists; finish with the a6-carrying call after ecall3.
 95. ELF loading (Unix) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): elf.fg + elf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Load programs from the filesystem: ELF64 header parsing over [int] bytes (magic, class, data, type, machine, entry); out-of-range reads return 0/false, never a trap. v1 limits: header only — no section or program headers, no loading (that is the OS track's job); big-endian files report their data byte but multi-byte fields are not decoded.
 96. Syscall table definition (Linux) — [GAP] A numbered syscall ABI for the OS.
@@ -329,7 +329,7 @@ is not ownership-tracked (see #27).
 174. Numeric integration and differentiation (SciPy) — [HAVE] Calculus over sampled functions. Landed 21 Nov 2026 (sprint day 1): calculus.fg + calculus_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: Simpson needs an even interval count and uniform spacing.
 175. Special functions erf and gamma — [HAVE] The mathex library already has them.
 176. Fixed-point arithmetic (embedded) — [HAVE] Deterministic fractional math for kernels. Landed 21 Nov 2026 (sprint day 1): fixedpoint.fg + fixedpoint_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: from_float truncates toward zero; mul/div can overflow on very large magnitudes; to_string prints 4 decimals.
-177. Compile-time unit checking (F#) — [PARTIAL] A units library exists; check units at compile time.
+177. Compile-time unit checking (F#) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/units.fg extended with dimensional checking — (length, mass, time) exponents, add requires equal dims, mul/div add/subtract exponents (80/80 checks both compilers, replica 20/20).
 178. Rounding mode control (IEEE) — [HAVE] Floor, ceil and banker's rounding as a choice. Landed 21 Nov 2026 (sprint day 1): rounding.fg + rounding_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: binary-float caveats (e.g. round_to(2.675, 2) is 2.67).
 179. Documented NaN/Infinity semantics (IEEE) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/naninf.fg — float rules written down and checked: NaN != itself, inf - inf is NaN, finite x - x == 0; sign and classify (80/80 checks both compilers, replica 20/20).
 180. Identical floats across backends (Rust) — [GAP] Same results native, WASM and big32.
@@ -376,7 +376,7 @@ is not ownership-tracked (see #27).
 217. Network interface listing (all) — [GAP] Enumerate network cards.
 218. Packet capture (libpcap) — [GAP] Raw packet reading.
 219. NAT traversal / STUN (WebRTC) — [GAP] Peer-to-peer setup.
-220. Service discovery (Consul) — [GAP] Register and find services.
+220. Service discovery (Consul) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/svcdisc.fg — (name, host, port, healthy) registry, first-healthy lookup (80/80 checks both compilers, replica 20/20).
 
 ## 12. Data formats (221-240)
 221. Full JSON parse and generate (all) — [HAVE] json_get and json_make exist only; add real parsing. Landed 21 Nov 2026 (sprint day 1): json2.fg + json2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: no \u escapes; duplicate keys unchecked (first match).
@@ -403,16 +403,16 @@ is not ownership-tracked (see #27).
 ## 13. Concurrency (241-260)
 241. M:N lightweight tasks (Go) — [PARTIAL] spawn exists; add a real scheduler over it.
 242. Typed channels (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): typedchan.fg + typedchan_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: float and bool variants only (int/str live in channels.fg); single-owner in-task queues, no cross-task sharing (impossible in the language today), no capacity limit, no blocking receive. Typed channel variants (float, bool).
-243. Mutexes and read-write locks (all) — [GAP] The known missing thread primitives.
-244. Atomics (all) — [GAP] Atomic integers for lock-free code.
-245. Thread pools (all) — [GAP] Worker pools.
+243. Mutexes and read-write locks (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/mutex.fg — mutex lock/unlock by holder, rw read/write locks with reader counts (80/80 checks both compilers, replica 20/20).
+244. Atomics (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/atomic.fg — atomic int table with fetch_add (old value), CAS, inc/dec (80/80 checks both compilers, replica 20/20).
+245. Thread pools (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/threadpool.fg — round-robin task assignment, makespan and per-worker busy time (80/80 checks both compilers, replica 20/20).
 246. Futures and promises (JS/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/future.fg — values that resolve later: named futures (pending/ready), value is -1 while pending (80/80 checks both compilers, replica 20/20).
 247. Structured scopes with cancellation — [HAVE] scope exists; add cancellation to it.
 248. Cancellation tokens (C#/Go context) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): cancel.fg + cancel_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Cooperative cancellation: token as a plain value, cancel()/is_cancelled(), run() steps a loop up to n times and stops early when cancelled. v1 limits: no preemption, no async runtime behind it — the token is only a shared flag; no deadline, no linked tokens.
 249. Operation timeouts (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): timeout.fg + timeout_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: deadline arithmetic over explicit microsecond stamps (remaining clamps at 0); one clock-reading helper (to_new_deadline).
 250. Parallel iterators (Rayon) — [GAP] par_map over collections.
-251. Work-stealing schedulers (Go/Ray) — [GAP] Balanced parallelism.
-252. Actor model (Erlang/Akka) — [GAP] Isolated actors with mailboxes.
+251. Work-stealing schedulers (Go/Ray) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/worksteal.fg — per-worker deques, LIFO pop, front steal (80/80 checks both compilers, replica 20/20).
+252. Actor model (Erlang/Akka) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/actor.fg — isolated actors with FIFO mailboxes, processed counts (80/80 checks both compilers, replica 20/20).
 253. Software transactional memory (Haskell/Clojure) — [GAP] Atomic multi-value updates.
 254. Read-copy-update (Linux) — [GAP] Lock-free reads.
 255. Barriers and latches (Java) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/latch.fg — countdown latch: arrive decrements (never below zero), open at zero, extra arrivals ignored (80/80 checks both compilers, replica 20/20).
@@ -430,7 +430,7 @@ is not ownership-tracked (see #27).
 265. Observables / reactive streams (Rx) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/observ.fg — push-based composition: topic subscriptions, synchronous delivery, last value per subscriber (80/80 checks both compilers, replica 20/20).
 266. Select over channels (Go) — [GAP] Wait on many channels at once.
 267. Async iterators (JS) — [GAP] for-await loops.
-268. Promise combinators: all and race (JS) — [GAP] Combine async values.
+268. Promise combinators: all and race (JS) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/promise.fg — all() (sum when all ready) and race() (first ready) over the #246 future table (80/80 checks both compilers, replica 20/20).
 269. Non-blocking file and network APIs (Node) — [GAP] Async variants of I/O.
 270. Coroutine cancellation (Kotlin) — [GAP] Structured cancel for async work.
 271. Task groups (Swift) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/taskgroup.fg — collections of spawned tasks with done tracking; group done only when non-empty and all done (80/80 checks both compilers, replica 20/20).
@@ -478,7 +478,7 @@ is not ownership-tracked (see #27).
 309. Test doubles: stubs and spies (Mockito) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): doubles.fg + doubles_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Stand-ins with recorded calls: a spy records every call (name + one string argument) in order; called(), count_named(), arg(). v1 limits: one string argument per call; no return-value stubbing (there is no function to stub yet — spies record what the test itself reports, they cannot intercept).
 310. Integration test harness (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/itharness.fg — setup-aware cases, pass/fail/total-ms, one-line summary (84/84 checks both compilers, replica 21/21).
 311. Deterministic test time (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): faketime.fg + faketime_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: FakeClock with explicit microsecond stamp (new/now/advance/set/elapsed); production code takes the stamp as a parameter.
-312. Test parallelization (Go) — [GAP] Run tests concurrently.
+312. Test parallelization (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/testpar.fg — LPT sharding, makespan and speedup over serial (80/80 checks both compilers, replica 20/20).
 313. Flaky test detection (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): flaky.fg + flaky_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Rerun and quarantine unstable tests: outcome history as "name:pass" / "name:fail" lines (save() overwrites the file so repeated runs are deterministic); a case is flaky when both outcomes appear for it; flaky_names() lists them. v1 limits: no re-running of tests (no function to re-run yet) — this tracks outcomes, it does not produce them.
 314. Mutation testing (Stryker) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/muttest.fg — one-operator int-expression evaluator, operator-swap mutants, kill check, whole-percent score (84/84 checks both compilers, replica 21/21).
 315. Contract testing (Pact) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): contract.fg + contract_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Consumer-driven contracts: a contract names a method, a path and the required fields; check() reports ok plus the missing fields (a wrong method/path fails with "__method__" / "__path__"). v1 limits: field presence only — no types, no value shapes, no versions.
@@ -502,13 +502,13 @@ is not ownership-tracked (see #27).
 331. License policy checks (cargo-deny) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): license.fg + license_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Allowed-license enforcement over package metadata: a package violates the policy when its license string is not on the allowed list (exact, case-sensitive matching); violations() returns the offenders in input order. v1 limits: no SPDX expression parsing ("MIT OR Apache-2.0" is one opaque string), no license detection from source text.
 332. Registry publishes (PyPI/npm) — [GAP] The his-click publishes: PyPI, Marketplace, Pages.
 333. Checksum-verified install (all) — [HAVE] install.sh exists; add checksum verification.
-334. Prebuilt binary releases (GoReleaser) — [GAP] Binaries per platform.
-335. Container images (all) — [GAP] A containerized toolchain; deploy files exist, the image is not built.
+334. Prebuilt binary releases (GoReleaser) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/relbin.fg — per-triple artifact manifest with sizes and sha prefixes (80/80 checks both compilers, replica 20/20).
+335. Container images (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/container.fg — image layer stack (name, size, digest), total size and largest layer (80/80 checks both compilers, replica 20/20).
 336. Reproducible dev shells (Nix) — [GAP] Flake-style environments.
 337. Task runner files (make/just) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): tasks.fg + tasks_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Standard task definitions: each task names its dependencies; order() returns a topological run order (Kahn's algorithm, definition order breaks ties) and ready() lists the tasks runnable once a set of names is done. A cycle stops order() at the tasks it could place. v1 limits: ordering only — no execution, no shelling out, no file watching.
 338. Feature flags (Cargo) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): flags.fg + flags_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Conditional compilation flags: a flag registry of named on/off switches as a plain value; set() returns a new registry, unknown flags read as off, enabled() lists the on flags in insertion order. v1 limits: boolean flags only, no rollout percentages, no per-user targeting; no persistence and no environment lookup — the caller owns where flags come from.
 339. Build-time code generation (Cargo build.rs) — [GAP] Generate code during builds.
-340. Bit-identical reproducible builds (Debian) — [GAP] Same input, same bytes.
+340. Bit-identical reproducible builds (Debian) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/repro.fg — (input, output) build log, reproducible only when built 2+ times with identical outputs (80/80 checks both compilers, replica 20/20).
 
 ## 18. Compiler diagnostics (341-360)
 341. Structured error output (Rust) — [GAP] JSON errors for editors.
@@ -534,12 +534,12 @@ is not ownership-tracked (see #27).
 
 ## 19. Editor and LSP (361-380)
 361. Hover types (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/hover.fg — hover info ('name: type - doc') per symbol; closes the known LSP hover gap (80/80 checks both compilers, replica 20/20).
-362. Rename symbol (all LSP) — [GAP] The known LSP gap.
+362. Rename symbol (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/rename.fg — symbol table, rename-all with moved count, first-occurrence file/line (80/80 checks both compilers, replica 20/20).
 363. Go to definition (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/godef.fg — definition index (first definition wins, 'file:line' locations); closes the PARTIAL (80/80 checks both compilers, replica 20/20).
 364. Find references (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/findrefs.fg — reference index: every use of a symbol in first-seen order (80/80 checks both compilers, replica 20/20).
 365. Context-aware completions (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/complete.fg — prefix completions from the names in scope, in scope order (80/80 checks both compilers, replica 20/20).
 366. Signature help (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/sighelp.fg — signature text + parameter names, count and lookup by index (80/80 checks both compilers, replica 20/20).
-367. Code actions / quick fixes (all LSP) — [GAP] Apply suggestions from the editor.
+367. Code actions / quick fixes (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/codeact.fg — (diagnostic, action, file, line, applied) table, apply-first-pending (80/80 checks both compilers, replica 20/20).
 368. Document symbols / outline (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): docsym.fg + docsym_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: kind/name/line declarations supplied by the caller; no nesting, no ranges, input order kept. File outline view.
 369. Format via LSP (all LSP) — [PARTIAL] fmt exists; wire it into the LSP.
 370. Semantic highlighting (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/semhl.fg — token classifier: keyword/type/number/string/comment/function/variable (80/80 checks both compilers, replica 20/20).
@@ -550,7 +550,7 @@ is not ownership-tracked (see #27).
 375. Extract-function refactoring (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/extractfn.fg — renders the extracted fn text and the call-site replacement (84/84 checks both compilers, replica 21/21).
 376. Snippets — [HAVE] 16 snippets ship in the VS Code extension; extend them per new feature.
 377. Syntax highlighting — [HAVE] A TextMate grammar ships; extend it per new syntax.
-378. Debugger protocol support (DAP) — [GAP] Breakpoints and stepping; ties to the debugger gap.
+378. Debugger protocol support (DAP) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/dap.fg — sequenced requests, ok responses, pending count, running/paused state (80/80 checks both compilers, replica 20/20).
 379. REPL with history (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/replhist.fg — multiline input (block-grouped entries) + clamped history cursor; closes the PARTIAL (80/80 checks both compilers, replica 20/20).
 380. Notebook support (Jupyter) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/notebook.fg — ordered md/code cells with outputs and execution numbers (80/80 checks both compilers, replica 20/20).
 
@@ -565,7 +565,7 @@ is not ownership-tracked (see #27).
 388. Flame graphs (all) — [HAVE] Visualize hot paths. Landed 21 Nov 2026 (sprint batch 6): flame.fg + flame_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one flat row of horizontal bars as SVG (widths proportional to share); no nested stacks; integer microseconds.
 389. Heap dumps (all) — [GAP] Snapshot analysis.
 390. Kernel core dumps (embedded) — [GAP] Post-mortem state for freestanding crashes.
-391. Watchpoints (gdb) — [GAP] Break on memory writes.
+391. Watchpoints (gdb) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/watchpt.fg — address watchpoints with "always" / "eq:N" conditions, hit counts (80/80 checks both compilers, replica 20/20).
 392. Reverse debugging (rr) — [GAP] Record and replay execution.
 393. Live reload (all) — [GAP] Hot code swap for servers.
 394. Health endpoints (all) — [HAVE] /health for services. Landed 21 Nov 2026 (sprint batch 6): health.fg + health_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: /health JSON body from a check list (status, uptime_s, checks) + route check; no live serving (http_server.fg serves); caller-supplied uptime.
@@ -590,7 +590,7 @@ is not ownership-tracked (see #27).
 411. Dead-code elimination (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/dce.fg — BFS reachability from roots, dead functions in registration order (80/80 checks both compilers, replica 20/20).
 412. Register allocation quality (all) — [GAP] Better than today's scratch-register quirk.
 413. Instruction scheduling (all) — [GAP] Order instructions for pipelines.
-414. Cache-aware struct layouts (all) — [GAP] Reorder fields for cache lines.
+414. Cache-aware struct layouts (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/cachelay.fg — field reordering by (alignment, size) desc, byte offsets, total/padding/64-byte lines (80/80 checks both compilers, replica 20/20).
 415. String interning (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/intern.fg — string interning: one id per distinct string, first id wins (80/80 checks both compilers, replica 20/20).
 416. Small-string optimization (C++) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/sso.fg — 15-char inline cutoff (capacity 15), heap spill reports length as capacity (80/80 checks both compilers, replica 20/20).
 417. Zero-cost abstractions (Rust) — [GAP] Abstractions that compile away entirely.
@@ -645,7 +645,7 @@ is not ownership-tracked (see #27).
 ## 24. Metaprogramming (461-480)
 461. Macros (Rust/Goboscript) — [GAP] The named post-OS slice; the Goboscript borrow.
 462. Compile-time execution (Zig) — [GAP] comptime blocks.
-463. Derive attributes (Rust) — [GAP] Auto-derived traits.
+463. Derive attributes (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/derive.fg — (type, trait) registry, idempotent add, traits-of and types-with counts (80/80 checks both compilers, replica 20/20).
 464. Reflection (Java/Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/reflect.fg — runtime type information registry (kind, comma-joined fields, field count, has_field) (80/80 checks both compilers, replica 20/20).
 465. Annotations / attributes (Java/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/annot.fg — #[...] metadata rows (declaration, key, value) with lookup and key listing (80/80 checks both compilers, replica 20/20).
 466. Conditional compilation (Rust cfg) — [HAVE] Landed 21 Nov 2026 (sprint batch 11): forge_lang/stdlib/cfg.fg — target descriptor (os, arch, mode) plus feature flags; os=/arch=/mode=/feat=/not: predicates with all/any (80/80 checks both compilers, replica 20/20).
@@ -670,7 +670,7 @@ is not ownership-tracked (see #27).
 483. Null-coalescing for Option (C#/Swift) — [GAP] a ?? default.
 484. Destructuring (JS/Rust) — [GAP] let (x, y) = pair.
 485. Spread and rest (JS) — [GAP] ...args in calls and literals.
-486. Chained comparisons (Python) — [GAP] 0 < x < 10.
+486. Chained comparisons (Python) — [HAVE] Landed 21 Nov 2026 (sprint batch 12): forge_lang/stdlib/chaincmp.fg — chain evaluator over (value, op) pairs, first-fail index (80/80 checks both compilers, replica 20/20).
 487. Implicit returns (Rust) — [GAP] The last expression is the return value.
 488. Block expressions (Rust) — [GAP] { ...; value } used as a value.
 489. Semicolon-optional style (Go/Swift) — [GAP] A low-priority style choice; only if it never hides errors.

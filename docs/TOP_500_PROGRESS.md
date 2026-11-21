@@ -1077,3 +1077,42 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (290 + 20 + 190 = 500). HAVE 290 of 500 = 58%. Next: sprint batch 12,
   same libs-only rule, target 20/day (the running count is the honest
   measure).
+
+- Sprint batch 12 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121l.py (80/80 PASS — 20
+  demos) with an independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch12/replica_20261121l.py):
+  cachelay.fg (#414 cache-aware field reordering by alignment,
+  offsets/total/padding/lines), chaincmp.fg (#486 chained
+  comparisons with first-fail index), derive.fg (#463 (type,
+  trait) derive registry, idempotent add), cap.fg (#93
+  unforgeable capability tokens from 1000, rights, revoke),
+  promise.fg (#268 all/race combinators over the #246 future
+  table), units.fg (#177 dimensional checking closes the
+  PARTIAL: (length, mass, time) exponents, add needs equal
+  dims), svcdisc.fg (#220 service registry, first-healthy
+  lookup), mutex.fg (#243 mutex + rw locks with reader
+  counts), atomic.fg (#244 atomic ints: fetch_add, CAS,
+  inc/dec), threadpool.fg (#245 round-robin pool, makespan),
+  worksteal.fg (#251 per-worker deques, LIFO pop, front
+  steal), actor.fg (#252 actors with FIFO mailboxes),
+  testpar.fg (#312 LPT test sharding, makespan, speedup),
+  relbin.fg (#334 per-triple release manifest), container.fg
+  (#335 image layer stack), repro.fg (#340 reproducible-build
+  log), rename.fg (#362 rename-all symbol table), codeact.fg
+  (#367 code-action table, apply-first-pending), dap.fg
+  (#378 DAP request/response table), watchpt.fg (#391
+  watchpoints with always/eq:N conditions).
+  No #42/#43/#53 work (#42 resolved: helper-function slice).
+  Skipped per brief: #273, #129, #302 (need function values);
+  #122/#164 not flipped (known stale notes). #181/#187/#188/
+  #189/#190 not buildable in pure Qasida (no mkdir/readdir/
+  rename builtins exist). #326's sysroots half stays open.
+  Counts after sprint batch 12: HAVE 310, PARTIAL 19, GAP 171, to build
+  190. Arithmetic from sprint batch 11 (HAVE 290, PARTIAL 20, GAP 190,
+  to build 210): 19 GAP-to-HAVE + 1 PARTIAL-to-HAVE = 20 flips;
+  290 + 20 = 310; 20 - 1 = 19; 190 - 19 = 171; 210 - 20 = 190
+  (310 + 19 + 171 = 500). HAVE 310 of 500 = 62%. Next: sprint batch 13,
+  same libs-only rule, target 20/day (the running count is the honest
+  measure).

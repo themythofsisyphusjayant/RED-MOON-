@@ -1,0 +1,96 @@
+// Qasida — actor model (Top-500 #252).
+// Import with: import "actor.fg";
+// Isolated actors with mailboxes: ac_send() enqueues a
+// message for an actor, ac_process() takes the FIRST queued
+// message (FIFO) and counts it processed. Actors share no
+// state — each mailbox is separate. v1 limits: simulation
+// only — no real threads; messages are strings.
+
+struct ActorSys {
+    actors: [str];
+    processed: [int];
+    senders: [str];
+    msgs: [str];
+    last_msg: str;
+}
+
+fn ac_new() -> ActorSys {
+    return ActorSys { actors: [], processed: [], senders: [], msgs: [], last_msg: "" };
+}
+
+fn ac_spawn(a: ActorSys, name: str) -> ActorSys {
+    let mut n: ActorSys = a;
+    push(n.actors, name);
+    push(n.processed, 0);
+    return n;
+}
+
+fn ac_index(a: ActorSys, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(a.actors) {
+        if a.actors[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn ac_send(a: ActorSys, name: str, msg: str) -> ActorSys {
+    let mut n: ActorSys = a;
+    push(n.senders, name);
+    push(n.msgs, msg);
+    return n;
+}
+
+fn ac_mailbox(a: ActorSys, name: str) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(a.senders) {
+        if a.senders[i] == name {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn ac_processed(a: ActorSys, name: str) -> int {
+    let i: int = ac_index(a, name);
+    if i < 0 {
+        return -1;
+    }
+    return a.processed[i];
+}
+
+fn ac_last_msg(a: ActorSys) -> str {
+    return a.last_msg;
+}
+
+fn ac_process(a: ActorSys, name: str) -> ActorSys {
+    let mut n: ActorSys = a;
+    let mut i: int = 0;
+    while i < len(n.senders) {
+        if n.senders[i] == name {
+            n.last_msg = n.msgs[i];
+            let ai: int = ac_index(n, name);
+            if ai >= 0 {
+                n.processed[ai] = n.processed[ai] + 1;
+            }
+            let mut s2: [str] = [];
+            let mut m2: [str] = [];
+            let mut j: int = 0;
+            while j < len(n.senders) {
+                if j != i {
+                    push(s2, n.senders[j]);
+                    push(m2, n.msgs[j]);
+                }
+                j = j + 1;
+            }
+            return ActorSys { actors: n.actors, processed: n.processed, senders: s2, msgs: m2, last_msg: n.last_msg };
+        }
+        i = i + 1;
+    }
+    n.last_msg = "";
+    return n;
+}

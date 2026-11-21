@@ -1,0 +1,105 @@
+// Qasida — service discovery (Top-500 #220).
+// Import with: import "svcdisc.fg";
+// A registry of (name, host, port, healthy) service
+// instances. sd_host()/sd_port() return the first HEALTHY
+// instance of a name, or "" / -1 when none is healthy.
+// v1 limits: no TTLs, no load balancing beyond first-healthy.
+
+struct SvcDisc {
+    names: [str];
+    hosts: [str];
+    ports: [int];
+    healthy: [bool];
+}
+
+fn sd_new() -> SvcDisc {
+    return SvcDisc { names: [], hosts: [], ports: [], healthy: [] };
+}
+
+fn sd_register(s: SvcDisc, name: str, host: str, port: int, healthy: bool) -> SvcDisc {
+    let mut n: SvcDisc = s;
+    push(n.names, name);
+    push(n.hosts, host);
+    push(n.ports, port);
+    push(n.healthy, healthy);
+    return n;
+}
+
+fn sd_index_healthy(s: SvcDisc, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(s.names) {
+        if s.names[i] == name {
+            if s.healthy[i] {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn sd_host(s: SvcDisc, name: str) -> str {
+    let i: int = sd_index_healthy(s, name);
+    if i < 0 {
+        return "";
+    }
+    return s.hosts[i];
+}
+
+fn sd_port(s: SvcDisc, name: str) -> int {
+    let i: int = sd_index_healthy(s, name);
+    if i < 0 {
+        return -1;
+    }
+    return s.ports[i];
+}
+
+fn sd_healthy(s: SvcDisc, name: str) -> bool {
+    return sd_index_healthy(s, name) >= 0;
+}
+
+fn sd_set_health(s: SvcDisc, name: str, host: str, healthy: bool) -> SvcDisc {
+    let mut n: SvcDisc = s;
+    let mut i: int = 0;
+    while i < len(n.names) {
+        if n.names[i] == name {
+            if n.hosts[i] == host {
+                n.healthy[i] = healthy;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn sd_count(s: SvcDisc, name: str) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(s.names) {
+        if s.names[i] == name {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn sd_names_count(s: SvcDisc) -> int {
+    let mut seen: [str] = [];
+    let mut i: int = 0;
+    while i < len(s.names) {
+        let mut dup: bool = false;
+        let mut j: int = 0;
+        while j < len(seen) {
+            if seen[j] == s.names[i] {
+                dup = true;
+            }
+            j = j + 1;
+        }
+        if !dup {
+            push(seen, s.names[i]);
+        }
+        i = i + 1;
+    }
+    return len(seen);
+}

@@ -1,0 +1,80 @@
+// Qasida — cache-aware struct layouts (Top-500 #414).
+// Import with: import "cachelay.fg";
+// A layout reorders fields by alignment (largest first, then
+// largest size) so padding shrinks and fewer cache lines are
+// touched. cl_layout() returns the reordered layout with byte
+// offsets, total size, padding bytes and 64-byte lines;
+// cl_layout_in_order() keeps the declared order for comparison.
+// v1 limits: fixed 64-byte lines; no nested structs.
+
+struct CacheLay {
+    names: [str];
+    sizes: [int];
+    aligns: [int];
+    offsets: [int];
+    total: int;
+    padding: int;
+    lines: int;
+}
+
+fn cl_align_up(x: int, a: int) -> int {
+    return ((x + a - 1) / a) * a;
+}
+
+fn cl_finish(names: [str], sizes: [int], aligns: [int]) -> CacheLay {
+    let mut offs: [int] = [];
+    let mut off: int = 0;
+    let mut sum: int = 0;
+    let mut i: int = 0;
+    while i < len(names) {
+        off = cl_align_up(off, aligns[i]);
+        push(offs, off);
+        off = off + sizes[i];
+        sum = sum + sizes[i];
+        i = i + 1;
+    }
+    let total: int = off;
+    let pad: int = total - sum;
+    let lines: int = (total + 63) / 64;
+    return CacheLay { names: names, sizes: sizes, aligns: aligns, offsets: offs, total: total, padding: pad, lines: lines };
+}
+
+fn cl_layout(names: [str], sizes: [int], aligns: [int]) -> CacheLay {
+    let mut n: [str] = names;
+    let mut s: [int] = sizes;
+    let mut a: [int] = aligns;
+    let mut i: int = 0;
+    while i < len(n) {
+        let mut best: int = i;
+        let mut j: int = i + 1;
+        while j < len(n) {
+            if a[j] > a[best] {
+                best = j;
+            } else {
+                if a[j] == a[best] {
+                    if s[j] > s[best] {
+                        best = j;
+                    }
+                }
+            }
+            j = j + 1;
+        }
+        if best != i {
+            let tn: str = n[i];
+            n[i] = n[best];
+            n[best] = tn;
+            let ts: int = s[i];
+            s[i] = s[best];
+            s[best] = ts;
+            let ta: int = a[i];
+            a[i] = a[best];
+            a[best] = ta;
+        }
+        i = i + 1;
+    }
+    return cl_finish(n, s, a);
+}
+
+fn cl_layout_in_order(names: [str], sizes: [int], aligns: [int]) -> CacheLay {
+    return cl_finish(names, sizes, aligns);
+}

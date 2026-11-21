@@ -1,0 +1,44 @@
+// Qasida — promise combinators: all and race (Top-500 #268).
+// Import with: import "promise.fg";
+// Combinators over the #246 future table: pr_all() resolves
+// when every listed future is ready, with the sum of their
+// values; pr_race() resolves when the first listed future is
+// ready, with that future's value. An empty all() is ready
+// with 0; an empty race() stays pending. v1 limits: int
+// values only; no cancellation.
+
+import "future.fg";
+
+fn pr_all(f: Future, ids: [str], new_id: str) -> Future {
+    let mut n: Future = f;
+    let mut sum: int = 0;
+    let mut all_ready: bool = true;
+    let mut i: int = 0;
+    while i < len(ids) {
+        if !fu_is_ready(n, ids[i]) {
+            all_ready = false;
+        } else {
+            sum = sum + fu_value(n, ids[i]);
+        }
+        i = i + 1;
+    }
+    n = fu_create(n, new_id);
+    if all_ready {
+        n = fu_resolve(n, new_id, sum);
+    }
+    return n;
+}
+
+fn pr_race(f: Future, ids: [str], new_id: str) -> Future {
+    let mut n: Future = f;
+    n = fu_create(n, new_id);
+    let mut i: int = 0;
+    while i < len(ids) {
+        if fu_is_ready(n, ids[i]) {
+            n = fu_resolve(n, new_id, fu_value(n, ids[i]));
+            return n;
+        }
+        i = i + 1;
+    }
+    return n;
+}

@@ -1,0 +1,80 @@
+// Qasida — prebuilt binary releases (Top-500 #334).
+// Import with: import "relbin.fg";
+// Binaries per platform: a release table of (triple,
+// artifact, size in bytes, sha prefix). rb_artifact() and
+// rb_size() look one triple up; rb_total_size() sums the
+// release. v1 limits: sha prefixes are short strings, not
+// verified digests; no upload, only the manifest.
+
+struct RelBin {
+    triples: [str];
+    artifacts: [str];
+    sizes: [int];
+    shas: [str];
+}
+
+fn rb_new() -> RelBin {
+    return RelBin { triples: [], artifacts: [], sizes: [], shas: [] };
+}
+
+fn rb_add(r: RelBin, triple: str, artifact: str, size: int, sha: str) -> RelBin {
+    let mut n: RelBin = r;
+    push(n.triples, triple);
+    push(n.artifacts, artifact);
+    push(n.sizes, size);
+    push(n.shas, sha);
+    return n;
+}
+
+fn rb_index(r: RelBin, triple: str) -> int {
+    let mut i: int = 0;
+    while i < len(r.triples) {
+        if r.triples[i] == triple {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rb_artifact(r: RelBin, triple: str) -> str {
+    let i: int = rb_index(r, triple);
+    if i < 0 {
+        return "";
+    }
+    return r.artifacts[i];
+}
+
+fn rb_size(r: RelBin, triple: str) -> int {
+    let i: int = rb_index(r, triple);
+    if i < 0 {
+        return -1;
+    }
+    return r.sizes[i];
+}
+
+fn rb_sha(r: RelBin, triple: str) -> str {
+    let i: int = rb_index(r, triple);
+    if i < 0 {
+        return "";
+    }
+    return r.shas[i];
+}
+
+fn rb_has(r: RelBin, triple: str) -> bool {
+    return rb_index(r, triple) >= 0;
+}
+
+fn rb_count(r: RelBin) -> int {
+    return len(r.triples);
+}
+
+fn rb_total_size(r: RelBin) -> int {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(r.sizes) {
+        s = s + r.sizes[i];
+        i = i + 1;
+    }
+    return s;
+}

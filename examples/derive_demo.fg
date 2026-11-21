@@ -1,0 +1,22 @@
+import "derive.fg";
+
+fn main() {
+    let mut d: Derive = dv_new();
+    d = dv_add(d, "Point", "Debug");
+    d = dv_add(d, "Point", "Clone");
+    d = dv_add(d, "Point", "PartialEq");
+    d = dv_add(d, "User", "Debug");
+    d = dv_add(d, "User", "Serialize");
+    d = dv_add(d, "Config", "Default");
+    d = dv_add(d, "Config", "Clone");
+    d = dv_add(d, "Point", "Debug");
+    println(dv_has(d, "Point", "Debug"));
+    println(dv_has(d, "Point", "Hash"));
+    println(dv_has(d, "User", "Serialize"));
+    let traits: [str] = dv_traits(d, "Point");
+    println(traits[0]);
+    println(traits[1]);
+    println(traits[2]);
+    println(dv_type_count(d, "Clone"));
+    println(dv_trait_count(d, "User"));
+}

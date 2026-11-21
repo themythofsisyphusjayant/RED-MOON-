@@ -1,0 +1,19 @@
+import "rename.fg";
+
+fn main() {
+    let mut r: Rename = rn_new();
+    r = rn_add(r, "foo", "fn", "main.fg", 10);
+    r = rn_add(r, "foo", "fn", "util.fg", 25);
+    r = rn_add(r, "bar", "struct", "types.fg", 3);
+    r = rn_add(r, "foo", "var", "main.fg", 40);
+    r = rn_rename(r, "foo", "foo2");
+    println(rn_last_count(r));
+    println(rn_lookup(r, "foo"));
+    println(rn_lookup(r, "foo2"));
+    println(rn_file(r, "foo2"));
+    println(rn_line(r, "foo2"));
+    println(rn_count(r, "bar"));
+    r = rn_rename(r, "bar", "baz");
+    println(rn_last_count(r));
+    println(rn_lookup(r, "baz"));
+}

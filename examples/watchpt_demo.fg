@@ -1,0 +1,21 @@
+import "watchpt.fg";
+
+fn main() {
+    let mut w: Watch = wp_new();
+    w = wp_add(w, 4096, "always");
+    w = wp_add(w, 8192, "eq:42");
+    w = wp_write(w, 4096, 7);
+    println(wp_last_hit(w));
+    println(wp_hits(w, 4096));
+    w = wp_write(w, 8192, 41);
+    println(wp_last_hit(w));
+    println(wp_hits(w, 8192));
+    w = wp_write(w, 8192, 42);
+    println(wp_last_hit(w));
+    println(wp_hits(w, 8192));
+    w = wp_write(w, 12288, 1);
+    println(wp_last_hit(w));
+    w = wp_write(w, 4096, 9);
+    println(wp_hits(w, 4096));
+    println(wp_count(w));
+}

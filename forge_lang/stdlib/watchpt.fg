@@ -1,0 +1,89 @@
+// Qasida — watchpoints (Top-500 #391).
+// Import with: import "watchpt.fg";
+// Break on memory writes: each watchpoint watches one
+// address with a condition — "always", or "eq:N" to fire
+// only when the written value equals N. wp_write()
+// simulates a write and reports whether any watchpoint
+// fired in wp_last_hit(). v1 limits: simulation only —
+// addresses are plain ints; no real memory is watched.
+
+struct Watch {
+    addrs: [int];
+    conds: [str];
+    hits: [int];
+    last_hit: bool;
+}
+
+fn wp_new() -> Watch {
+    return Watch { addrs: [], conds: [], hits: [], last_hit: false };
+}
+
+fn wp_add(w: Watch, addr: int, cond: str) -> Watch {
+    let mut n: Watch = w;
+    push(n.addrs, addr);
+    push(n.conds, cond);
+    push(n.hits, 0);
+    return n;
+}
+
+fn wp_cond_hit(cond: str, value: int) -> bool {
+    if cond == "always" {
+        return true;
+    }
+    if substr(cond, 0, 3) == "eq:" {
+        let want: int = parse_int(substr(cond, 3, len(cond) - 3));
+        return value == want;
+    }
+    return false;
+}
+
+fn wp_write(w: Watch, addr: int, value: int) -> Watch {
+    let mut n: Watch = w;
+    n.last_hit = false;
+    let mut i: int = 0;
+    while i < len(n.addrs) {
+        if n.addrs[i] == addr {
+            if wp_cond_hit(n.conds[i], value) {
+                n.hits[i] = n.hits[i] + 1;
+                n.last_hit = true;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn wp_hits(w: Watch, addr: int) -> int {
+    let mut i: int = 0;
+    while i < len(w.addrs) {
+        if w.addrs[i] == addr {
+            return w.hits[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn wp_last_hit(w: Watch) -> bool {
+    return w.last_hit;
+}
+
+fn wp_count(w: Watch) -> int {
+    return len(w.addrs);
+}
+
+fn wp_remove(w: Watch, addr: int) -> Watch {
+    let mut a: [int] = [];
+    let mut c: [str] = [];
+    let mut h: [int] = [];
+    let mut i: int = 0;
+    while i < len(w.addrs) {
+        if w.addrs[i] != addr {
+            push(a, w.addrs[i]);
+            push(c, w.conds[i]);
+            push(h, w.hits[i]);
+        }
+        i = i + 1;
+    }
+    return Watch { addrs: a, conds: c, hits: h, last_hit: w.last_hit };
+}

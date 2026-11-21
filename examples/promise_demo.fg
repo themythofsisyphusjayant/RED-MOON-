@@ -1,0 +1,35 @@
+import "promise.fg";
+
+fn main() {
+    let mut f: Future = fu_new();
+    f = fu_create(f, "f0");
+    f = fu_create(f, "f1");
+    f = fu_create(f, "f2");
+    f = fu_create(f, "f3");
+    f = fu_resolve(f, "f0", 10);
+    f = fu_resolve(f, "f2", 20);
+    f = fu_resolve(f, "f3", 5);
+    let a1: [str] = ["f0", "f2", "f3"];
+    f = pr_all(f, a1, "all1");
+    println(fu_state(f, "all1"));
+    println(fu_value(f, "all1"));
+    let a2: [str] = ["f0", "f1"];
+    f = pr_all(f, a2, "all2");
+    println(fu_state(f, "all2"));
+    println(fu_value(f, "all2"));
+    let r1: [str] = ["f1", "f2"];
+    f = pr_race(f, r1, "r1");
+    println(fu_state(f, "r1"));
+    println(fu_value(f, "r1"));
+    let r2: [str] = ["f1"];
+    f = pr_race(f, r2, "r2");
+    println(fu_state(f, "r2"));
+    println(fu_value(f, "r2"));
+    let e: [str] = [];
+    f = pr_all(f, e, "all0");
+    println(fu_state(f, "all0"));
+    println(fu_value(f, "all0"));
+    f = pr_race(f, e, "r0");
+    println(fu_state(f, "r0"));
+    println(fu_value(f, "r0"));
+}

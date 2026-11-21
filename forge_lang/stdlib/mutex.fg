@@ -1,0 +1,136 @@
+// Qasida — mutexes and read-write locks (Top-500 #243).
+// Import with: import "mutex.fg";
+// A lock table: each named lock is "mutex" or "rw". A mutex
+// lock succeeds only when free, and only its holder may
+// unlock it. An rw lock takes many readers but one writer,
+// and a writer waits until every reader is gone. v1 limits:
+// simulation only — no real threads; no timeouts, no
+// deadlock detection (see deadlock.fg, #258).
+
+struct Mutex {
+    names: [str];
+    kinds: [str];
+    locked: [bool];
+    holders: [str];
+    readers: [int];
+}
+
+fn mx_new() -> Mutex {
+    return Mutex { names: [], kinds: [], locked: [], holders: [], readers: [] };
+}
+
+fn mx_create(m: Mutex, name: str, kind: str) -> Mutex {
+    let mut n: Mutex = m;
+    push(n.names, name);
+    push(n.kinds, kind);
+    push(n.locked, false);
+    push(n.holders, "");
+    push(n.readers, 0);
+    return n;
+}
+
+fn mx_index(m: Mutex, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(m.names) {
+        if m.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn mx_lock(m: Mutex, name: str, holder: str) -> Mutex {
+    let mut n: Mutex = m;
+    let i: int = mx_index(n, name);
+    if i < 0 {
+        return n;
+    }
+    if !n.locked[i] {
+        n.locked[i] = true;
+        n.holders[i] = holder;
+    }
+    return n;
+}
+
+fn mx_unlock(m: Mutex, name: str, holder: str) -> Mutex {
+    let mut n: Mutex = m;
+    let i: int = mx_index(n, name);
+    if i < 0 {
+        return n;
+    }
+    if n.locked[i] {
+        if n.holders[i] == holder {
+            n.locked[i] = false;
+            n.holders[i] = "";
+        }
+    }
+    return n;
+}
+
+fn mx_rlock(m: Mutex, name: str) -> Mutex {
+    let mut n: Mutex = m;
+    let i: int = mx_index(n, name);
+    if i < 0 {
+        return n;
+    }
+    if n.kinds[i] == "rw" {
+        if !n.locked[i] {
+            n.readers[i] = n.readers[i] + 1;
+        }
+    }
+    return n;
+}
+
+fn mx_runlock(m: Mutex, name: str) -> Mutex {
+    let mut n: Mutex = m;
+    let i: int = mx_index(n, name);
+    if i < 0 {
+        return n;
+    }
+    if n.readers[i] > 0 {
+        n.readers[i] = n.readers[i] - 1;
+    }
+    return n;
+}
+
+fn mx_wlock(m: Mutex, name: str, holder: str) -> Mutex {
+    let mut n: Mutex = m;
+    let i: int = mx_index(n, name);
+    if i < 0 {
+        return n;
+    }
+    if n.kinds[i] == "rw" {
+        if !n.locked[i] {
+            if n.readers[i] == 0 {
+                n.locked[i] = true;
+                n.holders[i] = holder;
+            }
+        }
+    }
+    return n;
+}
+
+fn mx_locked(m: Mutex, name: str) -> bool {
+    let i: int = mx_index(m, name);
+    if i < 0 {
+        return false;
+    }
+    return m.locked[i];
+}
+
+fn mx_holder(m: Mutex, name: str) -> str {
+    let i: int = mx_index(m, name);
+    if i < 0 {
+        return "";
+    }
+    return m.holders[i];
+}
+
+fn mx_readers(m: Mutex, name: str) -> int {
+    let i: int = mx_index(m, name);
+    if i < 0 {
+        return -1;
+    }
+    return m.readers[i];
+}

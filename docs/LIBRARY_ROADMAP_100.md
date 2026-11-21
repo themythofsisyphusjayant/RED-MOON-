@@ -422,3 +422,20 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   (shared-buffer views, copies stay 0), covfuzz.fg (LCG
   mutational fuzzer over the ABCD-prefix target; seed 42, 60
   steps, edges 1/0/2/3 found). HAVE 270 -> 290 (58% of 500).
+- Sprint batch 12 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 (80/80 checks, 20 demos): cachelay.fg
+  (cache-aware field reordering, offsets/total/padding/lines),
+  chaincmp.fg (chained comparisons, first-fail index),
+  derive.fg ((type, trait) derive registry), cap.fg
+  (unforgeable capability tokens from 1000), promise.fg
+  (all/race over the future table), units.fg (dimensional
+  checking closes #177 PARTIAL), svcdisc.fg (service registry,
+  first-healthy lookup), mutex.fg (mutex + rw locks), atomic.fg
+  (fetch_add, CAS, inc/dec), threadpool.fg (round-robin pool,
+  makespan), worksteal.fg (per-worker deques, LIFO pop, front
+  steal), actor.fg (FIFO mailboxes), testpar.fg (LPT sharding,
+  makespan, speedup), relbin.fg (per-triple release manifest),
+  container.fg (image layer stack), repro.fg (reproducible-
+  build log), rename.fg (rename-all symbol table), codeact.fg
+  (code-action table), dap.fg (DAP request/response table),
+  watchpt.fg (watchpoints, always/eq:N). HAVE 290 -> 310 (62% of 500).

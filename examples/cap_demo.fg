@@ -1,0 +1,24 @@
+import "cap.fg";
+
+fn main() {
+    let mut t: CapTable = cap_new();
+    t = cap_issue(t, "uart0");
+    println(cap_last_token(t));
+    t = cap_issue(t, "/etc/passwd");
+    println(cap_last_token(t));
+    t = cap_grant(t, 1000, "read");
+    t = cap_grant(t, 1000, "write");
+    t = cap_grant(t, 1001, "read");
+    println(cap_check(t, 1000, "read"));
+    println(cap_check(t, 1000, "execute"));
+    println(cap_check(t, 1001, "write"));
+    println(cap_check(t, 9999, "read"));
+    println(cap_owner(t, 1000));
+    println(cap_owner(t, 9999));
+    println(cap_rights(t, 1000));
+    t = cap_revoke(t, 1000);
+    println(cap_last_ok(t));
+    println(cap_check(t, 1000, "read"));
+    t = cap_revoke(t, 1000);
+    println(cap_last_ok(t));
+}

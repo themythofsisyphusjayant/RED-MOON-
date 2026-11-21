@@ -1,0 +1,79 @@
+// Qasida — derive attributes (Top-500 #463).
+// Import with: import "derive.fg";
+// A derive table records (type, trait) pairs, as in Rust's
+// #[derive(Debug, Clone)]: dv_has() checks one pair,
+// dv_traits() lists every trait derived for a type,
+// dv_type_count() counts the types deriving a trait.
+// Adding the same pair twice is idempotent. v1 limits:
+// trait names are free text, not checked against a fixed
+// list; no derive expansion, only the registry.
+
+struct Derive {
+    types: [str];
+    traits: [str];
+}
+
+fn dv_new() -> Derive {
+    return Derive { types: [], traits: [] };
+}
+
+fn dv_has(d: Derive, typ: str, trait_name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(d.types) {
+        if d.types[i] == typ {
+            if d.traits[i] == trait_name {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn dv_add(d: Derive, typ: str, trait_name: str) -> Derive {
+    let mut n: Derive = d;
+    if dv_has(n, typ, trait_name) {
+        return n;
+    }
+    push(n.types, typ);
+    push(n.traits, trait_name);
+    return n;
+}
+
+fn dv_traits(d: Derive, typ: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.types) {
+        if d.types[i] == typ {
+            push(out, d.traits[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dv_trait_count(d: Derive, typ: str) -> int {
+    return len(dv_traits(d, typ));
+}
+
+fn dv_type_count(d: Derive, trait_name: str) -> int {
+    let mut seen: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.types) {
+        if d.traits[i] == trait_name {
+            let mut dup: bool = false;
+            let mut j: int = 0;
+            while j < len(seen) {
+                if seen[j] == d.types[i] {
+                    dup = true;
+                }
+                j = j + 1;
+            }
+            if !dup {
+                push(seen, d.types[i]);
+            }
+        }
+        i = i + 1;
+    }
+    return len(seen);
+}

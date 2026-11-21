@@ -1,0 +1,21 @@
+import "atomic.fg";
+
+fn main() {
+    let mut a: Atomic = at_new();
+    a = at_create(a, "hits", 0);
+    a = at_inc(a, "hits");
+    println(at_last(a));
+    a = at_add(a, "hits", 5);
+    println(at_last(a));
+    a = at_fetch_add(a, "hits", 10);
+    println(at_last(a));
+    println(at_get(a, "hits"));
+    a = at_cas(a, "hits", 16, 100);
+    println(at_last_ok(a));
+    println(at_get(a, "hits"));
+    a = at_cas(a, "hits", 16, 200);
+    println(at_last_ok(a));
+    println(at_get(a, "hits"));
+    a = at_dec(a, "hits");
+    println(at_last(a));
+}

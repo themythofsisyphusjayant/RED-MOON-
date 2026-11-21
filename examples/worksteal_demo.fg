@@ -1,0 +1,23 @@
+import "worksteal.fg";
+
+fn main() {
+    let mut s: Steal = ws_new(3);
+    s = ws_push(s, 0, "a", 5);
+    s = ws_push(s, 0, "b", 3);
+    s = ws_push(s, 0, "c", 4);
+    s = ws_push(s, 1, "d", 2);
+    s = ws_pop(s, 0);
+    println(ws_last_task(s));
+    s = ws_steal(s, 2, 0);
+    println(ws_last_task(s));
+    s = ws_pop(s, 0);
+    println(ws_last_task(s));
+    s = ws_pop(s, 0);
+    println(ws_last_task(s));
+    println(ws_last_ok(s));
+    s = ws_steal(s, 2, 1);
+    println(ws_last_task(s));
+    println(ws_count(s, 0));
+    println(ws_count(s, 1));
+    println(ws_count(s, 2));
+}

@@ -1,0 +1,24 @@
+import "threadpool.fg";
+
+fn main() {
+    let mut p: Pool = tp_new(2);
+    p = tp_submit(p, "a", 5);
+    p = tp_submit(p, "b", 3);
+    p = tp_submit(p, "c", 4);
+    p = tp_submit(p, "d", 2);
+    p = tp_submit(p, "e", 6);
+    println(tp_queued(p));
+    p = tp_run(p);
+    println(tp_done(p));
+    println(tp_makespan(p));
+    println(tp_busy(p, 0));
+    println(tp_busy(p, 1));
+    let mut q: Pool = tp_new(3);
+    q = tp_submit(q, "g", 4);
+    q = tp_submit(q, "h", 4);
+    q = tp_submit(q, "i", 4);
+    q = tp_submit(q, "j", 4);
+    q = tp_run(q);
+    println(tp_makespan(q));
+    println(tp_busy(q, 0));
+}

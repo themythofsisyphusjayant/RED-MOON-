@@ -1,0 +1,156 @@
+// Qasida — capability handles (Top-500 #93).
+// Import with: import "cap.fg";
+// Unforgeable handles for devices and files, as in seL4:
+// the kernel issues integer tokens starting at 1000; each
+// token names one resource and holds a set of granted rights.
+// A token that was never issued, or was revoked, grants
+// nothing. v1 limits: single global table; rights are the
+// fixed words read, write and execute; no delegation.
+
+struct CapTable {
+    issued: [int];
+    owners: [str];
+    gtokens: [int];
+    grights: [str];
+    galive: [bool];
+    revoked: [int];
+    next: int;
+    last_ok: bool;
+}
+
+fn cap_new() -> CapTable {
+    return CapTable { issued: [], owners: [], gtokens: [], grights: [], galive: [], revoked: [], next: 1000, last_ok: false };
+}
+
+fn cap_last_token(t: CapTable) -> int {
+    return t.next - 1;
+}
+
+fn cap_last_ok(t: CapTable) -> bool {
+    return t.last_ok;
+}
+
+fn cap_is_issued(t: CapTable, token: int) -> bool {
+    let mut i: int = 0;
+    while i < len(t.issued) {
+        if t.issued[i] == token {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cap_is_revoked(t: CapTable, token: int) -> bool {
+    let mut i: int = 0;
+    while i < len(t.revoked) {
+        if t.revoked[i] == token {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cap_issue(t: CapTable, resource: str) -> CapTable {
+    let mut n: CapTable = t;
+    push(n.issued, n.next);
+    push(n.owners, resource);
+    n.next = n.next + 1;
+    n.last_ok = true;
+    return n;
+}
+
+fn cap_grant(t: CapTable, token: int, right: str) -> CapTable {
+    let mut n: CapTable = t;
+    n.last_ok = false;
+    if !cap_is_issued(n, token) {
+        return n;
+    }
+    if cap_is_revoked(n, token) {
+        return n;
+    }
+    let mut i: int = 0;
+    while i < len(n.gtokens) {
+        if n.gtokens[i] == token {
+            if n.grights[i] == right {
+                if n.galive[i] {
+                    return n;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    push(n.gtokens, token);
+    push(n.grights, right);
+    push(n.galive, true);
+    n.last_ok = true;
+    return n;
+}
+
+fn cap_check(t: CapTable, token: int, right: str) -> bool {
+    if !cap_is_issued(t, token) {
+        return false;
+    }
+    if cap_is_revoked(t, token) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(t.gtokens) {
+        if t.gtokens[i] == token {
+            if t.grights[i] == right {
+                if t.galive[i] {
+                    return true;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cap_revoke(t: CapTable, token: int) -> CapTable {
+    let mut n: CapTable = t;
+    n.last_ok = false;
+    if !cap_is_issued(n, token) {
+        return n;
+    }
+    if cap_is_revoked(n, token) {
+        return n;
+    }
+    push(n.revoked, token);
+    let mut i: int = 0;
+    while i < len(n.gtokens) {
+        if n.gtokens[i] == token {
+            n.galive[i] = false;
+        }
+        i = i + 1;
+    }
+    n.last_ok = true;
+    return n;
+}
+
+fn cap_owner(t: CapTable, token: int) -> str {
+    let mut i: int = 0;
+    while i < len(t.issued) {
+        if t.issued[i] == token {
+            return t.owners[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn cap_rights(t: CapTable, token: int) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(t.gtokens) {
+        if t.gtokens[i] == token {
+            if t.galive[i] {
+                c = c + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return c;
+}

@@ -1,0 +1,25 @@
+import "cachelay.fg";
+
+fn main() {
+    let names: [str] = ["tag", "id", "flags", "count", "ok"];
+    let sizes: [int] = [1, 8, 4, 8, 1];
+    let aligns: [int] = [1, 8, 4, 8, 1];
+    let orig: CacheLay = cl_layout_in_order(names, sizes, aligns);
+    let opt: CacheLay = cl_layout(names, sizes, aligns);
+    println(orig.total);
+    println(orig.padding);
+    println(orig.lines);
+    println(opt.total);
+    println(opt.padding);
+    println(opt.lines);
+    println(opt.names[0]);
+    println(opt.names[1]);
+    println(opt.names[2]);
+    println(opt.names[3]);
+    println(opt.names[4]);
+    println(opt.offsets[0]);
+    println(opt.offsets[1]);
+    println(opt.offsets[2]);
+    println(opt.offsets[3]);
+    println(opt.offsets[4]);
+}

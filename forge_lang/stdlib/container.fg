@@ -1,0 +1,76 @@
+// Qasida — container images (Top-500 #335).
+// Import with: import "container.fg";
+// A container image is a stack of layers (name, size in
+// bytes, digest). ct_total_size() sums the stack;
+// ct_largest() names the heaviest layer. v1 limits: the
+// manifest only — no image is built or pushed; digests are
+// short strings, not verified hashes.
+
+struct Image {
+    layers: [str];
+    sizes: [int];
+    digests: [str];
+}
+
+fn ct_new() -> Image {
+    return Image { layers: [], sizes: [], digests: [] };
+}
+
+fn ct_add_layer(im: Image, name: str, size: int, digest: str) -> Image {
+    let mut n: Image = im;
+    push(n.layers, name);
+    push(n.sizes, size);
+    push(n.digests, digest);
+    return n;
+}
+
+fn ct_count(im: Image) -> int {
+    return len(im.layers);
+}
+
+fn ct_total_size(im: Image) -> int {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(im.sizes) {
+        s = s + im.sizes[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn ct_largest(im: Image) -> str {
+    if len(im.layers) == 0 {
+        return "";
+    }
+    let mut best: int = 0;
+    let mut i: int = 1;
+    while i < len(im.sizes) {
+        if im.sizes[i] > im.sizes[best] {
+            best = i;
+        }
+        i = i + 1;
+    }
+    return im.layers[best];
+}
+
+fn ct_has_layer(im: Image, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(im.layers) {
+        if im.layers[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ct_digest(im: Image, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(im.layers) {
+        if im.layers[i] == name {
+            return im.digests[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}

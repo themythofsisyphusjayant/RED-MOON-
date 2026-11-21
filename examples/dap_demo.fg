@@ -1,0 +1,19 @@
+import "dap.fg";
+
+fn main() {
+    let mut d: Dap = dp_new();
+    d = dp_request(d, "launch", "");
+    d = dp_request(d, "setBreakpoints", "main.fg:10");
+    d = dp_respond(d, 1, true);
+    d = dp_respond(d, 2, true);
+    d = dp_request(d, "continue", "");
+    println(dp_last_seq(d));
+    println(dp_count(d));
+    println(dp_ok(d, 1));
+    println(dp_ok(d, 3));
+    println(dp_pending(d));
+    d = dp_set_state(d, "paused");
+    println(dp_state(d));
+    d = dp_set_state(d, "running");
+    println(dp_state(d));
+}

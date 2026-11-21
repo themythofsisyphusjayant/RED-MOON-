@@ -1,0 +1,16 @@
+import "repro.fg";
+
+fn main() {
+    let mut r: Repro = rp_new();
+    r = rp_record(r, "src-v1", "out-aaaa");
+    r = rp_record(r, "src-v1", "out-aaaa");
+    r = rp_record(r, "src-v1", "out-bbbb");
+    r = rp_record(r, "src-v2", "out-cccc");
+    r = rp_record(r, "src-v2", "out-cccc");
+    println(rp_is_reproducible(r, "src-v1"));
+    println(rp_is_reproducible(r, "src-v2"));
+    println(rp_is_reproducible(r, "src-v9"));
+    println(rp_build_count(r, "src-v1"));
+    println(rp_build_count(r, "src-v2"));
+    println(rp_first_output(r, "src-v2"));
+}

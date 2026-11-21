@@ -1,0 +1,122 @@
+// Qasida — atomics (Top-500 #244).
+// Import with: import "atomic.fg";
+// Atomic integers for lock-free code: a table of named
+// counters with fetch_add (returns the OLD value),
+// compare-and-swap (succeeds only on the expected value)
+// and plain inc/dec. The last result of each mutating call
+// is kept in at_last()/at_last_ok(). v1 limits: simulation
+// only — no real threads; int values only.
+
+struct Atomic {
+    names: [str];
+    vals: [int];
+    last: int;
+    last_ok: bool;
+}
+
+fn at_new() -> Atomic {
+    return Atomic { names: [], vals: [], last: 0, last_ok: false };
+}
+
+fn at_index(a: Atomic, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(a.names) {
+        if a.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn at_create(a: Atomic, name: str, init: int) -> Atomic {
+    let mut n: Atomic = a;
+    push(n.names, name);
+    push(n.vals, init);
+    return n;
+}
+
+fn at_get(a: Atomic, name: str) -> int {
+    let i: int = at_index(a, name);
+    if i < 0 {
+        return 0;
+    }
+    return a.vals[i];
+}
+
+fn at_last(a: Atomic) -> int {
+    return a.last;
+}
+
+fn at_last_ok(a: Atomic) -> bool {
+    return a.last_ok;
+}
+
+fn at_inc(a: Atomic, name: str) -> Atomic {
+    let mut n: Atomic = a;
+    let i: int = at_index(n, name);
+    if i >= 0 {
+        n.vals[i] = n.vals[i] + 1;
+        n.last = n.vals[i];
+        n.last_ok = true;
+    } else {
+        n.last_ok = false;
+    }
+    return n;
+}
+
+fn at_dec(a: Atomic, name: str) -> Atomic {
+    let mut n: Atomic = a;
+    let i: int = at_index(n, name);
+    if i >= 0 {
+        n.vals[i] = n.vals[i] - 1;
+        n.last = n.vals[i];
+        n.last_ok = true;
+    } else {
+        n.last_ok = false;
+    }
+    return n;
+}
+
+fn at_add(a: Atomic, name: str, d: int) -> Atomic {
+    let mut n: Atomic = a;
+    let i: int = at_index(n, name);
+    if i >= 0 {
+        n.vals[i] = n.vals[i] + d;
+        n.last = n.vals[i];
+        n.last_ok = true;
+    } else {
+        n.last_ok = false;
+    }
+    return n;
+}
+
+fn at_fetch_add(a: Atomic, name: str, d: int) -> Atomic {
+    let mut n: Atomic = a;
+    let i: int = at_index(n, name);
+    if i >= 0 {
+        n.last = n.vals[i];
+        n.vals[i] = n.vals[i] + d;
+        n.last_ok = true;
+    } else {
+        n.last_ok = false;
+    }
+    return n;
+}
+
+fn at_cas(a: Atomic, name: str, expected: int, newv: int) -> Atomic {
+    let mut n: Atomic = a;
+    let i: int = at_index(n, name);
+    if i >= 0 {
+        n.last = n.vals[i];
+        if n.vals[i] == expected {
+            n.vals[i] = newv;
+            n.last_ok = true;
+        } else {
+            n.last_ok = false;
+        }
+    } else {
+        n.last_ok = false;
+    }
+    return n;
+}

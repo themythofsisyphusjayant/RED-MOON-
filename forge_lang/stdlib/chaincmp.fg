@@ -1,0 +1,62 @@
+// Qasida — chained comparisons (Top-500 #486).
+// Import with: import "chaincmp.fg";
+// cc_eval() checks a chain of values joined by operators:
+// cc_eval([0, 5, 10], ["<", "<"]) is 0 < 5 < 10.
+// cc_first_fail() returns the index of the first failing
+// link, or -1 when the whole chain holds (-2 when the
+// operator list does not match the values). v1 limits: int
+// values only; operators <, <=, >, >=, ==, !=.
+
+fn cc_cmp(a: int, op: str, b: int) -> bool {
+    if op == "<" {
+        return a < b;
+    }
+    if op == "<=" {
+        return a <= b;
+    }
+    if op == ">" {
+        return a > b;
+    }
+    if op == ">=" {
+        return a >= b;
+    }
+    if op == "==" {
+        return a == b;
+    }
+    if op == "!=" {
+        return a != b;
+    }
+    return false;
+}
+
+fn cc_eval(vals: [int], ops: [str]) -> bool {
+    if len(ops) != len(vals) - 1 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(ops) {
+        if !cc_cmp(vals[i], ops[i], vals[i + 1]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn cc_eval3(a: int, op1: str, b: int, op2: str, c: int) -> bool {
+    return cc_cmp(a, op1, b) && cc_cmp(b, op2, c);
+}
+
+fn cc_first_fail(vals: [int], ops: [str]) -> int {
+    if len(ops) != len(vals) - 1 {
+        return -2;
+    }
+    let mut i: int = 0;
+    while i < len(ops) {
+        if !cc_cmp(vals[i], ops[i], vals[i + 1]) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}

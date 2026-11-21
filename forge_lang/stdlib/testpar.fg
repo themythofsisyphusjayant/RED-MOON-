@@ -1,0 +1,118 @@
+// Qasida — test parallelization (Top-500 #312).
+// Import with: import "testpar.fg";
+// Run tests concurrently: tp_plan() splits tests into shards
+// with longest-processing-time-first (LPT) scheduling — the
+// longest test goes to the currently least-loaded shard — and
+// reports each shard's time, the makespan and the speedup
+// over the serial total. v1 limits: durations are ints;
+// speedup is integer division.
+
+struct TestPar {
+    names: [str];
+    durs: [int];
+    shards: int;
+    assign: [int];
+    times: [int];
+    serial: int;
+    makespan: int;
+}
+
+fn tp_plan(names: [str], durs: [int], shards: int) -> TestPar {
+    let mut order: [int] = [];
+    let mut i: int = 0;
+    while i < len(names) {
+        push(order, i);
+        i = i + 1;
+    }
+    let mut a: int = 0;
+    while a < len(order) {
+        let mut best: int = a;
+        let mut b: int = a + 1;
+        while b < len(order) {
+            if durs[order[b]] > durs[order[best]] {
+                best = b;
+            }
+            b = b + 1;
+        }
+        if best != a {
+            let t: int = order[a];
+            order[a] = order[best];
+            order[best] = t;
+        }
+        a = a + 1;
+    }
+    let mut assign: [int] = [];
+    let mut k: int = 0;
+    while k < len(names) {
+        push(assign, 0);
+        k = k + 1;
+    }
+    let mut times: [int] = [];
+    let mut s: int = 0;
+    while s < shards {
+        push(times, 0);
+        s = s + 1;
+    }
+    let mut serial: int = 0;
+    let mut o: int = 0;
+    while o < len(order) {
+        let idx: int = order[o];
+        let mut best_shard: int = 0;
+        let mut sh: int = 1;
+        while sh < shards {
+            if times[sh] < times[best_shard] {
+                best_shard = sh;
+            }
+            sh = sh + 1;
+        }
+        assign[idx] = best_shard;
+        times[best_shard] = times[best_shard] + durs[idx];
+        serial = serial + durs[idx];
+        o = o + 1;
+    }
+    let mut ms: int = 0;
+    let mut sh2: int = 0;
+    while sh2 < shards {
+        if times[sh2] > ms {
+            ms = times[sh2];
+        }
+        sh2 = sh2 + 1;
+    }
+    return TestPar { names: names, durs: durs, shards: shards, assign: assign, times: times, serial: serial, makespan: ms };
+}
+
+fn tp_serial(t: TestPar) -> int {
+    return t.serial;
+}
+
+fn tp_makespan(t: TestPar) -> int {
+    return t.makespan;
+}
+
+fn tp_speedup(t: TestPar) -> int {
+    if t.makespan == 0 {
+        return 0;
+    }
+    return t.serial / t.makespan;
+}
+
+fn tp_shard_time(t: TestPar, s: int) -> int {
+    if s < 0 {
+        return -1;
+    }
+    if s >= len(t.times) {
+        return -1;
+    }
+    return t.times[s];
+}
+
+fn tp_shard_of(t: TestPar, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(t.names) {
+        if t.names[i] == name {
+            return t.assign[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}

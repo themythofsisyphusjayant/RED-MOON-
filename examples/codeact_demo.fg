@@ -1,0 +1,21 @@
+import "codeact.fg";
+
+fn main() {
+    let mut c: CodeAct = ca_new();
+    c = ca_add(c, "unused-import", "remove-import", "main.fg", 3);
+    c = ca_add(c, "unused-import", "prefix-underscore", "main.fg", 3);
+    c = ca_add(c, "missing-semi", "insert-semi", "util.fg", 12);
+    let acts: [str] = ca_actions(c, "unused-import");
+    println(acts[0]);
+    println(acts[1]);
+    c = ca_apply(c, "unused-import", "remove-import");
+    println(ca_last_ok(c));
+    println(ca_pending(c));
+    println(ca_applied(c));
+    c = ca_apply(c, "unused-import", "no-such-action");
+    println(ca_last_ok(c));
+    c = ca_apply(c, "missing-semi", "insert-semi");
+    println(ca_last_ok(c));
+    println(ca_applied(c));
+    println(ca_pending(c));
+}

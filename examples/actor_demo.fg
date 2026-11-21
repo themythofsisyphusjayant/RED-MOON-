@@ -1,0 +1,30 @@
+import "actor.fg";
+
+fn main() {
+    let mut a: ActorSys = ac_new();
+    a = ac_spawn(a, "counter");
+    a = ac_spawn(a, "logger");
+    a = ac_send(a, "counter", "inc");
+    a = ac_send(a, "counter", "inc");
+    a = ac_send(a, "counter", "dec");
+    a = ac_send(a, "logger", "hello");
+    println(ac_mailbox(a, "counter"));
+    println(ac_mailbox(a, "logger"));
+    a = ac_process(a, "counter");
+    println(ac_last_msg(a));
+    println(ac_processed(a, "counter"));
+    println(ac_mailbox(a, "counter"));
+    a = ac_process(a, "counter");
+    println(ac_last_msg(a));
+    println(ac_processed(a, "counter"));
+    a = ac_process(a, "logger");
+    println(ac_last_msg(a));
+    println(ac_processed(a, "logger"));
+    a = ac_process(a, "counter");
+    println(ac_last_msg(a));
+    println(ac_processed(a, "counter"));
+    println(ac_mailbox(a, "counter"));
+    a = ac_process(a, "counter");
+    println(ac_last_msg(a));
+    println(ac_processed(a, "counter"));
+}

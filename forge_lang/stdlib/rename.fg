@@ -1,0 +1,92 @@
+// Qasida — rename symbol (Top-500 #362).
+// Import with: import "rename.fg";
+// The known LSP gap, as a symbol table: rn_rename() renames
+// every occurrence of a symbol and reports how many rows
+// moved in rn_last_count(); rn_file()/rn_line() point at the
+// first occurrence. v1 limits: the table only — no source
+// files are rewritten.
+
+struct Rename {
+    names: [str];
+    kinds: [str];
+    files: [str];
+    lines: [int];
+    last_count: int;
+}
+
+fn rn_new() -> Rename {
+    return Rename { names: [], kinds: [], files: [], lines: [], last_count: 0 };
+}
+
+fn rn_add(r: Rename, name: str, kind: str, file: str, line: int) -> Rename {
+    let mut n: Rename = r;
+    push(n.names, name);
+    push(n.kinds, kind);
+    push(n.files, file);
+    push(n.lines, line);
+    return n;
+}
+
+fn rn_rename(r: Rename, old: str, new_name: str) -> Rename {
+    let mut n: Rename = r;
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(n.names) {
+        if n.names[i] == old {
+            n.names[i] = new_name;
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    n.last_count = c;
+    return n;
+}
+
+fn rn_last_count(r: Rename) -> int {
+    return r.last_count;
+}
+
+fn rn_lookup(r: Rename, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn rn_file(r: Rename, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            return r.files[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn rn_line(r: Rename, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            return r.lines[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rn_count(r: Rename, name: str) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}

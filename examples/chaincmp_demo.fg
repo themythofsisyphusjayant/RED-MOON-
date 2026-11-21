@@ -1,0 +1,30 @@
+import "chaincmp.fg";
+
+fn main() {
+    println(cc_eval3(0, "<", 5, "<", 10));
+    println(cc_eval3(0, "<", 15, "<", 10));
+    let a: [int] = [1, 2, 3, 4];
+    let lt3: [str] = ["<", "<", "<"];
+    println(cc_eval(a, lt3));
+    let b: [int] = [1, 2, 2, 4];
+    let mixed: [str] = ["<", "<=", "<"];
+    println(cc_eval(b, mixed));
+    let c: [int] = [5, 5, 5];
+    let eq2: [str] = ["==", "=="];
+    println(cc_eval(c, eq2));
+    let d: [int] = [3, 2, 1];
+    let gt2: [str] = [">", ">"];
+    println(cc_eval(d, gt2));
+    let e: [int] = [1, 3, 2];
+    let zig: [str] = ["<", ">"];
+    println(cc_eval(e, zig));
+    println(cc_first_fail(b, lt3));
+    let f: [int] = [1, 2, 3];
+    let lt2: [str] = ["<", "<"];
+    println(cc_first_fail(f, lt2));
+    let one: [int] = [1];
+    let none: [str] = [];
+    println(cc_eval(one, none));
+    let two: [int] = [1, 2];
+    println(cc_eval(two, lt2));
+}

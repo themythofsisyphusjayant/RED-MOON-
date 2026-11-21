@@ -1,0 +1,18 @@
+import "testpar.fg";
+
+fn main() {
+    let names: [str] = ["a", "b", "c", "d", "e", "f"];
+    let durs: [int] = [10, 8, 7, 6, 5, 4];
+    let t: TestPar = tp_plan(names, durs, 2);
+    println(tp_serial(t));
+    println(tp_makespan(t));
+    println(tp_speedup(t));
+    println(tp_shard_time(t, 0));
+    println(tp_shard_time(t, 1));
+    println(tp_shard_of(t, "a"));
+    println(tp_shard_of(t, "b"));
+    let names2: [str] = ["g", "h", "i"];
+    let durs2: [int] = [9, 3, 3];
+    let t2: TestPar = tp_plan(names2, durs2, 3);
+    println(tp_makespan(t2));
+}

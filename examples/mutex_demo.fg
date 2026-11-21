@@ -1,0 +1,30 @@
+import "mutex.fg";
+
+fn main() {
+    let mut m: Mutex = mx_new();
+    m = mx_create(m, "db", "mutex");
+    m = mx_create(m, "cfg", "rw");
+    m = mx_lock(m, "db", "alice");
+    println(mx_locked(m, "db"));
+    println(mx_holder(m, "db"));
+    m = mx_lock(m, "db", "bob");
+    println(mx_locked(m, "db"));
+    println(mx_holder(m, "db"));
+    m = mx_unlock(m, "db", "bob");
+    println(mx_locked(m, "db"));
+    m = mx_unlock(m, "db", "alice");
+    println(mx_locked(m, "db"));
+    m = mx_rlock(m, "cfg");
+    println(mx_readers(m, "cfg"));
+    m = mx_rlock(m, "cfg");
+    println(mx_readers(m, "cfg"));
+    m = mx_wlock(m, "cfg", "carol");
+    println(mx_locked(m, "cfg"));
+    m = mx_runlock(m, "cfg");
+    println(mx_readers(m, "cfg"));
+    m = mx_runlock(m, "cfg");
+    println(mx_readers(m, "cfg"));
+    m = mx_wlock(m, "cfg", "carol");
+    println(mx_locked(m, "cfg"));
+    println(mx_holder(m, "cfg"));
+}

@@ -1,0 +1,14 @@
+import "container.fg";
+
+fn main() {
+    let mut im: Image = ct_new();
+    im = ct_add_layer(im, "base", 45000000, "sha256:aa");
+    im = ct_add_layer(im, "runtime", 12000000, "sha256:bb");
+    im = ct_add_layer(im, "app", 3000000, "sha256:cc");
+    println(ct_count(im));
+    println(ct_total_size(im));
+    println(ct_largest(im));
+    println(ct_has_layer(im, "app"));
+    println(ct_has_layer(im, "debug"));
+    println(ct_digest(im, "runtime"));
+}

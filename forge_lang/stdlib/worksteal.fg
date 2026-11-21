@@ -1,0 +1,99 @@
+// Qasida — work-stealing schedulers (Top-500 #251).
+// Import with: import "worksteal.fg";
+// Balanced parallelism: every worker owns a deque of tasks.
+// A worker pops from its OWN deque (LIFO, from the end);
+// an idle worker steals from the FRONT of another worker's
+// deque. ws_last_task()/ws_last_ok() report the last pop or
+// steal. v1 limits: simulation only — no real threads;
+// stealing is explicit, not automatic.
+
+struct Steal {
+    workers: int;
+    owners: [int];
+    tasks: [str];
+    durs: [int];
+    last_task: str;
+    last_ok: bool;
+}
+
+fn ws_new(workers: int) -> Steal {
+    return Steal { workers: workers, owners: [], tasks: [], durs: [], last_task: "", last_ok: false };
+}
+
+fn ws_push(s: Steal, w: int, task: str, dur: int) -> Steal {
+    let mut n: Steal = s;
+    push(n.owners, w);
+    push(n.tasks, task);
+    push(n.durs, dur);
+    return n;
+}
+
+fn ws_count(s: Steal, w: int) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(s.owners) {
+        if s.owners[i] == w {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn ws_last_task(s: Steal) -> str {
+    return s.last_task;
+}
+
+fn ws_last_ok(s: Steal) -> bool {
+    return s.last_ok;
+}
+
+fn ws_remove(s: Steal, idx: int) -> Steal {
+    let mut o: [int] = [];
+    let mut t: [str] = [];
+    let mut d: [int] = [];
+    let mut i: int = 0;
+    while i < len(s.owners) {
+        if i != idx {
+            push(o, s.owners[i]);
+            push(t, s.tasks[i]);
+            push(d, s.durs[i]);
+        }
+        i = i + 1;
+    }
+    return Steal { workers: s.workers, owners: o, tasks: t, durs: d, last_task: s.last_task, last_ok: s.last_ok };
+}
+
+fn ws_pop(s: Steal, w: int) -> Steal {
+    let mut i: int = len(s.owners) - 1;
+    while i >= 0 {
+        if s.owners[i] == w {
+            let mut n: Steal = ws_remove(s, i);
+            n.last_task = s.tasks[i];
+            n.last_ok = true;
+            return n;
+        }
+        i = i - 1;
+    }
+    let mut n: Steal = s;
+    n.last_task = "";
+    n.last_ok = false;
+    return n;
+}
+
+fn ws_steal(s: Steal, thief: int, victim: int) -> Steal {
+    let mut n: Steal = s;
+    let mut i: int = 0;
+    while i < len(n.owners) {
+        if n.owners[i] == victim {
+            n.owners[i] = thief;
+            n.last_task = n.tasks[i];
+            n.last_ok = true;
+            return n;
+        }
+        i = i + 1;
+    }
+    n.last_task = "";
+    n.last_ok = false;
+    return n;
+}

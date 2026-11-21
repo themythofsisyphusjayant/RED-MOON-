@@ -1,0 +1,66 @@
+// Qasida — bit-identical reproducible builds (Top-500 #340).
+// Import with: import "repro.fg";
+// Same input, same bytes: a build log of (input hash,
+// output hash) pairs. rp_is_reproducible() is true only
+// when an input was built at least twice and every build
+// produced the same output hash. v1 limits: hashes are
+// opaque strings; no actual rebuilding happens here.
+
+struct Repro {
+    inputs: [str];
+    outputs: [str];
+}
+
+fn rp_new() -> Repro {
+    return Repro { inputs: [], outputs: [] };
+}
+
+fn rp_record(r: Repro, input: str, output: str) -> Repro {
+    let mut n: Repro = r;
+    push(n.inputs, input);
+    push(n.outputs, output);
+    return n;
+}
+
+fn rp_build_count(r: Repro, input: str) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(r.inputs) {
+        if r.inputs[i] == input {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn rp_first_output(r: Repro, input: str) -> str {
+    let mut i: int = 0;
+    while i < len(r.inputs) {
+        if r.inputs[i] == input {
+            return r.outputs[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn rp_is_reproducible(r: Repro, input: str) -> bool {
+    let first: str = rp_first_output(r, input);
+    if first == "" {
+        return false;
+    }
+    if rp_build_count(r, input) < 2 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(r.inputs) {
+        if r.inputs[i] == input {
+            if r.outputs[i] != first {
+                return false;
+            }
+        }
+        i = i + 1;
+    }
+    return true;
+}
