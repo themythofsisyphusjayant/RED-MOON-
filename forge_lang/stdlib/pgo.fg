@@ -1,0 +1,42 @@
+// Qasida — profile-guided optimization (Top-500 #409).
+// Import with: import "pgo.fg";
+// Builds tuned by real profiles: a function is hot at
+// 100 or more samples; hot functions of size <= 8 inline,
+// cold functions of size >= 20 outline, everything else
+// stays as it is. pg_hot_count counts the hot ones.
+// v1 limits: the decision as a library — it decides
+// from caller-supplied profile rows, it does not rebuild
+// anything (same honesty rule as sampleprof.fg, which
+// only aggregates samples).
+
+struct PgFn {
+    name: str;
+    samples: int;
+    size: int;
+}
+
+fn pg_hot(f: PgFn) -> bool {
+    return f.samples >= 100;
+}
+
+fn pg_action(f: PgFn) -> str {
+    if pg_hot(f) && f.size <= 8 {
+        return "inline";
+    }
+    if !pg_hot(f) && f.size >= 20 {
+        return "outline";
+    }
+    return "keep";
+}
+
+fn pg_hot_count(fns: [PgFn]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(fns) {
+        if pg_hot(fns[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}

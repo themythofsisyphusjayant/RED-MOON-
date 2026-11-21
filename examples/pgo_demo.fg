@@ -1,0 +1,18 @@
+import "pgo.fg";
+
+fn main() {
+    let fns: [PgFn] = [PgFn { name: "parse", samples: 250, size: 6 }, PgFn { name: "main", samples: 500, size: 30 }, PgFn { name: "helper", samples: 50, size: 25 }, PgFn { name: "tiny", samples: 10, size: 2 }, PgFn { name: "render", samples: 100, size: 8 }, PgFn { name: "huge", samples: 5, size: 40 }];
+    println(pg_hot(fns[0]));
+    println(pg_hot(fns[1]));
+    println(pg_hot(fns[2]));
+    println(pg_hot(fns[3]));
+    println(pg_hot(fns[4]));
+    println(pg_hot(fns[5]));
+    println(pg_action(fns[0]));
+    println(pg_action(fns[1]));
+    println(pg_action(fns[2]));
+    println(pg_action(fns[3]));
+    println(pg_action(fns[4]));
+    println(pg_action(fns[5]));
+    println(pg_hot_count(fns));
+}

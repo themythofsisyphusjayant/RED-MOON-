@@ -1,0 +1,77 @@
+// Qasida — cross-language hover (Top-500 #300).
+// Import with: import "xhover.fg";
+// Editor support across FFI boundaries, as tables:
+// Qasida symbols (name, type, doc) beside C
+// declarations (name, signature), plus the call edges
+// from Qasida functions into C functions. xh_lookup_q
+// and xh_lookup_c answer one side ("unknown" when
+// absent); xh_cross follows one Qasida function across
+// the boundary to its C callee ("unknown" when the
+// function calls nothing in C). v1 limits: tables only
+// — no live editor, no parsing (same honesty rule as
+// hover.fg, which is a table over caller-supplied
+// symbols); one C callee per Qasida function.
+
+struct XhQasida {
+    name: str;
+    ty: str;
+    doc: str;
+}
+
+struct XhC {
+    name: str;
+    sig: str;
+}
+
+struct XhCall {
+    qfn: str;
+    cfn: str;
+}
+
+fn xh_lookup_q(qs: [XhQasida], name: str) -> str {
+    let mut i: int = 0;
+    while i < len(qs) {
+        if qs[i].name == name {
+            return qs[i].name + ": " + qs[i].ty + " - " + qs[i].doc;
+        }
+        i = i + 1;
+    }
+    return "unknown";
+}
+
+fn xh_lookup_c(cs: [XhC], name: str) -> str {
+    let mut i: int = 0;
+    while i < len(cs) {
+        if cs[i].name == name {
+            return cs[i].name + ": " + cs[i].sig;
+        }
+        i = i + 1;
+    }
+    return "unknown";
+}
+
+fn xh_c_sig(cs: [XhC], name: str) -> str {
+    let mut i: int = 0;
+    while i < len(cs) {
+        if cs[i].name == name {
+            return cs[i].sig;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn xh_cross(qs: [XhQasida], cs: [XhC], calls: [XhCall], qfn: str) -> str {
+    let mut i: int = 0;
+    while i < len(calls) {
+        if calls[i].qfn == qfn {
+            let sig: str = xh_c_sig(cs, calls[i].cfn);
+            if sig == "" {
+                return "unknown";
+            }
+            return qfn + " -> " + calls[i].cfn + ": " + sig;
+        }
+        i = i + 1;
+    }
+    return "unknown";
+}

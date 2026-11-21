@@ -1,0 +1,30 @@
+import "proptest.fg";
+
+fn main() {
+    let cases: [int] = pt_gen(42, 8, 0, 100);
+    println(cases[0]);
+    println(cases[1]);
+    println(cases[2]);
+    println(cases[3]);
+    println(cases[4]);
+    println(cases[5]);
+    println(cases[6]);
+    println(cases[7]);
+    let mut passed: [bool] = [];
+    let mut i: int = 0;
+    while i < len(cases) {
+        push(passed, cases[i] <= 90);
+        i = i + 1;
+    }
+    println(pt_fail_count(passed));
+    let mf: int = pt_min_failing(cases, passed);
+    println(mf);
+    let chain: [int] = pt_shrink(mf);
+    let mut j: int = 0;
+    while j < len(chain) {
+        println(chain[j]);
+        j = j + 1;
+    }
+    println(len(pt_shrink(0)));
+    println(len(pt_shrink(1)));
+}

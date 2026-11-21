@@ -1,0 +1,12 @@
+import "lto.fg";
+
+fn main() {
+    let fns: [LtFn] = [LtFn { module: "core", name: "add", calls: 3, size: 2 }, LtFn { module: "core", name: "helper", calls: 1, size: 4 }, LtFn { module: "util", name: "unused", calls: 0, size: 10 }, LtFn { module: "util", name: "tiny", calls: 1, size: 6 }, LtFn { module: "net", name: "send", calls: 2, size: 30 }, LtFn { module: "net", name: "dead2", calls: 0, size: 1 }];
+    let dead: [str] = lt_dead_names(fns);
+    println(dead[0]);
+    println(dead[1]);
+    let inl: [str] = lt_inline_names(fns);
+    println(inl[0]);
+    println(len(dead));
+    println(len(inl));
+}

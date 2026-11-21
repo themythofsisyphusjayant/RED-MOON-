@@ -1,0 +1,54 @@
+// Qasida — link-time optimization analysis (Top-500 #408).
+// Import with: import "lto.fg";
+// Cross-module optimization, as an analysis over the
+// module call graph: an exported function with zero
+// cross-module call sites is dead, and one called
+// exactly once with size <= 5 lines is an inline
+// candidate. lt_dead_names and lt_inline_names list
+// each set in registration order. v1 limits: the
+// analysis as a library — it decides, it does not
+// rewrite or link anything (same honesty rule as
+// dce.fg); call counts and sizes are caller-supplied
+// data.
+
+struct LtFn {
+    module: str;
+    name: str;
+    calls: int;
+    size: int;
+}
+
+fn lt_dead(f: LtFn) -> bool {
+    return f.calls == 0;
+}
+
+fn lt_inline_cand(f: LtFn) -> bool {
+    if f.calls == 1 && f.size <= 5 {
+        return true;
+    }
+    return false;
+}
+
+fn lt_dead_names(fns: [LtFn]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(fns) {
+        if lt_dead(fns[i]) {
+            push(out, fns[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn lt_inline_names(fns: [LtFn]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(fns) {
+        if lt_inline_cand(fns[i]) {
+            push(out, fns[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

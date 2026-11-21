@@ -1,0 +1,25 @@
+import "pariter.fg";
+
+fn main() {
+    println(pi_chunk_count(7, 3));
+    let sizes: [int] = pi_chunk_sizes(7, 3);
+    println(sizes[0]);
+    println(sizes[1]);
+    println(sizes[2]);
+    println(pi_chunk_start(7, 3, 0));
+    println(pi_chunk_start(7, 3, 1));
+    println(pi_chunk_start(7, 3, 2));
+    let out: [int] = pi_map([1, 2, 3, 4, 5, 6, 7], 3, "double");
+    println(out[0]);
+    println(out[1]);
+    println(out[2]);
+    println(out[3]);
+    println(out[4]);
+    println(out[5]);
+    println(out[6]);
+    let sq: [int] = pi_map([2, 3], 1, "square");
+    println(sq[0]);
+    println(sq[1]);
+    println(pi_apply("negate", -5));
+    println(pi_apply("cube", 3));
+}

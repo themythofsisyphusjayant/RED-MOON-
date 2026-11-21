@@ -1,0 +1,13 @@
+import "loopvec.fg";
+
+fn main() {
+    let loops: [LvLoop] = [LvLoop { name: "a", trip: 16, calls: false, branch: false }, LvLoop { name: "b", trip: 10, calls: false, branch: false }, LvLoop { name: "c", trip: 3, calls: false, branch: false }, LvLoop { name: "d", trip: 8, calls: true, branch: false }, LvLoop { name: "e", trip: 8, calls: false, branch: true }, LvLoop { name: "f", trip: 4, calls: false, branch: false }];
+    let mut i: int = 0;
+    while i < len(loops) {
+        println(lv_vectorizable(loops[i]));
+        println(lv_width(loops[i]));
+        println(lv_iters(loops[i]));
+        println(lv_tail(loops[i]));
+        i = i + 1;
+    }
+}

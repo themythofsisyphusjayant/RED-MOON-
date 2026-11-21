@@ -1,0 +1,85 @@
+// Qasida — parallel iterators (Top-500 #250).
+// Import with: import "pariter.fg";
+// par_map over collections: split [int] data into
+// worker chunks as evenly as possible (first chunks get
+// the extra element), apply a named op per element, and
+// combine in order. pi_chunk_sizes/pi_chunk_start expose
+// the split; pi_apply names the op ("double", "square",
+// "negate", "inc"; unknown ops are the identity).
+// v1 limits: the split/apply/combine is modelled — no
+// real threads run (same honesty rule as testpar.fg and
+// worksteal.fg); [int] data only.
+
+fn pi_chunk_count(n: int, workers: int) -> int {
+    if n <= 0 {
+        return 0;
+    }
+    if workers >= n {
+        return n;
+    }
+    return workers;
+}
+
+fn pi_chunk_sizes(n: int, workers: int) -> [int] {
+    let c: int = pi_chunk_count(n, workers);
+    let mut out: [int] = [];
+    if c == 0 {
+        return out;
+    }
+    let base: int = n / c;
+    let rem: int = n % c;
+    let mut i: int = 0;
+    while i < c {
+        if i < rem {
+            push(out, base + 1);
+        } else {
+            push(out, base);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn pi_chunk_start(n: int, workers: int, idx: int) -> int {
+    let sizes: [int] = pi_chunk_sizes(n, workers);
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < idx {
+        s = s + sizes[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn pi_apply(op: str, x: int) -> int {
+    if op == "double" {
+        return x * 2;
+    }
+    if op == "square" {
+        return x * x;
+    }
+    if op == "negate" {
+        return -x;
+    }
+    if op == "inc" {
+        return x + 1;
+    }
+    return x;
+}
+
+fn pi_map(data: [int], workers: int, op: str) -> [int] {
+    let mut out: [int] = [];
+    let c: int = pi_chunk_count(len(data), workers);
+    let mut chunk: int = 0;
+    while chunk < c {
+        let start: int = pi_chunk_start(len(data), workers, chunk);
+        let size: int = pi_chunk_sizes(len(data), workers)[chunk];
+        let mut j: int = 0;
+        while j < size {
+            push(out, pi_apply(op, data[start + j]));
+            j = j + 1;
+        }
+        chunk = chunk + 1;
+    }
+    return out;
+}

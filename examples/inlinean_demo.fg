@@ -1,0 +1,16 @@
+import "inlinean.fg";
+
+fn main() {
+    let fns: [IaFn] = [IaFn { name: "tiny", size: 2, calls: 1, hot: false }, IaFn { name: "big", size: 40, calls: 1, hot: false }, IaFn { name: "hot8", size: 8, calls: 5, hot: true }, IaFn { name: "hot9", size: 9, calls: 5, hot: true }, IaFn { name: "cold3", size: 3, calls: 2, hot: false }, IaFn { name: "hot3", size: 3, calls: 2, hot: true }];
+    println(ia_inline(fns[0]));
+    println(ia_inline(fns[1]));
+    println(ia_inline(fns[2]));
+    println(ia_inline(fns[3]));
+    println(ia_inline(fns[4]));
+    println(ia_inline(fns[5]));
+    println(ia_count(fns));
+    let names: [str] = ia_names(fns);
+    println(names[0]);
+    println(names[1]);
+    println(names[2]);
+}

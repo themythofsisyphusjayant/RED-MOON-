@@ -1,0 +1,14 @@
+import "cigate.fg";
+
+fn main() {
+    let files: [CiFile] = [CiFile { name: "main.fg", clean: true }, CiFile { name: "util.fg", clean: false }, CiFile { name: "net.fg", clean: false }, CiFile { name: "lib.fg", clean: true }];
+    println(ci_gate(files));
+    let bad: [str] = ci_offenders(files);
+    println(bad[0]);
+    println(bad[1]);
+    println(ci_fail_count(files));
+    let clean: [CiFile] = [CiFile { name: "a.fg", clean: true }];
+    println(ci_gate(clean));
+    println(len(ci_offenders(clean)));
+    println(ci_fail_count(clean));
+}

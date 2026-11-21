@@ -1,0 +1,28 @@
+// Qasida — loop unrolling analysis (Top-500 #404).
+// Import with: import "unroll.fg";
+// Which unroll factor a loop gets: the largest power of
+// two up to 4 whose body still fits (body * factor <= 16
+// lines); un_remainder is the scalar tail (trip %
+// factor) and un_iters the unrolled iteration count
+// (trip / factor). v1 limits: the analysis as a library
+// — it decides, it does not rewrite loops (same honesty
+// rule as bce.fg and dce.fg); trip counts and body sizes
+// are caller-supplied data.
+
+fn un_factor(trip: int, body: int) -> int {
+    if body * 4 <= 16 {
+        return 4;
+    }
+    if body * 2 <= 16 {
+        return 2;
+    }
+    return 1;
+}
+
+fn un_remainder(trip: int, factor: int) -> int {
+    return trip % factor;
+}
+
+fn un_iters(trip: int, factor: int) -> int {
+    return trip / factor;
+}

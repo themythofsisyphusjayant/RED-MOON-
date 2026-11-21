@@ -1,0 +1,12 @@
+import "escape.fg";
+
+fn main() {
+    let vals: [EsVal] = [EsVal { name: "x", returned: true, stored: false, called: false }, EsVal { name: "y", returned: false, stored: true, called: false }, EsVal { name: "z", returned: false, stored: false, called: true }, EsVal { name: "w", returned: false, stored: false, called: false }, EsVal { name: "v", returned: true, stored: true, called: true }];
+    println(es_place(vals[0]));
+    println(es_place(vals[1]));
+    println(es_place(vals[2]));
+    println(es_place(vals[3]));
+    println(es_place(vals[4]));
+    println(es_heap_count(vals));
+    println(es_stack_count(vals));
+}

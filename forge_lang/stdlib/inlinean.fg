@@ -1,0 +1,54 @@
+// Qasida — inlining analysis (Top-500 #403).
+// Import with: import "inlinean.fg";
+// Which small functions to inline: a function inlines
+// when it is tiny and called once (size <= 3 lines and
+// exactly 1 call site) or when it is hot and small
+// (hot and size <= 8 lines). ia_count counts the
+// inlineable functions, ia_names lists them in order.
+// (The module is inlinean, not inline: `inline` is a C
+// keyword and cannot be a file or field name.)
+// v1 limits: the analysis as a library — it decides,
+// it does not rewrite calls (same honesty rule as
+// bce.fg and dce.fg); sizes and call counts are
+// caller-supplied data.
+
+struct IaFn {
+    name: str;
+    size: int;
+    calls: int;
+    hot: bool;
+}
+
+fn ia_inline(f: IaFn) -> bool {
+    if f.size <= 3 && f.calls == 1 {
+        return true;
+    }
+    if f.hot && f.size <= 8 {
+        return true;
+    }
+    return false;
+}
+
+fn ia_count(fns: [IaFn]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(fns) {
+        if ia_inline(fns[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn ia_names(fns: [IaFn]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(fns) {
+        if ia_inline(fns[i]) {
+            push(out, fns[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

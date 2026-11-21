@@ -1,0 +1,21 @@
+import "regalloc.fg";
+
+fn main() {
+    let set1: [RgInterval] = [RgInterval { name: "a", start: 0, end: 5 }, RgInterval { name: "b", start: 1, end: 3 }, RgInterval { name: "c", start: 2, end: 7 }, RgInterval { name: "d", start: 3, end: 4 }, RgInterval { name: "e", start: 4, end: 9 }, RgInterval { name: "f", start: 6, end: 8 }];
+    let a1: [int] = rg_alloc(set1);
+    println(a1[0]);
+    println(a1[1]);
+    println(a1[2]);
+    println(a1[3]);
+    println(a1[4]);
+    println(a1[5]);
+    println(rg_spill_count(a1));
+    let set2: [RgInterval] = [RgInterval { name: "g", start: 0, end: 10 }, RgInterval { name: "h", start: 1, end: 10 }, RgInterval { name: "i", start: 2, end: 10 }, RgInterval { name: "j", start: 3, end: 10 }, RgInterval { name: "k", start: 4, end: 10 }];
+    let a2: [int] = rg_alloc(set2);
+    println(a2[0]);
+    println(a2[1]);
+    println(a2[2]);
+    println(a2[3]);
+    println(a2[4]);
+    println(rg_spill_count(a2));
+}

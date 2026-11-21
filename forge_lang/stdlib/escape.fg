@@ -1,0 +1,50 @@
+// Qasida — escape analysis (Top-500 #406).
+// Import with: import "escape.fg";
+// Decide stack vs heap per value: a value escapes (and
+// lives on the heap) when it is returned or stored;
+// a value only passed to calls stays on the stack.
+// es_heap_count / es_stack_count count each placement.
+// v1 limits: the analysis as a library — it decides,
+// it does not allocate (same honesty rule as bce.fg);
+// the facts (returned, stored, called) are
+// caller-supplied data.
+
+struct EsVal {
+    name: str;
+    returned: bool;
+    stored: bool;
+    called: bool;
+}
+
+fn es_escapes(v: EsVal) -> bool {
+    if v.returned {
+        return true;
+    }
+    if v.stored {
+        return true;
+    }
+    return false;
+}
+
+fn es_place(v: EsVal) -> str {
+    if es_escapes(v) {
+        return "heap";
+    }
+    return "stack";
+}
+
+fn es_heap_count(vals: [EsVal]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(vals) {
+        if es_escapes(vals[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn es_stack_count(vals: [EsVal]) -> int {
+    return len(vals) - es_heap_count(vals);
+}

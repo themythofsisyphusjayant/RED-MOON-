@@ -1,0 +1,66 @@
+// Qasida — instruction scheduling (Top-500 #413).
+// Import with: import "sched.fg";
+// Order instructions for pipelines: each op names one
+// dependency ("" for none) and a latency; sc_schedule
+// gives the start cycle of every op in input order
+// (start = finish of its dependency, or 0), sc_finishes
+// the finish cycles, sc_makespan the total. v1 limits:
+// one dependency per op, input must already be in
+// topological order, and the schedule is a model —
+// it orders, it does not emit code (same honesty rule
+// as dce.fg and bce.fg).
+
+struct ScOp {
+    name: str;
+    latency: int;
+    dep: str;
+}
+
+fn sc_find(ops: [ScOp], name: str) -> int {
+    let mut i: int = 0;
+    while i < len(ops) {
+        if ops[i].name == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn sc_schedule(ops: [ScOp]) -> [int] {
+    let mut starts: [int] = [];
+    let mut i: int = 0;
+    while i < len(ops) {
+        let mut s: int = 0;
+        if ops[i].dep != "" {
+            let d: int = sc_find(ops, ops[i].dep);
+            s = starts[d] + ops[d].latency;
+        }
+        push(starts, s);
+        i = i + 1;
+    }
+    return starts;
+}
+
+fn sc_finishes(ops: [ScOp], starts: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(ops) {
+        push(out, starts[i] + ops[i].latency);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sc_makespan(ops: [ScOp], starts: [int]) -> int {
+    let fin: [int] = sc_finishes(ops, starts);
+    let mut m: int = 0;
+    let mut i: int = 0;
+    while i < len(fin) {
+        if fin[i] > m {
+            m = fin[i];
+        }
+        i = i + 1;
+    }
+    return m;
+}

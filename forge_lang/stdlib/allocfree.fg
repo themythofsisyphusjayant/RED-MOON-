@@ -1,0 +1,40 @@
+// Qasida — allocation-free hot paths (Top-500 #419).
+// Import with: import "allocfree.fg";
+// No allocation inside loops: a loop is alloc-free when
+// its allocation-site count is zero. af_free_count
+// counts the alloc-free loops and af_total_allocs the
+// allocation sites across all of them. v1 limits: the
+// analysis as a library — it judges caller-supplied
+// counts, it does not inspect loop bodies or move
+// allocations (same honesty rule as unreach.fg).
+
+struct AfLoop {
+    name: str;
+    allocs: int;
+}
+
+fn af_free(l: AfLoop) -> bool {
+    return l.allocs == 0;
+}
+
+fn af_free_count(loops: [AfLoop]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(loops) {
+        if af_free(loops[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn af_total_allocs(loops: [AfLoop]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(loops) {
+        c = c + loops[i].allocs;
+        i = i + 1;
+    }
+    return c;
+}

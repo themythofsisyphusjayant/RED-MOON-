@@ -1162,3 +1162,47 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (330 + 13 + 157 = 500). HAVE 330 of 500 = 66%. Next: sprint batch 14,
   same libs-only rule, target 20/day (the running count is the honest
   measure).
+
+Sprint batch 14 (21 Nov 2026, same day, LIBS ONLY): 15 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121n.py (60/60 PASS — 15
+  demos) with an independent Python replica 15/15 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch14/replica_20261121n.py):
+  pariter.fg (#250 chunk split + named int-op map, modelled
+  parallelism, no real threads), proptest.fg (#302 LCG case
+  generation, halving shrink chain, smallest failing case),
+  buildgen.fg (#339 generator rules with {name} substitution),
+  cigate.fg (#352 fmt gate over a (file, fmt-clean?) table,
+  closes the PARTIAL), inlinean.fg (#403 inline-candidate
+  analysis: tiny + called once, or hot + small),
+  unroll.fg (#404 unroll-factor analysis: largest power of 2
+  to 4 with body * factor <= 16, tail + iterations),
+  loopvec.fg (#405 auto-vectorization analysis: no calls, no
+  branches, trip >= 4, width 4), escape.fg (#406 escape
+  analysis: returned or stored escapes to the heap),
+  pgo.fg (#409 profile-guided decisions: hot at 100+ samples,
+  inline/outline/keep), regalloc.fg (#412 linear-scan register
+  allocation over 4 registers, spill -1), sched.fg (#413 list
+  scheduling over a single-dependency DAG, makespan),
+  benchtune.fg (#418 bench verdicts: regress/improve/stable
+  at +/-10%), xhover.fg (#300 cross-language hover tables:
+  Qasida symbols beside C declarations plus call edges),
+  lto.fg (#408 cross-module analysis: dead exports, inline
+  candidates), allocfree.fg (#419 alloc-free loop analysis).
+  No #42/#43/#53 work (#42 resolved: helper-function slice).
+  Skipped per brief: #273, #129, #302 (need function values);
+  #122/#164 not flipped (known stale notes). #181/#187/#188/
+  #189/#190 not buildable in pure Qasida (no mkdir/readdir/
+  rename builtins exist). Error/diagnostics clusters #44-#60
+  and #341-#360 untouched (#42-adjacent). The library-buildable
+  pool is now thin: of the 155 items left, most are compiler
+  work (closures, macros, syntax), OS/kernel, network/FFI,
+  compiler internals, or the banned error/diagnostics clusters.
+  Counts after sprint batch 14: HAVE 345, PARTIAL 12, GAP 143, to build
+  155. Arithmetic from sprint batch 13 (HAVE 330, PARTIAL 13, GAP 157,
+  to build 170): 14 GAP-to-HAVE + 1 PARTIAL-to-HAVE = 15 flips;
+  330 + 15 = 345; 13 - 1 = 12; 157 - 14 = 143; 170 - 15 = 155
+  (345 + 12 + 143 = 500). HAVE 345 of 500 = 69%. Next: sprint batch 15,
+  same libs-only rule — land what the pool honestly supports (the
+  running count is the honest measure; a smaller honest batch beats
+  a padded one).

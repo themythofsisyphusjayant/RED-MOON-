@@ -1,0 +1,68 @@
+// Qasida — property-based testing (Top-500 #302).
+// Import with: import "proptest.fg";
+// Generated cases with shrinking: pt_gen produces
+// deterministic int cases from a seed (the rand.fg LCG
+// constants, kept in int range by masking with
+// 2147483647), pt_shrink gives the halving chain of a
+// failing value down to 0, and the run table records
+// which cases passed so pt_min_failing names the
+// smallest failing case (-1 when none failed).
+// v1 limits: int cases only; the caller evaluates the
+// property per case (no function values exist yet, item
+// 103, still GAP) — this generates and shrinks, it does
+// not run the property itself (same honesty rule as
+// paramtest.fg and flaky.fg).
+
+fn pt_next(seed: int) -> int {
+    return (1103515245 * seed + 12345) % 2147483647;
+}
+
+fn pt_gen(seed: int, count: int, lo: int, hi: int) -> [int] {
+    let mut out: [int] = [];
+    let mut s: int = seed;
+    let span: int = hi - lo + 1;
+    let mut i: int = 0;
+    while i < count {
+        s = pt_next(s);
+        push(out, lo + s % span);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn pt_shrink(v: int) -> [int] {
+    let mut out: [int] = [];
+    let mut x: int = v / 2;
+    while x > 0 {
+        push(out, x);
+        x = x / 2;
+    }
+    push(out, 0);
+    return out;
+}
+
+fn pt_fail_count(passed: [bool]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(passed) {
+        if !passed[i] {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn pt_min_failing(cases: [int], passed: [bool]) -> int {
+    let mut best: int = -1;
+    let mut i: int = 0;
+    while i < len(cases) {
+        if !passed[i] {
+            if best < 0 || cases[i] < best {
+                best = cases[i];
+            }
+        }
+        i = i + 1;
+    }
+    return best;
+}

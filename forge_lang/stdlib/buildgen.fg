@@ -1,0 +1,72 @@
+// Qasida — build-time code generation (Top-500 #339).
+// Import with: import "buildgen.fg";
+// Generate code during builds: a rule names a template
+// (lines with a {name} placeholder) and an input name;
+// bg_run substitutes the name into every line and bg_file
+// names the generated file. bg_sub replaces every
+// occurrence of {name} in one line.
+// v1 limits: one placeholder ({name}) only; output is
+// generated text, not compiled code (same honesty rule as
+// schemagen.fg and srcgen.fg); no file is written — the
+// caller owns where the lines go.
+
+struct BgRule {
+    name: str;
+    template: [str];
+}
+
+fn bg_find(hay: str, needle: str) -> int {
+    if len(needle) == 0 {
+        return 0;
+    }
+    if len(needle) > len(hay) {
+        return -1;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn bg_sub(line: str, name: str) -> str {
+    let mut out: str = "";
+    let mut rest: str = line;
+    let mut done: bool = false;
+    while !done {
+        let at: int = bg_find(rest, "{name}");
+        if at < 0 {
+            out = out + rest;
+            done = true;
+        } else {
+            out = out + substr(rest, 0, at) + name;
+            if at + 6 >= len(rest) {
+                done = true;
+            } else {
+                rest = substr(rest, at + 6, len(rest) - (at + 6));
+            }
+        }
+    }
+    return out;
+}
+
+fn bg_run(rule: BgRule, input_name: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(rule.template) {
+        push(out, bg_sub(rule.template[i], input_name));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bg_file(rule: BgRule, input_name: str) -> str {
+    return rule.name + "_" + input_name + ".fg";
+}
+
+fn bg_count(rule: BgRule) -> int {
+    return len(rule.template);
+}

@@ -458,3 +458,17 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   eval), publish.fg (publish records, version validation),
   devshell.fg (FNV-1a derivation hash), stdlibfuzz.fg (LCG
   fuzz driver, exact ok-counts). HAVE 310 -> 330 (66% of 500).
+- Sprint batch 14 (21 Nov 2026, same day, LIBS ONLY): 15 flips,
+  all verified 4/4 (60/60 checks, 15 demos): pariter.fg
+  (chunk split + named int-op map, modelled parallelism),
+  proptest.fg (LCG cases, halving shrink, smallest failing),
+  buildgen.fg ({name} substitution), cigate.fg (fmt gate,
+  closes #352 PARTIAL), inlinean.fg (inline-candidate
+  analysis), unroll.fg (unroll-factor analysis), loopvec.fg
+  (auto-vectorization analysis), escape.fg (escape analysis),
+  pgo.fg (profile-guided decisions), regalloc.fg (linear-scan
+  register allocation, 4 regs), sched.fg (list scheduling,
+  makespan), benchtune.fg (bench verdicts at +/-10%),
+  xhover.fg (cross-language hover tables), lto.fg
+  (cross-module dead/inline analysis), allocfree.fg
+  (alloc-free loop analysis). HAVE 330 -> 345 (69% of 500).

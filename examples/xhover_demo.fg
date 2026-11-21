@@ -1,0 +1,14 @@
+import "xhover.fg";
+
+fn main() {
+    let qs: [XhQasida] = [XhQasida { name: "parse", ty: "fn(str) -> int", doc: "parse a number" }, XhQasida { name: "render", ty: "fn(int) -> str", doc: "render a value" }];
+    let cs: [XhC] = [XhC { name: "strlen", sig: "size_t strlen(const char*)" }, XhC { name: "memcpy", sig: "void* memcpy(void*, const void*, size_t)" }];
+    let calls: [XhCall] = [XhCall { qfn: "parse", cfn: "strlen" }, XhCall { qfn: "render", cfn: "memcpy" }];
+    println(xh_lookup_q(qs, "parse"));
+    println(xh_lookup_q(qs, "missing"));
+    println(xh_lookup_c(cs, "memcpy"));
+    println(xh_lookup_c(cs, "free"));
+    println(xh_cross(qs, cs, calls, "parse"));
+    println(xh_cross(qs, cs, calls, "render"));
+    println(xh_cross(qs, cs, calls, "main"));
+}

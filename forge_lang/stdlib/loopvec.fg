@@ -1,0 +1,46 @@
+// Qasida — auto-vectorization analysis (Top-500 #405).
+// Import with: import "loopvec.fg";
+// Which loops vectorize automatically: a loop
+// vectorizes when it makes no calls, has no branches
+// and runs at least 4 trips; the vector width is 4
+// lanes, lv_iters counts the vector iterations and
+// lv_tail the scalar tail. v1 limits: the analysis as
+// a library — it decides, it emits no vector
+// instructions (same honesty rule as simd.fg, whose
+// width-4 chunks run in order); trip counts and body
+// facts are caller-supplied data.
+
+struct LvLoop {
+    name: str;
+    trip: int;
+    calls: bool;
+    branch: bool;
+}
+
+fn lv_vectorizable(l: LvLoop) -> bool {
+    if l.calls {
+        return false;
+    }
+    if l.branch {
+        return false;
+    }
+    if l.trip < 4 {
+        return false;
+    }
+    return true;
+}
+
+fn lv_width(l: LvLoop) -> int {
+    if lv_vectorizable(l) {
+        return 4;
+    }
+    return 1;
+}
+
+fn lv_iters(l: LvLoop) -> int {
+    return l.trip / lv_width(l);
+}
+
+fn lv_tail(l: LvLoop) -> int {
+    return l.trip % lv_width(l);
+}

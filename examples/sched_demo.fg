@@ -1,0 +1,18 @@
+import "sched.fg";
+
+fn main() {
+    let ops: [ScOp] = [ScOp { name: "load", latency: 2, dep: "" }, ScOp { name: "add", latency: 1, dep: "load" }, ScOp { name: "mul", latency: 3, dep: "add" }, ScOp { name: "store", latency: 1, dep: "mul" }, ScOp { name: "other", latency: 2, dep: "load" }];
+    let starts: [int] = sc_schedule(ops);
+    println(starts[0]);
+    println(starts[1]);
+    println(starts[2]);
+    println(starts[3]);
+    println(starts[4]);
+    let fin: [int] = sc_finishes(ops, starts);
+    println(fin[0]);
+    println(fin[1]);
+    println(fin[2]);
+    println(fin[3]);
+    println(fin[4]);
+    println(sc_makespan(ops, starts));
+}

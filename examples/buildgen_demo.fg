@@ -1,0 +1,13 @@
+import "buildgen.fg";
+
+fn main() {
+    let rule: BgRule = BgRule { name: "getter", template: ["fn get_{name}() -> int {", "    return self.{name};", "}"] };
+    println(bg_file(rule, "count"));
+    println(bg_count(rule));
+    let lines: [str] = bg_run(rule, "count");
+    println(lines[0]);
+    println(lines[1]);
+    println(lines[2]);
+    println(bg_sub("// generated", "count"));
+    println(bg_sub("a {name} b {name}", "x"));
+}

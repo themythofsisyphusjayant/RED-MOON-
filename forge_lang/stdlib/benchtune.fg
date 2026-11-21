@@ -1,0 +1,52 @@
+// Qasida — benchmark-driven tuning (Top-500 #418).
+// Import with: import "benchtune.fg";
+// A bench suite that drives tuning decisions: each row
+// pairs a baseline time with the current time (integer
+// microseconds); the verdict is "regress" when the
+// current time is more than 10% over baseline,
+// "improve" when it is more than 10% under, and
+// "stable" otherwise. bt_regressions / bt_improvements
+// count each verdict. v1 limits: the verdicts as a
+// library — it judges caller-supplied bench rows, it
+// does not run benchmarks (bench.fg owns the runs) and
+// it does not retune anything.
+
+struct BtBench {
+    name: str;
+    baseline: int;
+    current: int;
+}
+
+fn bt_verdict(b: BtBench) -> str {
+    if b.current * 100 > b.baseline * 110 {
+        return "regress";
+    }
+    if b.current * 100 < b.baseline * 90 {
+        return "improve";
+    }
+    return "stable";
+}
+
+fn bt_regressions(benches: [BtBench]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(benches) {
+        if bt_verdict(benches[i]) == "regress" {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn bt_improvements(benches: [BtBench]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(benches) {
+        if bt_verdict(benches[i]) == "improve" {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}

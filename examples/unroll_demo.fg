@@ -1,0 +1,14 @@
+import "unroll.fg";
+
+fn main() {
+    let trips: [int] = [16, 10, 7, 12, 9, 5, 3];
+    let bodies: [int] = [3, 3, 2, 5, 4, 6, 20];
+    let mut i: int = 0;
+    while i < len(trips) {
+        let f: int = un_factor(trips[i], bodies[i]);
+        println(f);
+        println(un_remainder(trips[i], f));
+        println(un_iters(trips[i], f));
+        i = i + 1;
+    }
+}

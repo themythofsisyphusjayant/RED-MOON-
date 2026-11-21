@@ -1,0 +1,12 @@
+import "benchtune.fg";
+
+fn main() {
+    let benches: [BtBench] = [BtBench { name: "tick", baseline: 1000, current: 1050 }, BtBench { name: "matmul", baseline: 2000, current: 2300 }, BtBench { name: "orderbook", baseline: 500, current: 400 }, BtBench { name: "bs", baseline: 800, current: 800 }, BtBench { name: "mc", baseline: 300, current: 340 }];
+    println(bt_verdict(benches[0]));
+    println(bt_verdict(benches[1]));
+    println(bt_verdict(benches[2]));
+    println(bt_verdict(benches[3]));
+    println(bt_verdict(benches[4]));
+    println(bt_regressions(benches));
+    println(bt_improvements(benches));
+}

@@ -1,0 +1,11 @@
+import "allocfree.fg";
+
+fn main() {
+    let loops: [AfLoop] = [AfLoop { name: "hot", allocs: 0 }, AfLoop { name: "warm", allocs: 2 }, AfLoop { name: "cold", allocs: 0 }, AfLoop { name: "mix", allocs: 1 }];
+    println(af_free(loops[0]));
+    println(af_free(loops[1]));
+    println(af_free(loops[2]));
+    println(af_free(loops[3]));
+    println(af_free_count(loops));
+    println(af_total_allocs(loops));
+}

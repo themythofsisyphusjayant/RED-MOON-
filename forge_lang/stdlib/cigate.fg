@@ -1,0 +1,50 @@
+// Qasida — formatter enforcement in CI (Top-500 #352).
+// Import with: import "cigate.fg";
+// fmt exists and is idempotent; this is the gate that
+// enforces it: a file table (name, fmt-clean?) with
+// ci_gate (true only when every file is clean),
+// ci_offenders (the unclean names, in input order) and
+// ci_fail_count. v1 limits: the gate logic as a library
+// — it checks a caller-supplied table, it does not run
+// fmt itself and wiring it into CI is the caller's job
+// (same honesty rule as flaky.fg and depcheck.fg).
+
+struct CiFile {
+    name: str;
+    clean: bool;
+}
+
+fn ci_gate(files: [CiFile]) -> bool {
+    let mut i: int = 0;
+    while i < len(files) {
+        if !files[i].clean {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn ci_offenders(files: [CiFile]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(files) {
+        if !files[i].clean {
+            push(out, files[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ci_fail_count(files: [CiFile]) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(files) {
+        if !files[i].clean {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
