@@ -1,0 +1,45 @@
+// Qasida — 1-D convolution layer (the missing nn layer).
+// Import with: import "conv1d.fg";
+// conv1d runs a kernel over a float signal: valid mode
+// (no padding, stride s) and same mode (zero-padded,
+// stride 1, output as long as the input). This is the
+// convolution slice of catalog #423 — nn.fg already has
+// linear, layernorm, GELU, MLP and attention layers.
+// v1 limits: 1-D only, float signals, single channel;
+// no dilation, no bias term (add one with vecmath).
+fn conv1d(x: [float], k: [float], stride: int) -> [float] {
+    let n: int = (len(x) - len(k)) / stride + 1;
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        let mut acc: float = 0.0;
+        let mut j: int = 0;
+        while j < len(k) {
+            acc = acc + x[i * stride + j] * k[j];
+            j = j + 1;
+        }
+        push(out, acc);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn conv1d_same(x: [float], k: [float]) -> [float] {
+    let pad: int = len(k) / 2;
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(x) {
+        let mut acc: float = 0.0;
+        let mut j: int = 0;
+        while j < len(k) {
+            let at: int = i + j - pad;
+            if at >= 0 && at < len(x) {
+                acc = acc + x[at] * k[j];
+            }
+            j = j + 1;
+        }
+        push(out, acc);
+        i = i + 1;
+    }
+    return out;
+}

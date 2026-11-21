@@ -303,7 +303,7 @@ is not ownership-tracked (see #27).
 150. Full template engine (Jinja/Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): template2.fg + template2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: {{#if}} conditionals, {{#each}} loops over [str] with {{.}}, HTML escaping; no nesting, no {{else}}. A template library exists; grow it to a full engine.
 151. Text encodings UTF-8/16/32 (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): utf8.fg + utf8_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: codepoints travel as [int] (no ord()/chr() builtins); UTF-8 only, no UTF-16/32. Encode and decode with validation.
 152. Line-oriented streaming (Go bufio) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): lines.fg + lines_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: scanner over a string (no file streaming yet); no trailing empty line when text ends with "\n".
-153. Unified diff output (Python difflib) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): unidiff.fg + unidiff_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one hunk, no @@ header lines; line arrays only. A difflib library exists; add unified diff format.
+153. Unified diff output (Python difflib) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): unidiff.fg + unidiff_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one hunk, no @@ header lines; line arrays only. Unified diff format landed (unidiff.fg, batch 2); difflib.fg covers the diff algorithm.
 154. Markdown parsing to AST (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): mdast.fg + mdast_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: heading/para/list/code/quote nodes, HTML render; no inline bold parsing, no tables, no nested lists. Markdown parsing to AST.
 155. CSV parsing and generation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): csv2.fg + csv2_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one line in/out, quoted fields with doubled quotes, generation quotes only when needed. Parse and load exist; add quoted fields and generation.
 156. JSON string escaping (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): json2.fg + json2_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: full recursive-descent parse + compact generate with correct escaping (j2_parse_str handles \" \\ / \n \t \r); no \\u escapes. Correct escape and unescape.
@@ -351,7 +351,7 @@ is not ownership-tracked (see #27).
 194. Compact binary serialization (Rust) — [HAVE] A bincode-style format. Landed 21 Nov 2026 (sprint day 1): bincode.fg + bincode_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: floats stored scaled by 1000 (3 decimals); printable-ASCII strings only.
 195. Layered configuration loading (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): config2.fg + config2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: cfg2_merge over config.fg Configs (later layer wins, first-seen key order); chaining merges gives defaults < file < overrides.
 196. Log rotation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): logrot.fg + logrot_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: size-based rotation over a line buffer (full buffer rotates out whole); no filesystem or time-based rotation yet.
-197. Tar and zip archives (all) — [GAP] Read and write archives.
+197. Tar and zip archives (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): archive.fg + tarball.fg + tardata.fg + tarball_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: tar only (ustar header + checksum + build + verify + read-back); zip not covered, stored/deflate entries are a later slice. Read and write archives.
 198. Checksum-verified reads (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): checkread.fg + checkread_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: "<crc32 decimal>\n<text>" files via write_bytes/read_bytes, CRC32 recomputed on load (matches Python zlib.crc32); ASCII text only.
 199. Non-blocking file I/O (Node) — [GAP] Async reads.
 200. Append-only journals (etcd) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): journal.fg + journal_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: truncate-on-open, one record per line via fs_append, replay by reading back; records are single-line ASCII strings.
@@ -470,7 +470,7 @@ is not ownership-tracked (see #27).
 301. Rich unit-test framework (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): testkit.fg + testkit_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: named cases, string/float-epsilon/not-equal/substring asserts, one-line summary naming failures, data-level fixtures (no function values exist yet, so fixtures are data tables, not setup callbacks). qasida test plus a test library exist; add fixtures and richer asserts.
 302. Property-based testing (Hypothesis/QuickCheck) — [GAP] Generated cases with shrinking.
 303. Coverage-guided fuzzing (Rust cargo-fuzz) — [GAP] Fuzz inputs by coverage.
-304. Benchmark harness (Go/Rust) — [GAP] Timing with statistics; the bench item already queued.
+304. Benchmark harness (Go/Rust) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): bench.fg + bench_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: caller times a region with clock_micros stamps; the harness does us/op, ops/sec, ms and summary text only (no closures yet). Timing with statistics.
 305. Test coverage (all) — [GAP] Line and branch coverage.
 306. Mocking (all) — [GAP] Fake dependencies.
 307. Snapshot testing (Jest) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): snap.fg + snap_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: line-by-line comparison reporting the first differing line (0-based) with both sides; golden-file I/O is the caller's job (read_bytes/write_bytes).
@@ -559,7 +559,7 @@ is not ownership-tracked (see #27).
 382. dbg! print debugging (Rust) — [GAP] Value-printing helpers.
 383. Logging framework (all) — [PARTIAL] A log library exists; add levels and structured logs.
 384. Tracing and spans (OpenTelemetry) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): trace.fg + trace_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: start/end named spans over explicit microsecond stamps, duration lookup, text report of closed spans; no trace IDs or exporters.
-385. Metrics: counters and gauges (Prometheus) — [GAP] Runtime metrics.
+385. Metrics: counters and gauges (Prometheus) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): promet.fg + promet_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int values only; counters, gauges and Prometheus text render; no histograms, labels or exposition server. Runtime metrics.
 386. CPU profiling (all) — [GAP] A sampling profiler; the profiler item already queued.
 387. Memory profiling (all) — [GAP] Allocation tracking beyond the alloc_count builtins.
 388. Flame graphs (all) — [GAP] Visualize hot paths.
@@ -601,21 +601,21 @@ is not ownership-tracked (see #27).
 ## 22. ML and data (421-440)
 421. First-class tensors (PyTorch/JAX) — [PARTIAL] A tensor library exists; raise it to a real type.
 422. Full autograd coverage (PyTorch) — [PARTIAL] tensor_autograd covers 20 ops; finish coverage plus tape freeing, the 0.5.0 unlock.
-423. Neural layers: conv, attention, norm (PyTorch) — [PARTIAL] An nn library exists; add the missing layers.
+423. Neural layers: conv, attention, norm (PyTorch) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): conv1d.fg + conv1d_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: 1-D convolution (valid + same, stride), the missing layer — nn.fg already had linear, layernorm, GELU, MLP and attention; no dilation, no bias term, single channel. An nn library exists; add the missing layers.
 424. Optimizers with state (PyTorch) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): optimizers.fg + optimizers_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: SGD + Adam over [float] with explicit grad arrays; no lr schedules, no other optimizers. Adam and SGD with state.
-425. Datasets and dataloaders (PyTorch) — [PARTIAL] A dataset library exists; add batching and shuffling.
-426. BPE and WordPiece tokenizers (HF) — [PARTIAL] A tokenizer library exists; add real BPE.
+425. Datasets and dataloaders (PyTorch) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): dataset.fg + dataset_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: sliding-window sequences with train/test split, seq_batch and seeded seq_shuffle; no file-backed loading. A dataset library exists; add batching and shuffling.
+426. BPE and WordPiece tokenizers (HF) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): tokenizer.fg + tokenizer_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: real BPE training (most-frequent-pair merges, first max wins ties) + char tokenizer + encode/decode round-trips; WordPiece not covered. A tokenizer library exists; add real BPE.
 427. Full transformer blocks (HF) — [PARTIAL] gpt and gpt2 libraries exist; finish attention plus RoPE.
 428. Evaluation metrics suite (all) — [PARTIAL] A metrics library covers accuracy, confusion, PRF, MSE, MAE, R2 and perplexity; grow it into a suite.
-429. Eval harness (lm-eval) — [GAP] The eval-harness item already queued.
-430. Embeddings (all) — [GAP] The embeddings item already queued.
+429. Eval harness (lm-eval) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): evalharness.fg + evalharness_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: accuracy, MSE, perplexity and a one-line report over caller-supplied held-out arrays; no batching or splits. The eval-harness item already queued.
+430. Embeddings (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): embeddings.fg + embeddings_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: in-memory store, one fixed dimension, flat [float] rows, cosine + nearest neighbour by linear scan; mismatched dims score -2.0. The embeddings item already queued.
 431. sklearn-lite v2 (scikit-learn) — [PARTIAL] v1 is done; add trees, forests, Bayes, PCA, scaling, pipelines, CV and splits.
 432. Dataframes — [HAVE] The pandas library already does flat DataFrames.
-433. Plotting (matplotlib) — [GAP] The plot-lite item already queued.
-434. SVG generation (all) — [GAP] The svg-gen item already queued.
-435. ML run profiling (all) — [GAP] The profiler item already queued.
+433. Plotting (matplotlib) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): plot.fg + plot_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: integer data only; bar/line/scatter SVG charts on svg.fg; no axes, labels or legends. The plot-lite item already queued.
+434. SVG generation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): svg.fg + svg_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: integer coordinates only (digit-table int strings); rect/circle/line/text/polyline; no groups, transforms or CSS. The svg-gen item already queued.
+435. ML run profiling (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): profiler.fg + profiler_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: section timers over caller-supplied clock_micros stamps, totals + plain-text report; nested same-name sections share one total. The profiler item already queued.
 436. ONNX model export (all) — [GAP] Portable models.
-437. Weight quantization (all) — [GAP] int8 weights.
+437. Weight quantization (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): quant.fg + quant_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: per-range int8 calibration (scale + zero point, round-half-up, clamp 0..255), quantize/dequantize + max reconstruction error; extends nn.fg's scalar int8 steps. int8 weights.
 438. Distributed training (PyTorch) — [GAP] Long-term only; needs a cluster, honestly not a near-term build.
 439. Real GPU codegen (CUDA) — [PARTIAL] codegen_cuda emits only a limited subset today.
 440. Dataset versioning (DVC) — [GAP] Snapshots of datasets.
@@ -626,20 +626,20 @@ is not ownership-tracked (see #27).
 443. Constant-time crypto operations (all) — [GAP] No timing leaks.
 444. Secrets handling (all) — [GAP] Zeroing buffers and never logging secrets.
 445. Sandboxing flags (Deno) — [GAP] Permission flags for file and network access.
-446. Input validation framework (all) — [GAP] Validators for untrusted data.
-447. Injection-safe queries (all) — [GAP] Parameterized queries only.
+446. Input validation framework (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): valid2.fg + valid2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: email shape, http(s) URL shape, enum membership, float range, trim + space-collapse sanitize; ASCII only, no DNS or RFC corners. Validators for untrusted data.
+447. Injection-safe queries (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): paramq.fg + paramq_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ? placeholders only, int params raw, string params quoted with single quotes doubled; no named parameters, no SQL engine. Parameterized queries only.
 448. Auto-escaping templates (all) — [GAP] XSS-safe output by default.
-449. CSRF tokens (all) — [GAP] Web form protection.
-450. Password hashing (bcrypt/argon2) — [GAP] Proper password storage.
-451. JWT issue and verify (all) — [GAP] Token handling.
+449. CSRF tokens (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): csrf.fg + csrf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: seed-based deterministic tokens (rand.fg LCG, 31-char alphabet, no lookalikes), verify re-derives and compares every character; seed must stay server-side, no expiry. Web form protection.
+450. Password hashing (bcrypt/argon2) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): pwhash.fg + pwhash_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: iterated SHA-256 only (100 rounds over password + ':' + salt) — NOT bcrypt/argon2 and not memory-hard; caller-supplied salts. Proper password storage.
+451. JWT issue and verify (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): jwt.fg + jwt_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: HS256 sign + verify over HMAC-SHA256 (hashlib.fg), base64url without padding; no expiry or claim validation. Token handling.
 452. TLS certificate verification (all) — [GAP] Cert validation; ties to TLS itself.
 453. Dependency pinning with hashes (all) — [GAP] Lockfile hashes.
 454. Signed releases (Sigstore) — [GAP] Signed artifacts.
-455. SBOM generation (all) — [GAP] Software bill of materials.
+455. SBOM generation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): sbom.fg + sbom_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: CycloneDX 1.5 JSON from a package list (name/version/license id); no hashes, dependencies or SPDX expressions. Software bill of materials.
 456. Vulnerability feeds (all) — [GAP] Alerts for bad dependencies.
 457. Safe deserialization (all) — [GAP] Never evaluate data as code.
-458. CORS handling (web) — [GAP] Cross-origin rules.
-459. Content Security Policy helpers (web) — [GAP] Header generation.
+458. CORS handling (web) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): cors.fg + cors_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: exact origin matches only (no wildcards or suffix patterns); Allow-Origin echo + Allow-Methods preflight text, no credentials flag. Cross-origin rules.
+459. Content Security Policy helpers (web) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): csp.fg + csp_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: builds the header from caller-supplied directive/value lists; no validation, no nonce generation. Header generation.
 460. Threat-model documentation (all) — [GAP] Security notes per feature.
 
 ## 24. Metaprogramming (461-480)

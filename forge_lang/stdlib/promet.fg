@@ -1,0 +1,74 @@
+// Qasida — Prometheus-style metrics: counters and gauges.
+// Import with: import "promet.fg";
+// Counters only go up (inc), gauges are set to any value.
+// prom_render emits Prometheus text exposition format:
+// "# TYPE <name> counter\ngauge...\n<name> <value>\n" per entry.
+// v1 limits: int values only; no histograms, no labels, no
+// exposition server (the caller prints the rendered text).
+import "svg.fg";
+
+struct PromStore {
+    names: [str];
+    kinds: [str];
+    values: [int];
+}
+
+fn prom_new() -> PromStore {
+    return PromStore { names: [], kinds: [], values: [] };
+}
+
+fn prom_find(s: PromStore, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(s.names) {
+        if s.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn prom_inc(s: PromStore, name: str, n: int) -> PromStore {
+    let mut q = s;
+    let at: int = prom_find(q, name);
+    if at >= 0 {
+        q.values[at] = q.values[at] + n;
+        return q;
+    }
+    push(q.names, name);
+    push(q.kinds, "counter");
+    push(q.values, n);
+    return q;
+}
+
+fn prom_gauge_set(s: PromStore, name: str, v: int) -> PromStore {
+    let mut q = s;
+    let at: int = prom_find(q, name);
+    if at >= 0 {
+        q.values[at] = v;
+        return q;
+    }
+    push(q.names, name);
+    push(q.kinds, "gauge");
+    push(q.values, v);
+    return q;
+}
+
+fn prom_get(s: PromStore, name: str) -> int {
+    let at: int = prom_find(s, name);
+    if at < 0 {
+        return -1;
+    }
+    return s.values[at];
+}
+
+fn prom_render(s: PromStore) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s.names) {
+        out = out + "# TYPE " + s.names[i] + " " + s.kinds[i] + "\n";
+        out = out + s.names[i] + " " + svg_int_str(s.values[i]) + "\n";
+        i = i + 1;
+    }
+    return out;
+}

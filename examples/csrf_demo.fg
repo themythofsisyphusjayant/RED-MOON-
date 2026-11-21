@@ -1,0 +1,9 @@
+import "csrf.fg";
+
+fn main() {
+    let tok: str = csrf_token(42, 12);
+    println(tok);
+    println(csrf_verify(tok, 42, 12));
+    println(csrf_verify(tok, 43, 12));
+    println(csrf_verify("aaaaaaaaaaaa", 42, 12));
+}

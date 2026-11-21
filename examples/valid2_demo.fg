@@ -1,0 +1,15 @@
+import "valid2.fg";
+
+fn main() {
+    println(v2_email("ada@example.com"));
+    println(v2_email("ada@@example.com"));
+    println(v2_email("adaexample.com"));
+    println(v2_email("ada@com"));
+    println(v2_url("https://a.example/x"));
+    println(v2_url("ftp://a.example"));
+    println(v2_in_enum("red", ["red", "green"]));
+    println(v2_in_enum("blue", ["red", "green"]));
+    println(v2_float_range(2.5, 0.0, 5.0));
+    println(v2_float_range(7.5, 0.0, 5.0));
+    println(v2_sanitize("  hello   world  "));
+}

@@ -1,0 +1,12 @@
+import "promet.fg";
+
+fn main() {
+    let mut s = prom_new();
+    s = prom_inc(s, "requests", 1);
+    s = prom_inc(s, "requests", 4);
+    s = prom_gauge_set(s, "queue", 7);
+    println(prom_get(s, "requests"));
+    println(prom_get(s, "queue"));
+    println(prom_get(s, "missing"));
+    println(prom_render(s));
+}

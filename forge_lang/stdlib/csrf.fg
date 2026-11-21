@@ -1,0 +1,43 @@
+// Qasida — CSRF tokens (web form protection).
+// Import with: import "csrf.fg";
+// Tokens are deterministic from a seed (rand.fg LCG): the
+// server keeps the seed and re-derives the token to verify
+// it, comparing every character (mismatch count, no early
+// exit). The alphabet skips lookalike characters (1, l, 0, O).
+// v1 limits: seed-based, not session-bound; the seed must
+// stay server-side; tokens carry no expiry.
+import "rand.fg";
+
+fn csrf_alphabet() -> str {
+    return "abcdefghjkmnpqrstuvwxyz23456789";
+}
+
+fn csrf_token(seed: int, n: int) -> str {
+    let alpha: str = csrf_alphabet();
+    let mut s: int = seed;
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        s = rand_next(s);
+        let idx: int = s % 31;
+        out = out + substr(alpha, idx, 1);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn csrf_verify(token: str, seed: int, n: int) -> bool {
+    if len(token) != n {
+        return false;
+    }
+    let expect: str = csrf_token(seed, n);
+    let mut bad: int = 0;
+    let mut i: int = 0;
+    while i < n {
+        if token[i] != expect[i] {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad == 0;
+}

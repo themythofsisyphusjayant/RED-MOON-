@@ -1,0 +1,12 @@
+import "paramq.fg";
+
+fn main() {
+    let mut q = pq_new("SELECT * FROM users WHERE id = ? AND name = ?");
+    q = pq_int(q, 7);
+    q = pq_str(q, "O'Brien");
+    println(pq_count(q));
+    println(pq_render(q));
+    let mut q2 = pq_new("DELETE FROM t WHERE a = ?");
+    q2 = pq_str(q2, "x");
+    println(pq_render(q2));
+}

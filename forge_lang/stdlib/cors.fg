@@ -1,0 +1,46 @@
+// Qasida — CORS handling (web).
+// Import with: import "cors.fg";
+// Origin allow-list checks plus the response headers a
+// server sends: Access-Control-Allow-Origin (echoed only
+// for allowed origins) and Access-Control-Allow-Methods
+// for preflight. No server is involved — this builds the
+// header text; the caller sends it.
+// v1 limits: exact origin matches only (no wildcards or
+// suffix patterns); credentials flag not modelled.
+fn cors_allowed(origin: str, allowed: [str]) -> bool {
+    let mut i: int = 0;
+    while i < len(allowed) {
+        if allowed[i] == origin {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cors_allow_header(origin: str, allowed: [str]) -> str {
+    if cors_allowed(origin, allowed) {
+        return origin;
+    }
+    return "";
+}
+
+fn cors_preflight(methods: [str]) -> str {
+    let mut out: str = "Access-Control-Allow-Methods: ";
+    let mut i: int = 0;
+    while i < len(methods) {
+        if i > 0 {
+            out = out + ", ";
+        }
+        out = out + methods[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cors_headers(origin: str, allowed: [str], methods: [str]) -> str {
+    if cors_allowed(origin, allowed) == false {
+        return "";
+    }
+    return "Access-Control-Allow-Origin: " + origin + "\n" + cors_preflight(methods);
+}

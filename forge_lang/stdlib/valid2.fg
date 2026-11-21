@@ -1,0 +1,118 @@
+// Qasida — input validation framework (untrusted data).
+// Import with: import "valid2.fg";
+// Small validators for values arriving from outside:
+// email shape, http(s) URL shape, enum membership, float
+// range, plus trim/sanitize for strings. Validators return
+// plain bools; the caller decides what to do with a failure.
+// v1 limits: email shape only (no DNS, no RFC 5322 corners);
+// URLs checked by scheme prefix only; ASCII only.
+fn v2_has_char(s: str, c: str) -> bool {
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == c {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn v2_count_char(s: str, c: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == c {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn v2_email(s: str) -> bool {
+    if v2_count_char(s, "@") != 1 {
+        return false;
+    }
+    if v2_has_char(s, " ") {
+        return false;
+    }
+    let mut at: int = 0;
+    while substr(s, at, 1) != "@" {
+        at = at + 1;
+    }
+    if at == 0 {
+        return false;
+    }
+    let mut dot: bool = false;
+    let mut i: int = at + 1;
+    while i < len(s) {
+        if substr(s, i, 1) == "." {
+            if i > at + 1 && i < len(s) - 1 {
+                dot = true;
+            }
+        }
+        i = i + 1;
+    }
+    return dot;
+}
+
+fn v2_url(s: str) -> bool {
+    if v2_has_char(s, " ") {
+        return false;
+    }
+    if len(s) >= 8 && substr(s, 0, 8) == "https://" {
+        return len(s) > 8;
+    }
+    if len(s) >= 7 && substr(s, 0, 7) == "http://" {
+        return len(s) > 7;
+    }
+    return false;
+}
+
+fn v2_in_enum(s: str, options: [str]) -> bool {
+    let mut i: int = 0;
+    while i < len(options) {
+        if options[i] == s {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn v2_float_range(x: float, lo: float, hi: float) -> bool {
+    return x >= lo && x <= hi;
+}
+
+fn v2_trim(s: str) -> str {
+    let mut a: int = 0;
+    while a < len(s) && substr(s, a, 1) == " " {
+        a = a + 1;
+    }
+    let mut b: int = len(s);
+    while b > a && substr(s, b - 1, 1) == " " {
+        b = b - 1;
+    }
+    return substr(s, a, b - a);
+}
+
+fn v2_sanitize(s: str) -> str {
+    let t: str = v2_trim(s);
+    let mut out: str = "";
+    let mut prev_space: bool = false;
+    let mut i: int = 0;
+    while i < len(t) {
+        let c: str = substr(t, i, 1);
+        if c == " " {
+            if prev_space == false {
+                out = out + " ";
+            }
+            prev_space = true;
+        } else {
+            out = out + c;
+            prev_space = false;
+        }
+        i = i + 1;
+    }
+    return out;
+}

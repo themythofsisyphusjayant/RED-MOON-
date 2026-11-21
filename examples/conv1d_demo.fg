@@ -1,0 +1,17 @@
+import "conv1d.fg";
+
+fn main() {
+    let v: [float] = conv1d([1.0, 2.0, 3.0, 4.0], [1.0, 0.0, -1.0], 1);
+    println("valid", len(v));
+    println(v[0]);
+    println(v[1]);
+    let v2: [float] = conv1d([1.0, 2.0, 3.0, 4.0], [1.0, 0.0, -1.0], 2);
+    println("stride2", len(v2));
+    println(v2[0]);
+    let v3: [float] = conv1d_same([1.0, 2.0, 3.0, 4.0], [1.0, 0.0, -1.0]);
+    println("same", len(v3));
+    println(v3[0]);
+    println(v3[1]);
+    println(v3[2]);
+    println(v3[3]);
+}

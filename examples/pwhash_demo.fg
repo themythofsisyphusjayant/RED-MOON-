@@ -1,0 +1,8 @@
+import "pwhash.fg";
+
+fn main() {
+    let h: str = pw_hash("hunter2", "s4lt", 100);
+    println(h);
+    println(pw_verify("hunter2", "s4lt", 100, h));
+    println(pw_verify("hunter3", "s4lt", 100, h));
+}

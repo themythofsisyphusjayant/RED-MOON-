@@ -1,0 +1,11 @@
+import "cors.fg";
+
+fn main() {
+    let allowed: [str] = ["https://a.example", "https://b.example"];
+    println(cors_allowed("https://a.example", allowed));
+    println(cors_allowed("https://evil.example", allowed));
+    println(cors_allow_header("https://a.example", allowed));
+    println(cors_allow_header("https://evil.example", allowed));
+    println(cors_preflight(["GET", "POST"]));
+    println(cors_headers("https://b.example", allowed, ["GET"]));
+}

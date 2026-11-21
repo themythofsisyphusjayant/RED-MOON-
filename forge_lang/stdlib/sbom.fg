@@ -1,0 +1,43 @@
+// Qasida — SBOM generation (CycloneDX-style, JSON text).
+// Import with: import "sbom.fg";
+// Builds a software bill of materials from a package list:
+// name, version and license id per component. Output is a
+// single JSON document string; the caller writes it out.
+// v1 limits: CycloneDX 1.5 shape only, no hashes or
+// dependencies, no SPDX expression parsing; names, versions
+// and license ids must be plain (no quotes or backslashes).
+struct Sbom {
+    names: [str];
+    versions: [str];
+    licenses: [str];
+}
+
+fn sbom_new() -> Sbom {
+    return Sbom { names: [], versions: [], licenses: [] };
+}
+
+fn sbom_add(b: Sbom, name: str, version: str, license: str) -> Sbom {
+    let mut q = b;
+    push(q.names, name);
+    push(q.versions, version);
+    push(q.licenses, license);
+    return q;
+}
+
+fn sbom_count(b: Sbom) -> int {
+    return len(b.names);
+}
+
+fn sbom_json(b: Sbom) -> str {
+    let mut out: str = "{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.5\",\"components\":[";
+    let mut i: int = 0;
+    while i < len(b.names) {
+        if i > 0 {
+            out = out + ",";
+        }
+        out = out + "{\"name\":\"" + b.names[i] + "\",\"version\":\"" + b.versions[i] + "\",\"licenses\":[{\"license\":{\"id\":\"" + b.licenses[i] + "\"}}]}";
+        i = i + 1;
+    }
+    out = out + "]}";
+    return out;
+}

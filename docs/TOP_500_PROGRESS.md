@@ -814,3 +814,37 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   helper-function slice (errwrap.fg) as #42's answer (21 Nov ~11:28
   IST); no further error-wrapping variants. Next: sprint batch 5,
   same libs-only rule, target 20/day toward HAVE ~211 by 27 Nov.
+
+## Sprint batch 5 — 21 Nov 2026 (LIBS ONLY, OS paused)
+  20/20 landed: 11 verification flips (#304 bench, #429 evalharness,
+  #430 embeddings, #433 plot, #434 svg, #435 profiler, #451 jwt,
+  #197 tar, #425 dataset, #426 tokenizer, #437 quant — the modules
+  already existed in the tree while the catalog wrongly said
+  GAP/PARTIAL; each was run under BOTH compilers and confirmed
+  genuinely working before flipping) and 9 new libraries (#385
+  promet, #455 sbom, #458 cors, #459 csp, #449 csrf, #450 pwhash,
+  #447 paramq, #446 valid2, #423 conv1d). Daily test:
+  tests/test_daily_20261121e.py — 80/80 checks PASS (20 items x 2
+  compilers x rc=0 + exact stdout); expected values from an
+  independent Python replica
+  (~/workspace/blackmoon-iso/daily-20261121-batch5/replica_20261121e.py,
+  20/20 match — replica re-derived bench timing arithmetic, eval
+  accuracy/MSE/perplexity, embedding cosine + nearest neighbour,
+  profiler section totals, JWT HMAC-SHA256 tokens, the tar header
+  checksum, dataset windows/splits/batches, BPE training, int8
+  calibration, SVG shape strings, plot scaling, Prometheus text,
+  SBOM JSON, CORS/CSP header text, CSRF LCG tokens, iterated
+  SHA-256 password hashing, parameterized-query rendering, input
+  validation rules, and 1-D convolution from first principles).
+  Counts after sprint batch 5: HAVE 170, PARTIAL 35, GAP 295, to build
+  330. Arithmetic from sprint batch 4 (HAVE 150, PARTIAL 38, GAP 312,
+  to build 350): 17 GAP-to-HAVE + 3 PARTIAL-to-HAVE = 20 flips;
+  150 + 20 = 170; 38 - 3 = 35; 312 - 17 = 295; 350 - 20 = 330
+  (170 + 35 + 295 = 500). Findings: the csrf alphabet is 31 chars,
+  not 32 (i, l and o all skipped as lookalikes) — the modulus is
+  % 31, caught by the first run; #448 auto-escaping templates was
+  NOT flipped — template2.fg's t2_escape is opt-in (never called by
+  the render path), so a default-escaping esc.fg wrapper is a
+  batch-6 item instead; #153's stale note fixed (unidiff landed in
+  batch 2). Next: sprint batch 6, same libs-only rule, target
+  20/day toward HAVE ~211 by 27 Nov.

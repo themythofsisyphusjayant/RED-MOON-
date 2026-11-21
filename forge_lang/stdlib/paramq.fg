@@ -1,0 +1,87 @@
+// Qasida — injection-safe queries (parameterized SQL).
+// Import with: import "paramq.fg";
+// A query keeps its SQL text with ? placeholders and its
+// bound parameters apart: ints render raw, strings render
+// quoted with single quotes doubled, so user input can
+// never break out of a literal. pq_render substitutes the
+// parameters in order; a missing parameter fails.
+// v1 limits: ? placeholders only (no named parameters);
+// every value is int or string; no SQL engine — the caller
+// sends the rendered text.
+import "svg.fg";
+
+struct PQuery {
+    sql: str;
+    params: [str];
+    kinds: [int];
+}
+
+fn pq_new(sql: str) -> PQuery {
+    return PQuery { sql: sql, params: [], kinds: [] };
+}
+
+fn pq_int(q: PQuery, v: int) -> PQuery {
+    let mut r = q;
+    push(r.params, svg_int_str(v));
+    push(r.kinds, 0);
+    return r;
+}
+
+fn pq_str(q: PQuery, v: str) -> PQuery {
+    let mut r = q;
+    push(r.params, v);
+    push(r.kinds, 1);
+    return r;
+}
+
+fn pq_count(q: PQuery) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(q.sql) {
+        if substr(q.sql, i, 1) == "?" {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn pq_escape_str(v: str) -> str {
+    let mut out: str = "'";
+    let mut i: int = 0;
+    while i < len(v) {
+        let c: str = substr(v, i, 1);
+        if c == "'" {
+            out = out + "''";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    out = out + "'";
+    return out;
+}
+
+fn pq_render(q: PQuery) -> str {
+    let mut out: str = "";
+    let mut p: int = 0;
+    let mut i: int = 0;
+    while i < len(q.sql) {
+        let c: str = substr(q.sql, i, 1);
+        if c == "?" {
+            if p >= len(q.params) {
+                fail("pq_render: missing parameter");
+            }
+            if q.kinds[p] == 0 {
+                out = out + q.params[p];
+            } else {
+                out = out + pq_escape_str(q.params[p]);
+            }
+            p = p + 1;
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}

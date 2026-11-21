@@ -1,0 +1,8 @@
+import "csp.fg";
+
+fn main() {
+    let d: [str] = ["default-src", "script-src", "object-src"];
+    let v: [str] = ["'self'", "'self' https://cdn.example.com", "'none'"];
+    println(csp_build(d, v));
+    println(csp_header(d, v));
+}

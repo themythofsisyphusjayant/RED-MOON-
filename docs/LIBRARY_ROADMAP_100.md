@@ -310,3 +310,15 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   typed JSON field lookup), xmlpath.fg (nested path lookup,
   all-children, counting), testkit.fg (named cases, richer asserts,
   data-level fixtures), all verified 4/4.
+
+- Sprint batch 5 (21 Nov 2026, same day, LIBS ONLY): 11 verification
+  flips (bench.fg, evalharness.fg, embeddings.fg, plot.fg, svg.fg,
+  profiler.fg, jwt.fg, tarball.fg + archive.fg, dataset.fg,
+  tokenizer.fg, quant.fg — all already in the tree, verified 4/4
+  under both compilers before flipping) and 9 new libraries:
+  promet.fg (counters/gauges + Prometheus text render), sbom.fg
+  (CycloneDX JSON), cors.fg (origin allow-list + headers), csp.fg
+  (CSP header builder), csrf.fg (seed-based tokens), pwhash.fg
+  (iterated SHA-256), paramq.fg (parameterized queries), valid2.fg
+  (email/URL/enum/range/sanitize), conv1d.fg (1-D convolution, the
+  missing nn layer), all verified 4/4.

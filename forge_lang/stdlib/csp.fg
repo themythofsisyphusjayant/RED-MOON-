@@ -1,0 +1,23 @@
+// Qasida — Content Security Policy helpers (web).
+// Import with: import "csp.fg";
+// Builds a Content-Security-Policy header from parallel
+// directive/value lists, e.g. default-src 'self'.
+// v1 limits: the caller supplies directive names and
+// values verbatim (no validation, no nonce generation);
+// one policy per header string.
+fn csp_build(directives: [str], values: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(directives) {
+        if i > 0 {
+            out = out + "; ";
+        }
+        out = out + directives[i] + " " + values[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn csp_header(directives: [str], values: [str]) -> str {
+    return "Content-Security-Policy: " + csp_build(directives, values);
+}

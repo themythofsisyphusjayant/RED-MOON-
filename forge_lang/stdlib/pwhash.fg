@@ -1,0 +1,38 @@
+// Qasida — password hashing (iterated SHA-256).
+// Import with: import "pwhash.fg";
+// pw_hash(password, salt, iters) hashes password + ":" + salt
+// with SHA-256, then re-hashes the hex digest (iters - 1)
+// more times, so iters hashes run in total. pw_verify
+// recomputes with the same salt and iteration count and
+// compares the full digest (mismatch count, no early exit).
+// v1 limits: iterated SHA-256 only — NOT bcrypt/argon2 and
+// not memory-hard; salts are caller-supplied strings; the
+// stored form is the bare hex digest (salt and iters travel
+// alongside, as pw_verify's arguments show).
+import "hmac.fg";
+
+fn pw_hash(password: str, salt: str, iters: int) -> str {
+    let mut h: str = sha256_hex(str_bytes(password + ":" + salt));
+    let mut i: int = 1;
+    while i < iters {
+        h = sha256_hex(str_bytes(h));
+        i = i + 1;
+    }
+    return h;
+}
+
+fn pw_verify(password: str, salt: str, iters: int, expect: str) -> bool {
+    let got: str = pw_hash(password, salt, iters);
+    if len(got) != len(expect) {
+        return false;
+    }
+    let mut bad: int = 0;
+    let mut i: int = 0;
+    while i < len(got) {
+        if got[i] != expect[i] {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad == 0;
+}
