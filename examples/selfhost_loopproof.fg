@@ -3300,7 +3300,9 @@ fn fix1_analyze_program(prog: Node) -> Fix1Res {
 // subtree. Returns the number of nodes tagged.
 fn fix1_tag_function(fn_node: Node) -> int {
     let res: Fix1Res = fix1_analyze_node(fn_node, fix1_res_new());
-    return fix1_tag_node(fn_node, res);
+    let mut n: int = fix1_tag_node(fn_node, res);
+    n = n + fix1_ivdep_tag_function(fn_node);
+    return n;
 }
 
 // Walk `n`; on every FuncDef, analyze + tag that function only and
@@ -3324,4 +3326,678 @@ fn fix1_tag_functions(n: Node) -> int {
 // fix1_tag_program above is lp_test-only.
 fn fix1_tag_program_fns(prog: Node) -> int {
     return fix1_tag_functions(prog);
+}
+
+// ---------- Fix 2 ivdep ----------
+//
+// `#pragma GCC ivdep` on proven-non-aliasing nests. Hosted mirror
+// of the Python analyze_ivdep in forge_lang/loopproof.py; the proof
+// is in quant/fix2/ivdep/DESIGN.md (gates IV-G1..G11 plus the
+// flow-insensitive provenance F-P1..F-P6). A wrong pragma is a
+// silent miscompilation, so every gate is conservative: any doubt
+// means no pragma.
+//
+// The tag is has_nul on the While node (kind 15) — free there: the
+// parser sets it only on StrLit, the Fix 1 tagger uses it on
+// Index/BinOp/UnaryOp and sval on loops. Production tags per
+// FuncDef (b1fix2 lesson: never pooled — (line, col) collides
+// across files in a merged program); the pooled
+// fix1_ivdep_program below is lp_test-only.
+
+// ArrayLit (kind 29) with no elements: the `[]` literal.
+fn fix1_ivdep_is_empty_arraylit(n: Node) -> bool {
+    return n.kind == 29 && len(n.kids) == 0;
+}
+
+// Innermost Var base name of a FieldAccess/Index/TupleIndex chain,
+// "" when the chain bottoms out on anything else.
+fn fix1_ivdep_ultimate_base(n: Node) -> str {
+    let mut cur: Node = n;
+    while (cur.kind == 32 || cur.kind == 36 || cur.kind == 37) && len(cur.kids) > 0 {
+        cur = cur.kids[0];
+    }
+    if cur.kind == 34 {
+        return cur.name;
+    }
+    return "";
+}
+
+// True iff Var(name) occurs anywhere in n's subtree.
+fn fix1_ivdep_has_var(n: Node, name: str) -> bool {
+    if n.kind == 34 && n.name == name {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_ivdep_has_var(n.kids[i], name) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True iff the Call (kind 35) / MethodCall (kind 33) node n passes
+// `name` to a non-whitelisted callee. Whitelisted: push(name, ...)
+// and len(name) — args[0] / the base itself is the array being
+// pushed to / measured, which cannot alias it with anything.
+fn fix1_ivdep_call_taints(n: Node, name: str) -> bool {
+    if n.kind == 35 {
+        if n.name == "push" && len(n.kids) > 0 && n.kids[0].kind == 34 && n.kids[0].name == name {
+            let mut i: int = 1;
+            while i < len(n.kids) {
+                if fix1_ivdep_has_var(n.kids[i], name) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+        if n.name == "len" && len(n.kids) == 1 && n.kids[0].kind == 34 && n.kids[0].name == name {
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            if fix1_ivdep_has_var(n.kids[i], name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    if n.kind == 33 {
+        if (n.name == "push" || n.name == "len") && len(n.kids) > 0 && n.kids[0].kind == 34 && n.kids[0].name == name {
+            let mut i: int = 1;
+            while i < len(n.kids) {
+                if fix1_ivdep_has_var(n.kids[i], name) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            if fix1_ivdep_has_var(n.kids[i], name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    return false;
+}
+
+// True iff `name` is tainted anywhere in n's subtree: a
+// disqualifying call use, a FieldAssign on it, or a Spawn/Defer
+// mention (F-P4..F-P6).
+fn fix1_ivdep_tainted(n: Node, name: str) -> bool {
+    if n.kind == 35 || n.kind == 33 {
+        if fix1_ivdep_call_taints(n, name) {
+            return true;
+        }
+    }
+    if n.kind == 13 && len(n.kids) > 0 && fix1_ivdep_ultimate_base(n.kids[0]) == name {
+        return true;
+    }
+    if (n.kind == 21 || n.kind == 23) && fix1_ivdep_has_var(n, name) {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_ivdep_tainted(n.kids[i], name) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True iff every Let/Assign write of `name` in n's subtree has an
+// `[]` right-hand side (F-P3).
+fn fix1_ivdep_writes_all_empty(n: Node, name: str) -> bool {
+    if (n.kind == 10 || n.kind == 11) && n.name == name {
+        if len(n.kids) == 0 || !fix1_ivdep_is_empty_arraylit(n.kids[0]) {
+            return false;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if !fix1_ivdep_writes_all_empty(n.kids[i], name) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Count of Let (kind 10) bindings of `name` in n's subtree.
+fn fix1_ivdep_let_count(n: Node, name: str) -> int {
+    let mut c: int = 0;
+    if n.kind == 10 && n.name == name {
+        c = c + 1;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        c = c + fix1_ivdep_let_count(n.kids[i], name);
+        i = i + 1;
+    }
+    return c;
+}
+
+// Count of For (kind 16) bindings of `name` in n's subtree.
+fn fix1_ivdep_for_count(n: Node, name: str) -> int {
+    let mut c: int = 0;
+    if n.kind == 16 && n.name == name {
+        c = c + 1;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        c = c + fix1_ivdep_for_count(n.kids[i], name);
+        i = i + 1;
+    }
+    return c;
+}
+
+// Distinct Let-bound names in n's subtree, in first-seen order.
+fn fix1_ivdep_let_names(n: Node) -> [str] {
+    let mut out: [str] = [];
+    if n.kind == 10 && n.name != "" {
+        push(out, n.name);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let sub: [str] = fix1_ivdep_let_names(n.kids[i]);
+        let mut j: int = 0;
+        while j < len(sub) {
+            let mut seen: bool = false;
+            let mut k: int = 0;
+            while k < len(out) {
+                if out[k] == sub[j] {
+                    seen = true;
+                }
+                k = k + 1;
+            }
+            if !seen {
+                push(out, sub[j]);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Parameter names of a FuncDef node (kind 43 kids), in order.
+fn fix1_ivdep_param_names(fn_node: Node) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(fn_node.kids) {
+        let p: Node = fn_node.kids[i];
+        if p.kind == 43 {
+            push(out, p.name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fix1_ivdep_in_list(names: [str], name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(names) {
+        if names[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Fresh array names in one FuncDef (DESIGN.md §1a).
+fn fix1_ivdep_fresh_names(fn_node: Node) -> [str] {
+    let params: [str] = fix1_ivdep_param_names(fn_node);
+    let lets: [str] = fix1_ivdep_let_names(fn_node);
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lets) {
+        let nm: str = lets[i];
+        if !fix1_ivdep_in_list(params, nm) && fix1_ivdep_let_count(fn_node, nm) == 1 && fix1_ivdep_for_count(fn_node, nm) == 0 && fix1_ivdep_writes_all_empty(fn_node, nm) && !fix1_ivdep_tainted(fn_node, nm) {
+            push(out, nm);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Sign (+1 / 0 / -1) of the coefficient of v in `n`, or 2 when `n`
+// is not affine in v. Sign-only: no value arithmetic, so no
+// overflow or cap can differ between mirrors.
+fn fix1_ivdep_affine_sign(n: Node, v: str) -> int {
+    if n.kind == 34 && n.name == v {
+        return 1;
+    }
+    if n.kind == 34 || n.kind == 25 || n.kind == 26 || n.kind == 27 || n.kind == 28 {
+        return 0;
+    }
+    if n.kind == 41 && n.name == "-" {
+        if len(n.kids) == 0 {
+            return 2;
+        }
+        let s: int = fix1_ivdep_affine_sign(n.kids[0], v);
+        if s == 2 {
+            return 2;
+        }
+        return -s;
+    }
+    if n.kind == 40 {
+        if len(n.kids) < 2 {
+            return 2;
+        }
+        let a: int = fix1_ivdep_affine_sign(n.kids[0], v);
+        let b: int = fix1_ivdep_affine_sign(n.kids[1], v);
+        if a == 2 || b == 2 {
+            return 2;
+        }
+        if n.name == "+" {
+            if a == 0 {
+                return b;
+            }
+            if b == 0 {
+                return a;
+            }
+            if a == b {
+                return a;
+            }
+            return 2;
+        }
+        if n.name == "-" {
+            if a == 0 {
+                return -b;
+            }
+            if b == 0 {
+                return a;
+            }
+            if a == -b {
+                return a;
+            }
+            return 2;
+        }
+        if n.name == "*" {
+            if n.kids[0].kind == 25 {
+                let k: int = n.kids[0].ival;
+                if k > 0 {
+                    return b;
+                }
+                if k < 0 {
+                    return -b;
+                }
+                return 0;
+            }
+            if n.kids[1].kind == 25 {
+                let k: int = n.kids[1].ival;
+                if k > 0 {
+                    return a;
+                }
+                if k < 0 {
+                    return -a;
+                }
+                return 0;
+            }
+            if a == 0 && b == 0 {
+                return 0;
+            }
+            return 2;
+        }
+        return 2;
+    }
+    return 2;
+}
+
+// Loop variable name of a counted-while condition, "" when the
+// condition is not `v < B` / `v > B` (either order) with B v-free.
+fn fix1_ivdep_cond_var(cond: Node) -> str {
+    if cond.kind != 40 {
+        return "";
+    }
+    if cond.name != "<" && cond.name != "<=" && cond.name != ">" && cond.name != ">=" {
+        return "";
+    }
+    if len(cond.kids) < 2 {
+        return "";
+    }
+    if cond.kids[0].kind == 34 && !fix1_ivdep_has_var(cond.kids[1], cond.kids[0].name) {
+        return cond.kids[0].name;
+    }
+    if cond.kids[1].kind == 34 && !fix1_ivdep_has_var(cond.kids[0], cond.kids[1].name) {
+        return cond.kids[1].name;
+    }
+    return "";
+}
+
+// 1 when the condition counts ASCENDING for v, 0 when DESCENDING,
+// -1 when it is not a counted shape for v.
+fn fix1_ivdep_cond_asc(cond: Node, v: str) -> int {
+    if cond.kind != 40 || len(cond.kids) < 2 {
+        return -1;
+    }
+    if cond.kids[0].kind == 34 && cond.kids[0].name == v {
+        if cond.name == "<" || cond.name == "<=" {
+            return 1;
+        }
+        if cond.name == ">" || cond.name == ">=" {
+            return 0;
+        }
+        return -1;
+    }
+    if cond.kids[1].kind == 34 && cond.kids[1].name == v {
+        if cond.name == ">" || cond.name == ">=" {
+            return 1;
+        }
+        if cond.name == "<" || cond.name == "<=" {
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+// True iff n's subtree contains a node kind banned inside an ivdep
+// candidate (IV-G8): Call 35, MethodCall 33, Break 18, Continue 19,
+// Return 17, Spawn 21, Defer 23, FieldAccess 32, FieldAssign 13,
+// TupleIndex 37, Cast 39, For 16.
+fn fix1_ivdep_has_banned(n: Node) -> bool {
+    if n.kind == 35 || n.kind == 33 || n.kind == 18 || n.kind == 19 || n.kind == 17 || n.kind == 21 || n.kind == 23 || n.kind == 32 || n.kind == 13 || n.kind == 37 || n.kind == 39 || n.kind == 16 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_ivdep_has_banned(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True iff n's subtree contains an Index node (kind 36).
+fn fix1_ivdep_has_index(n: Node) -> bool {
+    if n.kind == 36 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_ivdep_has_index(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Count of IndexAssign nodes (kind 12) in n's subtree.
+fn fix1_ivdep_store_count(n: Node) -> int {
+    let mut c: int = 0;
+    if n.kind == 12 {
+        c = c + 1;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        c = c + fix1_ivdep_store_count(n.kids[i]);
+        i = i + 1;
+    }
+    return c;
+}
+
+// IV-G9 + IV-G7 + IV-G6 over the subtree: every Index base is a
+// bare Var, every base name is fresh, and no Index loads the stored
+// array except the store target `tgt` itself (identified by its
+// position — unique within one function).
+fn fix1_ivdep_index_bases_ok(n: Node, fresh: [str], tgt: Node) -> bool {
+    if n.kind == 36 {
+        if len(n.kids) < 2 || n.kids[0].kind != 34 {
+            return false;
+        }
+        let nm: str = n.kids[0].name;
+        if !fix1_ivdep_in_list(fresh, nm) {
+            return false;
+        }
+        if nm == tgt.kids[0].name && (n.line != tgt.line || n.col != tgt.col) {
+            return false;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if !fix1_ivdep_index_bases_ok(n.kids[i], fresh, tgt) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// IV-G5b: every Var in `idx` other than v is not written in `body`.
+fn fix1_ivdep_index_vars_stable(idx: Node, body: Node, v: str) -> bool {
+    if idx.kind == 34 && idx.name != v {
+        if fix1_write_count(body, idx.name) > 0 {
+            return false;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(idx.kids) {
+        if !fix1_ivdep_index_vars_stable(idx.kids[i], body, v) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// True iff a Let named `name` occurs in n's subtree.
+fn fix1_ivdep_has_let(n: Node, name: str) -> bool {
+    if n.kind == 10 && n.name == name {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if fix1_ivdep_has_let(n.kids[i], name) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// IV-G11 over the subtree: every Assign is the increment `inc`
+// (by position), or targets a name whose exactly one Let in the
+// whole function sits inside `loop_body`.
+fn fix1_ivdep_assigns_local(n: Node, loop_body: Node, fn_node: Node, inc: Node) -> bool {
+    if n.kind == 11 && (n.line != inc.line || n.col != inc.col) {
+        let nm: str = n.name;
+        if fix1_ivdep_let_count(fn_node, nm) != 1 {
+            return false;
+        }
+        if !fix1_ivdep_has_let(loop_body, nm) {
+            return false;
+        }
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if !fix1_ivdep_assigns_local(n.kids[i], loop_body, fn_node, inc) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// All gates IV-G1..G11 for one While node (DESIGN.md §1b).
+fn fix1_ivdep_loop_ok(loop_node: Node, fresh: [str], fn_node: Node) -> bool {
+    if loop_node.kind != 15 || len(loop_node.kids) < 2 {
+        return false;
+    }
+    let cond: Node = loop_node.kids[0];
+    let body: Node = loop_node.kids[1];
+    if body.kind != 9 || len(body.kids) == 0 {
+        return false;
+    }
+    // IV-G8: banned kinds in cond + body.
+    if fix1_ivdep_has_banned(cond) || fix1_ivdep_has_banned(body) {
+        return false;
+    }
+    // IV-G1: counted shape.
+    let v: str = fix1_ivdep_cond_var(cond);
+    if v == "" {
+        return false;
+    }
+    let asc: int = fix1_ivdep_cond_asc(cond, v);
+    if asc < 0 {
+        return false;
+    }
+    // IV-G10: no array access in the condition.
+    if fix1_ivdep_has_index(cond) {
+        return false;
+    }
+    // IV-G2: single increment, last direct child.
+    if fix1_write_count(body, v) != 1 {
+        return false;
+    }
+    let inc: Node = body.kids[len(body.kids) - 1];
+    if inc.kind != 11 || inc.name != v {
+        return false;
+    }
+    let site: [int] = fix1_write_site(body, v);
+    if site[0] != inc.line || site[1] != inc.col {
+        return false;
+    }
+    if len(inc.kids) < 1 {
+        return false;
+    }
+    let mut step_ok: bool = false;
+    let e: Node = inc.kids[0];
+    if e.kind == 40 && len(e.kids) >= 2 && e.kids[0].kind == 34 && e.kids[0].name == v && e.kids[1].kind == 25 && e.kids[1].ival > 0 {
+        if asc == 1 && e.name == "+" {
+            step_ok = true;
+        }
+        if asc == 0 && e.name == "-" {
+            step_ok = true;
+        }
+    }
+    if !step_ok {
+        return false;
+    }
+    // IV-G3: exactly one store, a direct child of the body.
+    let mut direct_store: Node = new_node(0, 0, 0);
+    let mut direct_n: int = 0;
+    let mut di: int = 0;
+    while di < len(body.kids) {
+        if body.kids[di].kind == 12 {
+            direct_store = body.kids[di];
+            direct_n = direct_n + 1;
+        }
+        di = di + 1;
+    }
+    if direct_n != 1 || fix1_ivdep_store_count(body) != 1 {
+        return false;
+    }
+    // IV-G4: store target is a bare local.
+    if len(direct_store.kids) < 1 {
+        return false;
+    }
+    let tgt: Node = direct_store.kids[0];
+    if tgt.kind != 36 || len(tgt.kids) < 2 || tgt.kids[0].kind != 34 {
+        return false;
+    }
+    // IV-G9 + IV-G7 + IV-G6.
+    if !fix1_ivdep_index_bases_ok(body, fresh, tgt) {
+        return false;
+    }
+    // IV-G5: store index affine in v with nonzero coefficient.
+    let idx: Node = tgt.kids[1];
+    let sign: int = fix1_ivdep_affine_sign(idx, v);
+    if sign != 1 && sign != -1 {
+        return false;
+    }
+    // IV-G5b: every other Var in the index is not written in the body.
+    if !fix1_ivdep_index_vars_stable(idx, body, v) {
+        return false;
+    }
+    // IV-G11: no cross-iteration scalar writes.
+    if !fix1_ivdep_assigns_local(body, body, fn_node, inc) {
+        return false;
+    }
+    return true;
+}
+
+// Walk n; append (line, col) of each eligible While node to out.
+fn fix1_ivdep_collect(n: Node, fresh: [str], fn_node: Node, out0: [int]) -> [int] {
+    let mut out: [int] = out0;
+    if n.kind == 15 && fix1_ivdep_loop_ok(n, fresh, fn_node) {
+        push(out, n.line);
+        push(out, n.col);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        out = fix1_ivdep_collect(n.kids[i], fresh, fn_node, out);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Flat [line, col, ...] of eligible While nodes in one FuncDef.
+fn fix1_ivdep_loops(fn_node: Node) -> [int] {
+    let fresh: [str] = fix1_ivdep_fresh_names(fn_node);
+    let mut out: [int] = [];
+    out = fix1_ivdep_collect(fn_node, fresh, fn_node, out);
+    return out;
+}
+
+// Set has_nul on While nodes at the listed (line, col) positions
+// in n's subtree. Returns the number stamped.
+fn fix1_ivdep_stamp(n: Node, pairs: [int]) -> int {
+    let mut tagged: int = 0;
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let mut c: Node = n.kids[i];
+        if c.kind == 15 {
+            let mut j: int = 0;
+            while j < len(pairs) {
+                if pairs[j] == c.line && pairs[j + 1] == c.col {
+                    c.has_nul = true;
+                    tagged = tagged + 1;
+                }
+                j = j + 2;
+            }
+        }
+        tagged = tagged + fix1_ivdep_stamp(c, pairs);
+        n.kids[i] = c;
+        i = i + 1;
+    }
+    return tagged;
+}
+
+// Analyze one FuncDef for ivdep and stamp has_nul on its eligible
+// While nodes. Returns the number stamped.
+fn fix1_ivdep_tag_function(fn_node: Node) -> int {
+    let pairs: [int] = fix1_ivdep_loops(fn_node);
+    return fix1_ivdep_stamp(fn_node, pairs);
+}
+
+// Pooled (line, col) pairs for the whole program (lp_test-only;
+// production uses the per-function tagger above).
+fn fix1_ivdep_program(n: Node) -> [int] {
+    if n.kind == 2 {
+        return fix1_ivdep_loops(n);
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let sub: [int] = fix1_ivdep_program(n.kids[i]);
+        let mut j: int = 0;
+        while j < len(sub) {
+            push(out, sub[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
 }

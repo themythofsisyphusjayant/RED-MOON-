@@ -1198,6 +1198,10 @@ class Codegen:
         # by generate(); empty until then (no proof => checks stay).
         self._fix1_covered = set()
         self._fix1_guards = {}
+        # Fix 2 ivdep: While loops proven non-aliasing (loopproof.py
+        # analyze_ivdep), populated by generate(); empty until then
+        # (no proof => no pragma).
+        self._ivdep_loops = set()
         # Fix 1 B2: BinOp nodes whose checked helper may drop (R2
         # '%', R3 '*' and '+'), and straight-line R5 guards that
         # ride with their Index node (see loopproof.py).
@@ -2046,6 +2050,15 @@ class Codegen:
             self._fix1_plain = set()
             self._fix1_idx_guards = {}
         self.lines.append(FREESTANDING_HEADER if self.freestanding else HEADER)
+        # Fix 2 ivdep: non-aliasing loop proofs (loopproof.py).
+        # Total by construction; any unexpected failure means no
+        # pragmas rather than a broken compile.
+        self._ivdep_loops = set()
+        try:
+            from .loopproof import analyze_ivdep
+            self._ivdep_loops = analyze_ivdep(self.program)
+        except Exception:
+            self._ivdep_loops = set()
         # Fix 1 B0 traceability: the emitted C records which
         # measurement toggles were on (top comment, §5).
         if self.no_bounds_checks:
@@ -3375,6 +3388,12 @@ class Codegen:
             if self._bounds_on:
                 for _g in self._fix1_guards.get(id(stmt), []):
                     self.emit(_g)
+            # Fix 2 ivdep: the non-aliasing proof (loopproof.py
+            # analyze_ivdep) licenses this pragma. It asserts no
+            # loop-carried dependences, so gcc may vectorize the
+            # loop. Ungated on mode: the proof is mode-independent.
+            if id(stmt) in self._ivdep_loops:
+                self.emit('_Pragma("GCC ivdep")')
             # A loop body runs many times: facts proven before the
             # loop may be stale by the second iteration, so no facts
             # cross a loop boundary in either direction.

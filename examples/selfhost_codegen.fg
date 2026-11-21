@@ -6194,6 +6194,13 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_facts_clear(g);
         let cout: CGExpr = cg_gen_expr(g, st.kids[0]);
         g = cout.g;
+        if st.has_nul {
+            // Fix 2 ivdep: the loopproof tagger proved every array
+            // in this nest is a distinct local allocation, so the
+            // iterations are independent and gcc may vectorize.
+            // Ungated on mode: the proof is mode-independent.
+            g = cg_emit(g, "_Pragma(\"GCC ivdep\")");
+        }
         g = cg_emit(g, "while (" + cout.code + ") {");
         g.indent = g.indent + 1;
         g = cg_push_owned_frame(g);

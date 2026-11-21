@@ -2048,3 +2048,307 @@ def analyze_program(program):
                 seen.append(g)
         guards[k] = seen
     return covered, guards, plain, idx_guards
+
+
+# ------------------------------------------------------------------
+# Fix 2 ivdep — `#pragma GCC ivdep` on proven-non-aliasing nests.
+#
+# Pure analysis pass over the checked AST. analyze_ivdep(program)
+# returns a set of id(While) eligible for the pragma. Codegen emits
+# `_Pragma("GCC ivdep")` immediately before those loops, in both
+# modes. The proof is in quant/fix2/ivdep/DESIGN.md (gates IV-G1..G11
+# plus the flow-insensitive provenance F-P1..F-P6). A wrong pragma is
+# a silent miscompilation, so every gate is conservative: any doubt
+# means no pragma. Total: a failure in one function yields no ivdep
+# for that function; generate() additionally treats any failure as
+# an empty set.
+# ------------------------------------------------------------------
+
+_BANNED_IVDEP = (A.Call, A.MethodCall, A.Break, A.Continue, A.Return,
+                 A.Spawn, A.Defer, A.FieldAccess, A.FieldAssign,
+                 A.TupleIndex, A.Cast, A.For)
+
+
+def _ivdep_is_empty_arraylit(node):
+    return isinstance(node, A.ArrayLit) and len(node.elems) == 0
+
+
+def _ivdep_ultimate_var_base(node):
+    """Innermost Var base of a FieldAccess/Index/TupleIndex chain."""
+    while isinstance(node, (A.FieldAccess, A.Index, A.TupleIndex)):
+        node = node.base
+    return node.name if isinstance(node, A.Var) else None
+
+
+def _ivdep_fresh_names(fn):
+    """(fresh_names, let_nodes): names whose buffer is provably
+    unshared in this function (DESIGN.md §1a), plus per-name Let
+    nodes (for the IV-G11 shadowing check)."""
+    params = {pname for pname, _ in (getattr(fn, "params", None) or [])}
+    let_count = {}
+    let_nodes = {}
+    for_count = {}
+    writes = {}
+    tainted = set()
+    for node in _walk(fn.body):
+        if isinstance(node, A.Let):
+            let_count[node.name] = let_count.get(node.name, 0) + 1
+            let_nodes.setdefault(node.name, []).append(node)
+            writes.setdefault(node.name, []).append(node.expr)
+        elif isinstance(node, A.Assign):
+            writes.setdefault(node.name, []).append(node.expr)
+        elif isinstance(node, A.For):
+            for_count[node.name] = for_count.get(node.name, 0) + 1
+        elif isinstance(node, A.Call):
+            if node.name == "push" and node.args \
+                    and _is_var(node.args[0]):
+                # push(a, ...): args[0] is the pushed-to array
+                # (exempt); every Var in the remaining args is a
+                # value passed to the call — taint it (a nested
+                # call's own rule taints its args too).
+                for a in node.args[1:]:
+                    for v in _walk(a):
+                        if isinstance(v, A.Var):
+                            tainted.add(v.name)
+            elif node.name == "len" and len(node.args) == 1 \
+                    and _is_var(node.args[0]):
+                pass  # pure; no taint
+            else:
+                for a in node.args:
+                    for v in _walk(a):
+                        if isinstance(v, A.Var):
+                            tainted.add(v.name)
+        elif isinstance(node, A.MethodCall):
+            if node.method in ("push", "len") and _is_var(node.base):
+                for a in node.args:
+                    for v in _walk(a):
+                        if isinstance(v, A.Var):
+                            tainted.add(v.name)
+            else:
+                for v in _walk(node.base):
+                    if isinstance(v, A.Var):
+                        tainted.add(v.name)
+                for a in node.args:
+                    for v in _walk(a):
+                        if isinstance(v, A.Var):
+                            tainted.add(v.name)
+        elif isinstance(node, A.FieldAssign):
+            base = _ivdep_ultimate_var_base(node.target)
+            if base is not None:
+                tainted.add(base)
+        elif isinstance(node, (A.Spawn, A.Defer)):
+            for v in _walk(node):
+                if isinstance(v, A.Var):
+                    tainted.add(v.name)
+    fresh = set()
+    for name, nlet in let_count.items():
+        if name in params:
+            continue
+        if nlet != 1:
+            continue
+        if for_count.get(name, 0) != 0:
+            continue
+        if name in tainted:
+            continue
+        if all(_ivdep_is_empty_arraylit(rhs)
+               for rhs in writes.get(name, [])):
+            fresh.add(name)
+    return fresh, let_nodes
+
+
+def _ivdep_affine_sign(node, v):
+    """Sign (+1 / 0 / -1) of the coefficient of v in `node`, or None
+    when the expression is not affine in v. Sign-only: no value
+    arithmetic, so no overflow or cap can differ between mirrors."""
+    if _is_var(node, v):
+        return 1
+    if isinstance(node, (A.Var, A.IntLit, A.FloatLit, A.StrLit,
+                         A.BoolLit)):
+        return 0
+    if isinstance(node, A.UnaryOp) and node.op == "-":
+        s = _ivdep_affine_sign(node.expr, v)
+        return None if s is None else -s
+    if isinstance(node, A.BinOp):
+        if node.op == "+":
+            a = _ivdep_affine_sign(node.left, v)
+            b = _ivdep_affine_sign(node.right, v)
+            if a is None or b is None:
+                return None
+            if a == 0:
+                return b
+            if b == 0:
+                return a
+            if a == b:
+                return a
+            return None
+        if node.op == "-":
+            a = _ivdep_affine_sign(node.left, v)
+            b = _ivdep_affine_sign(node.right, v)
+            if a is None or b is None:
+                return None
+            if a == 0:
+                return -b
+            if b == 0:
+                return a
+            if a == -b:
+                return a
+            return None
+        if node.op == "*":
+            a = _ivdep_affine_sign(node.left, v)
+            b = _ivdep_affine_sign(node.right, v)
+            if a is None or b is None:
+                return None
+            if isinstance(node.left, A.IntLit):
+                k = node.left.value
+                if k > 0:
+                    return b
+                if k < 0:
+                    return -b
+                return 0
+            if isinstance(node.right, A.IntLit):
+                k = node.right.value
+                if k > 0:
+                    return a
+                if k < 0:
+                    return -a
+                return 0
+            if a == 0 and b == 0:
+                return 0
+            return None
+        return None
+    return None
+
+
+def _ivdep_parse_cond(cond):
+    """(v_name, ascending) for a counted-while condition, else None."""
+    if not isinstance(cond, A.BinOp):
+        return None
+    op = cond.op
+    if _is_var(cond.left):
+        v = cond.left.name
+        if any(isinstance(n, A.Var) and n.name == v
+               for n in _walk(cond.right)):
+            return None
+        if op in ("<", "<="):
+            return (v, True)
+        if op in (">", ">="):
+            return (v, False)
+        return None
+    if _is_var(cond.right):
+        v = cond.right.name
+        if any(isinstance(n, A.Var) and n.name == v
+               for n in _walk(cond.left)):
+            return None
+        if op in (">", ">="):
+            return (v, True)
+        if op in ("<", "<="):
+            return (v, False)
+        return None
+    return None
+
+
+def _ivdep_loop_ok(loop, fresh, let_nodes):
+    """All gates IV-G1..G11 for one While node (DESIGN.md §1b)."""
+    body = loop.body
+    cond = loop.cond
+    stmts = getattr(body, "stmts", None)
+    if not isinstance(stmts, list) or not stmts:
+        return False
+    # IV-G8: banned node kinds anywhere in the subtree (cond+body).
+    for node in _walk(loop):
+        if isinstance(node, _BANNED_IVDEP):
+            return False
+    # IV-G1: counted shape.
+    parsed = _ivdep_parse_cond(cond)
+    if parsed is None:
+        return False
+    v, ascending = parsed
+    # IV-G10: no array access in the condition.
+    if any(isinstance(n, A.Index) for n in _walk(cond)):
+        return False
+    # IV-G2: single increment, last direct child.
+    sites = _write_sites(body, v)
+    if len(sites) != 1:
+        return False
+    inc = stmts[-1]
+    if not isinstance(inc, A.Assign) or inc.name != v:
+        return False
+    if sites[0] is not inc:
+        return False
+    step_ok = False
+    if isinstance(inc.expr, A.BinOp) and _is_var(inc.expr.left, v):
+        if isinstance(inc.expr.right, A.IntLit) \
+                and inc.expr.right.value > 0:
+            if ascending and inc.expr.op == "+":
+                step_ok = True
+            if not ascending and inc.expr.op == "-":
+                step_ok = True
+    if not step_ok:
+        return False
+    # IV-G3: exactly one array store, a direct child of the body.
+    stores = [n for n in _walk(body) if isinstance(n, A.IndexAssign)]
+    if len(stores) != 1:
+        return False
+    store = stores[0]
+    if not any(s is store for s in stmts):
+        return False
+    # IV-G4: store target is a bare local.
+    if not (isinstance(store.base, A.Index)
+            and _is_var(store.base.base)):
+        return False
+    s_name = store.base.base.name
+    # IV-G9: every Index base is a bare local.
+    for n in _walk(body):
+        if isinstance(n, A.Index) and not _is_var(n.base):
+            return False
+    # IV-G7: every Index base name is fresh.
+    for n in _walk(body):
+        if isinstance(n, A.Index) and n.base.name not in fresh:
+            return False
+    # IV-G6: stored array is write-only in the loop.
+    for n in _walk(body):
+        if isinstance(n, A.Index) and _is_var(n.base, s_name) \
+                and n is not store.base:
+            return False
+    # IV-G5: store index affine in v with nonzero coefficient.
+    idx = store.base.index
+    if _ivdep_affine_sign(idx, v) not in (1, -1):
+        return False
+    # IV-G5b: every other Var in the index is not written in the body.
+    for n in _walk(idx):
+        if isinstance(n, A.Var) and n.name != v:
+            if _write_sites(body, n.name):
+                return False
+    # IV-G11: no cross-iteration scalar writes. Every Assign in the
+    # body is the increment, or targets a name whose exactly one Let
+    # in the whole function sits inside this body subtree.
+    body_ids = {id(n) for n in _walk(body)}
+    for n in _walk(body):
+        if isinstance(n, A.Assign) and n is not inc:
+            lets = let_nodes.get(n.name, [])
+            if len(lets) != 1 or id(lets[0]) not in body_ids:
+                return False
+    return True
+
+
+def analyze_ivdep(program):
+    """Returns a set of id(While) eligible for `#pragma GCC ivdep`."""
+    out = set()
+    funcs = list(getattr(program, "funcs", None) or [])
+    for impl in (getattr(program, "impls", None) or []):
+        funcs.extend(getattr(impl, "methods", None) or [])
+    for fn in funcs:
+        if getattr(fn, "is_extern", False):
+            continue
+        body = getattr(fn, "body", None)
+        if body is None:
+            continue
+        try:
+            fresh, let_nodes = _ivdep_fresh_names(fn)
+            for node in _walk(body):
+                if isinstance(node, A.While) \
+                        and _ivdep_loop_ok(node, fresh, let_nodes):
+                    out.add(id(node))
+        except Exception:
+            continue
+    return out
