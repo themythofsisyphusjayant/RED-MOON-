@@ -113,6 +113,14 @@ struct HChecker {
     field_base_depth: int;
     // Root variable being written in place (field/index assign).
     pinned_write_root: str;
+    // Lambda frames (Top-500 #101): a stack, one entry per lambda
+    // body being checked. lam_boundaries[i] is len(var_names) at
+    // the lambda's entry (its boundary); lam_caps[i] is that
+    // lambda's captures so far, "~"-joined names. A variable whose
+    // declaration index is below a frame's boundary is a capture
+    // of that lambda (CL-C2); assigning to one is an error (CL-C3).
+    lam_boundaries: [int];
+    lam_caps: [str];
     // Freestanding mode (Top-500 #39 / slice 4g): no heap,
     // no hosted runtime — the checker rejects heap-backed
     // values and hosted-only features at first use.
@@ -125,7 +133,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", freestanding: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false };
 }
 
 // C keywords that are not Qasida keywords: user names colliding
@@ -470,7 +478,7 @@ fn heap_error(n: Node, t: str) -> str {
 // Freestanding blocklist (Python checker.py:2251): builtins
 // that need the hosted runtime.
 fn is_fs_blocked_builtin(name: str) -> bool {
-    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
+    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
 }
 
 fn elem_type(t: str) -> str {
@@ -908,7 +916,7 @@ fn suggest(name: str, candidates: [str]) -> str {
 // All builtin function names (Python checker.py BUILTINS), as
 // suggestion candidates for undefined functions.
 fn builtin_names() -> [str] {
-    return ["print", "println", "push", "pin", "fail", "assert", "poke32", "mmap_set", "mmap_close", "mmap_set32", "csr_write", "csr_set", "csr_clear", "fail_compile", "eprintln", "len", "range", "clock_micros", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "read_file", "read_line", "write_file", "read_bytes", "write_bytes", "file_exists", "args", "parse_int", "parse_float", "run_command", "try_alloc", "split", "join", "substr", "trim", "starts_with", "ends_with", "http_get", "http_listen", "http_accept", "http_read_request", "http_respond", "http_respond_status", "http_close", "alloc_count", "free_count", "parallel_dot", "parallel_matmul", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "weak_upgrade", "move", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3"];
+    return ["print", "println", "push", "pin", "fail", "assert", "poke32", "mmap_set", "mmap_close", "mmap_set32", "csr_write", "csr_set", "csr_clear", "fail_compile", "eprintln", "len", "range", "clock_micros", "panicked_tasks", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "read_file", "read_line", "write_file", "read_bytes", "write_bytes", "file_exists", "args", "parse_int", "parse_float", "run_command", "try_alloc", "split", "join", "substr", "trim", "starts_with", "ends_with", "http_get", "http_listen", "http_accept", "http_read_request", "http_respond", "http_respond_status", "http_close", "alloc_count", "free_count", "parallel_dot", "parallel_matmul", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "weak_upgrade", "move", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3"];
 }
 
 // Statement-only builtins (Python checker.py STMT_BUILTINS):
@@ -919,7 +927,7 @@ fn is_stmt_builtin(name: str) -> bool {
 }
 
 fn is_expr_builtin(name: str) -> bool {
-    return name == "len" || name == "range" || name == "clock_micros" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
+    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -1013,6 +1021,11 @@ fn is_owned_type(c: HChecker, t: str) -> bool {
         return true;
     }
     if is_tuple(t) {
+        return true;
+    }
+    // A fn value is owned: its env reference is a hold the
+    // scope-end free must drop (Top-500 #101).
+    if is_fn_type(t) {
         return true;
     }
     let base: str = generic_base(t);
@@ -1464,6 +1477,80 @@ fn is_moved(c: HChecker, name: str) -> bool {
         i = i - 1;
     }
     return false;
+}
+
+// Is the named variable a capture of an enclosing lambda
+// (Top-500 #101, CL-C2/CL-C3)? Its declaration index is below
+// some frame's boundary — equivalently, below the innermost
+// frame's boundary, since boundaries nest.
+fn lam_is_capture(c: HChecker, name: str) -> bool {
+    let di: int = env_decl_index(c, name);
+    if di < 0 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(c.lam_boundaries) {
+        if di < c.lam_boundaries[i] {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Record `name` as a capture of every enclosing lambda frame
+// whose boundary is above the name's binding scope (Top-500
+// #101, CL-C2): the transitive chain nested lambdas need — an
+// inner lambda reads the value through the outer env. First-use
+// order within each frame.
+fn lam_record(c0: HChecker, name: str) -> HChecker {
+    let mut c: HChecker = c0;
+    let di: int = env_decl_index(c, name);
+    if di < 0 {
+        return c;
+    }
+    let mut i: int = 0;
+    while i < len(c.lam_boundaries) {
+        if di < c.lam_boundaries[i] {
+            let caps: str = c.lam_caps[i];
+            let mut found: bool = false;
+            if caps != "" {
+                let parts: [str] = split(caps, "~");
+                let mut j: int = 0;
+                while j < len(parts) {
+                    if parts[j] == name {
+                        found = true;
+                    }
+                    j = j + 1;
+                }
+            }
+            if !found {
+                if caps == "" {
+                    c.lam_caps[i] = name;
+                } else {
+                    c.lam_caps[i] = caps + "~" + name;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// Push a lambda frame (boundary = len(var_names) at entry).
+fn lam_push(c0: HChecker, boundary: int) -> HChecker {
+    let mut c: HChecker = c0;
+    push(c.lam_boundaries, boundary);
+    push(c.lam_caps, "");
+    return c;
+}
+
+// Pop the innermost lambda frame.
+fn lam_pop(c0: HChecker) -> HChecker {
+    let mut c: HChecker = c0;
+    c.lam_boundaries = trunc_int(c.lam_boundaries, len(c.lam_boundaries) - 1);
+    c.lam_caps = trunc_str(c.lam_caps, len(c.lam_caps) - 1);
+    return c;
 }
 
 fn env_declare(c0: HChecker, name: str, typ: str) -> HChecker {
@@ -2545,6 +2632,14 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
             return COut { c: c, typ: fn_type_of_sig(func_sig(c, n.name)) };
         }
         let t: str = env_lookup(c, n.name, n.line, n.col);
+        // Capture recording (Top-500 #101, CL-C2): a name
+        // resolving to a scope outside an enclosing lambda's
+        // boundary is a capture of that lambda — and of every
+        // lambda frame between it and the binding. env_lookup
+        // above already failed on a moved/undefined name, so
+        // only a valid use is recorded (mirroring Python, where
+        // the moved check precedes the recording).
+        c = lam_record(c, n.name);
         return COut { c: c, typ: t };
     }
     if n.kind == 29 {
@@ -2922,6 +3017,11 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         // are the args (Top-500 #103).
         return check_indirect_call(c, n);
     }
+    if n.kind == 47 {
+        // Lambda: kids are Param nodes then the body Block, sval
+        // is the return type (Top-500 #101).
+        return check_lambda(c, n);
+    }
     if n.kind == 33 {
         // MethodCall: kids[0] is the receiver, name is the method.
         return check_method_call(c, n);
@@ -3076,6 +3176,17 @@ fn check_call(c0: HChecker, n: Node) -> COut {
             if !is_fn_type(vt) {
                 fail_at(n.line, n.col, "calling '" + n.name + "' (type " + vt + ") — '" + n.name + "' is not a function");
             }
+            if is_moved(c, n.name) {
+                // Calling a moved closure is a use of the moved
+                // value, like any other Var use (Top-500 #101:
+                // the callee here is a name, not a Var node, so
+                // the Var branch's moved check never sees it).
+                fail_at(n.line, n.col, "use of moved value '" + n.name + "'");
+            }
+            // The callee is a name, not a Var node: record the
+            // capture here, or a lambda calling an outer fn
+            // variable would have no env slot for it (#101).
+            c = lam_record(c, n.name);
             return check_indirect_args(c, n, vt, "'" + n.name + "'", 0);
         }
         // Builtins the checker knows without a definition.
@@ -3392,6 +3503,11 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     }
     if n.name == "clock_micros" {
         c = expect_builtin_msg(c, n, [], "clock_micros() takes no arguments");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "panicked_tasks" {
+        // Top-500 #44: total tasks that have panicked so far.
+        c = expect_builtin_msg(c, n, [], "panicked_tasks() takes no arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "sqrt" || n.name == "exp" || n.name == "log" || n.name == "sin" || n.name == "cos" || n.name == "tan" {
@@ -4199,6 +4315,12 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if !env_is_mut(c, n.name) {
             fail_at(n.line, n.col, "cannot assign to immutable variable '" + n.name + "' (declare it with 'let mut')");
         }
+        // Assignment to a captured binding (Top-500 #101, CL-C3):
+        // closures capture by value and the binding is read-only
+        // inside the lambda in v1.
+        if lam_is_capture(c, n.name) {
+            fail_at(n.line, n.col, "cannot assign to captured variable '" + n.name + "' (closures capture by value; captured variables are read-only in v1)");
+        }
         if is_pinned(c, n.name) {
             fail_at(n.line, n.col, "cannot reassign pinned variable '" + n.name + "' (pin forbids replacing the value; change it in place through its fields or indexes)");
         }
@@ -4896,6 +5018,136 @@ fn body_diverges(c: HChecker, body: Node) -> bool {
     return false;
 }
 
+fn check_lambda(c0: HChecker, n: Node) -> COut {
+    // Lambda expression (Top-500 #101, CL-C1). Node kind 47:
+    // kids are Param nodes (kind 43, name + sval) then the body
+    // Block; sval is the return type ("void" when `-> R` is
+    // omitted). Params must be annotated, like fn declarations.
+    // The body is checked in a fresh function context (loop depth
+    // reset — a `break` inside a lambda must not break the
+    // enclosing loop), starting from a COPY of the enclosing
+    // move/pin state (a variable moved before the lambda was
+    // created stays unusable inside it; a move inside the lambda
+    // moves only the lambda's own copy). Captures are collected
+    // by the Var branch (CL-C2) into the frame pushed here. The
+    // checker cannot stamp the node (nodes are values), so the
+    // captures live only in the frame — for the CL-C3 assign
+    // check — and the infer pass re-derives them for codegen.
+    let mut c: HChecker = c0;
+    let ret: str = n.sval;
+    if c.freestanding {
+        fail_at(n.line, n.col, "lambda expressions need the heap allocator (not in freestanding v1; use a named function instead)");
+    }
+    let mut params: [str] = [];
+    let mut pnames: [str] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) - 1 {
+        let k: Node = n.kids[i];
+        if is_c_keyword(k.name) {
+            fail_at(n.line, n.col, "'" + k.name + "' is a C keyword and cannot be used as a parameter name; rename it");
+        }
+        if str_in_arr(k.name, pnames) {
+            fail_at(n.line, n.col, "duplicate parameter '" + k.name + "' in lambda");
+        }
+        if !hc_valid_type(c, k.sval, []) || k.sval == "void" {
+            fail_at(n.line, n.col, "lambda parameter type '" + k.sval + "' is not a value type");
+        }
+        push(pnames, k.name);
+        push(params, k.sval);
+        i = i + 1;
+    }
+    if ret != "void" && !hc_valid_type(c, ret, []) {
+        fail_at(n.line, n.col, "unknown lambda return type '" + ret + "'");
+    }
+    let body: Node = n.kids[len(n.kids) - 1];
+    // Save enclosing state; the lambda starts from copies that
+    // are discarded after (see checker_snapshot's note: plain
+    // assignment shares the arrays, so snapshot deep-copies).
+    let saved: HChecker = checker_snapshot(c);
+    let mark: int = len(c.var_names);
+    c = lam_push(c, mark);
+    let mut pi: int = 0;
+    while pi < len(pnames) {
+        c = env_declare(c, pnames[pi], params[pi]);
+        pi = pi + 1;
+    }
+    c.ret_type = ret;
+    c.loop_depth = 0;
+    c.branch_depth = 0;
+    c.loop_vars = trunc_str(c.loop_vars, 0);
+    c.for_iter_roots = trunc_str(c.for_iter_roots, 0);
+    c.for_iter_paths = trunc_str(c.for_iter_paths, 0);
+    c.for_iter_scopes = trunc_int(c.for_iter_scopes, 0);
+    c.unres_names = trunc_str(c.unres_names, 0);
+    c.unres_lines = trunc_int(c.unres_lines, 0);
+    c.unres_cols = trunc_int(c.unres_cols, 0);
+    c.moved_fields = trunc_str(c.moved_fields, 0);
+    c.moved_field_target = "";
+    c.pinned_base_depth = 0;
+    c.pinned_observe = 0;
+    c.field_base_depth = 0;
+    c.pinned_write_root = "";
+    c = check_block(c, body);
+    if len(c.unres_names) > 0 {
+        // An empty array literal no use in this lambda
+        // constrained: inference found no element type.
+        fail_at(c.unres_lines[0], c.unres_cols[0], "cannot infer the element type of an empty array literal; add an annotation, e.g. let x: [int] = []");
+    }
+    // Return rules, like check_func.
+    if ret == "never" {
+        if node_has_return(body) {
+            fail_at(n.line, n.col, "never lambda cannot return; its body must diverge instead");
+        }
+        if !body_diverges(c, body) {
+            fail_at(n.line, n.col, "never lambda must end with a diverging statement (fail or a call to a never function); its body can fall off the end");
+        }
+    } else if ret != "void" {
+        let mut ends_return: bool = false;
+        if len(body.kids) > 0 && body.kids[len(body.kids) - 1].kind == 17 {
+            ends_return = true;
+        }
+        if !ends_return && !body_diverges(c, body) {
+            fail_at(n.line, n.col, "lambda returns " + ret + " but its body does not end with a return; add a return statement of type " + ret + " at the end of the lambda");
+        }
+    }
+    // The lambda's own declarations (params + body lets) leave
+    // scope; the enclosing moved/pinned/unres/loop state is
+    // restored from the snapshot (a move inside the lambda moves
+    // only the lambda's own copy).
+    c = env_restore(c, mark);
+    c = lam_pop(c);
+    c.var_moved = copy_bool(saved.var_moved);
+    c.var_pinned = copy_bool(saved.var_pinned);
+    c.moved_fields = copy_str(saved.moved_fields);
+    c.unres_names = copy_str(saved.unres_names);
+    c.unres_lines = copy_int(saved.unres_lines);
+    c.unres_cols = copy_int(saved.unres_cols);
+    c.for_iter_roots = copy_str(saved.for_iter_roots);
+    c.for_iter_paths = copy_str(saved.for_iter_paths);
+    c.for_iter_scopes = copy_int(saved.for_iter_scopes);
+    c.loop_vars = copy_str(saved.loop_vars);
+    c.ret_type = saved.ret_type;
+    c.loop_depth = saved.loop_depth;
+    c.branch_depth = saved.branch_depth;
+    c.moved_field_target = saved.moved_field_target;
+    c.pinned_base_depth = saved.pinned_base_depth;
+    c.pinned_observe = saved.pinned_observe;
+    c.field_base_depth = saved.field_base_depth;
+    c.pinned_write_root = saved.pinned_write_root;
+    // Fn type string: fn(p1, p2) -> ret.
+    let mut ft: str = "fn(";
+    let mut j: int = 0;
+    while j < len(params) {
+        if j > 0 {
+            ft = ft + ", ";
+        }
+        ft = ft + params[j];
+        j = j + 1;
+    }
+    ft = ft + ") -> " + ret;
+    return COut { c: c, typ: ft };
+}
+
 fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
     let mut c: HChecker = c0;
     // Generic template: the body is checked only on instantiation,
@@ -4968,6 +5220,8 @@ fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
     c.loop_depth = 0;
     c.branch_depth = 0;
     c.loop_vars = trunc_str(c.loop_vars, 0);
+    c.lam_boundaries = trunc_int(c.lam_boundaries, 0);
+    c.lam_caps = trunc_str(c.lam_caps, 0);
     c = check_block(c, body);
     if len(c.unres_names) > 0 {
         // An empty array literal no use in this function

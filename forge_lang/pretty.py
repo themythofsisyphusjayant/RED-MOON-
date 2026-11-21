@@ -88,6 +88,20 @@ def fmt_expr(expr, parent_prec=0):
                 f"({', '.join(fmt_expr(a) for a in expr.args)})")
     if isinstance(expr, A.Try):
         return f"{fmt_expr(expr.expr, 99)}?"
+    if isinstance(expr, A.Lambda):
+        # Lambda (Top-500 #101): the body formats multi-line,
+        # relative to indent 0 — Formatter.emit pads every line
+        # of a multi-line statement text, so nesting composes.
+        params = ", ".join(f"{n}: {t}" for n, t in expr.params)
+        ret = f" -> {expr.ret}" if expr.ret != "void" else ""
+        if not expr.body.stmts:
+            return f"fn({params}){ret} {{}}"
+        sub = Formatter()
+        sub.fmt_block(expr.body, 1)
+        lines = [f"fn({params}){ret} {{"]
+        lines.extend(sub.lines)
+        lines.append("}")
+        return "\n".join(lines)
     raise ForgeError(f"formatter: unsupported expression {type(expr).__name__}")
 
 
@@ -96,7 +110,15 @@ class Formatter:
         self.lines = []
 
     def emit(self, indent, text=""):
-        self.lines.append(("    " * indent + text) if text else "")
+        if not text:
+            self.lines.append("")
+            return
+        # A multi-line text (a lambda body) gets the indent on
+        # every line, not just the first, so nested lambdas
+        # compose at the right depth (Top-500 #101).
+        pad = "    " * indent
+        self.lines.append("\n".join(pad + line if line else ""
+                                    for line in text.split("\n")))
 
     def fmt_program(self, prog):
         for imp in prog.imports:

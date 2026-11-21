@@ -348,6 +348,22 @@ class Infer:
             for a in expr.args:
                 self.walk_expr(a)
             return self.set(expr, "int")
+        if isinstance(expr, A.Lambda):
+            # A lambda's type is its fn type (checker-stamped);
+            # walk the body so nested expressions get types, with
+            # the params and the captured variables in scope
+            # (Top-500 #101).
+            from .fntypes import fn_type_string
+            ft = getattr(expr, "fn_type", None) or fn_type_string(expr.params, expr.ret)
+            caps = getattr(expr, "captures", None) or []
+            self.scopes.append({n: t for n, t in expr.params})
+            self.scopes.append({n: t for n, t in caps})
+            try:
+                self.walk_block(expr.body)
+            finally:
+                self.scopes.pop()
+                self.scopes.pop()
+            return self.set(expr, ft)
         if isinstance(expr, A.Call):
             if getattr(expr, "concrete_type", None):
                 for a in expr.args:
@@ -385,7 +401,7 @@ class Infer:
                     return self.set(expr, ret)
             for a in expr.args:
                 self.walk_expr(a)
-            if expr.name in ("len", "clock_micros", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
+            if expr.name in ("len", "clock_micros", "panicked_tasks", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
                 return self.set(expr, "int")
             if expr.name == "weak_upgrade":
                 for a in expr.args:

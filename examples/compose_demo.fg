@@ -1,0 +1,18 @@
+import "compose.fg";
+
+fn inc(x: int) -> int { return x + 1; }
+fn dbl(x: int) -> int { return x * 2; }
+fn shout(s: str) -> str { return s + "!"; }
+fn slen(s: str) -> int { return len(s); }
+
+fn main() {
+    let inc_dbl = compose(inc, dbl);
+    println(inc_dbl(5));
+    let dbl_inc = compose(dbl, inc);
+    println(dbl_inc(5));
+    let loud_len = compose(slen, shout);
+    println(loud_len("hey"));
+    let inc_dbl_inc = compose3(inc, dbl, inc);
+    println(inc_dbl_inc(5));
+    println(inc_dbl(0));
+}

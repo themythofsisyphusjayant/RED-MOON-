@@ -1,0 +1,19 @@
+import "curry.fg";
+
+fn add(a: int, b: int) -> int { return a + b; }
+fn mul(a: int, b: int) -> int { return a * b; }
+fn sub(a: int, b: int) -> int { return a - b; }
+fn concat(a: str, b: str) -> str { return a + b; }
+
+fn main() {
+    let add10 = curry(add, 10);
+    println(add10(5));
+    println(add10(7));
+    let mul3 = curry(mul, 3);
+    println(mul3(4));
+    let minus10 = curry_last(sub, 10);
+    println(minus10(3));
+    let greet = curry(concat, "hi ");
+    println(greet("there"));
+    println(add10(0));
+}

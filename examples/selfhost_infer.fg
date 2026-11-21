@@ -85,6 +85,22 @@ struct HInfer {
     // constraining use resolves it to a concrete array type.
     unres_names: [str];
     unres_keys: [int];
+    // Lambda capture frames (Top-500 #101): a stack, one entry
+    // per lambda body being walked. cap_boundaries[i] is scope_len
+    // at the lambda's entry; cap_caps[i] is that lambda's captures
+    // so far, encoded "name:type;name:type" in first-use order.
+    cap_boundaries: [int];
+    cap_caps: [str];
+    // Capture map (output): one entry per lambda node, keyed by
+    // the lambda's infer key (cap_keys), value the encoded
+    // captures (cap_vals). Codegen reads it to build env structs
+    // and lambda-creation code. In a template walk the key is
+    // offset by 10^17, exactly like the type map (infer_set_key).
+    cap_keys: [int];
+    cap_vals: [str];
+    // Bare function names used as values, first-use order
+    // (Top-500 #101): codegen emits one wrapper per entry.
+    fn_uses: [str];
 }
 
 fn infer_new() -> HInfer {
@@ -100,7 +116,7 @@ fn infer_new() -> HInfer {
         push(ms, -1);
         i = i + 1;
     }
-    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], map_keys: mk, map_vals: mv, map_seq: ms, map_cap: 1024, map_len: 0, scope_names: [], scope_types: [], scope_marks: [], scope_len: 0, current_ret: "void", in_template: false, current_fn: "", current_fn_idx: -2, unres_names: [], unres_keys: [] };
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], map_keys: mk, map_vals: mv, map_seq: ms, map_cap: 1024, map_len: 0, scope_names: [], scope_types: [], scope_marks: [], scope_len: 0, current_ret: "void", in_template: false, current_fn: "", current_fn_idx: -2, unres_names: [], unres_keys: [], cap_boundaries: [], cap_caps: [], cap_keys: [], cap_vals: [], fn_uses: [] };
 }
 
 // First index of needle in hay (needle may be multi-char), or -1.
@@ -403,6 +419,113 @@ fn infer_set_key(h0: HInfer, key: int, t: str) -> HInfer {
         return infer_map_put(h, key + 100000000000000000, t);
     }
     return infer_map_put(h, key, t);
+}
+
+// Declaration index of a name in the live scope prefix, or -1
+// (Top-500 #101: capture detection compares this index against
+// the lambda frames' boundaries).
+fn infer_decl_index(h: HInfer, name: str) -> int {
+    let mut i: int = h.scope_len - 1;
+    while i >= 0 {
+        if h.scope_names[i] == name {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+// Record `name:typ` as a capture of every enclosing lambda frame
+// whose boundary is above the name's binding scope (Top-500 #101,
+// CL-C2): the transitive chain nested lambdas need. First-use
+// order within each frame.
+fn infer_cap_record(h0: HInfer, name: str, typ: str) -> HInfer {
+    let mut h: HInfer = h0;
+    let di: int = infer_decl_index(h, name);
+    if di < 0 {
+        return h;
+    }
+    let mut i: int = 0;
+    while i < len(h.cap_boundaries) {
+        if di < h.cap_boundaries[i] {
+            let caps: str = h.cap_caps[i];
+            let mut found: bool = false;
+            if caps != "" {
+                let parts: [str] = split(caps, ";");
+                let mut j: int = 0;
+                while j < len(parts) {
+                    let kv: [str] = split(parts[j], ":");
+                    if len(kv) >= 1 && kv[0] == name {
+                        found = true;
+                    }
+                    j = j + 1;
+                }
+            }
+            if !found {
+                let entry: str = name + ":" + typ;
+                if caps == "" {
+                    h.cap_caps[i] = entry;
+                } else {
+                    h.cap_caps[i] = caps + ";" + entry;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return h;
+}
+
+// Push a lambda capture frame (boundary = scope_len at entry).
+fn infer_cap_push(h0: HInfer, boundary: int) -> HInfer {
+    let mut h: HInfer = h0;
+    push(h.cap_boundaries, boundary);
+    push(h.cap_caps, "");
+    return h;
+}
+
+// Pop the innermost lambda capture frame.
+fn infer_cap_pop(h0: HInfer) -> HInfer {
+    let mut h: HInfer = h0;
+    h.cap_boundaries = infer_trunc_int(h.cap_boundaries, len(h.cap_boundaries) - 1);
+    h.cap_caps = infer_trunc_str(h.cap_caps, len(h.cap_caps) - 1);
+    return h;
+}
+
+// Store a lambda's encoded captures in the cap map, keyed by the
+// lambda node's infer key. Mirrors infer_set: a template walk
+// stores under the bare template key infer_key_int(-1, line, col)
+// (codegen reads it back through the same template-key fallback
+// cg_expr_type_raw uses); a concrete walk under the fn key.
+fn infer_cap_put(h0: HInfer, lam: Node, caps: str) -> HInfer {
+    let mut h: HInfer = h0;
+    let mut k: int = infer_key_int(h.current_fn_idx, lam.line, lam.col);
+    if h.in_template {
+        k = infer_key_int(-1, lam.line, lam.col);
+    }
+    let mut i: int = 0;
+    while i < len(h.cap_keys) {
+        if h.cap_keys[i] == k {
+            h.cap_vals[i] = caps;
+            return h;
+        }
+        i = i + 1;
+    }
+    push(h.cap_keys, k);
+    push(h.cap_vals, caps);
+    return h;
+}
+
+// Read a lambda's encoded captures from the cap map ("" when
+// absent). Used by codegen through the copied HCodegen fields.
+fn infer_cap_get(h: HInfer, key: int) -> str {
+    let mut i: int = 0;
+    while i < len(h.cap_keys) {
+        if h.cap_keys[i] == key {
+            return h.cap_vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 // Concrete array type: starts with "[", ends with "]", and holds
@@ -1268,6 +1391,11 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         if infer_scope_type(h, e.name) == "" && infer_table_find(h.variant_names, e.name) < 0 {
             let found0: [str] = infer_fn_lookup(h, e.name);
             if found0[0] == "1" {
+                // Record the bare fn use for codegen's wrappers
+                // (Top-500 #101): first-use order.
+                if infer_table_find(h.fn_uses, e.name) < 0 {
+                    push(h.fn_uses, e.name);
+                }
                 let params0: [str] = infer_parse_params(found0[2]);
                 let mut pts: str = "";
                 let mut pi: int = 0;
@@ -1285,7 +1413,10 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
                 return infer_set(h, e, "fn(" + pts + ") -> " + found0[1]);
             }
         }
-        return infer_set(h, e, infer_lookup(h, e.name));
+        // Capture recording (Top-500 #101, CL-C2).
+        let vt34: str = infer_lookup(h, e.name);
+        h = infer_cap_record(h, e.name, vt34);
+        return infer_set(h, e, vt34);
     }
     if e.kind == 29 {
         // ArrayLit: empty -> "[?]"; else "[t0]".
@@ -1526,6 +1657,50 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         }
         return infer_set(h, e, "int");
     }
+    if e.kind == 47 {
+        // Lambda: kids are Param nodes (kind 43, name + sval)
+        // then the body Block; sval is the return type (Top-500
+        // #101). Walk the body with the params in scope, collecting
+        // captures (names read inside that resolve below the
+        // lambda's boundary). The lambda's fn type and its captures
+        // go into the maps keyed by the lambda node's infer key.
+        let mut params47: [str] = [];
+        let mut pnames47: [str] = [];
+        let mut i47: int = 0;
+        while i47 < len(e.kids) - 1 {
+            push(pnames47, e.kids[i47].name);
+            push(params47, e.kids[i47].sval);
+            i47 = i47 + 1;
+        }
+        let mut ft47: str = "fn(";
+        let mut j47: int = 0;
+        while j47 < len(params47) {
+            if j47 > 0 {
+                ft47 = ft47 + ", ";
+            }
+            ft47 = ft47 + params47[j47];
+            j47 = j47 + 1;
+        }
+        ft47 = ft47 + ") -> " + e.sval;
+        let boundary47: int = h.scope_len;
+        h = infer_push_scope(h);
+        let mut pi47: int = 0;
+        while pi47 < len(pnames47) {
+            h = infer_declare(h, pnames47[pi47], params47[pi47]);
+            pi47 = pi47 + 1;
+        }
+        h = infer_cap_push(h, boundary47);
+        let saved_ret47: str = h.current_ret;
+        h.current_ret = e.sval;
+        h = infer_walk_block(h, e.kids[len(e.kids) - 1]);
+        h.current_ret = saved_ret47;
+        h = infer_pop_scope(h);
+        let caps47: str = h.cap_caps[len(h.cap_caps) - 1];
+        h = infer_cap_pop(h);
+        h = infer_set(h, e, ft47);
+        h = infer_cap_put(h, e, caps47);
+        return h;
+    }
     if e.kind == 35 {
         // Call: name = fn, kids = [args].
         let vi: int = infer_table_find(h.variant_names, e.name);
@@ -1616,6 +1791,11 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
             // them first), so the probe skips them.
             let vt: str = infer_scope_type(h, e.name);
             if vt != "" && is_fn_type(vt) && !is_expr_builtin(e.name) {
+                // The callee is a name, not a Var node: record the
+                // capture here (Top-500 #101, mirroring the
+                // checker's fix — without this a lambda calling an
+                // outer fn variable would have no env slot).
+                h = infer_cap_record(h, e.name, vt);
                 let params: [str] = fn_type_params(vt);
                 let mut i: int = 0;
                 while i < len(e.kids) {
@@ -1635,7 +1815,7 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
             h = infer_walk_expr(h, e.kids[i]);
             i = i + 1;
         }
-        if e.name == "len" || e.name == "clock_micros" || e.name == "abs" || e.name == "parse_int" || e.name == "run_command" || e.name == "alloc_count" || e.name == "free_count" || e.name == "arr_alloc_count" || e.name == "arr_free_count" || e.name == "refcount" || e.name == "weak_new" || e.name == "mmap_open" || e.name == "mmap_get" || e.name == "mmap_grow" || e.name == "mmap_get32" || e.name == "peek32" || e.name == "csr_read" || e.name == "ecall" || e.name == "ecall3" || e.name == "wrapping_add" || e.name == "wrapping_sub" || e.name == "wrapping_mul" || e.name == "wrapping_neg" {
+        if e.name == "len" || e.name == "clock_micros" || e.name == "panicked_tasks" || e.name == "abs" || e.name == "parse_int" || e.name == "run_command" || e.name == "alloc_count" || e.name == "free_count" || e.name == "arr_alloc_count" || e.name == "arr_free_count" || e.name == "refcount" || e.name == "weak_new" || e.name == "mmap_open" || e.name == "mmap_get" || e.name == "mmap_grow" || e.name == "mmap_get32" || e.name == "peek32" || e.name == "csr_read" || e.name == "ecall" || e.name == "ecall3" || e.name == "wrapping_add" || e.name == "wrapping_sub" || e.name == "wrapping_mul" || e.name == "wrapping_neg" {
             return infer_set(h, e, "int");
         }
         if e.name == "weak_upgrade" {
@@ -1761,6 +1941,8 @@ fn run_infer(prog: Node) -> HInfer {
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 h.unres_names = infer_trunc_str(h.unres_names, 0);
                 h.unres_keys = infer_trunc_int(h.unres_keys, 0);
+                h.cap_boundaries = infer_trunc_int(h.cap_boundaries, 0);
+                h.cap_caps = infer_trunc_str(h.cap_caps, 0);
                 h = infer_push_scope(h);
                 let mut j: int = 0;
                 while j < len(n.kids) {
@@ -1793,6 +1975,8 @@ fn run_infer(prog: Node) -> HInfer {
                 h.scope_marks = infer_trunc_int(h.scope_marks, 0);
                 h.unres_names = infer_trunc_str(h.unres_names, 0);
                 h.unres_keys = infer_trunc_int(h.unres_keys, 0);
+                h.cap_boundaries = infer_trunc_int(h.cap_boundaries, 0);
+                h.cap_caps = infer_trunc_str(h.cap_caps, 0);
                 h = infer_push_scope(h);
                 let mut k: int = 0;
                 while k < len(m.kids) {

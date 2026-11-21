@@ -1239,3 +1239,105 @@ Sprint batch 14 (21 Nov 2026, same day, LIBS ONLY): 15 flips,
   155 - 4 = 151 (349 + 12 + 139 = 500). HAVE 349 of 500 = 69.8%.
   Next: pipeline item #44 (panic vs recover boundary, GAP);
   only #393 is library-shaped in the remaining pool.
+
+  #44 panic vs recover boundary (21 Nov 2026, pipeline run):
+  implemented in BOTH compilers, NOT yet HAVE (gates deferred).
+  fail() on a spawned task's thread ends just that task (stderr
+  "qasida: task panicked: <msg>", atomic counter +1, pthread_exit);
+  siblings finish, the scope join proceeds; new builtin
+  panicked_tasks() -> int reads the count after a join. fail() on
+  the main thread unchanged (exit 1). Files: forge_lang/checker.py
+  + infer.py + codegen.py (HEADER thread-local flag + counter,
+  thread wrappers, fail() branch, builtin expr) + codegen_rv.py /
+  codegen_wasm.py named rejections; hosted mirror in
+  examples/selfhost_check.fg + selfhost_infer.fg +
+  selfhost_codegen.fg (fail branch, wrappers, expr site) with the
+  header regenerated via gen_codegen_header.py. Demo
+  examples/panic_recover_demo.fg; own test
+  tests/test_panic_recover_v1.py 41/41 ALL PASS both compilers
+  (demo exact stdout, 7 run cases, 2 fatal cases, 2 rejection
+  cases, freestanding/big32/WASM rejections, fmt idempotent).
+  Gates run: fresh hosted binary md5
+  84f64ea4ff6572d77bf1cfa09a23d30f (rebuilt after a VM restart
+  killed the first attempt at ~21:43 IST; build log
+  blackmoon-iso/pr44_hosted_build.log, cc warnings are pre-existing
+  -Wmisleading-indentation/-Wunused-variable/-Wsign-compare only),
+  bootstrap 7/7 byte-identical (log
+  blackmoon-iso/pr44_bootstrap_emit.log, ulimit -s 65536), demo
+  ASan-clean under both compilers (byte-identical emits, default
+  leak detection on). Leak limit measured, not guessed: a task
+  allocating [1,2,3] then failing leaks 32 bytes (24 + 8 refcount)
+  under LeakSanitizer (probe /tmp/pr44_leakprobe.fg); the same
+  program prints "1 / count 1" and exits 0 without ASan.
+  Gates NOT run: full suite, parity 124/124, corpus 99/99,
+  regression 62/62, fuzz — deferred because the closures slice
+  (#101/#114/#116, refcounted env, Jayant's pick ~21:57 IST)
+  started in the same tree that evening; the long gates need a
+  stable tree and would be contaminated by closures edits landing
+  mid-run. No binary sync, no push this run. Counts after this
+  entry: HAVE 349, PARTIAL 13, GAP 138, to build 151. Arithmetic
+  from the function-values slice (HAVE 349, PARTIAL 12, GAP 139,
+  to build 151): 1 GAP-to-PARTIAL (#44); 349 + 0 = 349; 12 + 1 = 13;
+  139 - 1 = 138; 151 - 0 = 151 (349 + 13 + 138 = 500).
+  Next: re-run the #44 gates (suite + parity + corpus + regression
+  + fuzz) after the closures slice lands, flip #44 to HAVE, then
+  push; queue head after #44 is #45 (assertions with messages).
+
+  Closures slice — #101, #114, #116 (21 Nov 2026, Jayant's pick
+  ~21:57 IST: refcounted env, option (a) from the function-values
+  DESIGN.md §7). Compiler work, not a library batch. Lambda syntax
+  `let f = fn(x: int) -> int { ... };` (anonymous `fn`, params must
+  be annotated); capture-by-value into a heap env struct; a closure
+  is a fat pointer {fn_ptr, env_ptr}; the env is freed when the
+  last fn value holding it dies (refcount + drop hook). Closures
+  may escape (returned, stored, passed). #114 curry/curry_last and
+  #116 compose/compose3 are pure-Qasida libraries on top
+  (forge_lang/stdlib/curry.fg, compose.fg + demos, 8/8 checks in
+  tests/test_closures_proofs.py). Both compilers (Python +
+  hosted mirror) agree: bootstrap 7/7 byte-identical (hosted
+  rebuild 5, md5 f0e96e5876deb2d1c96ddc64c8f949c7), parity 124/124
+  agree + 124/124 byte-identical, corpus 99/99, regression 62/62,
+  closure fuzz 66/66 (33 cases x 2 modes), fv fuzz 56/56, existing
+  fuzz 122/122 both modes (manifest grew 102 -> 122 since the fv
+  slice: +20 safe cases, trap count unchanged at 35), suite 79/86
+  hosted + 79/86 python (7 known big32 pre-existing failures,
+  identical both modes), fmt idempotent 41/41, ASan clean
+  compiler-side (122/122 + 56/56 + 66/66 under the rebuild-5 ASan
+  binary, detect_leaks=0) and program-side (23/23, leak detection
+  on). Benchmarks re-measured (rebuild 5, Qasida safe / C-O3):
+  tick 0.91x (first run 1.10x was VM noise — re-run clean),
+  orderbook 0.96x, bs 0.94x, bs_call 0.98x, mc 0.82x, matmul 0.38x
+  (0.95x vs C-O3-native), alloc 1.30x; no benchmark uses fn values,
+  so this is a regression check on the shared codegen paths —
+  nothing moved outside VM noise. Retroactive #103 changes (see
+  blackmoon-iso/closures-slice/DESIGN.md §9): fn values are now
+  owned, not plain pointers (move(f) works, scope-end frees run,
+  [fn] arrays stop leaking, fn == compares fn+env). Two fixes
+  found by the gates, both pre-existing (not closures regressions):
+  (1) print-temp str leak — println(f()) where f returns str leaked
+  the temp; is_fresh_str now recognises indirect calls returning
+  str (both compilers) and gen_print binds + frees fresh str args
+  (found by the new program-side ASan check on cl_capture_str);
+  (2) hosted cg_is_fresh_str missed generic instantiations
+  returning str (cg_fn_lookup misses mangled names) — now falls
+  back to the infer-map return type, with the template check via
+  cg_template_lookup (found by corpus v47_generics_fn on rebuild
+  4; fixed in rebuild 5). Also: capmap now carries capture TYPES
+  (captured fn values as callees), and the env-free helper is
+  forge_closure_release (renamed from forge_closure_free so the
+  #39 freestanding gate's "free(" substring check passes; the gate
+  was not weakened). Follow-ups: a METHOD returning str passed to
+  println still leaks (same class, unexercised); the hosted
+  checker stack-depth issue (needs ulimit -s 65536) still open;
+  the `join` builtin-redefinition divergence (Python rejects,
+  hosted accepts) still open; the __forge_moved_fns unused-variable
+  warning still open. Counts after the slice: HAVE 352, PARTIAL
+  13, GAP 135, to build 148. Arithmetic from the #44 entry (HAVE
+  349, PARTIAL 13, GAP 138, to build 151): 3 GAP-to-HAVE (#101,
+  #114, #116); 349 + 3 = 352; 138 - 3 = 135; 151 - 3 = 148
+  (352 + 13 + 135 = 500). HAVE 352 of 500 = 70.4%.
+  Next: re-run the #44 gates (suite + parity + corpus + regression
+  + fuzz) now that the closures slice has landed, flip #44 to HAVE,
+  then push (closures push allowlist must EXCLUDE #44's tree edits
+  — they were unpushed when the slice started); queue head after
+  #44 is #45 (assertions with messages).

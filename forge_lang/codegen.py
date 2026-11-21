@@ -116,6 +116,14 @@ static void forge_str_array_free(ForgeStrArray a) {
     }
 }
 
+/* Closures (Top-500 #101): a closure value is {fn, env}; env is a
+   heap struct whose first two fields are always (ref, drop), so
+   inc/free work for every lambda's env without knowing its layout.
+   A NULL env is a bare function value — inc/free are no-ops. */
+typedef struct { long long ref; void (*drop)(void *); } ForgeClosureEnv;
+static void forge_closure_inc(void *env) { if (env) ((ForgeClosureEnv *)env)->ref++; }
+static void forge_closure_release(void *env) { if (env) { ForgeClosureEnv *h = (ForgeClosureEnv *)env; if (--(h->ref) == 0 && h->drop) h->drop(env); } }
+
 static void forge_fail(const char *msg) {
     fprintf(stderr, "qasida: runtime error: %s\n", msg);
     exit(1);
@@ -598,6 +606,13 @@ static pthread_t forge_threads[1024];
 static long long forge_thread_count = 0;
 static long long forge_thread_joined[1024];
 
+/* Top-500 #44: panic vs recover boundary. fail() on a spawned
+   task's thread ends just that task and counts one panic here;
+   fail() on the main thread still exits the process. A program
+   reads the count with the panicked_tasks() builtin after a join. */
+static _Thread_local int forge_in_task = 0;
+static volatile long long forge_panicked_total = 0;
+
 static void forge_join_scope(long long start) {
     for (long long i = start; i < forge_thread_count; i++) {
         if (!forge_thread_joined[i]) {
@@ -1012,6 +1027,14 @@ typedef struct { double *data; int64_t len; int64_t cap; int64_t *ref; } ForgeFl
 typedef struct { bool *data; int64_t len; int64_t cap; int64_t *ref; } ForgeBoolArray;
 typedef struct { char **data; int64_t len; int64_t cap; int64_t *ref; } ForgeStrArray;
 
+/* Closures (Top-500 #101): same env header as the hosted header
+   (int64_t spelling here); freestanding fn values are always
+   NULL-env (lambdas are rejected), so inc/free are no-ops — but
+   the helpers must exist for the emitted C to link. */
+typedef struct { int64_t ref; void (*drop)(void *); } ForgeClosureEnv;
+static void forge_closure_inc(void *env) { if (env) ((ForgeClosureEnv *)env)->ref++; }
+static void forge_closure_release(void *env) { if (env) { ForgeClosureEnv *h = (ForgeClosureEnv *)env; if (--(h->ref) == 0 && h->drop) h->drop(env); } }
+
 static void forge_fail(const char *msg) {
     (void)msg;
     for (;;) {}
@@ -1062,12 +1085,13 @@ def c_type(t):
     # apart. The map is set by Codegen.__init__ (the compiler is
     # single-threaded and every compilation builds a Codegen).
     t = _resolve_newtype(t)
-    from .fntypes import is_fn_type, fn_c_name
+    from .fntypes import is_fn_type, fn_c_name, fn_closure_name
     if is_fn_type(t):
-        # A fn value is a plain C function pointer, named by its
-        # typedef (Top-500 #103); generate() emits the typedef
-        # before any use.
-        return fn_c_name(t)
+        # A fn value is a closure struct {fn, env}, named by its
+        # typedef (Top-500 #101); the trampoline typedef
+        # (fn_c_name) is the fn field's type. generate() emits
+        # both typedefs before any use.
+        return fn_closure_name(t)
     if is_union_type(t):
         return union_c_name(t)
     if is_opaque_type(t):
@@ -1098,9 +1122,10 @@ def c_type(t):
             # their element helpers do not exist yet.
             raise ForgeError(f"arrays of {inner} are not supported in v1")
         if is_fn_type(inner):
-            # Array of function values: the element is the fn
-            # typedef name (Top-500 #103).
-            return f"ForgeArray_{fn_c_name(inner)}"
+            # Array of closure values: the element is the closure
+            # struct (Top-500 #101); the array frees each element's
+            # env per element (array_free_code's fn branch).
+            return f"ForgeArray_{fn_closure_name(inner)}"
         if inner.startswith("["):
             # Nested array: ForgeArray_<inner C array type>.
             return f"ForgeArray_{c_type(inner)}"
@@ -1190,6 +1215,21 @@ class Codegen:
         self.loop_frames = []
         self.spawn_counter = 0
         self.current_fn = None
+        # Closure state (Top-500 #101): `_cap_stack` holds one
+        # capture map per lambda body being generated (a map from
+        # captured name to its env-field C code, e.g. "__forge_e->x");
+        # it is empty while generating plain function bodies.
+        # `_shadow_stack` is a stack of sets, one per block scope
+        # currently being generated (pushed by gen_block); a name in
+        # any frame shadows a capture of the same name. Both are
+        # reset by gen_lambda_trampoline for each trampoline.
+        # `_lambda_ids` maps a Lambda node to its index in
+        # find_lambdas (its id in emitted C names); `_lambda_enclosing`
+        # maps it to its enclosing function (for #line file info).
+        self._cap_stack = []
+        self._shadow_stack = []
+        self._lambda_ids = {}
+        self._lambda_enclosing = {}
         self._types = {}
         # Check-elimination state (native codegen only, safe mode only
         # for the checks themselves; the state is reset per statement
@@ -1587,6 +1627,7 @@ class Codegen:
         # Every owned variable gets a flag at its declaration
         # (Let, parameter, match binding), so this is always
         # in scope wherever the variable can be freed.
+        from .fntypes import is_fn_type
         self.emit(f"if (!{self.moved_flag(name)}) {{")
         self.indent += 1
         if typ == "str":
@@ -1599,6 +1640,10 @@ class Codegen:
             self.emit(f"forge_free_{opaque_c_name(typ)}({name});")
         elif is_tuple_type(typ):
             self.emit(self.tuple_free_code(name, typ))
+        elif is_fn_type(typ):
+            # A closure value drops its env reference (Top-500
+            # #101); a NULL env (bare function value) is a no-op.
+            self.emit(f"forge_closure_release({name}.env);")
         elif self.is_array_type(typ):
             self.emit(self.array_free_code(name, typ))
         elif self.is_struct_type(typ):
@@ -1680,7 +1725,9 @@ class Codegen:
         if not (t.startswith("[") and t.endswith("]")):
             return False
         inner = t[1:-1]
+        from .fntypes import is_fn_type
         return (inner in ("int", "float", "bool", "str")
+                or is_fn_type(inner)
                 or self.is_struct_type(inner) or self.is_array_type(inner))
 
     def array_free_code(self, var_code, typ):
@@ -1701,10 +1748,16 @@ class Codegen:
             return f"forge_{self.struct_type_name(inner)}_array_free({var_code});"
         from .fntypes import is_fn_type
         if is_fn_type(inner):
-            # Array of function values: plain pointers, no
-            # per-element free — drop the refcount and the buffer
-            # only (Top-500 #103).
+            # Array of closure values: free each element's env
+            # (a NULL env is a no-op in forge_closure_release),
+            # then drop the refcount and the buffer (Top-500 #101).
+            # In #103 v1 there was no per-element free at all —
+            # plain pointers needed none, and the buffer leaked
+            # because is_array_type returned False for [fn].
+            i = f"__forge_fi{self.assign_counter}"
+            self.assign_counter += 1
             return (f"if ({var_code}.ref && --(*{var_code}.ref) == 0) {{ "
+                    f"for (long long {i} = 0; {i} < {var_code}.len; {i}++) {{ forge_closure_release({var_code}.data[{i}].env); }} "
                     f"if ({var_code}.data) memset({var_code}.data, 0, (size_t){var_code}.cap * sizeof(*{var_code}.data)); free({var_code}.data); if ({var_code}.ref) memset({var_code}.ref, 0, sizeof(long long)); free({var_code}.ref); forge_arr_frees++; }}")
         # Nested array: refcount the outer, free each element array,
         # then the outer buffer.
@@ -1753,6 +1806,7 @@ class Codegen:
     def struct_own_code(self, var_code, t):
         """C statements making a struct value independently owned:
         deep-copy str fields, gain array references, recurse into nested structs."""
+        from .fntypes import is_fn_type
         fields = self.structs.get(self.struct_type_name(t), {})
         parts = []
         for fname, ftype in fields.items():
@@ -1763,6 +1817,10 @@ class Codegen:
                 parts.append(f"forge_arr_inc({code}.ref);")
             elif self.is_struct_type(ftype):
                 parts.append(self.struct_own_code(code, ftype))
+            elif is_fn_type(ftype):
+                # A fn-typed field gains an env reference for this
+                # owner (Top-500 #101).
+                parts.append(f"forge_closure_inc({code}.env);")
         return " ".join(parts)
 
     def emit_struct_own(self, var_code, t):
@@ -1775,6 +1833,7 @@ class Codegen:
         copy str elements, gain array references, recurse into
         nested struct/tuple elements (mirrors struct_own_code)."""
         from .tuples import tuple_elems, is_tuple_type
+        from .fntypes import is_fn_type
         parts = []
         for i, et in enumerate(tuple_elems(t)):
             code = f"{var_code}._{i}"
@@ -1792,6 +1851,8 @@ class Codegen:
                 parts.append(self.struct_own_code(code, et))
             elif is_tuple_type(et):
                 parts.append(self.tuple_own_code(code, et))
+            elif is_fn_type(et):
+                parts.append(f"forge_closure_inc({code}.env);")
         return " ".join(parts)
 
     def emit_tuple_own(self, var_code, t):
@@ -1803,6 +1864,7 @@ class Codegen:
         """C statements freeing a tuple value's owned elements
         (mirrors struct_free_code)."""
         from .tuples import tuple_elems, is_tuple_type
+        from .fntypes import is_fn_type
         parts = []
         for i, et in enumerate(tuple_elems(t)):
             code = f"{var_code}._{i}"
@@ -1820,12 +1882,60 @@ class Codegen:
                 parts.append(self.struct_free_code(code, et))
             elif is_tuple_type(et):
                 parts.append(self.tuple_free_code(code, et))
+            elif is_fn_type(et):
+                parts.append(f"forge_closure_release({code}.env);")
         return " ".join(parts)
 
     def emit_tuple_free(self, var_code, t):
         code = self.tuple_free_code(var_code, t)
         if code:
             self.emit(code)
+
+    def closure_own_code(self, var_code, t):
+        """C statements making a value independently owned, for a
+        closure env field (Top-500 #101): the same per-type steps
+        the struct/tuple own paths use, covering every owned type
+        a captured variable can have (a captured value may be a
+        union or an opaque, which struct_own_code does not cover).
+        `var_code` is the field lvalue (e.g. `e->x`); the code
+        runs after the field was assigned the captured value."""
+        from .fntypes import is_fn_type
+        if t == "str":
+            return f"{var_code} = forge_copy_str({var_code});"
+        if is_union_type(t):
+            return self.union_copy_stmt(var_code, t) or ""
+        if is_opaque_type(t):
+            return f"{var_code} = forge_copy_{opaque_c_name(t)}({var_code});"
+        if self.is_array_type(t):
+            return f"forge_arr_inc({var_code}.ref);"
+        if self.is_struct_type(t):
+            return self.struct_own_code(var_code, t)
+        if is_tuple_type(t):
+            return self.tuple_own_code(var_code, t)
+        if is_fn_type(t):
+            return f"forge_closure_inc({var_code}.env);"
+        return ""
+
+    def closure_free_code(self, var_code, t):
+        """C statements freeing a value, for a closure env field
+        (Top-500 #101): mirrors closure_own_code. Called by the
+        env-free function with `var_code` = `e->field`."""
+        from .fntypes import is_fn_type
+        if t == "str":
+            return f"forge_free_str({var_code});"
+        if is_union_type(t):
+            return self.union_free_code(var_code, t) or ""
+        if is_opaque_type(t):
+            return f"forge_free_{opaque_c_name(t)}({var_code});"
+        if self.is_array_type(t):
+            return self.array_free_code(var_code, t)
+        if self.is_struct_type(t):
+            return self.struct_free_code(var_code, t)
+        if is_tuple_type(t):
+            return self.tuple_free_code(var_code, t)
+        if is_fn_type(t):
+            return f"forge_closure_release({var_code}.env);"
+        return ""
 
     def is_fresh_tuple(self, expr):
         if isinstance(expr, (A.TupleLit, A.Call, A.MethodCall)):
@@ -1837,6 +1947,7 @@ class Codegen:
         `path` is the variable's dotted path, fields recorded
         in moved_fields (move v2: straight-line field moves)
         are skipped — their new owner frees them."""
+        from .fntypes import is_fn_type
         fields = self.structs.get(self.struct_type_name(t), {})
         parts = []
         for fname, ftype in fields.items():
@@ -1858,6 +1969,10 @@ class Codegen:
                 parts.append(self.array_free_code(code, ftype))
             elif self.is_struct_type(ftype):
                 parts.append(self.struct_free_code(code, ftype, path=full))
+            elif is_fn_type(ftype):
+                # A fn-typed field drops its env reference
+                # (Top-500 #101).
+                parts.append(f"forge_closure_release({code}.env);")
         return " ".join(parts)
 
     def emit_struct_free(self, var_code, t, path=None):
@@ -1912,16 +2027,81 @@ class Codegen:
         """True if the expression already returns a fresh, owned string
         (a user-function return, a str helper, or string concat),
         so taking it as-is does not leak or double-own."""
+        from .fntypes import fn_parts
         if isinstance(expr, A.Call):
             if expr.name in ("read_file", "read_line", "join", "substr", "trim", "http_get", "http_read_request", "move"):
                 return True
             if self.func_ret.get(expr.name) == "str" and not self.func_is_extern.get(expr.name):
                 return True
+            # Indirect call through a fn value (Top-500 #101/#103):
+            # the checker stamps the callee's fn type on the node;
+            # a str return is fresh, so print/call-arg/let sites
+            # must not copy it (the copy would leak the original).
+            stamped = getattr(expr, "fn_type", None)
+            if stamped is not None:
+                parts = fn_parts(stamped)
+                if parts is not None and parts[1] == "str":
+                    return True
             return False
+        if isinstance(expr, A.IndirectCall):
+            ct = self.expr_type(expr.callee)
+            parts = fn_parts(ct)
+            return parts is not None and parts[1] == "str"
         if isinstance(expr, A.BinOp) and expr.op == "+" and self.expr_type(expr.left) == "str":
             return True
         if isinstance(expr, A.Index) and self.expr_type(expr.base) == "str":
             return True
+        return False
+
+    def _capture_code(self, name):
+        """C code for reading a captured variable `name` inside the
+        trampoline currently being generated, or None when `name`
+        is not a capture of that trampoline — or is shadowed by a
+        local binding in an enclosing block of the trampoline body
+        (Top-500 #101). Defensive about empty stacks: deferred
+        calls emitted at function exit run after gen_block popped
+        its shadow frame."""
+        if not self._cap_stack:
+            return None
+        cap = self._cap_stack[-1]
+        if name not in cap:
+            return None
+        for frame in self._shadow_stack:
+            if name in frame:
+                return None
+        return cap[name]
+
+    def is_fresh_fn(self, expr):
+        """True if the expression yields a fresh, solely-owned
+        closure (env ref=1) or a NULL-env value, so a receiving
+        site must not inc it (Top-500 #101). A lambda literal is
+        fresh (its env is allocated ref=1); a bare function name
+        is NULL-env; a call returning a fn type is fresh; move()
+        transfers its hold."""
+        from .fntypes import is_fn_type, fn_parts
+        if isinstance(expr, A.Lambda):
+            return True
+        if isinstance(expr, A.Var):
+            return bool(getattr(expr, "is_fn_value", False))
+        if isinstance(expr, A.IndirectCall):
+            ct = self.expr_type(expr.callee)
+            parts = fn_parts(ct)
+            return parts is not None and is_fn_type(parts[1])
+        if isinstance(expr, A.MethodCall):
+            from .traits import mangle
+            struct_t = self.expr_type(expr.base)
+            mangled = mangle(struct_t, expr.method)
+            rt = self.func_ret.get(mangled)
+            return bool(rt and is_fn_type(rt))
+        if isinstance(expr, A.Call):
+            if expr.name == "move":
+                return True
+            stamped = getattr(expr, "fn_type", None)
+            if stamped is not None:
+                parts = fn_parts(stamped)
+                return parts is not None and is_fn_type(parts[1])
+            rt = self.func_ret.get(expr.name)
+            return bool(rt and is_fn_type(rt))
         return False
 
     def collect_spawns(self, block, out):
@@ -2087,16 +2267,20 @@ class Codegen:
             self.lines.append("/* qasida: no-bounds-checks */")
         if self.no_overflow_checks:
             self.lines.append("/* qasida: no-overflow-checks */")
-        # Function-value typedefs (Top-500 #103): one typedef per
+        # Function-value typedefs (Top-500 #103, closures #101):
+        # one trampoline typedef + one closure-struct typedef per
         # distinct fn type, inner types first, emitted here — after
         # the header, before enums, structs, unions, tuples and
         # array structs — because every one of those can reference
-        # a fn type through c_type.
-        from .fntypes import find_fn_types, fn_parts, fn_c_name
+        # a fn type through c_type. The trampoline takes the env
+        # pointer first; the closure struct is what c_type
+        # returns for a fn type.
+        from .fntypes import find_fn_types, fn_parts, fn_c_name, fn_closure_name
         for ft in find_fn_types(self.program, list(self._types.values())):
             params, ret = fn_parts(ft)
-            sig_params = ", ".join(c_type(p) for p in params) or "void"
+            sig_params = ", ".join(["void *"] + [c_type(p) for p in params])
             self.emit(f"typedef {c_type(ret)} (*{fn_c_name(ft)})({sig_params});")
+            self.emit(f"typedef struct {{ {fn_c_name(ft)} fn; void *env; }} {fn_closure_name(ft)};")
         # Skip generic templates: only concrete structs are emitted.
         # self.structs is built from program.structs, which includes
         # templates; rebuild it from concrete structs only.
@@ -2417,14 +2601,18 @@ class Codegen:
             seen_wrappers.add(call.name)
             if call.args:
                 self.emit(f"static void *forge_thread_{call.name}(void *arg) {{")
-                self.emit(f"    long long v = *(long long *)arg; memset(arg, 0, sizeof(long long)); free(arg); {call.name}(v); return NULL;")
+                self.emit(f"    long long v = *(long long *)arg; memset(arg, 0, sizeof(long long)); free(arg); forge_in_task = 1; {call.name}(v); return NULL;")
                 self.emit("}")
             else:
                 self.emit(f"static void *forge_thread_{call.name}(void *arg) {{")
-                self.emit(f"    (void)arg; {call.name}(); return NULL;")
+                self.emit(f"    (void)arg; forge_in_task = 1; {call.name}(); return NULL;")
                 self.emit("}")
         if seen_wrappers:
             self.lines.append("")
+        # Closure support (Top-500 #101): env structs, env-free
+        # functions, wrappers, trampolines — after prototypes,
+        # before function bodies.
+        self.emit_lambda_support()
         for fn in self.program.funcs:
             if getattr(fn, "type_params", None):
                 continue
@@ -2479,6 +2667,195 @@ class Codegen:
     def attach_types(self, types):
         self._types = types
 
+    def fn_value_uses(self):
+        """Function names used as values (checker-stamped Var nodes
+        with is_fn_value), first-use order (Top-500 #101). Walks
+        every concrete function body, including lambda bodies
+        nested inside them; template bodies are skipped (their
+        Var nodes are unstamped)."""
+        uses = []
+        seen = set()
+
+        def walk(node):
+            if isinstance(node, A.Var) and getattr(node, "is_fn_value", False):
+                if node.name not in seen:
+                    seen.add(node.name)
+                    uses.append(node.name)
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if isinstance(node, dict):
+                for v in node.values():
+                    walk(v)
+                return
+            if hasattr(node, "__dict__"):
+                for v in vars(node).values():
+                    walk(v)
+
+        for fn in self.program.funcs:
+            if getattr(fn, "type_params", None):
+                continue
+            if getattr(fn, "body", None) is not None:
+                walk(fn.body)
+        return uses
+
+    def gen_lambda_trampoline(self, lam, lid):
+        """Generate one lambda's trampoline (Top-500 #101): the C
+        function the closure struct points at. Mirrors gen_func:
+        fresh codegen state, the env cast first, captures read
+        through __forge_e->name, parameters owned like function
+        parameters, defers + owned frees at the end for void
+        lambdas. The trampoline's own parameters seed the body's
+        shadow frame, so a parameter shadows a capture of the
+        same name."""
+        from .fntypes import (fn_parts, fn_env_name, fn_lambda_name,
+                              is_fn_type)
+        params, ret = fn_parts(lam.fn_type)
+        self.current_fn = fn_lambda_name(lid)
+        self.moved_fields = set()
+        self.drop_receiver = None
+        self._check_cache = {}
+        self._facts = {}
+        self._let_stack = []
+        self.scope_stack = []
+        enclosing = self._lambda_enclosing.get(id(lam))
+        self.current_file = (getattr(enclosing, "file", "") or ""
+                             if enclosing is not None else "")
+        self.owned_stack = [{}]
+        self.local_types = {}
+        self.loop_frames = []
+        self.defer_stack = [[]]
+        self.defer_loop_stack = []
+        self._cap_stack = [{name: f"__forge_e->{name}"
+                            for name, _ct in (lam.captures or [])}]
+        self._shadow_stack = []
+        for pn, pt in lam.params:
+            self.local_types[pn] = pt
+            if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
+                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt):
+                self.owned_stack[0][pn] = pt
+        sig_params = ", ".join(["void *__forge_env"]
+                               + [f"{c_type(pt)} {pn}" for pn, pt in lam.params])
+        self.emit(f"static {c_type(ret)} {fn_lambda_name(lid)}({sig_params}) {{")
+        self.indent += 1
+        for pn, pt in lam.params:
+            if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
+                    or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt) \
+                    or is_fn_type(pt):
+                self.emit(f"int {self.moved_flag(pn)} = 0;")
+        if lam.captures:
+            self.emit(f"{fn_env_name(lid)} *__forge_e = ({fn_env_name(lid)} *)__forge_env;")
+        else:
+            self.emit("(void)__forge_env;")
+        self.gen_block(lam.body, ret,
+                       shadow_names=[pn for pn, _pt in lam.params])
+        if ret == "void":
+            self._emit_defer_frame(self.defer_stack[0], ret)
+            self.emit_free_owned()
+        self.indent -= 1
+        self.emit("}")
+        self.lines.append("")
+        self.current_fn = None
+        self.drop_receiver = None
+        self.owned_stack = [{}]
+        self.loop_frames = []
+        self.defer_stack = [[]]
+        self.defer_loop_stack = []
+        self._cap_stack = []
+        self._shadow_stack = []
+
+    def emit_lambda_support(self):
+        """Emit the closure support block (Top-500 #101): one env
+        struct + env-free function per lambda, one wrapper per bare
+        function used as a value, and one trampoline per lambda.
+        Order matters: wrappers come before trampolines (a
+        trampoline may reference a wrapper for a bare fn name in
+        the lambda body), and the whole block comes after the
+        prototypes (trampolines and wrappers call user functions)
+        and before the function bodies (which reference the
+        trampolines and wrappers)."""
+        from .fntypes import (find_lambdas, fn_env_name, fn_lambda_name,
+                              fn_wrap_name, fn_env_free_name, fn_parts)
+        lambdas = find_lambdas(self.program)
+        self._lambda_ids = {id(lam): i for i, lam in enumerate(lambdas)}
+        # Enclosing function per lambda (for #line file info), in
+        # the same walk order as find_lambdas.
+        enclosing = {}
+
+        def walk(node, out):
+            if isinstance(node, A.Lambda):
+                out.append(node)
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x, out)
+                return
+            if isinstance(node, dict):
+                for v in node.values():
+                    walk(v, out)
+                return
+            if hasattr(node, "__dict__"):
+                for v in vars(node).values():
+                    walk(v, out)
+
+        for fn in self.program.funcs:
+            if getattr(fn, "type_params", None):
+                continue
+            if getattr(fn, "body", None) is not None:
+                per_fn = []
+                walk(fn.body, per_fn)
+                for lam in per_fn:
+                    enclosing[id(lam)] = fn
+        self._lambda_enclosing = enclosing
+        uses = self.fn_value_uses()
+        if not lambdas and not uses:
+            return
+        # Env structs + env-free functions.
+        for lid, lam in enumerate(lambdas):
+            env_t = fn_env_name(lid)
+            members = ["long long ref", "void (*drop)(void *)"]
+            members += [f"{c_type(ct)} {name}"
+                        for name, ct in (lam.captures or [])]
+            self.emit(f"typedef struct {{ {'; '.join(members)}; }} {env_t};")
+            free_name = fn_env_free_name(lid)
+            self.emit(f"static void {free_name}(void *p) {{")
+            self.emit(f"    {env_t} *e = ({env_t} *)p;")
+            for name, ct in (lam.captures or []):
+                code = self.closure_free_code(f"e->{name}", ct)
+                if code:
+                    self.emit(f"    {code}")
+            self.emit("    free(e);")
+            self.emit("}")
+        # Trampoline prototypes: a trampoline's body may contain a
+        # nested lambda literal, so it can reference a trampoline
+        # defined later (the inner one) — declare them all up front.
+        # Wrappers need none: they are defined before the
+        # trampolines and only call user functions (prototyped
+        # above this block).
+        for lid, lam in enumerate(lambdas):
+            params, ret = fn_parts(lam.fn_type)
+            sig_params = ", ".join(["void *"] + [c_type(pt) for pt in params])
+            self.emit(f"static {c_type(ret)} {fn_lambda_name(lid)}({sig_params});")
+        # Wrappers: a bare function used as a value needs a
+        # trampoline-shaped entry point (env first, ignored).
+        for name in uses:
+            params = self.func_params[name]
+            ret = self.func_ret[name]
+            wrap = fn_wrap_name(name)
+            sig_params = ", ".join(["void *__forge_env"]
+                                   + [f"{c_type(pt)} {pn}" for pn, pt in params])
+            self.emit(f"static {c_type(ret)} {wrap}({sig_params}) {{")
+            self.emit("    (void)__forge_env;")
+            args = ", ".join(pn for pn, _pt in params)
+            if ret == "void":
+                self.emit(f"    {name}({args});")
+            else:
+                self.emit(f"    return {name}({args});")
+            self.emit("}")
+        # Trampolines.
+        for lid, lam in enumerate(lambdas):
+            self.gen_lambda_trampoline(lam, lid)
+
     def gen_func(self, fn):
         self.current_fn = fn.name
         self.moved_fields = set()
@@ -2513,10 +2890,13 @@ class Codegen:
         # Array parameters own a reference after refcount-on-call (see gen_expr Call).
         # Struct parameters own their fields after own-on-call (see gen_expr Call).
         # Union and opaque parameters own their value after copy-on-call (see gen_expr Call).
+        # Fn parameters own an env reference after inc-on-call (see gen_expr Call, Top-500 #101).
+        # Tuple parameters own their elements after own-on-call (see gen_expr Call).
+        from .fntypes import is_fn_type
         for pn, pt in fn.params:
             self.local_types[pn] = pt
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
-                    or is_union_type(pt) or is_opaque_type(pt):
+                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt):
                 self.owned_stack[0][pn] = pt
         sig = ("long long qasida_main(void)"
                if fn.name == "main" and self.freestanding
@@ -2529,7 +2909,8 @@ class Codegen:
         # to the function-end free, which checks this flag.
         for pn, pt in fn.params:
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
-                    or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt):
+                    or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt) \
+                    or is_fn_type(pt):
                 self.emit(f"int {self.moved_flag(pn)} = 0;")
         if fn.name == "main" and not self.freestanding:
             self.emit("forge_args_global.len = __forge_argc > 0 ? __forge_argc - 1 : 0;")
@@ -2796,17 +3177,26 @@ class Codegen:
             for s in self._let_stack:
                 s.add(name)
 
-    def gen_block(self, block, ret_type):
-        for stmt in block.stmts:
-            if self.debug and self.current_file:
-                line = getattr(stmt, "line", None)
-                if line:
-                    # Column 0: emit() would indent it,
-                    # and a #line directive must not be
-                    # indented to be safe with cc.
-                    esc = self.current_file.replace("\\", "\\\\").replace('"', '\\"')
-                    self.lines.append(f'#line {line} "{esc}"')
-            self.gen_stmt(stmt, ret_type)
+    def gen_block(self, block, ret_type, shadow_names=()):
+        """Generate a block's statements. `shadow_names` seeds the
+        block's shadow frame with bindings declared by the enclosing
+        construct before the block (a for-loop variable, a match
+        binding, a trampoline's parameters) — such a name shadows a
+        capture of the same name inside the block (Top-500 #101)."""
+        self._shadow_stack.append(set(shadow_names))
+        try:
+            for stmt in block.stmts:
+                if self.debug and self.current_file:
+                    line = getattr(stmt, "line", None)
+                    if line:
+                        # Column 0: emit() would indent it,
+                        # and a #line directive must not be
+                        # indented to be safe with cc.
+                        esc = self.current_file.replace("\\", "\\\\").replace('"', '\\"')
+                        self.lines.append(f'#line {line} "{esc}"')
+                self.gen_stmt(stmt, ret_type)
+        finally:
+            self._shadow_stack.pop()
 
     def _emit_defer_frame(self, frame, ret_type):
         """Emit one block's deferred calls, LIFO, as statements
@@ -2824,11 +3214,13 @@ class Codegen:
     def _emit_all_defers(self, ret_type):
         self._emit_defers_downto(0, ret_type)
 
-    def gen_arm_block(self, body, ret_type):
+    def gen_arm_block(self, body, ret_type, shadow_names=()):
         """A match arm's block: its own defer frame, run at arm
-        exit (arms have no owned frame of their own)."""
+        exit (arms have no owned frame of their own). `shadow_names`
+        seeds the block's shadow frame with the arm's binding
+        (Top-500 #101)."""
         self.defer_stack.append([])
-        self.gen_block(body, ret_type)
+        self.gen_block(body, ret_type, shadow_names=shadow_names)
         self._emit_defer_frame(self.defer_stack[-1], ret_type)
         self.defer_stack.pop()
 
@@ -2853,6 +3245,7 @@ class Codegen:
             self.emit("}")
             return
         if isinstance(stmt, A.Let):
+            from .fntypes import is_fn_type
             t = stmt.ann if (stmt.ann and (is_opaque_type(stmt.ann)
                              or is_union_type(stmt.ann)
                              or self.expr_type(stmt.expr) == "never"
@@ -2861,6 +3254,11 @@ class Codegen:
             expr = self.gen_expr(stmt.expr)
             if self.expr_type(stmt.expr) == "never":
                 expr = self.never_wrap(expr, t)
+            # The new binding shadows a capture of the same name
+            # from here on (the RHS above still read the capture,
+            # because the binding did not exist yet) — Top-500 #101.
+            if self._shadow_stack:
+                self._shadow_stack[-1].add(stmt.name)
             self.local_types[stmt.name] = t
             self._facts_update_from_rhs(stmt.name, stmt.expr, True)
             if t == "str":
@@ -2924,9 +3322,20 @@ class Codegen:
                 if not self.is_fresh_tuple(stmt.expr):
                     self.emit_tuple_own(stmt.name, t)
                 return
+            elif is_fn_type(t):
+                # Fresh closures (lambda literal, bare fn name, call
+                # return, move) are taken as-is; a shared closure
+                # gains an env reference for this new owner (#101).
+                self.owned_add(stmt.name, t)
+                self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
+                if not self.is_fresh_fn(stmt.expr):
+                    self.emit(f"forge_closure_inc({stmt.name}.env);")
+                return
             self.emit(f"{c_type(t)} {stmt.name} = {expr};")
             return
         if isinstance(stmt, A.Assign):
+            from .fntypes import is_fn_type
             expr = self.gen_expr(stmt.expr)
             self._facts_update_from_rhs(stmt.name, stmt.expr, False)
             et = self.expr_type(stmt.expr)
@@ -3026,10 +3435,25 @@ class Codegen:
                 self.emit(f"{stmt.name} = __forge_assign{n};")
                 self.owned_add(stmt.name, et)
                 self.emit(f"{self.moved_flag(stmt.name)} = 0;")
+            elif is_fn_type(et):
+                # Same temp-first shape as arrays: evaluate into a
+                # temp, gain an env reference unless fresh, free the
+                # old value's env, then take the new one (#101).
+                n = self.assign_counter
+                self.assign_counter += 1
+                self.emit(f"{c_type(et)} __forge_assign{n} = {expr};")
+                if not self.is_fresh_fn(stmt.expr):
+                    self.emit(f"forge_closure_inc(__forge_assign{n}.env);")
+                if self.owned_contains(stmt.name):
+                    self.emit_guarded(stmt.name, f"forge_closure_release({stmt.name}.env);")
+                self.emit(f"{stmt.name} = __forge_assign{n};")
+                self.owned_add(stmt.name, et)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
             else:
                 self.emit(f"{stmt.name} = {expr};")
             return
         if isinstance(stmt, A.FieldAssign):
+            from .fntypes import is_fn_type
             # A field that moved away (move v2) holds no value
             # to free: assigning it revives it, so its old free
             # is skipped and the path leaves moved_fields below.
@@ -3100,6 +3524,18 @@ class Codegen:
                     self.emit_tuple_own(f"__forge_fa{n}", ft)
                 if not field_moved:
                     self.emit_tuple_free(target_code, ft)
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif is_fn_type(ft):
+                # Same temp-first shape as arrays: gain an env
+                # reference unless fresh, free the old field's env,
+                # then take the new value (Top-500 #101).
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if not self.is_fresh_fn(stmt.expr):
+                    self.emit(f"forge_closure_inc(__forge_fa{n}.env);")
+                if not field_moved:
+                    self.emit(f"forge_closure_release({target_code}.env);")
                 self.emit(f"{target_code} = __forge_fa{n};")
             else:
                 self.emit(f"{target_code} = {val};")
@@ -3177,16 +3613,23 @@ class Codegen:
                 self.emit(self.array_free_code(f"{base_code}.data[{itmp}]", et))
                 self.emit(f"{base_code}.data[{itmp}] = {val};")
             elif is_fn_type(et):
-                # Assign a fn value through an index: plain pointer,
-                # direct store with a bounds check (Top-500 #103).
-                # SET_FN has no entry for fn types; no per-element
-                # free (the old value is a plain pointer).
+                # Assign a closure value through an index (Top-500
+                # #101): free the old element's env, then store the
+                # new value, gaining an env reference unless it is
+                # fresh. SET_FN has no entry for fn types.
+                if not self.is_fresh_fn(stmt.expr):
+                    tmp = f"__forge_setf{self.assign_counter}"
+                    self.assign_counter += 1
+                    self.emit(f"{c_type(et)} {tmp} = {val};")
+                    self.emit(f"forge_closure_inc({tmp}.env);")
+                    val = tmp
                 itmp = f"__forge_si{self.assign_counter}"
                 self.assign_counter += 1
                 self.emit(f"long long {itmp} = {idx};")
                 if self._bounds_on and id(stmt.base) not in self._fix1_covered:
                     self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
                               f"forge_fail(\"array index out of bounds\");")
+                self.emit(f"forge_closure_release(({base_code}).data[{itmp}].env);")
                 self.emit(f"({base_code}).data[{itmp}] = {val};")
             elif self._bounds_on and id(stmt.base) not in self._fix1_covered:
                 self.emit(f"{SET_FN[et]}(&{base_code}, {idx}, {val});")
@@ -3232,7 +3675,7 @@ class Codegen:
                                 or is_tuple_type(pat) or is_union_type(pat) or is_opaque_type(pat):
                             self.emit(f"int {self.moved_flag(binding)} = 0;")
                         self._facts.pop(binding, None)
-                        self.gen_arm_block(body, ret_type)
+                        self.gen_arm_block(body, ret_type, shadow_names=(binding,))
                         self.indent -= 1
                         if idx == len(stmt.arms) - 1:
                             self.emit("}")
@@ -3311,7 +3754,7 @@ class Codegen:
                         # of the same name for this arm: its value is
                         # unknown, so drop the outer variable's facts.
                         self._facts.pop(binding, None)
-                    self.gen_arm_block(body, ret_type)
+                    self.gen_arm_block(body, ret_type, shadow_names=(binding,) if binding is not None else ())
                     self.indent -= 1
                     if idx == len(stmt.arms) - 1:
                         self.emit("}")
@@ -3485,7 +3928,7 @@ class Codegen:
                 self.loop_frames.append(len(self.owned_stack) - 1)
                 self.defer_loop_stack.append(len(self.defer_stack))
                 self.defer_stack.append([])
-                self.gen_block(stmt.body, ret_type)
+                self.gen_block(stmt.body, ret_type, shadow_names=(stmt.name,))
                 self.defer_loop_stack.pop()
                 self._emit_defer_frame(self.defer_stack[-1], ret_type)
                 self.defer_stack.pop()
@@ -3521,7 +3964,7 @@ class Codegen:
             self.loop_frames.append(len(self.owned_stack) - 1)
             self.defer_loop_stack.append(len(self.defer_stack))
             self.defer_stack.append([])
-            self.gen_block(stmt.body, ret_type)
+            self.gen_block(stmt.body, ret_type, shadow_names=(stmt.name,))
             self.defer_loop_stack.pop()
             self._emit_defer_frame(self.defer_stack[-1], ret_type)
             self.defer_stack.pop()
@@ -3569,6 +4012,7 @@ class Codegen:
             self.scope_stack.pop()
             return
         if isinstance(stmt, A.Return):
+            from .fntypes import is_fn_type
             # Defers run before joins and frees: a deferred call
             # runs while its block's locals are still alive, and
             # any task it spawns is still joined below.
@@ -3612,6 +4056,11 @@ class Codegen:
                     # Shared tuple return: gain independent elements before
                     # freeing owned locals, so the returned tuple survives.
                     self.emit_tuple_own("__forge_ret", ret_type)
+                if is_fn_type(ret_type) and not self.is_fresh_fn(stmt.expr):
+                    # Shared closure return: gain an env reference
+                    # before freeing owned locals, so the returned
+                    # closure survives (Top-500 #101).
+                    self.emit("forge_closure_inc(__forge_ret.env);")
                 if is_union_type(ret_type) and self.expr_type(stmt.expr) == ret_type \
                         and not self.is_fresh_union(stmt.expr):
                     # Shared union return: gain an independent str
@@ -3704,10 +4153,18 @@ class Codegen:
                     self.emit("}")
                     self.emit(f"{ptr}->data[{ptr}->len++] = {val};")
                 elif is_fn_type(et):
-                    # Push a function value: plain pointers, no
-                    # per-element copy/free. Detach on shared (CoW)
-                    # like the scalar helpers, then grow and append
-                    # (Top-500 #103).
+                    # Push a closure value (Top-500 #101): gain an env
+                    # reference for the slot unless the value is fresh,
+                    # then detach on shared (CoW) like the scalar
+                    # helpers — the detach loop incs each copied
+                    # slot's env, matching the array free path —
+                    # then grow and append.
+                    if not self.is_fresh_fn(call.args[1]):
+                        tmp = f"__forge_pushf{self.assign_counter}"
+                        self.assign_counter += 1
+                        self.emit(f"{c_type(et)} {tmp} = {val};")
+                        self.emit(f"forge_closure_inc({tmp}.env);")
+                        val = tmp
                     ptr = f"__forge_pf{self.assign_counter}"
                     self.assign_counter += 1
                     ocap = f"__forge_pfo{self.assign_counter}"
@@ -3724,7 +4181,7 @@ class Codegen:
                     self.emit(f"    long long {ocap} = {ptr}->cap ? {ptr}->cap : 4;")
                     self.emit(f"    {elem_c} *{nbuf} = ({elem_c} *)malloc(sizeof({elem_c}) * (size_t){ocap});")
                     self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\");")
-                    self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; }}")
+                    self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; forge_closure_inc({nbuf}[{li}].env); }}")
                     self.emit(f"    (*{ptr}->ref)--;")
                     self.emit(f"    {ptr}->data = {nbuf}; {ptr}->cap = {ocap}; {ptr}->ref = forge_arr_ref_new();")
                     self.emit("}")
@@ -3739,8 +4196,24 @@ class Codegen:
                     self.emit(f"{PUSH_FN[et]}(&{var_code}, {val});")
                 return
             if isinstance(call, A.Call) and call.name == "fail":
-                self.emit(f'fprintf(stderr, "qasida: %s\\n", {self.gen_expr(call.args[0])});')
+                # Top-500 #44: fail() stays fatal on the main thread,
+                # but on a spawned task's thread it ends just that
+                # task — the panic is printed and counted, the thread
+                # exits, and the spawning scope joins normally. The
+                # program observes the count with panicked_tasks().
+                msg = self.gen_expr(call.args[0])
+                self.emit("if (forge_in_task) {")
+                self.indent += 1
+                self.emit(f'fprintf(stderr, "qasida: task panicked: %s\\n", {msg});')
+                self.emit("__atomic_add_fetch(&forge_panicked_total, 1, __ATOMIC_SEQ_CST);")
+                self.emit("pthread_exit(NULL);")
+                self.indent -= 1
+                self.emit("} else {")
+                self.indent += 1
+                self.emit(f'fprintf(stderr, "qasida: %s\\n", {msg});')
                 self.emit("exit(1);")
+                self.indent -= 1
+                self.emit("}")
                 return
             if isinstance(call, A.Call) and call.name == "fail_compile":
                 # Slice 5 driver builtin: compile-time error, with
@@ -3778,13 +4251,37 @@ class Codegen:
             elif t == "bool":
                 self.emit(f'printf("%s", {code} ? "true" : "false");')
             elif t == "str":
-                self.emit(f'printf("%s", {code});')
+                if self.is_fresh_str(arg):
+                    # A fresh str temp (a call/concat result) is
+                    # owned once by this statement: bind it, print
+                    # it, free it — printing it inline would leak
+                    # it (pre-existing; found by the closures
+                    # program-side ASan check, Top-500 #101).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    self.emit(f'{{ char *__forge_print{n} = {code}; printf("%s", __forge_print{n}); forge_free_str(__forge_print{n}); }}')
+                else:
+                    self.emit(f'printf("%s", {code});')
             else:
                 raise ForgeError(f"cannot print a value of type {t}", call.line, call.col)
             if idx < len(call.args) - 1:
                 self.emit('printf(" ");')
         if newline:
             self.emit('printf("\\n");')
+
+    def _is_simple_lvalue(self, expr):
+        """True for a Var, or a FieldAccess/TupleIndex/Index rooted
+        at a Var with a pure index (Top-500 #101): such an expression
+        is a pure lvalue read, safe to emit twice (as .fn and .env
+        of a closure call, or as the two sides of a fn ==)."""
+        if isinstance(expr, A.Var):
+            return True
+        if isinstance(expr, (A.FieldAccess, A.TupleIndex)):
+            return self._is_simple_lvalue(expr.base)
+        if isinstance(expr, A.Index):
+            return (self._is_simple_lvalue(expr.base)
+                    and isinstance(expr.index, (A.Var, A.IntLit)))
+        return False
 
     def _call_arg_codes(self, expr, params):
         """Argument C code for a call with the given param types.
@@ -3794,9 +4291,11 @@ class Codegen:
         stamped by the checker, Top-500 #103): string arguments are
         copied so the callee owns its parameter, shared arrays
         gain a reference, shared structs/tuples gain independent
-        fields. Arguments beyond the known signature (should not
+        fields, shared closures gain an env reference (#101).
+        Arguments beyond the known signature (should not
         happen for checked code) pass through unchanged.
         """
+        from .fntypes import is_fn_type
         arg_codes = []
         for a, (_pn, pt) in zip(expr.args, params):
             code = self.gen_expr(a)
@@ -3840,6 +4339,13 @@ class Codegen:
                 own = self.tuple_own_code(f"__forge_arg{n}", pt)
                 code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
                         f"{own} __forge_arg{n};}})")
+            elif is_fn_type(pt) and not self.is_fresh_fn(a):
+                # Shared closure argument: callee gains an env
+                # reference (Top-500 #101).
+                self.assign_counter += 1
+                n = self.assign_counter
+                code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"forge_closure_inc(__forge_arg{n}.env); __forge_arg{n};}})")
             arg_codes.append(code)
         if len(expr.args) > len(params):
             for a in expr.args[len(params):]:
@@ -3883,13 +4389,53 @@ class Codegen:
                         raise ForgeError(f"variant '{expr.name}' has a payload; write {expr.name}(value)")
                     et = self.expr_type(expr)
                     return f"({c_type(et)}){{ .tag = {tag} }}"
+            if getattr(expr, "is_fn_value", False):
+                # A bare function name used as a value is the closure
+                # literal {wrapper, NULL} (Top-500 #101): the wrapper
+                # is the trampoline-compatible entry point, and a
+                # NULL env needs no refcount.
+                from .fntypes import fn_wrap_name, fn_closure_name
+                ft = self.expr_type(expr)
+                return f"({fn_closure_name(ft)}){{ {fn_wrap_name(expr.name)}, NULL }}"
+            cap = self._capture_code(expr.name)
+            if cap is not None:
+                return cap
             return expr.name
+        if isinstance(expr, A.Lambda):
+            # A lambda literal builds a closure value (Top-500 #101):
+            # one fresh env per evaluation, holding the captures by
+            # value (each gaining its own hold), plus the trampoline
+            # pointer. With no captures the value is the plain
+            # literal {trampoline, NULL} — no heap allocation at all.
+            # The capture reads go through gen_expr(Var), so a
+            # capture that is itself an outer lambda's capture reads
+            # through the outer env, and a name shadowed at the
+            # creation point reads the local.
+            from .fntypes import (fn_lambda_name, fn_env_name,
+                                  fn_env_free_name, fn_closure_name)
+            lid = self._lambda_ids[id(expr)]
+            ft = expr.fn_type
+            if not expr.captures:
+                return f"({fn_closure_name(ft)}){{ {fn_lambda_name(lid)}, NULL }}"
+            env_t = fn_env_name(lid)
+            stmts = [f"{env_t} *__forge_env = ({env_t} *)malloc(sizeof({env_t}));",
+                     "if (!__forge_env) forge_fail(\"out of memory\");",
+                     "__forge_env->ref = 1;",
+                     f"__forge_env->drop = {fn_env_free_name(lid)};"]
+            for name, ct in (expr.captures or []):
+                stmts.append(f"__forge_env->{name} = {self.gen_expr(A.Var(name, expr.line, expr.col))};")
+                own = self.closure_own_code(f"__forge_env->{name}", ct)
+                if own:
+                    stmts.append(own)
+            stmts.append(f"({fn_closure_name(ft)}){{ {fn_lambda_name(lid)}, __forge_env }};")
+            return "({ " + " ".join(stmts) + " })"
         if isinstance(expr, A.RangeLit):
             # A range is just its two endpoints; nothing is
             # materialized, so iteration and methods stay O(1).
             return (f"(ForgeRange){{ .start = {self.gen_expr(expr.start)}, "
                     f".end = {self.gen_expr(expr.end)} }}")
         if isinstance(expr, A.TupleLit):
+            from .fntypes import is_fn_type
             t = self.expr_type(expr)
             cname = c_type(t)
             elems = tuple_elems(t)
@@ -3932,9 +4478,17 @@ class Codegen:
                     own = self.tuple_own_code(f"__forge_arg{n}", et)
                     code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
                             f"{own} __forge_arg{n};}})")
+                elif is_fn_type(et) and not self.is_fresh_fn(eexpr):
+                    # Shared closure stored in a tuple: tuple gains
+                    # an env reference (Top-500 #101).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                            f"forge_closure_inc(__forge_arg{n}.env); __forge_arg{n};}})")
                 parts.append(code)
             return f"({cname}){{ {', '.join(parts)} }}"
         if isinstance(expr, A.StructLit):
+            from .fntypes import is_fn_type
             concrete = getattr(expr, "concrete_type", None) or expr.name
             cname = c_type(concrete)
             fields = self.structs.get(cname, self.structs.get(expr.name, {}))
@@ -3979,6 +4533,13 @@ class Codegen:
                     own = self.tuple_own_code(f"__forge_arg{n}", ft)
                     code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
                             f"{own} __forge_arg{n};}})")
+                elif ft and is_fn_type(ft) and not self.is_fresh_fn(fexpr):
+                    # Shared closure stored in a struct: struct gains
+                    # an env reference (Top-500 #101).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
+                            f"forge_closure_inc(__forge_arg{n}.env); __forge_arg{n};}})")
                 parts.append(f".{fname} = {code}")
             return f"({cname}){{ {', '.join(parts)} }}"
         if isinstance(expr, A.TupleIndex):
@@ -4012,6 +4573,7 @@ class Codegen:
             base = self.gen_expr(expr.base)
             return f"({base}).{expr.field}"
         if isinstance(expr, A.ArrayLit):
+            from .fntypes import is_fn_type
             arr_type = self.expr_type(expr)
             if arr_type in ("[?]", "int"):
                 raise ForgeError("array literal needs a known element type "
@@ -4041,6 +4603,10 @@ class Codegen:
                     # Shared array element: gain a reference for the
                     # outer array's copy.
                     body += f"forge_arr_inc({tmp}.data[{i}].ref); "
+                elif is_fn_type(et) and not self.is_fresh_fn(e):
+                    # Shared closure element: gain an env reference
+                    # for the array's copy (Top-500 #101).
+                    body += f"forge_closure_inc({tmp}.data[{i}].env); "
             body += f"{tmp}"
             return "({" + " ".join(parts) + "; " + body + "; })"
         if isinstance(expr, A.Index):
@@ -4104,9 +4670,11 @@ class Codegen:
                 return f"({base}).data[{idx}]"
             from .fntypes import is_fn_type
             if is_fn_type(et):
-                # A fn value is a plain pointer: direct data access
-                # with the same bounds check as the array branch
-                # (Top-500 #103). GET_FN has no entry for fn types.
+                # A closure value is a struct {fn, env}: direct data
+                # access with the same bounds check as the array
+                # branch (Top-500 #101). GET_FN has no entry for fn
+                # types; the caller gains an env reference when
+                # storing it.
                 if self._bounds_on:
                     key = ("arr", base, idx)
                     if idx_pure and key in self._check_cache:
@@ -4209,10 +4777,36 @@ class Codegen:
                         f"({ct})(0);}})")
             return f"({expr.op}{self.gen_expr(expr.expr)})"
         if isinstance(expr, A.BinOp):
+            from .fntypes import is_fn_type
             if expr.op in ("==", "!=") and self.expr_type(expr.left) == "str":
                 spec = self._str_index_cmp(expr)
                 if spec is not None:
                     return spec
+            if expr.op in ("==", "!=") and is_fn_type(self.expr_type(expr.left)):
+                # Closure equality (Top-500 #101): same code pointer
+                # and same env pointer. Each side is bound to a temp
+                # unless both are simple lvalues, so a call result is
+                # not evaluated twice by the two field reads. Note !=
+                # is the OR of the field inequalities, not the AND.
+                if self._is_simple_lvalue(expr.left) and self._is_simple_lvalue(expr.right):
+                    l = self.gen_expr(expr.left)
+                    r = self.gen_expr(expr.right)
+                    if expr.op == "==":
+                        return f"({l}.fn == {r}.fn && {l}.env == {r}.env)"
+                    return f"({l}.fn != {r}.fn || {l}.env != {r}.env)"
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.assign_counter += 1
+                m = self.assign_counter
+                lt = c_type(self.expr_type(expr.left))
+                rt = c_type(self.expr_type(expr.right))
+                l = self.gen_expr(expr.left)
+                r = self.gen_expr(expr.right)
+                if expr.op == "==":
+                    cmp = f"(__forge_fn{n}.fn == __forge_fn{m}.fn && __forge_fn{n}.env == __forge_fn{m}.env)"
+                else:
+                    cmp = f"(__forge_fn{n}.fn != __forge_fn{m}.fn || __forge_fn{n}.env != __forge_fn{m}.env)"
+                return (f"({{ {lt} __forge_fn{n} = {l}; {rt} __forge_fn{m} = {r}; {cmp}; }})")
             left = self.gen_expr(expr.left)
             right = self.gen_expr(expr.right)
             if expr.op == "+" and self.expr_type(expr.left) == "str":
@@ -4402,19 +4996,29 @@ class Codegen:
                                         list(expr.args),
                                         expr.line, expr.col))
         if isinstance(expr, A.IndirectCall):
-            # handlers[i](x): the callee expression is a fn value;
-            # emit it as a C call through the pointer, with the same
-            # argument-ownership loop as a direct call (Top-500 #103).
-            # Like a direct call it may mutate shared state, so it
-            # ends any duplicate-check run inside this expression.
+            # f(x) through a fn value (Top-500 #103, #101): the value
+            # is a closure struct {fn, env}; the call goes through
+            # .fn with .env first. The callee is bound to a temp
+            # unless it is a plain variable or a field/index rooted
+            # at one — any other form (a call result, an array
+            # element) would be evaluated twice by the two field
+            # reads. The temp is a plain struct copy: no env inc,
+            # no free — it dies with the statement expression.
             self._check_cache = {}
             from .fntypes import fn_parts
-            callee_code = self.gen_expr(expr.callee)
             stamped = getattr(expr, "fn_type", None)
             params = ([("", pt) for pt in fn_parts(stamped)[0]]
                       if stamped is not None else [])
             arg_codes = self._call_arg_codes(expr, params)
-            return f"{callee_code}({', '.join(arg_codes)})"
+            args = ", ".join(arg_codes)
+            if self._is_simple_lvalue(expr.callee):
+                callee_code = self.gen_expr(expr.callee)
+                return f"{callee_code}.fn({callee_code}.env{', ' if args else ''}{args})"
+            self.assign_counter += 1
+            n = self.assign_counter
+            ct = c_type(self.expr_type(expr.callee))
+            return (f"({{ {ct} __forge_fn{n} = {self.gen_expr(expr.callee)}; "
+                    f"__forge_fn{n}.fn(__forge_fn{n}.env{', ' if args else ''}{args}); }})")
         if isinstance(expr, A.Call):
             # A call may mutate shared state (an array passed to it
             # can be written through its parameter), so it ends any
@@ -4430,6 +5034,10 @@ class Codegen:
                 return f"forge_range({self.gen_expr(expr.args[0])})"
             if expr.name == "clock_micros":
                 return "forge_clock_micros()"
+            if expr.name == "panicked_tasks":
+                # Top-500 #44: total tasks that have panicked so far
+                # (atomic read; the counter only grows).
+                return "__atomic_load_n(&forge_panicked_total, __ATOMIC_SEQ_CST)"
             if expr.name in ("sqrt", "exp", "log", "sin", "cos", "tan"):
                 return f"{expr.name}({self.gen_expr(expr.args[0])})"
             if expr.name == "pow":
@@ -4675,13 +5283,23 @@ class Codegen:
             # callee owns its parameter and can free it on return.
             # Fresh string arguments are passed as-is (already owned).
             # An indirect call through a fn-typed variable takes its
-            # params from the fn type stamped by the checker (FN-C2).
+            # params from the fn type stamped by the checker (FN-C2)
+            # and goes through the closure struct: .fn with .env
+            # first (Top-500 #101). The callee here is always a bare
+            # variable (computed callees are IndirectCall), so the
+            # two field reads cannot re-evaluate anything — but the
+            # variable may be a capture of the enclosing lambda, in
+            # which case it reads through the env (#101).
             params = self.func_params.get(expr.name)
             if params is None:
                 from .fntypes import fn_parts
                 stamped = getattr(expr, "fn_type", None)
                 params = ([("", pt) for pt in fn_parts(stamped)[0]]
                           if stamped is not None else [])
+                arg_codes = self._call_arg_codes(expr, params)
+                args = ", ".join(arg_codes)
+                callee = self._capture_code(expr.name) or expr.name
+                return f"{callee}.fn({callee}.env{', ' if args else ''}{args})"
             arg_codes = self._call_arg_codes(expr, params)
             return f"{expr.name}({', '.join(arg_codes)})"
         raise ForgeError(f"unsupported expression {type(expr).__name__}")

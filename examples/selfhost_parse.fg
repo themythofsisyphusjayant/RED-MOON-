@@ -120,6 +120,8 @@ fn node_kind_name(k: int) -> str {
     if k == 43 { return "Param"; }
     if k == 44 { return "Field"; }
     if k == 45 { return "Arm"; }
+    if k == 46 { return "IndirectCall"; }
+    if k == 47 { return "Lambda"; }
     return "?";
 }
 
@@ -913,6 +915,49 @@ fn parse_primary(p0: HParser) -> POut {
         let c: TOut = expect_op(p, ")");
         p = c.p;
         return POut { p: p, n: first.n };
+    }
+    if at_kw(p, "fn") {
+        // Lambda expression: fn(params) -> ret { body } (Top-500
+        // #101). Same shape as a fn declaration minus the name;
+        // params must be annotated, like fn declarations. Node
+        // kind 47: kids are Param nodes then the body block, and
+        // sval holds the return type.
+        let kw: TOut = expect_kw(p, "fn");
+        p = kw.p;
+        let o: TOut = expect_op(p, "(");
+        p = o.p;
+        let pr: TOut = parse_params(p);
+        p = pr.p;
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        let mut ret: str = "void";
+        if at_op(p, "->") {
+            let a: TOut = expect_op(p, "->");
+            p = a.p;
+            let t: TOut = parse_type(p, true);
+            p = t.p;
+            ret = t.text;
+        }
+        let body: POut = parse_block(p);
+        p = body.p;
+        let mut n: Node = new_node(47, kw.line, kw.col);
+        n.sval = ret;
+        let mut kids: [Node] = [];
+        if pr.text != "" {
+            let parts: [str] = split(pr.text, "~");
+            let mut i: int = 0;
+            while i < len(parts) {
+                let kv: [str] = split(parts[i], ":");
+                let mut pn: Node = new_node(43, kw.line, kw.col);
+                pn.name = kv[0];
+                pn.sval = kv[1];
+                push(kids, pn);
+                i = i + 1;
+            }
+        }
+        push(kids, body.n);
+        n.kids = kids;
+        return POut { p: p, n: n };
     }
     if at_op(p, "[") {
         let tok: TOut = expect_op(p, "[");

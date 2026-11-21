@@ -130,6 +130,37 @@ def fn_c_name(t):
     return fn_mangle(t)
 
 
+def fn_closure_name(t):
+    """C struct name for a closure value of fn type t.
+
+    fn(int) -> int  ->  ForgeClosure_int_int. The closure struct
+    holds the trampoline pointer plus the env pointer (Top-500
+    #101); fn_c_name keeps naming the trampoline typedef.
+    """
+    return "ForgeClosure_" + fn_mangle(t)[len("ForgeFn_"):]
+
+
+def fn_env_name(n):
+    """Env struct name for lambda id n."""
+    return f"ForgeEnv_{n}"
+
+
+def fn_lambda_name(n):
+    """Trampoline function name for lambda id n."""
+    return f"__forge_lambda_{n}"
+
+
+def fn_wrap_name(fn_name):
+    """Wrapper function name adapting a plain function to the
+    trampoline signature (env first)."""
+    return f"__forge_wrap_{fn_name}"
+
+
+def fn_env_free_name(n):
+    """Env-free function name for lambda id n."""
+    return f"__forge_env_free_{n}"
+
+
 def fn_depth(t):
     """Nesting depth of fn types inside t (for typedef order)."""
     return t.count("fn(") if isinstance(t, str) else 0
@@ -165,6 +196,52 @@ def extract_fn_types(t, out):
     if g is not None:
         for a in g[1]:
             extract_fn_types(a, out)
+
+
+def find_lambdas(program):
+    """Every Lambda node in the program, in deterministic visit
+    order (Top-500 #101).
+
+    Functions in program.funcs order (including checker-appended
+    generic instantiations), statements in order, expressions in
+    source order — a generic walk over the dataclass fields, so
+    the order is the field order of each node (Let visits its
+    expr, If visits cond/then/els, BinOp visits left/right, and
+    so on). Each lambda's id is its index in this list; the ids
+    appear in emitted C (ForgeEnv_N, __forge_lambda_N), so the
+    hosted mirror implements the same order and the parity gate
+    verifies they agree.
+    """
+    from . import ast_nodes as A
+    found = []
+
+    def walk(node):
+        if isinstance(node, A.Lambda):
+            found.append(node)
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+            return
+        if hasattr(node, "__dict__"):
+            for v in vars(node).values():
+                walk(v)
+
+    for fn in getattr(program, "funcs", []) or []:
+        if getattr(fn, "type_params", None):
+            # Generic template: its lambdas are unchecked (no
+            # captures stamped, types mention type params) and
+            # templates are never codegen'd — the concrete
+            # instantiations appended by the checker carry the
+            # checked copies. Skipping them keeps ids over
+            # codegen'd lambdas only (Top-500 #101).
+            continue
+        if getattr(fn, "body", None) is not None:
+            walk(fn.body)
+    return found
 
 
 def find_fn_types(program, extra_types=None):
@@ -206,6 +283,13 @@ def find_fn_types(program, extra_types=None):
 
     def walk_expr(e):
         if e is None:
+            return
+        if isinstance(e, A.Lambda):
+            # A lambda's fn type needs its typedef even when it
+            # only ever flows through inference (Top-500 #101).
+            add(getattr(e, "fn_type", None))
+            if getattr(e, "body", None) is not None:
+                walk_block(e.body)
             return
         for attr in ("args", "elems"):
             for child in getattr(e, attr, []) or []:

@@ -278,6 +278,26 @@ class Var:
     name: str
     line: int
     col: int
+    # Set by the checker (Top-500 #103, FN-C1): True when this Var
+    # is a bare function name used as a fn value (not a local).
+    # Codegen reads it to collect wrapper functions.
+    is_fn_value: bool = False
+
+
+@dataclass
+class Lambda:
+    # A closure literal (Top-500 #101): fn(params) -> ret { body }.
+    # params is [(name, type)] like FuncDef; ret is "void" when the
+    # `-> R` is omitted. Stamped by the checker: captures is the
+    # first-use-ordered [(name, type)] of captured variables, and
+    # fn_type is the fn-type string of the lambda.
+    params: list
+    ret: str
+    body: object
+    line: int
+    col: int
+    captures: list = None
+    fn_type: str = None
 
 
 @dataclass

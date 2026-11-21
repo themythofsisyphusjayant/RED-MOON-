@@ -1,0 +1,20 @@
+// Qasida — function composition (Top-500 #116).
+// Import with: import "compose.fg";
+// Combine two functions into one value: compose(f, g) is the
+// function x -> f(g(x)), "f after g". Generic over the three
+// types, so one definition serves int, str and any other types.
+//   compose(f, g)    -> fn(x) -> f(g(x))
+//   compose3(f, g, h) -> fn(x) -> f(g(h(x)))
+// The returned closure captures both functions by value, so it
+// stays valid after the caller's locals are gone, and it can be
+// called any number of times.
+// Verified 21 Nov 2026 (closures slice): compose_demo.fg under
+// both compilers + independent Python replica.
+
+fn compose<A, B, C>(f: fn(B) -> C, g: fn(A) -> B) -> fn(A) -> C {
+    return fn(x: A) -> C { return f(g(x)); };
+}
+
+fn compose3<A, B, C, D>(f: fn(C) -> D, g: fn(B) -> C, h: fn(A) -> B) -> fn(A) -> D {
+    return fn(x: A) -> D { return f(g(h(x))); };
+}

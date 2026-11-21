@@ -84,7 +84,7 @@ STMT_BUILTINS = {"print", "println", "push", "pin", "fail", "assert", "poke32",
                  "mmap_set", "mmap_close", "mmap_set32",
                  "csr_write", "csr_set", "csr_clear",
                  "fail_compile", "eprintln"}
-EXPR_BUILTINS = {"len", "range", "clock_micros", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs",
+EXPR_BUILTINS = {"len", "range", "clock_micros", "panicked_tasks", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
@@ -162,6 +162,13 @@ class Checker:
         self.func_instantiations = {}  # (name, bindings tuple) -> FuncDef
         self.struct_instantiations = {}  # concrete type -> {field: type}
         self._instantiating = set()
+        # Lambda frames (Top-500 #101, CL-C1/CL-C2): a stack of
+        # {"boundary": scope depth at lambda entry, "captures":
+        # {name: type}} — one frame per lambda being checked.
+        # The boundary is len(self.scopes) BEFORE the lambda's
+        # param scope is pushed, so a name resolving to a scope
+        # at index < boundary is a capture of that lambda.
+        self._lambda_frames = []
         self.unresolved = {}  # (scope id, name) -> Let node, for empty
         # array literals whose element type no later use has fixed yet.
 
@@ -587,6 +594,11 @@ class Checker:
             elif isinstance(node, A.Let):
                 if node.ann is not None:
                     node.ann = expand(node.ann)
+            elif isinstance(node, A.Lambda):
+                # Lambda param/return types (Top-500 #101): aliases
+                # inside them expand like fn-declaration types.
+                node.params = [(n, expand(t)) for n, t in node.params]
+                node.ret = expand(node.ret)
             elif isinstance(node, A.Cast):
                 node.target = expand(node.target)
             elif isinstance(node, A.NewtypeDef):
@@ -1052,6 +1064,27 @@ class Checker:
             elif isinstance(stmt, A.Match):
                 for _pat, _bind, body in stmt.arms:
                     self._substitute_let_ann(body, bindings)
+        # Lambda param/return types (Top-500 #101, CL-C7): a lambda
+        # inside a generic function may mention type parameters;
+        # substitute them before the body is checked (the generic
+        # walk reaches lambdas nested in any expression).
+        def walk(node):
+            if isinstance(node, A.Lambda):
+                node.params = [(n, substitute_type(t, bindings))
+                               for n, t in node.params]
+                node.ret = substitute_type(node.ret, bindings)
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if isinstance(node, dict):
+                for v in node.values():
+                    walk(v)
+                return
+            if hasattr(node, "__dict__"):
+                for v in vars(node).values():
+                    walk(v)
+        walk(block)
 
     def check_func(self, fn):
         # Save outer state: checking a generic instantiation can happen
@@ -1060,7 +1093,7 @@ class Checker:
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
                  self.moved_fields, self.loop_vars, self.pinned,
-                 self._for_iterables)
+                 self._for_iterables, self._lambda_frames)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1073,6 +1106,7 @@ class Checker:
             self.pinned = set()
             self.loop_vars = []
             self._for_iterables = []
+            self._lambda_frames = []
             for pn, pt in fn.params:
                 if pn in C_KEYWORDS:
                     raise ForgeError(f"'{pn}' is a C keyword and cannot be used as a "
@@ -1128,7 +1162,7 @@ class Checker:
             self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
                 self.moved_fields, self.loop_vars, self.pinned, \
-                self._for_iterables = saved
+                self._for_iterables, self._lambda_frames = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -1228,6 +1262,34 @@ class Checker:
                 return id(scope)
         return None
 
+    def _scope_index_for(self, name):
+        """Index into self.scopes of the innermost scope binding
+        `name`, or None (Top-500 #101: capture detection compares
+        this index against the lambda frames' boundaries)."""
+        if name is None:
+            return None
+        for i in range(len(self.scopes) - 1, -1, -1):
+            if name in self.scopes[i]:
+                return i
+        return None
+
+    def _record_capture(self, name):
+        """Record `name` as a capture of every enclosing lambda
+        frame whose boundary is above the name's binding scope
+        (Top-500 #101, CL-C2): the transitive chain nested lambdas
+        need — an inner lambda reads the value through the outer
+        env. Shared by the Var branch and check_call's indirect
+        path (a call callee is a name, not a Var node, so the Var
+        branch never sees it — without this, `f(x)` inside a lambda
+        where `f` is an outer variable would have no env slot)."""
+        scope_idx = self._scope_index_for(name)
+        if scope_idx is not None:
+            for frame in self._lambda_frames:
+                if scope_idx < frame["boundary"]:
+                    if name not in frame["captures"]:
+                        frame["captures"][name] = \
+                            self.scopes[scope_idx][name][0]
+
     def _for_iterable_conflict(self, arg):
         """True when moving `arg` would break an enclosing for
         loop that is iterating over it (Top-500 #40): the loop
@@ -1258,9 +1320,11 @@ class Checker:
     def _is_owned_type(self, t):
         """The move predicate (Top-500 #27): the types whose
         values carry a hold — arrays, str, structs, tuples.
-        Pin reuses it: reading such a leaf out of a pinned
-        binding would copy the hold."""
+        Fn types join it under closures (Top-500 #101, CL-C4):
+        a closure value holds its env, so it moves like an
+        array and is freed when its last holder dies."""
         return (elem_type(t) is not None or t == "str" or is_tuple_type(t)
+                or is_fn_type(t)
                 or t in self.structs or t in self.struct_instantiations)
 
     def _check_observed(self, expr):
@@ -1361,6 +1425,19 @@ class Checker:
             if not mutable:
                 raise ForgeError(f"cannot assign to immutable variable '{stmt.name}' "
                                  f"(declare it with 'let mut')", stmt.line, stmt.col)
+            if self._lambda_frames:
+                # Assignment to a captured binding (Top-500 #101,
+                # CL-C3): closures capture by value and the binding
+                # is read-only inside the lambda in v1. A name
+                # resolving outside the innermost frame's boundary
+                # is a capture of that lambda.
+                scope_idx = self._scope_index_for(stmt.name)
+                if (scope_idx is not None
+                        and scope_idx < self._lambda_frames[-1]["boundary"]):
+                    raise ForgeError(f"cannot assign to captured variable '{stmt.name}' "
+                                     f"(closures capture by value; captured variables "
+                                     f"are read-only in v1)",
+                                     stmt.line, stmt.col)
             if stmt.name in self.pinned:
                 raise ForgeError(f"cannot reassign pinned variable '{stmt.name}' "
                                  f"(pin forbids replacing the value; change it "
@@ -1972,7 +2049,7 @@ class Checker:
                                  call.line, call.col)
             t, _m = self.lookup(arg.name, call.line, call.col)
             if not self._is_owned_type(t):
-                raise ForgeError(f"pin needs an owned value (array, str, struct, tuple), "
+                raise ForgeError(f"pin needs an owned value (array, str, struct, tuple, function value), "
                                  f"got {t}", call.line, call.col)
             if t in self.method_types and "drop" in self.method_types[t]:
                 raise ForgeError(f"cannot pin a value of struct '{t}' with a drop "
@@ -2137,7 +2214,15 @@ class Checker:
                     and expr.name in self.funcs):
                 # A bare function name in value position is a fn
                 # value (Top-500 #103, FN-C1).
+                expr.is_fn_value = True
                 return self._fn_value_type(expr.name, expr.line, expr.col)
+            # Capture recording (Top-500 #101, CL-C2): a name
+            # resolving to a scope outside an enclosing lambda's
+            # boundary is a capture of that lambda — and of every
+            # lambda frame between it and the binding (the
+            # transitive chain nested lambdas need: the inner
+            # lambda reads the value through the outer env).
+            self._record_capture(expr.name)
             return self.lookup(expr.name, expr.line, expr.col)[0]
         if isinstance(expr, A.ArrayLit):
             if not expr.elems:
@@ -2425,9 +2510,101 @@ class Checker:
             return self.check_method_call(expr)
         if isinstance(expr, A.IndirectCall):
             return self.check_indirect_call(expr)
+        if isinstance(expr, A.Lambda):
+            return self.check_lambda(expr)
         if isinstance(expr, A.Call):
             return self.check_call(expr)
         raise ForgeError(f"unsupported expression {type(expr).__name__}", expr.line, expr.col)
+
+    def check_lambda(self, expr):
+        """Check a lambda expression (Top-500 #101, CL-C1).
+
+        Params must be annotated (like fn declarations); the
+        return type defaults to void. The body is checked in a
+        fresh function context (loop depth reset — a `break`
+        inside a lambda must not break the enclosing loop),
+        starting from a COPY of the enclosing move/pin state
+        (a variable moved before the lambda was created stays
+        unusable inside it; a move inside the lambda moves
+        only the lambda's own copy). Captures are collected by
+        the Var branch (CL-C2) into the frame pushed here.
+        """
+        seen = set()
+        for pn, pt in expr.params:
+            if pn in C_KEYWORDS:
+                raise ForgeError(f"'{pn}' is a C keyword and cannot be used as a "
+                                 f"parameter name; rename it", expr.line, expr.col)
+            if pn in seen:
+                raise ForgeError(f"duplicate parameter '{pn}' in lambda",
+                                 expr.line, expr.col)
+            seen.add(pn)
+            if not self.valid_type(pt) or pt == "void":
+                raise ForgeError(f"lambda parameter type '{pt}' is not a value type",
+                                 expr.line, expr.col)
+        if expr.ret != "void" and not self.valid_type(expr.ret):
+            raise ForgeError(f"unknown lambda return type '{expr.ret}'"
+                             f"{suggest(expr.ret, list(SCALARS) + list(self.structs) + list(self.enums))}",
+                             expr.line, expr.col)
+        if self.freestanding:
+            raise ForgeError("lambda expressions need the heap allocator "
+                             "(not in freestanding v1; use a named function instead)",
+                             expr.line, expr.col)
+        saved = (self.current_ret, self.current_fn, self.loop_depth,
+                 self.branch_depth, self.moved, self.moved_fields,
+                 self.pinned, self.loop_vars, self._for_iterables,
+                 self.unresolved)
+        try:
+            self.current_ret = expr.ret
+            self.current_fn = None
+            self.loop_depth = 0
+            self.branch_depth = 0
+            self.moved = set(self.moved)
+            self.moved_fields = set(self.moved_fields)
+            self.pinned = set(self.pinned)
+            self.loop_vars = []
+            self._for_iterables = []
+            self.unresolved = {}
+            frame = {"boundary": len(self.scopes), "captures": {}}
+            self._lambda_frames.append(frame)
+            try:
+                self.scopes.append({n: (t, False) for n, t in expr.params})
+                try:
+                    self.check_block(expr.body)
+                finally:
+                    self.scopes.pop()
+            finally:
+                self._lambda_frames.pop()
+            if self.unresolved:
+                let = next(iter(self.unresolved.values()))
+                raise ForgeError("cannot infer the element type of an empty array "
+                                 "literal; add an annotation, e.g. "
+                                 "let x: [int] = []",
+                                 let.line, let.col)
+            if expr.ret == "never":
+                if self._has_return(expr.body):
+                    raise ForgeError("never lambda cannot return; "
+                                     "its body must diverge instead",
+                                     expr.line, expr.col)
+                if not self._body_diverges(expr.body):
+                    raise ForgeError("never lambda must end with a "
+                                     "diverging statement (fail or a call to a never "
+                                     "function); its body can fall off the end",
+                                     expr.line, expr.col)
+            elif expr.ret != "void":
+                if not expr.body.stmts or not isinstance(expr.body.stmts[-1], A.Return):
+                    if not self._body_diverges(expr.body):
+                        raise ForgeError(f"lambda returns {expr.ret} but its body "
+                                         f"does not end with a return; add a return statement "
+                                         f"of type {expr.ret} at the end of the lambda",
+                                         expr.line, expr.col)
+            expr.captures = list(frame["captures"].items())
+            expr.fn_type = fn_type_string(expr.params, expr.ret)
+            return expr.fn_type
+        finally:
+            (self.current_ret, self.current_fn, self.loop_depth,
+             self.branch_depth, self.moved, self.moved_fields,
+             self.pinned, self.loop_vars, self._for_iterables,
+             self.unresolved) = saved
 
     def _check_indirect_args(self, call, fn_type, what):
         """Check a call's args against a fn type (FN-C2).
@@ -2483,7 +2660,7 @@ class Checker:
                 "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
-                "clock_micros", "args", "parallel_dot", "parallel_matmul",
+                "clock_micros", "panicked_tasks", "args", "parallel_dot", "parallel_matmul",
                 "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "run_command"):
             raise ForgeError(f"'{call.name}' needs the hosted runtime "
                              f"(not in freestanding v1)",
@@ -2580,9 +2757,8 @@ class Checker:
                     raise ForgeError(f"cannot move '{path}' (it is the iterable of an "
                                      f"enclosing for loop; moving it frees the buffer "
                                      f"the loop is reading)", call.line, call.col)
-                if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
-                        or t in self.structs or t in self.struct_instantiations):
-                    raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
+                if not self._is_owned_type(t):
+                    raise ForgeError(f"move needs an owned value (array, str, struct, tuple, function value), "
                                      f"got {t}", call.line, call.col)
                 self.moved_fields.add(path)
                 call.in_conditional = False
@@ -2592,9 +2768,8 @@ class Checker:
                 raise ForgeError(f"cannot move '{arg.name}' (it is the iterable of an "
                                  f"enclosing for loop; moving it frees the buffer "
                                  f"the loop is reading)", call.line, call.col)
-            if not (elem_type(t) is not None or t == "str" or is_tuple_type(t)
-                    or t in self.structs or t in self.struct_instantiations):
-                raise ForgeError(f"move needs an owned value (array, str, struct, tuple), "
+            if not self._is_owned_type(t):
+                raise ForgeError(f"move needs an owned value (array, str, struct, tuple, function value), "
                                  f"got {t}", call.line, call.col)
             self.moved.add(arg.name)
             # Codegen reads this: a conditional move must not
@@ -2635,6 +2810,11 @@ class Checker:
         if call.name == "clock_micros":
             if call.args:
                 raise ForgeError("clock_micros() takes no arguments", call.line, call.col)
+            return "int"
+        if call.name == "panicked_tasks":
+            # Top-500 #44: total tasks that have panicked so far.
+            if call.args:
+                raise ForgeError("panicked_tasks() takes no arguments", call.line, call.col)
             return "int"
         if call.name in ("alloc_count", "free_count", "arr_alloc_count", "arr_free_count"):
             if call.args:
@@ -2884,6 +3064,17 @@ class Checker:
                     raise ForgeError(f"calling '{call.name}' (type {var_type}) — "
                                      f"'{call.name}' is not a function",
                                      call.line, call.col)
+                if call.name in self.moved:
+                    # Calling a moved closure is a use of the moved
+                    # value, like any other Var use (Top-500 #101:
+                    # the callee here is a name, not a Var node, so
+                    # the Var branch's moved check never sees it).
+                    raise ForgeError(f"use of moved value '{call.name}'",
+                                     call.line, call.col)
+                # The callee is a name, not a Var node: record the
+                # capture here, or a lambda calling an outer fn
+                # variable would have no env slot for it (#101).
+                self._record_capture(call.name)
                 return self._check_indirect_args(call, var_type, f"'{call.name}'")
             raise ForgeError(f"undefined function '{call.name}'"
                              f"{suggest(call.name, list(self.funcs) + list(BUILTINS))}",

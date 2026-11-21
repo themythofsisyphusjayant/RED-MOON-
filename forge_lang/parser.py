@@ -396,10 +396,10 @@ class Parser:
         self.expect_op(";")
         return A.NewtypeDef(name.value, target, kw.line, kw.col)
 
-    def parse_func(self):
-        kw = self.expect_kw("fn")
-        name = self.expect_ident()
-        type_params = self.parse_type_params()
+    def parse_param_list(self):
+        """`(name: type, ...)` — shared by fn declarations and
+        lambda expressions (Top-500 #101). Params must be
+        annotated; there is no inference from context in v1."""
         self.expect_op("(")
         params = []
         if not self.at_op(")"):
@@ -413,6 +413,13 @@ class Parser:
                     continue
                 break
         self.expect_op(")")
+        return params
+
+    def parse_func(self):
+        kw = self.expect_kw("fn")
+        name = self.expect_ident()
+        type_params = self.parse_type_params()
+        params = self.parse_param_list()
         ret = "void"
         if self.at_op("->"):
             self.next()
@@ -694,6 +701,19 @@ class Parser:
         if tok.kind == "KEYWORD" and tok.value in ("true", "false"):
             self.next()
             return A.BoolLit(tok.value == "true", tok.line, tok.col)
+        if self.at_kw("fn"):
+            # Lambda expression (Top-500 #101): fn(params) -> ret
+            # { body } — the fn-declaration shape minus the name.
+            # No lexer change: `fn` never starts any other
+            # expression form, so this branch is unambiguous.
+            kw = self.next()
+            params = self.parse_param_list()
+            ret = "void"
+            if self.at_op("->"):
+                self.next()
+                ret = self.parse_type()
+            body = self.parse_block()
+            return A.Lambda(params, ret, body, kw.line, kw.col)
         if tok.kind == "IDENT":
             self.next()
             if self.at_op("("):

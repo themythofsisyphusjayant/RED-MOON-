@@ -1,0 +1,21 @@
+// Qasida — currying / partial application (Top-500 #114).
+// Import with: import "curry.fg";
+// Fix one argument of a two-argument function, returning a
+// closure over the remaining argument (item 101). Generic over
+// the argument and result types: one definition serves [int],
+// [str] and any other types.
+//   curry(f, x)      -> fn(y) -> f(x, y)   (fix the first arg)
+//   curry_last(f, y) -> fn(x) -> f(x, y)   (fix the second arg)
+// The returned closure captures its arguments by value, so it
+// stays valid after the caller's locals are gone, and it can be
+// called any number of times.
+// Verified 21 Nov 2026 (closures slice): curry_demo.fg under
+// both compilers + independent Python replica.
+
+fn curry<A, B, C>(f: fn(A, B) -> C, x: A) -> fn(B) -> C {
+    return fn(y: B) -> C { return f(x, y); };
+}
+
+fn curry_last<A, B, C>(f: fn(A, B) -> C, y: B) -> fn(A) -> C {
+    return fn(x: A) -> C { return f(x, y); };
+}

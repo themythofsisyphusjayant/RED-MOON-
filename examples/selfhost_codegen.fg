@@ -216,6 +216,40 @@ struct HCodegen {
     inst_btypes: [str];
     inst_busy: [str];
     spawn_counter: int;
+    // Top-500 #101 (closures): the lambda capture map and bare-fn
+    // uses, copied read-only from HInfer by cg_new (cap_keys /
+    // cap_vals: lambda infer key -> encoded "name:type;..."
+    // captures; fn_uses: bare function names used as values,
+    // first-use order, one wrapper each).
+    cap_keys: [int];
+    cap_vals: [str];
+    fn_uses: [str];
+    // Top-500 #101: collected lambdas (cg_collect_lambdas, in
+    // find_lambdas order — the id is the index): infer key,
+    // enclosing function name (mangled for impl methods and
+    // generic instantiations), enclosing fn index (-2 for
+    // instantiations), and the node itself (the trampoline
+    // generator needs the template node for instantiations).
+    lam_keys: [int];
+    lam_fn_names: [str];
+    lam_fn_idx: [int];
+    lam_nodes: [Node];
+    // Top-500 #101: the capture map of the lambda body being
+    // generated (capmap_names + capmap_types flat and parallel,
+    // capmap_marks frame starts; the C code for a capture is
+    // "__forge_e->" + name, and its type is substituted at lookup
+    // time via cg_subst, so a template lambda's captures read
+    // concrete in each instantiation), and the shadow stack
+    // (shadow_names flat, shadow_marks frame starts; a name in
+    // any frame shadows a capture). lam_fn is the function whose
+    // lambdas are being generated (unchanged by trampoline entry:
+    // nested lambdas belong to the enclosing function).
+    capmap_names: [str];
+    capmap_types: [str];
+    capmap_marks: [int];
+    shadow_names: [str];
+    shadow_marks: [int];
+    lam_fn: str;
     // Index of current_fn in func_names (speed step 2; -2 = unset
     // or a mangled instantiation name: lookups miss, exactly like
     // the old unmatched "fn:line:col" key).
@@ -566,7 +600,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -1381,6 +1415,12 @@ fn cg_is_array_type(g: HCodegen, t: str) -> bool {
     if inner == "int" || inner == "float" || inner == "bool" || inner == "str" {
         return true;
     }
+    if is_fn_type(inner) {
+        // An array of fn values is an owned array (Top-500 #101):
+        // in #103 v1 this returned False, so [fn] array buffers
+        // leaked (no per-element free ever ran).
+        return true;
+    }
     if cg_is_struct_type(g, inner) {
         return true;
     }
@@ -1394,9 +1434,9 @@ fn cg_c_type(g: HCodegen, t: str) -> str {
         return cg_union_c_name(r);
     }
     if is_fn_type(r) {
-        // A fn value is a plain C function pointer; its typedef
-        // name is its mangled form (Top-500 #103).
-        return infer_mangle_type(r);
+        // A fn value is a closure struct {fn, env} (Top-500 #101);
+        // the trampoline typedef keeps the mangled name.
+        return cg_fn_closure_name(r);
     }
     if cg_is_opaque_type(r) {
         return "Opaque_" + cg_opaque_trait(r);
@@ -1473,9 +1513,10 @@ fn cg_c_type(g: HCodegen, t: str) -> str {
             fail("arrays of " + inner + " are not supported in v1");
         }
         if is_fn_type(inner) {
-            // An array of fn values: ForgeArray_<typedef>
-            // (Top-500 #103).
-            return "ForgeArray_" + infer_mangle_type(inner);
+            // An array of fn values: ForgeArray_<closure struct>
+            // (Top-500 #101; the #103 form used the trampoline
+            // typedef, which is now only the fn field's type).
+            return "ForgeArray_" + cg_fn_closure_name(inner);
         }
         if starts_with(inner, "[") {
             return "ForgeArray_" + cg_c_type(g, inner);
@@ -1633,8 +1674,39 @@ fn cg_is_fresh_str(g: HCodegen, e: Node) -> bool {
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
-        if found[0] == "1" && found[1] == "str" && !cg_fn_is_extern(g, e.name) {
+        if found[0] == "1" && cg_template_lookup(g, e.name)[0] == "0" {
+            // Concrete function: decide from its declared return.
+            // (A template's declared return is a type param, so
+            // it must NOT take this branch — the infer map below
+            // holds the instantiated return type instead.)
+            if found[1] == "str" && !cg_fn_is_extern(g, e.name) {
+                return true;
+            }
+            return false;
+        }
+        // Generic instantiation or indirect call: the infer map
+        // holds the (instantiated) return type of the call itself.
+        if cg_expr_type(g, e) == "str" {
             return true;
+        }
+        // Belt-and-braces when the infer map has no entry for
+        // the call: a capture has no local binding, so its type
+        // comes from the capmap; a str return is fresh, so print
+        // / call-arg / let sites must not copy it (the copy would
+        // leak the original).
+        let mut vt: str = cg_local_type(g, e.name);
+        if vt == "" {
+            vt = cg_capture_type(g, e.name);
+        }
+        if is_fn_type(vt) && fn_type_ret(vt) == "str" {
+            return true;
+        }
+        return false;
+    }
+    if e.kind == 46 {
+        let ct: str = cg_expr_type(g, e.kids[0]);
+        if is_fn_type(ct) {
+            return fn_type_ret(ct) == "str";
         }
         return false;
     }
@@ -1705,6 +1777,342 @@ fn cg_is_fresh_union(g: HCodegen, e: Node) -> bool {
         return true;
     }
     return false;
+}
+
+// ---- closures (Top-500 #101) ----
+
+// C struct name for a closure value of fn type t: the mirror of
+// Python's fn_closure_name — "ForgeClosure_" + the mangle
+// without its "ForgeFn_" prefix.
+fn cg_fn_closure_name(t: str) -> str {
+    let m: str = infer_mangle_type(t);
+    return "ForgeClosure_" + substr(m, 8, len(m) - 8);
+}
+
+// True when `name` in value position is a bare function name
+// (Top-500 #103, FN-C1): no variable binding, no enum variant,
+// resolves to a function. The checker stamps this on Var nodes
+// in Python; the hosted mirror recomputes it (no per-node stamps).
+fn cg_is_bare_fn(g: HCodegen, name: str) -> bool {
+    if cg_local_type(g, name) != "" {
+        return false;
+    }
+    // A capture is a variable binding held in the env, not a bare
+    // function name — even when a same-named function exists
+    // (the checker resolves the variable first, Top-500 #101).
+    if cg_capture_code(g, name) != "" {
+        return false;
+    }
+    let v: [str] = cg_variant_lookup(g, name);
+    if v[0] == "1" {
+        return false;
+    }
+    let found: [str] = cg_fn_lookup(g, name);
+    return found[0] == "1";
+}
+
+// is_fresh_fn (codegen.py:2060): true when the expression yields
+// a fresh, solely-owned closure (env ref=1) or a NULL-env value,
+// so a receiving site must not inc it.
+fn cg_is_fresh_fn(g: HCodegen, e: Node) -> bool {
+    if e.kind == 47 {
+        return true;
+    }
+    if e.kind == 34 {
+        return cg_is_bare_fn(g, e.name);
+    }
+    if e.kind == 46 {
+        let ct: str = cg_expr_type(g, e.kids[0]);
+        if is_fn_type(ct) {
+            return is_fn_type(fn_type_ret(ct));
+        }
+        return false;
+    }
+    if e.kind == 33 {
+        let rt: str = cg_expr_type(g, e.kids[0]);
+        let mangled: str = infer_mangle_method(rt, e.name);
+        let found: [str] = cg_fn_lookup(g, mangled);
+        if found[0] == "1" {
+            return is_fn_type(found[1]);
+        }
+        return false;
+    }
+    if e.kind == 35 {
+        if e.name == "move" {
+            return true;
+        }
+        let found: [str] = cg_fn_lookup(g, e.name);
+        if found[0] == "1" {
+            return is_fn_type(found[1]);
+        }
+        // Indirect call through a fn-typed variable: a capture
+        // has no local binding, so its type comes from the
+        // capmap (Top-500 #101).
+        let mut vt: str = cg_local_type(g, e.name);
+        if vt == "" {
+            vt = cg_capture_type(g, e.name);
+        }
+        if is_fn_type(vt) {
+            return is_fn_type(fn_type_ret(vt));
+        }
+        return false;
+    }
+    return false;
+}
+
+// _is_simple_lvalue (codegen.py:4248): a Var, or a FieldAccess /
+// TupleIndex / Index rooted at a Var with a pure index — safe to
+// emit twice (as .fn and .env of a closure call, or as the two
+// sides of a fn ==).
+fn cg_is_simple_lvalue(g: HCodegen, e: Node) -> bool {
+    if e.kind == 34 {
+        return true;
+    }
+    if e.kind == 32 || e.kind == 37 {
+        return cg_is_simple_lvalue(g, e.kids[0]);
+    }
+    if e.kind == 36 {
+        if e.kids[1].kind == 34 || e.kids[1].kind == 25 {
+            return cg_is_simple_lvalue(g, e.kids[0]);
+        }
+        return false;
+    }
+    return false;
+}
+
+// _capture_code (codegen.py:2042): C code for reading a captured
+// variable `name` inside the trampoline currently being
+// generated, or "" when `name` is not a capture of that
+// trampoline — or is shadowed by a local binding in an enclosing
+// block of the trampoline body. Defensive about empty stacks:
+// deferred calls emitted at function exit run after gen_block
+// popped its shadow frame.
+fn cg_capture_code(g: HCodegen, name: str) -> str {
+    if len(g.capmap_marks) == 0 {
+        return "";
+    }
+    let start: int = g.capmap_marks[len(g.capmap_marks) - 1];
+    let mut found: bool = false;
+    let mut i: int = len(g.capmap_names) - 1;
+    while i >= start {
+        if g.capmap_names[i] == name {
+            found = true;
+        }
+        i = i - 1;
+    }
+    if !found {
+        return "";
+    }
+    let mut j: int = 0;
+    while j < len(g.shadow_names) {
+        if g.shadow_names[j] == name {
+            return "";
+        }
+        j = j + 1;
+    }
+    return "__forge_e->" + name;
+}
+
+// The capture's type (Top-500 #101): same lookup as
+// cg_capture_code — top capmap frame only, shadowed names miss —
+// with the template type substituted for the current
+// instantiation (g.subst holds the trampoline's bindings during
+// body generation; generic calls never touch it). "" when the
+// name is not a visible capture.
+fn cg_capture_type(g: HCodegen, name: str) -> str {
+    if len(g.capmap_marks) == 0 {
+        return "";
+    }
+    let start: int = g.capmap_marks[len(g.capmap_marks) - 1];
+    let mut found: str = "";
+    let mut i: int = len(g.capmap_names) - 1;
+    while i >= start {
+        if g.capmap_names[i] == name {
+            found = g.capmap_types[i];
+        }
+        i = i - 1;
+    }
+    if found == "" {
+        return "";
+    }
+    let mut j: int = 0;
+    while j < len(g.shadow_names) {
+        if g.shadow_names[j] == name {
+            return "";
+        }
+        j = j + 1;
+    }
+    return cg_subst(g, found);
+}
+
+// Push a capture-map frame for a lambda's captures (encoded
+// "name:type;name:type"); the C code for a capture is
+// "__forge_e->" + name, so only the names are stored.
+fn cg_capmap_push(g0: HCodegen, caps: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    push(g.capmap_marks, len(g.capmap_names));
+    if caps != "" {
+        let parts: [str] = split(caps, ";");
+        let mut i: int = 0;
+        while i < len(parts) {
+            let kv: [str] = split(parts[i], ":");
+            if len(kv) >= 1 {
+                push(g.capmap_names, kv[0]);
+                if len(kv) >= 2 {
+                    push(g.capmap_types, kv[1]);
+                } else {
+                    push(g.capmap_types, "");
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return g;
+}
+
+fn cg_capmap_pop(g0: HCodegen) -> HCodegen {
+    let mut g: HCodegen = g0;
+    let mark: int = g.capmap_marks[len(g.capmap_marks) - 1];
+    g.capmap_marks = cg_trunc_int(g.capmap_marks, len(g.capmap_marks) - 1);
+    g.capmap_names = cg_trunc_str(g.capmap_names, mark);
+    g.capmap_types = cg_trunc_str(g.capmap_types, mark);
+    return g;
+}
+
+// Push a shadow frame, seeded with "~"-joined names (a for-loop
+// variable, a match binding, a trampoline's parameters); each
+// block pushes one more (empty) frame of its own.
+fn cg_shadow_push(g0: HCodegen, seed: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    push(g.shadow_marks, len(g.shadow_names));
+    if seed != "" {
+        let parts: [str] = split(seed, "~");
+        let mut i: int = 0;
+        while i < len(parts) {
+            push(g.shadow_names, parts[i]);
+            i = i + 1;
+        }
+    }
+    return g;
+}
+
+fn cg_shadow_pop(g0: HCodegen) -> HCodegen {
+    let mut g: HCodegen = g0;
+    let mark: int = g.shadow_marks[len(g.shadow_marks) - 1];
+    g.shadow_marks = cg_trunc_int(g.shadow_marks, len(g.shadow_marks) - 1);
+    g.shadow_names = cg_trunc_str(g.shadow_names, mark);
+    return g;
+}
+
+// A Let binding shadows a capture of the same name from here on
+// (the RHS above still read the capture, because the binding did
+// not exist yet) — Top-500 #101.
+fn cg_shadow_add(g0: HCodegen, name: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    if len(g.shadow_marks) > 0 {
+        push(g.shadow_names, name);
+    }
+    return g;
+}
+
+// Read a lambda's encoded captures from the cap map, with the
+// same template-key fallback cg_expr_type_raw uses (inside an
+// instantiation body, template entries win).
+fn cg_cap_map_get(g: HCodegen, key: int) -> str {
+    let mut i: int = 0;
+    while i < len(g.cap_keys) {
+        if g.cap_keys[i] == key {
+            return g.cap_vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn cg_lambda_caps(g: HCodegen, node: Node) -> str {
+    if len(g.subst_names) > 0 {
+        let t: str = cg_cap_map_get(g, infer_key_int(-1, node.line, node.col));
+        if t != "" {
+            return t;
+        }
+    }
+    return cg_cap_map_get(g, infer_key_int(g.current_fn_idx, node.line, node.col));
+}
+
+// A lambda's id: its index in the collected lam_keys, matched
+// by infer key AND enclosing function name (two instantiations
+// of one template share the template key, so the name is the
+// discriminator — exactly like the trampoline's lam_fn).
+fn cg_lambda_id(g: HCodegen, node: Node) -> int {
+    let mut key: int = infer_key_int(g.current_fn_idx, node.line, node.col);
+    if len(g.subst_names) > 0 {
+        key = infer_key_int(-1, node.line, node.col);
+    }
+    let mut i: int = 0;
+    while i < len(g.lam_keys) {
+        if g.lam_keys[i] == key && g.lam_fn_names[i] == g.lam_fn {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// closure_own_code (codegen.py:1894): C statements making a
+// value independently owned, for a closure env field — the same
+// per-type steps the struct/tuple own paths use, covering every
+// owned type a captured variable can have.
+fn cg_closure_own_code(g: HCodegen, var_code: str, t: str) -> str {
+    if t == "str" {
+        return var_code + " = forge_copy_str(" + var_code + ");";
+    }
+    if is_union_type(t) {
+        return cg_union_copy_stmt(var_code, t);
+    }
+    if cg_is_opaque_type(t) {
+        return var_code + " = forge_copy_" + cg_opaque_c_name(t) + "(" + var_code + ");";
+    }
+    if cg_is_array_type(g, t) {
+        return "forge_arr_inc(" + var_code + ".ref);";
+    }
+    if cg_is_struct_type(g, t) {
+        return cg_struct_own_code(g, var_code, t);
+    }
+    if infer_is_tuple_type(t) {
+        return cg_tuple_own_code(g, var_code, t);
+    }
+    if is_fn_type(t) {
+        return "forge_closure_inc(" + var_code + ".env);";
+    }
+    return "";
+}
+
+// closure_free_code (codegen.py:1919): C statements freeing a
+// value, for a closure env field — mirrors closure_own_code.
+fn cg_closure_free_code(g0: HCodegen, var_code: str, t: str) -> CGExpr {
+    let mut g: HCodegen = g0;
+    if t == "str" {
+        return CGExpr { g: g, code: "forge_free_str(" + var_code + ");" };
+    }
+    if is_union_type(t) {
+        return CGExpr { g: g, code: cg_union_free_code(var_code, t) };
+    }
+    if cg_is_opaque_type(t) {
+        return CGExpr { g: g, code: "forge_free_" + cg_opaque_c_name(t) + "(" + var_code + ");" };
+    }
+    if cg_is_array_type(g, t) {
+        return cg_array_free_code(g, var_code, t);
+    }
+    if cg_is_struct_type(g, t) {
+        return cg_struct_free_code(g, var_code, t, "");
+    }
+    if infer_is_tuple_type(t) {
+        return cg_tuple_free_code(g, var_code, t);
+    }
+    if is_fn_type(t) {
+        return CGExpr { g: g, code: "forge_closure_release(" + var_code + ".env);" };
+    }
+    return CGExpr { g: g, code: "" };
 }
 
 // ---- 4f: check elimination (codegen.py:1163-1171, 2440-2659) ----
@@ -2465,6 +2873,10 @@ fn cg_struct_own_code(g: HCodegen, var_code: str, t: str) -> str {
                 push(pieces, "forge_arr_inc(" + code + ".ref);");
             } else if cg_is_struct_type(g, ftype) {
                 push(pieces, cg_struct_own_code(g, code, ftype));
+            } else if is_fn_type(ftype) {
+                // A fn-typed field gains an env reference for this
+                // owner (Top-500 #101).
+                push(pieces, "forge_closure_inc(" + code + ".env);");
             }
         }
         i = i + 1;
@@ -2495,6 +2907,8 @@ fn cg_tuple_own_code(g: HCodegen, var_code: str, t: str) -> str {
             push(pieces, cg_struct_own_code(g, code, et));
         } else if infer_is_tuple_type(et) {
             push(pieces, cg_tuple_own_code(g, code, et));
+        } else if is_fn_type(et) {
+            push(pieces, "forge_closure_inc(" + code + ".env);");
         }
         i = i + 1;
     }
@@ -2542,6 +2956,10 @@ fn cg_struct_free_code(g0: HCodegen, var_code: str, t: str, path: str) -> CGExpr
                     let fc: CGExpr = cg_struct_free_code(g, code, ftype, subpath);
                     g = fc.g;
                     push(pieces, fc.code);
+                } else if is_fn_type(ftype) {
+                    // A fn-typed field drops its env reference
+                    // (Top-500 #101).
+                    push(pieces, "forge_closure_release(" + code + ".env);");
                 }
             }
         }
@@ -2580,6 +2998,8 @@ fn cg_tuple_free_code(g0: HCodegen, var_code: str, t: str) -> CGExpr {
             let fc: CGExpr = cg_tuple_free_code(g, code, et);
             g = fc.g;
             push(pieces, fc.code);
+        } else if is_fn_type(et) {
+            push(pieces, "forge_closure_release(" + code + ".env);");
         }
         i = i + 1;
     }
@@ -3015,6 +3435,12 @@ fn cg_convert_owned(g0: HCodegen, code0: str, child_t: str, et: str, child: Node
         let n: int = g.assign_counter;
         let own: str = cg_tuple_own_code(g, "__forge_arg" + itoa(n), et);
         code = "({" + cg_c_type(g, et) + " __forge_arg" + itoa(n) + " = " + code + "; " + own + " __forge_arg" + itoa(n) + ";})";
+    } else if is_fn_type(et) && !cg_is_fresh_fn(g, child) {
+        // Shared closure argument / element / field: the receiver
+        // gains an env reference (Top-500 #101).
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        code = "({" + cg_c_type(g, et) + " __forge_arg" + itoa(n) + " = " + code + "; forge_closure_inc(__forge_arg" + itoa(n) + ".env); __forge_arg" + itoa(n) + ";})";
     }
     return CGExpr { g: g, code: code };
 }
@@ -3484,6 +3910,111 @@ fn cg_collect_walk(g0: HCodegen, node: Node) -> HCodegen {
     return g;
 }
 
+// Recursive body walk for the lambda pass: every Lambda node,
+// in find_lambdas order (Top-500 #101). A lambda is recorded
+// with its infer key (template key inside an instantiation),
+// its enclosing function name, its enclosing fn index, and its
+// node; its (substituted) fn type is collected for the typedef.
+fn cg_collect_lambdas_walk(g0: HCodegen, node: Node) -> HCodegen {
+    let mut g: HCodegen = g0;
+    // BinOp spine: same iterative flattening as cg_collect_walk
+    // (a long chain recursed N deep overflows the C stack).
+    if node.kind == 40 {
+        let mut spine: [Node] = [];
+        let mut cur: Node = node;
+        while cur.kind == 40 {
+            push(spine, cur);
+            cur = cur.kids[0];
+        }
+        g = cg_collect_lambdas_walk(g, cur);
+        let mut i: int = len(spine) - 1;
+        while i >= 0 {
+            g = cg_collect_lambdas_walk(g, spine[i].kids[1]);
+            i = i - 1;
+        }
+        return g;
+    }
+    if node.kind == 47 {
+        let mut key: int = infer_key_int(g.current_fn_idx, node.line, node.col);
+        if len(g.subst_names) > 0 {
+            key = infer_key_int(-1, node.line, node.col);
+        }
+        push(g.lam_keys, key);
+        push(g.lam_fn_names, g.lam_fn);
+        push(g.lam_fn_idx, g.current_fn_idx);
+        push(g.lam_nodes, node);
+        let ft: str = cg_expr_type(g, node);
+        g = cg_collect_type(g, ft);
+    }
+    let mut i: int = 0;
+    while i < len(node.kids) {
+        g = cg_collect_lambdas_walk(g, node.kids[i]);
+        i = i + 1;
+    }
+    return g;
+}
+
+// Lambda collection (Top-500 #101): the mirror of Python's
+// find_lambdas — concrete top-level functions in program order,
+// then impl methods under their mangled names, then generic
+// instantiations in discovery order (each instantiation gets its
+// own ids for the template's lambdas, because their trampolines
+// differ by substituted types). Generic templates themselves are
+// skipped (their lambdas are unchecked and never codegen'd).
+fn cg_collect_lambdas(g0: HCodegen, prog: Node) -> HCodegen {
+    let mut g: HCodegen = g0;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 && !n.bval {
+            let sp: [str] = split_tparams(n.name);
+            if sp[1] == "" {
+                g.current_fn = n.name;
+                g.current_fn_idx = cg_fn_index(g, n.name);
+                g.lam_fn = n.name;
+                g.subst_names = cg_trunc_str(g.subst_names, 0);
+                g.subst_types = cg_trunc_str(g.subst_types, 0);
+                g = cg_collect_lambdas_walk(g, n.kids[len(n.kids) - 1]);
+            }
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 6 {
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                g.current_fn = n.name + "__" + m.name;
+                g.current_fn_idx = cg_fn_index(g, n.name + "__" + m.name);
+                g.lam_fn = n.name + "__" + m.name;
+                g.subst_names = cg_trunc_str(g.subst_names, 0);
+                g.subst_types = cg_trunc_str(g.subst_types, 0);
+                g = cg_collect_lambdas_walk(g, m.kids[len(m.kids) - 1]);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    let mut xi: int = 0;
+    while xi < len(g.inst_mangled) {
+        let tmpl: Node = cg_find_fn_node(prog, g.inst_tmpl[xi]);
+        if tmpl.kind == 2 {
+            g.current_fn = g.inst_mangled[xi];
+            g.current_fn_idx = -2;
+            g.lam_fn = g.inst_mangled[xi];
+            g.subst_names = split(g.inst_bnames[xi], "~");
+            g.subst_types = split(g.inst_btypes[xi], "~");
+            g = cg_collect_lambdas_walk(g, tmpl.kids[len(tmpl.kids) - 1]);
+        }
+        xi = xi + 1;
+    }
+    g.subst_names = cg_trunc_str(g.subst_names, 0);
+    g.subst_types = cg_trunc_str(g.subst_types, 0);
+    return g;
+}
+
 // Collect pass (runs after cg_build_tables, before cg_generate):
 // every composite type the program uses, from the infer table,
 // signatures, struct/enum/trait declarations, and a body walk.
@@ -3614,6 +4145,9 @@ fn cg_collect(g0: HCodegen, prog: Node) -> HCodegen {
         }
         xi = xi + 1;
     }
+    // Lambda collection (Top-500 #101): ids, enclosing functions
+    // and fn types for the closure support block in generate().
+    g = cg_collect_lambdas(g, prog);
     return g;
 }
 
@@ -3644,10 +4178,16 @@ fn cg_array_free_code(g0: HCodegen, var_code: str, typ: str) -> CGExpr {
         return CGExpr { g: g, code: "forge_" + cg_struct_type_name(g, inner) + "_array_free(" + var_code + ");" };
     }
     if is_fn_type(inner) {
-        // Array of function values: plain pointers, no
-        // per-element free — drop the refcount and the buffer
-        // only (Top-500 #103).
-        let code: str = "if (" + var_code + ".ref && --(*" + var_code + ".ref) == 0) { if (" + var_code + ".data) memset(" + var_code + ".data, 0, (size_t)" + var_code + ".cap * sizeof(*" + var_code + ".data)); free(" + var_code + ".data); if (" + var_code + ".ref) memset(" + var_code + ".ref, 0, sizeof(long long)); free(" + var_code + ".ref); forge_arr_frees++; }";
+        // Array of closure values: free each element's env (a
+        // NULL env is a no-op in forge_closure_release), then drop
+        // the refcount and the buffer (Top-500 #101). In #103 v1
+        // there was no per-element free at all — plain pointers
+        // needed none, and the buffer leaked because
+        // is_array_type returned False for [fn].
+        let n: int = g.assign_counter;
+        g.assign_counter = g.assign_counter + 1;
+        let tmp: str = "__forge_fi" + itoa(n);
+        let code: str = "if (" + var_code + ".ref && --(*" + var_code + ".ref) == 0) { for (long long " + tmp + " = 0; " + tmp + " < " + var_code + ".len; " + tmp + "++) { forge_closure_release(" + var_code + ".data[" + tmp + "].env); } if (" + var_code + ".data) memset(" + var_code + ".data, 0, (size_t)" + var_code + ".cap * sizeof(*" + var_code + ".data)); free(" + var_code + ".data); if (" + var_code + ".ref) memset(" + var_code + ".ref, 0, sizeof(long long)); free(" + var_code + ".ref); forge_arr_frees++; }";
         return CGExpr { g: g, code: code };
     }
     // Nested array: refcount the outer, free each element array,
@@ -3712,6 +4252,10 @@ fn cg_emit_free_one(g0: HCodegen, name: str, typ: str) -> HCodegen {
         let fc: CGExpr = cg_tuple_free_code(g, name, typ);
         g = fc.g;
         g = cg_emit(g, fc.code);
+    } else if is_fn_type(typ) {
+        // A closure value drops its env reference (Top-500 #101);
+        // a NULL env (bare function value) is a no-op.
+        g = cg_emit(g, "forge_closure_release(" + name + ".env);");
     }
     g.indent = g.indent - 1;
     g = cg_emit(g, "}");
@@ -4188,7 +4732,64 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
                 return CGExpr { g: g, code: "(" + cg_c_type(g, et) + "){ .tag = " + v[2] + " }" };
             }
         }
+        if cg_is_bare_fn(g, e.name) {
+            // A bare function name used as a value is the closure
+            // literal {wrapper, NULL} (Top-500 #101): the wrapper
+            // is the trampoline-compatible entry point, and a
+            // NULL env needs no refcount.
+            let ft: str = cg_expr_type(g, e);
+            return CGExpr { g: g, code: "(" + cg_fn_closure_name(ft) + "){ __forge_wrap_" + e.name + ", NULL }" };
+        }
+        let cap: str = cg_capture_code(g, e.name);
+        if cap != "" {
+            return CGExpr { g: g, code: cap };
+        }
         return CGExpr { g: g, code: e.name };
+    }
+    if e.kind == 47 {
+        // Lambda literal: builds a closure value (Top-500 #101).
+        // One fresh env per evaluation, holding the captures by
+        // value (each gaining its own hold), plus the trampoline
+        // pointer. With no captures the value is the plain literal
+        // {trampoline, NULL} — no heap allocation at all. The
+        // capture reads go through the enclosing capture map, so
+        // a capture that is itself an outer lambda's capture reads
+        // through the outer env, and a name shadowed at the
+        // creation point reads the local.
+        let lid: int = cg_lambda_id(g, e);
+        if lid < 0 {
+            fail("lambda was not collected (internal error)");
+            return CGExpr { g: g, code: "" };
+        }
+        let ft: str = cg_expr_type(g, e);
+        let caps: str = cg_lambda_caps(g, e);
+        if caps == "" {
+            return CGExpr { g: g, code: "(" + cg_fn_closure_name(ft) + "){ __forge_lambda_" + itoa(lid) + ", NULL }" };
+        }
+        let env_t: str = "ForgeEnv_" + itoa(lid);
+        let mut stmts: str = env_t + " *__forge_env = (" + env_t + " *)malloc(sizeof(" + env_t + ")); if (!__forge_env) forge_fail(\"out of memory\"); __forge_env->ref = 1; __forge_env->drop = __forge_env_free_" + itoa(lid) + ";";
+        let parts: [str] = split(caps, ";");
+        let mut i: int = 0;
+        while i < len(parts) {
+            let kv: [str] = split(parts[i], ":");
+            if len(kv) >= 2 {
+                let cname: str = kv[0];
+                let ct: str = cg_subst(g, kv[1]);
+                let read: str = cg_capture_code(g, cname);
+                let mut rcode: str = cname;
+                if read != "" {
+                    rcode = read;
+                }
+                stmts = stmts + " __forge_env->" + cname + " = " + rcode + ";";
+                let own: str = cg_closure_own_code(g, "__forge_env->" + cname, ct);
+                if own != "" {
+                    stmts = stmts + " " + own;
+                }
+            }
+            i = i + 1;
+        }
+        stmts = stmts + " (" + cg_fn_closure_name(ft) + "){ __forge_lambda_" + itoa(lid) + ", __forge_env };";
+        return CGExpr { g: g, code: "({ " + stmts + " })" };
     }
     if e.kind == 41 {
         // UnaryOp: name = op, kids = [operand].
@@ -4465,6 +5066,10 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
                 }
             } else if cg_is_array_type(g, et) && !cg_is_fresh_array(g, child) {
                 body = body + "forge_arr_inc(" + ta + ".data[" + itoa(i) + "].ref); ";
+            } else if is_fn_type(et) && !cg_is_fresh_fn(g, child) {
+                // Shared closure element: gain an env reference
+                // for the array's copy (Top-500 #101).
+                body = body + "forge_closure_inc(" + ta + ".data[" + itoa(i) + "].env); ";
             }
             i = i + 1;
         }
@@ -4603,13 +5208,17 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
     }
     if e.kind == 46 {
         // IndirectCall: kids[0] is the callee fn value, the rest
-        // are the args (Top-500 #103). Same argument-ownership
+        // are the args (Top-500 #103, #101). Same argument-ownership
         // loop as a direct call, with the callee's fn type as
         // the param types. Like a direct call it may mutate
-        // shared state, so it ends any duplicate-check run.
+        // shared state, so it ends any duplicate-check run. The
+        // value is a closure struct {fn, env}; the call goes
+        // through .fn with .env first. The callee is bound to a
+        // temp unless it is a plain variable or a field/index
+        // rooted at one — any other form would be evaluated twice
+        // by the two field reads. Args generate before the callee,
+        // exactly like Python (counter order).
         g = cg_cache_clear(g);
-        let cout: CGExpr = cg_gen_expr(g, e.kids[0]);
-        g = cout.g;
         let ct: str = cg_expr_type(g, e.kids[0]);
         let params: [str] = fn_type_params(ct);
         let mut arg_codes: [str] = [];
@@ -4627,7 +5236,22 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             push(arg_codes, code);
             i = i + 1;
         }
-        return CGExpr { g: g, code: cout.code + "(" + join(arg_codes, ", ") + ")" };
+        let args: str = join(arg_codes, ", ");
+        let mut suffix: str = "";
+        if args != "" {
+            suffix = ", " + args;
+        }
+        if cg_is_simple_lvalue(g, e.kids[0]) {
+            let cout: CGExpr = cg_gen_expr(g, e.kids[0]);
+            g = cout.g;
+            return CGExpr { g: g, code: cout.code + ".fn(" + cout.code + ".env" + suffix + ")" };
+        }
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let cct: str = cg_c_type(g, ct);
+        let cout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = cout.g;
+        return CGExpr { g: g, code: "({ " + cct + " __forge_fn" + itoa(n) + " = " + cout.code + "; __forge_fn" + itoa(n) + ".fn(__forge_fn" + itoa(n) + ".env" + suffix + "); })" };
     }
     if e.kind == 35 {
         return cg_gen_call(g, e);
@@ -5028,6 +5652,43 @@ fn cg_binop_combine(g0: HCodegen, e: Node, left: str, right: str) -> CGExpr {
 // walked iteratively and folded innermost-first; recursion depth
 // is bounded by operand depth, not chain length. Spine length 1
 // takes the exact old path below.
+// Closure equality (Top-500 #101): same code pointer and same
+// env pointer. Each side is bound to a temp unless both are
+// simple lvalues, so a call result is not evaluated twice by the
+// two field reads. Note != is the OR of the field inequalities,
+// not the AND. Temps are allocated BEFORE the sides generate,
+// exactly like Python (counter order).
+fn cg_fn_eq(g0: HCodegen, e: Node) -> CGExpr {
+    let mut g: HCodegen = g0;
+    if cg_is_simple_lvalue(g, e.kids[0]) && cg_is_simple_lvalue(g, e.kids[1]) {
+        let lout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = lout.g;
+        let rout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = rout.g;
+        if e.name == "==" {
+            return CGExpr { g: g, code: "(" + lout.code + ".fn == " + rout.code + ".fn && " + lout.code + ".env == " + rout.code + ".env)" };
+        }
+        return CGExpr { g: g, code: "(" + lout.code + ".fn != " + rout.code + ".fn || " + lout.code + ".env != " + rout.code + ".env)" };
+    }
+    g.assign_counter = g.assign_counter + 1;
+    let n: int = g.assign_counter;
+    g.assign_counter = g.assign_counter + 1;
+    let m: int = g.assign_counter;
+    let lt: str = cg_c_type(g, cg_expr_type(g, e.kids[0]));
+    let rt: str = cg_c_type(g, cg_expr_type(g, e.kids[1]));
+    let lout: CGExpr = cg_gen_expr(g, e.kids[0]);
+    g = lout.g;
+    let rout: CGExpr = cg_gen_expr(g, e.kids[1]);
+    g = rout.g;
+    let mut cmp: str = "";
+    if e.name == "==" {
+        cmp = "(__forge_fn" + itoa(n) + ".fn == __forge_fn" + itoa(m) + ".fn && __forge_fn" + itoa(n) + ".env == __forge_fn" + itoa(m) + ".env)";
+    } else {
+        cmp = "(__forge_fn" + itoa(n) + ".fn != __forge_fn" + itoa(m) + ".fn || __forge_fn" + itoa(n) + ".env != __forge_fn" + itoa(m) + ".env)";
+    }
+    return CGExpr { g: g, code: "({ " + lt + " __forge_fn" + itoa(n) + " = " + lout.code + "; " + rt + " __forge_fn" + itoa(m) + " = " + rout.code + "; " + cmp + "; })" };
+}
+
 fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
     let mut g: HCodegen = g0;
     let mut spine: [Node] = [];
@@ -5047,6 +5708,9 @@ fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
                 return spec;
             }
         }
+        if (e.name == "==" || e.name == "!=") && is_fn_type(cg_expr_type(g, e.kids[0])) {
+            return cg_fn_eq(g, e);
+        }
         let lout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = lout.g;
         let rout: CGExpr = cg_gen_expr(g, e.kids[1]);
@@ -5065,6 +5729,11 @@ fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
         if spec.code != "" {
             acc = spec.code;
         }
+    }
+    if acc == "" && (inner.name == "==" || inner.name == "!=") && is_fn_type(cg_expr_type(g, inner.kids[0])) {
+        let feq: CGExpr = cg_fn_eq(g, inner);
+        g = feq.g;
+        acc = feq.code;
     }
     if acc == "" {
         let lout: CGExpr = cg_gen_expr(g, inner.kids[0]);
@@ -5120,6 +5789,10 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     }
     if e.name == "clock_micros" {
         return CGExpr { g: g, code: "forge_clock_micros()" };
+    }
+    if e.name == "panicked_tasks" {
+        // Top-500 #44: total tasks that have panicked so far.
+        return CGExpr { g: g, code: "__atomic_load_n(&forge_panicked_total, __ATOMIC_SEQ_CST)" };
     }
     if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "sin" || e.name == "cos" || e.name == "tan" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -5480,14 +6153,22 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     let mut call_name: str = e.name;
     let found: [str] = cg_fn_lookup(g, e.name);
     let mut params: [str] = infer_parse_params(found[2]);
+    // An indirect call through a fn-typed variable goes through
+    // the closure struct: .fn with .env first (Top-500 #101).
+    let mut indirect: bool = false;
     if found[0] == "0" {
         // Indirect call through a fn-typed variable (Top-500
         // #103, FN-C2): the variable's fn type gives the param
         // types for per-arg ownership conversion. A same-named
         // function still wins (the lookup above), exactly as
-        // the checker resolves it.
-        let vt: str = cg_local_type(g, e.name);
+        // the checker resolves it. A capture has no local
+        // binding, so its type comes from the capmap (#101).
+        let mut vt: str = cg_local_type(g, e.name);
+        if vt == "" {
+            vt = cg_capture_type(g, e.name);
+        }
         if is_fn_type(vt) {
+            indirect = true;
             let fparams: [str] = fn_type_params(vt);
             let mut fp: [str] = [];
             let mut fi2: int = 0;
@@ -5542,6 +6223,23 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         push(arg_codes, code);
         i = i + 1;
     }
+    if indirect {
+        // The callee is always a bare variable here (computed
+        // callees are IndirectCall), so the two field reads cannot
+        // re-evaluate anything — but the variable may be a capture
+        // of the enclosing lambda, in which case it reads through
+        // the env (#101).
+        let mut callee: str = cg_capture_code(g, e.name);
+        if callee == "" {
+            callee = e.name;
+        }
+        let args: str = join(arg_codes, ", ");
+        let mut suffix: str = "";
+        if args != "" {
+            suffix = ", " + args;
+        }
+        return CGExpr { g: g, code: callee + ".fn(" + callee + ".env" + suffix + ")" };
+    }
     return CGExpr { g: g, code: call_name + "(" + join(arg_codes, ", ") + ")" };
 }
 
@@ -5568,7 +6266,18 @@ fn cg_gen_print(g0: HCodegen, call: Node) -> HCodegen {
         } else if t == "bool" {
             g = cg_emit(g, "printf(\"%s\", " + code + " ? \"true\" : \"false\");");
         } else if t == "str" {
-            g = cg_emit(g, "printf(\"%s\", " + code + ");");
+            if cg_is_fresh_str(g, arg) {
+                // A fresh str temp (a call/concat result) is
+                // owned once by this statement: bind it, print
+                // it, free it — printing it inline would leak
+                // it (pre-existing; found by the closures
+                // program-side ASan check, Top-500 #101).
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                g = cg_emit(g, "{ char *__forge_print" + itoa(n) + " = " + code + "; printf(\"%s\", __forge_print" + itoa(n) + "); forge_free_str(__forge_print" + itoa(n) + "); }");
+            } else {
+                g = cg_emit(g, "printf(\"%s\", " + code + ");");
+            }
         } else {
             fail("cannot print a value of type " + t);
         }
@@ -5598,11 +6307,15 @@ fn cg_let_type(g: HCodegen, st: Node) -> str {
 
 // gen_arm_block (codegen.py:2684): a match arm's block gets its own
 // defer frame (run at arm exit); arms have no owned frame of their own.
-fn cg_gen_arm_block(g0: HCodegen, body: Node, ret_type: str) -> HCodegen {
+fn cg_gen_arm_block(g0: HCodegen, body: Node, ret_type: str, seed: str) -> HCodegen {
     let mut g: HCodegen = g0;
     g = cg_push_defer_frame(g);
     g.branch_depth = g.branch_depth + 1;
+    // A match binding shadows a capture of the same name inside
+    // the arm (Top-500 #101).
+    g = cg_shadow_push(g, seed);
     g = cg_gen_block(g, body, ret_type);
+    g = cg_shadow_pop(g);
     g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
     g = cg_pop_defer_frame(g);
     g.branch_depth = g.branch_depth - 1;
@@ -5636,7 +6349,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                     g = cg_emit(g, "} else {");
                 }
                 g.indent = g.indent + 1;
-                g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+                g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
                 g.indent = g.indent - 1;
                 g = cg_emit(g, "}");
             } else {
@@ -5663,7 +6376,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                     g = cg_emit(g, "int " + cg_moved_flag(arm.sval) + " = 0;");
                 }
                 g = cg_facts_pop(g, arm.sval);
-                g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+                g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
                 g.indent = g.indent - 1;
                 if a == len(st.kids) - 1 {
                     g = cg_emit(g, "}");
@@ -5704,7 +6417,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                     g = cg_emit(g, "} else {");
                 }
                 g.indent = g.indent + 1;
-                g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+                g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
                 g.indent = g.indent - 1;
                 g = cg_emit(g, "}");
             } else {
@@ -5714,7 +6427,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 }
                 g = cg_emit(g, kw + " (" + target + " == " + arm.name + ") {");
                 g.indent = g.indent + 1;
-                g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+                g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
                 g.indent = g.indent - 1;
                 if a == len(st.kids) - 1 {
                     g = cg_emit(g, "}");
@@ -5747,7 +6460,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "} else {");
             }
             g.indent = g.indent + 1;
-            g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+            g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
             g.indent = g.indent - 1;
             g = cg_emit(g, "}");
         } else {
@@ -5779,7 +6492,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 }
                 g = cg_facts_pop(g, arm.sval);
             }
-            g = cg_gen_arm_block(g, arm.kids[0], ret_type);
+            g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
             g.indent = g.indent - 1;
             if a == len(st.kids) - 1 {
                 g = cg_emit(g, "}");
@@ -5981,6 +6694,22 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit(g, st.name + " = __forge_assign" + itoa(n) + ";");
             g = cg_owned_add(g, st.name, et);
             g = cg_emit(g, cg_moved_flag(st.name) + " = 0;");
+        } else if is_fn_type(et) {
+            // Same temp-first shape as arrays: evaluate into a
+            // temp, gain an env reference unless fresh, free the
+            // old value's env, then take the new one (#101).
+            let n: int = g.assign_counter;
+            g.assign_counter = g.assign_counter + 1;
+            g = cg_emit(g, cg_c_type(g, et) + " __forge_assign" + itoa(n) + " = " + expr + ";");
+            if !cg_is_fresh_fn(g, rhs) {
+                g = cg_emit(g, "forge_closure_inc(__forge_assign" + itoa(n) + ".env);");
+            }
+            if cg_owned_contains(g, st.name) {
+                g = cg_emit_guarded(g, st.name, "forge_closure_release(" + st.name + ".env);");
+            }
+            g = cg_emit(g, st.name + " = __forge_assign" + itoa(n) + ";");
+            g = cg_owned_add(g, st.name, et);
+            g = cg_emit(g, cg_moved_flag(st.name) + " = 0;");
         } else {
             g = cg_emit(g, st.name + " = " + expr + ";");
         }
@@ -6069,6 +6798,20 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
             if !field_moved {
                 g = cg_emit_tuple_free(g, tcode.code, ft);
+            }
+            g = cg_emit(g, tcode.code + " = __forge_fa" + itoa(n) + ";");
+        } else if is_fn_type(ft) {
+            // Same temp-first shape as arrays: gain an env
+            // reference unless fresh, free the old field's env,
+            // then take the new value (Top-500 #101).
+            g.assign_counter = g.assign_counter + 1;
+            let n: int = g.assign_counter;
+            g = cg_emit(g, cg_c_type(g, ft) + " __forge_fa" + itoa(n) + " = " + val + ";");
+            if !cg_is_fresh_fn(g, rhs) {
+                g = cg_emit(g, "forge_closure_inc(__forge_fa" + itoa(n) + ".env);");
+            }
+            if !field_moved {
+                g = cg_emit(g, "forge_closure_release(" + tcode.code + ".env);");
             }
             g = cg_emit(g, tcode.code + " = __forge_fa" + itoa(n) + ";");
         } else {
@@ -6175,17 +6918,24 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit(g, fc.code);
             g = cg_emit(g, base_code + ".data[" + itmp + "] = " + val + ";");
         } else if is_fn_type(et) {
-            // Assign a fn value through an index: plain pointer,
-            // direct store with a bounds check (Top-500 #103).
-            // No per-element free (the old value is a plain
-            // pointer); the index is bound to a temp first (it
-            // is used twice).
+            // Assign a closure value through an index (Top-500
+            // #101): free the old element's env, then store the
+            // new value, gaining an env reference unless it is
+            // fresh. SET_FN has no entry for fn types.
+            if !cg_is_fresh_fn(g, value) {
+                let tmp: str = "__forge_setf" + itoa(g.assign_counter);
+                g.assign_counter = g.assign_counter + 1;
+                g = cg_emit(g, cg_c_type(g, et) + " " + tmp + " = " + val + ";");
+                g = cg_emit(g, "forge_closure_inc(" + tmp + ".env);");
+                val = tmp;
+            }
             let itmp: str = "__forge_si" + itoa(g.assign_counter);
             g.assign_counter = g.assign_counter + 1;
             g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
             if !g.no_bounds_checks && !target.has_nul {
                 g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
             }
+            g = cg_emit(g, "forge_closure_release((" + base_code + ").data[" + itmp + "].env);");
             g = cg_emit(g, "(" + base_code + ").data[" + itmp + "] = " + val + ";");
         } else {
             let mut set_fn: str = "";
@@ -6479,7 +7229,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             push(g.defer_loop_stack, len(g.defer_frame_starts));
             g = cg_push_defer_frame(g);
             g.loop_depth = g.loop_depth + 1;
+            // The loop variable shadows a capture of the same name
+            // inside the body (Top-500 #101).
+            g = cg_shadow_push(g, st.name);
             g = cg_gen_block(g, body, ret_type);
+            g = cg_shadow_pop(g);
             g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, len(g.defer_loop_stack) - 1);
             g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
             g = cg_pop_defer_frame(g);
@@ -6524,7 +7278,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         push(g.defer_loop_stack, len(g.defer_frame_starts));
         g = cg_push_defer_frame(g);
         g.loop_depth = g.loop_depth + 1;
+        // The loop variable shadows a capture of the same name
+        // inside the body (Top-500 #101).
+        g = cg_shadow_push(g, st.name);
         g = cg_gen_block(g, body, ret_type);
+        g = cg_shadow_pop(g);
         g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, len(g.defer_loop_stack) - 1);
         g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
         g = cg_pop_defer_frame(g);
@@ -6589,6 +7347,10 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         if cg_expr_type(g, init) == "never" {
             expr = cg_never_wrap(expr, t, g);
         }
+        // The new binding shadows a capture of the same name from
+        // here on (the RHS above still read the capture, because
+        // the binding did not exist yet) — Top-500 #101.
+        g = cg_shadow_add(g, st.name);
         push(g.local_names, st.name);
         push(g.local_types, t);
         g = cg_facts_update_from_rhs(g, st.name, init, true);
@@ -6655,6 +7417,18 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
             return g;
         }
+        if is_fn_type(t) {
+            // Fresh closures (lambda literal, bare fn name, call
+            // return, move) are taken as-is; a shared closure
+            // gains an env reference for this new owner (#101).
+            g = cg_owned_add(g, st.name, t);
+            g = cg_emit(g, cg_c_type(g, t) + " " + st.name + " = " + expr + ";");
+            g = cg_emit(g, "int " + cg_moved_flag(st.name) + " = 0;");
+            if !cg_is_fresh_fn(g, init) {
+                g = cg_emit(g, "forge_closure_inc(" + st.name + ".env);");
+            }
+            return g;
+        }
         g = cg_emit(g, cg_c_type(g, t) + " " + st.name + " = " + expr + ";");
         return g;
     }
@@ -6712,6 +7486,12 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         }
         if infer_is_tuple_type(ret_type) && !cg_is_fresh_tuple(g, e) {
             g = cg_emit_tuple_own(g, "__forge_ret", ret_type);
+        }
+        if is_fn_type(ret_type) && !cg_is_fresh_fn(g, e) {
+            // Shared closure return: gain an env reference before
+            // freeing owned locals, so the returned closure
+            // survives (Top-500 #101).
+            g = cg_emit(g, "forge_closure_inc(__forge_ret.env);");
         }
         if is_union_type(ret_type) && cg_expr_type(g, e) == ret_type && !cg_is_fresh_union(g, e) {
             let copy: str = cg_union_copy_stmt("__forge_ret", ret_type);
@@ -6800,10 +7580,19 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 return g;
             }
             if is_fn_type(et) {
-                // Push a function value: plain pointers, no
-                // per-element copy/free. Detach on shared (CoW)
-                // like the scalar helpers, then grow and append
-                // (Top-500 #103).
+                // Push a closure value (Top-500 #101): gain an env
+                // reference for the slot unless the value is fresh,
+                // then detach on shared (CoW) like the scalar
+                // helpers — the detach loop incs each copied
+                // slot's env, matching the array free path — then
+                // grow and append.
+                if !cg_is_fresh_fn(g, call.kids[1]) {
+                    g.assign_counter = g.assign_counter + 1;
+                    let tmp: str = "__forge_pushf" + itoa(g.assign_counter - 1);
+                    g = cg_emit(g, cg_c_type(g, et) + " " + tmp + " = " + val + ";");
+                    g = cg_emit(g, "forge_closure_inc(" + tmp + ".env);");
+                    val = tmp;
+                }
                 g.assign_counter = g.assign_counter + 1;
                 let ptr: str = "__forge_pf" + itoa(g.assign_counter - 1);
                 g.assign_counter = g.assign_counter + 1;
@@ -6820,7 +7609,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "    long long " + ocap + " = " + ptr + "->cap ? " + ptr + "->cap : 4;");
                 g = cg_emit(g, "    " + elem_c + " *" + nbuf + " = (" + elem_c + " *)malloc(sizeof(" + elem_c + ") * (size_t)" + ocap + ");");
                 g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\");");
-                g = cg_emit(g, "    for (long long " + li + " = 0; " + li + " < " + ptr + "->len; " + li + "++) { " + nbuf + "[" + li + "] = " + ptr + "->data[" + li + "]; }");
+                g = cg_emit(g, "    for (long long " + li + " = 0; " + li + " < " + ptr + "->len; " + li + "++) { " + nbuf + "[" + li + "] = " + ptr + "->data[" + li + "]; forge_closure_inc(" + nbuf + "[" + li + "].env); }");
                 g = cg_emit(g, "    (*" + ptr + "->ref)--;");
                 g = cg_emit(g, "    " + ptr + "->data = " + nbuf + "; " + ptr + "->cap = " + ocap + "; " + ptr + "->ref = forge_arr_ref_new();");
                 g = cg_emit(g, "}");
@@ -6849,10 +7638,25 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             return g;
         }
         if call.kind == 35 && call.name == "fail" {
+            // Top-500 #44: fail() stays fatal on the main thread,
+            // but on a spawned task's thread it ends just that
+            // task -- the panic is printed and counted, the thread
+            // exits, and the spawning scope joins normally. The
+            // program observes the count with panicked_tasks().
             let mout: CGExpr = cg_gen_expr(g, call.kids[0]);
             g = mout.g;
+            g = cg_emit(g, "if (forge_in_task) {");
+            g.indent = g.indent + 1;
+            g = cg_emit(g, "fprintf(stderr, \"qasida: task panicked: %s\\n\", " + mout.code + ");");
+            g = cg_emit(g, "__atomic_add_fetch(&forge_panicked_total, 1, __ATOMIC_SEQ_CST);");
+            g = cg_emit(g, "pthread_exit(NULL);");
+            g.indent = g.indent - 1;
+            g = cg_emit(g, "} else {");
+            g.indent = g.indent + 1;
             g = cg_emit(g, "fprintf(stderr, \"qasida: %s\\n\", " + mout.code + ");");
             g = cg_emit(g, "exit(1);");
+            g.indent = g.indent - 1;
+            g = cg_emit(g, "}");
             return g;
         }
         if call.kind == 35 && call.name == "fail_compile" {
@@ -6886,11 +7690,176 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
 
 fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
     let mut g: HCodegen = g0;
+    // Every block gets its own shadow frame (Top-500 #101): a Let
+    // inside it shadows a capture of the same name from its
+    // declaration on. Seeds (for-loop variables, match bindings,
+    // trampoline parameters) are pushed as a frame of their own
+    // by the enclosing construct before calling here.
+    g = cg_shadow_push(g, "");
     let mut i: int = 0;
     while i < len(blk.kids) {
         g = cg_gen_stmt(g, blk.kids[i], ret_type);
         i = i + 1;
     }
+    g = cg_shadow_pop(g);
+    return g;
+}
+
+// Set the per-lambda codegen context (Top-500 #101): the
+// enclosing fn index (for infer-map lookups), lam_fn (for
+// lambda-id lookups), and the instantiation bindings when the
+// lambda belongs to a generic instantiation (its node is the
+// template's; types and captures substitute per instantiation).
+fn cg_lambda_ctx(g0: HCodegen, lid: int) -> HCodegen {
+    let mut g: HCodegen = g0;
+    g.current_fn_idx = g.lam_fn_idx[lid];
+    g.lam_fn = g.lam_fn_names[lid];
+    g.current_fn = g.lam_fn_names[lid];
+    g.subst_names = cg_trunc_str(g.subst_names, 0);
+    g.subst_types = cg_trunc_str(g.subst_types, 0);
+    let mangled: str = g.lam_fn_names[lid];
+    let mut i: int = 0;
+    while i < len(g.inst_mangled) {
+        if g.inst_mangled[i] == mangled {
+            g.subst_names = split(g.inst_bnames[i], "~");
+            g.subst_types = split(g.inst_btypes[i], "~");
+            return g;
+        }
+        i = i + 1;
+    }
+    return g;
+}
+
+// gen_lambda_trampoline (codegen.py:2689): one lambda's
+// trampoline — the C function the closure struct points at.
+// Mirrors gen_func: fresh codegen state, the env cast first,
+// captures read through __forge_e->name, parameters owned like
+// function parameters, defers + owned frees at the end for void
+// lambdas. The trampoline's own parameters seed the body's
+// shadow frame, so a parameter shadows a capture of the same name.
+fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
+    let mut g: HCodegen = g0;
+    let lam: Node = g.lam_nodes[lid];
+    g = cg_lambda_ctx(g, lid);
+    let tname: str = "__forge_lambda_" + itoa(lid);
+    g.current_fn = tname;
+    let ft: str = cg_expr_type(g, lam);
+    let params: [str] = fn_type_params(ft);
+    let ret: str = fn_type_ret(ft);
+    g.current_ret = ret;
+    g.moved_fields = cg_trunc_str(g.moved_fields, 0);
+    g.drop_receiver = "";
+    g.defer_conds = cg_trunc_bool(g.defer_conds, 0);
+    g.move_cond = -1;
+    g.owned_names = cg_trunc_str(g.owned_names, 0);
+    g.owned_types = cg_trunc_str(g.owned_types, 0);
+    g.owned_marks = cg_trunc_int(g.owned_marks, 0);
+    g.owned_frame_starts = cg_trunc_int(g.owned_frame_starts, 0);
+    push(g.owned_frame_starts, 0);
+    g.defer_calls = cg_trunc_node(g.defer_calls, 0);
+    g.defer_frame_starts = cg_trunc_int(g.defer_frame_starts, 0);
+    push(g.defer_frame_starts, 0);
+    g.loop_frames = cg_trunc_int(g.loop_frames, 0);
+    g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, 0);
+    g.scope_vars = cg_trunc_str(g.scope_vars, 0);
+    g.scope_depths = cg_trunc_int(g.scope_depths, 0);
+    g.scope_counter = 0;
+    g.local_names = cg_trunc_str(g.local_names, 0);
+    g.local_types = cg_trunc_str(g.local_types, 0);
+    g.fact_names = cg_trunc_str(g.fact_names, 0);
+    g.fact_los = cg_trunc_int(g.fact_los, 0);
+    g.fact_his = cg_trunc_int(g.fact_his, 0);
+    g.check_keys = cg_trunc_str(g.check_keys, 0);
+    g.let_names = cg_trunc_str(g.let_names, 0);
+    g.let_starts = cg_trunc_int(g.let_starts, 0);
+    g.capmap_names = cg_trunc_str(g.capmap_names, 0);
+    g.capmap_types = cg_trunc_str(g.capmap_types, 0);
+    g.capmap_marks = cg_trunc_int(g.capmap_marks, 0);
+    g.shadow_names = cg_trunc_str(g.shadow_names, 0);
+    g.shadow_marks = cg_trunc_int(g.shadow_marks, 0);
+    let caps: str = cg_lambda_caps(g, lam);
+    g = cg_capmap_push(g, caps);
+    // Owned parameters own their copy after copy-on-call (fn
+    // params included, Top-500 #101). Param names/types come
+    // from the lambda node (kids are Param nodes, then the body
+    // Block); types substitute per instantiation.
+    let nparams: int = len(lam.kids) - 1;
+    let mut pi: int = 0;
+    while pi < nparams {
+        let pn: str = lam.kids[pi].name;
+        let pt: str = cg_subst(g, lam.kids[pi].sval);
+        push(g.local_names, pn);
+        push(g.local_types, pt);
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) {
+            g = cg_owned_add(g, pn, pt);
+        }
+        pi = pi + 1;
+    }
+    let mut sig: str = "void *__forge_env";
+    pi = 0;
+    while pi < nparams {
+        let pn: str = lam.kids[pi].name;
+        let pt: str = cg_subst(g, lam.kids[pi].sval);
+        sig = sig + ", " + cg_c_type(g, pt) + " " + pn;
+        pi = pi + 1;
+    }
+    g = cg_emit(g, "static " + cg_c_type(g, ret) + " " + tname + "(" + sig + ") {");
+    g.indent = g.indent + 1;
+    pi = 0;
+    while pi < nparams {
+        let pn: str = lam.kids[pi].name;
+        let pt: str = cg_subst(g, lam.kids[pi].sval);
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) {
+            g = cg_emit(g, "int " + cg_moved_flag(pn) + " = 0;");
+        }
+        pi = pi + 1;
+    }
+    let env_t: str = "ForgeEnv_" + itoa(lid);
+    if caps != "" {
+        g = cg_emit(g, env_t + " *__forge_e = (" + env_t + " *)__forge_env;");
+    } else {
+        g = cg_emit(g, "(void)__forge_env;");
+    }
+    let mut seed: str = "";
+    pi = 0;
+    while pi < nparams {
+        if seed == "" {
+            seed = lam.kids[pi].name;
+        } else {
+            seed = seed + "~" + lam.kids[pi].name;
+        }
+        pi = pi + 1;
+    }
+    g = cg_shadow_push(g, seed);
+    g = cg_gen_block(g, lam.kids[len(lam.kids) - 1], ret);
+    g = cg_shadow_pop(g);
+    if ret == "void" {
+        g = cg_emit_defer_frame(g, 0, ret);
+        g = cg_emit_free_owned(g);
+    }
+    g.indent = g.indent - 1;
+    g = cg_emit(g, "}");
+    g = cg_emit_raw(g, "");
+    g.current_fn = "";
+    g.current_fn_idx = -2;
+    g.drop_receiver = "";
+    g.owned_names = cg_trunc_str(g.owned_names, 0);
+    g.owned_types = cg_trunc_str(g.owned_types, 0);
+    g.owned_marks = cg_trunc_int(g.owned_marks, 0);
+    g.owned_frame_starts = cg_trunc_int(g.owned_frame_starts, 0);
+    push(g.owned_frame_starts, 0);
+    g.loop_frames = cg_trunc_int(g.loop_frames, 0);
+    g.defer_calls = cg_trunc_node(g.defer_calls, 0);
+    g.defer_frame_starts = cg_trunc_int(g.defer_frame_starts, 0);
+    push(g.defer_frame_starts, 0);
+    g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, 0);
+    g.capmap_names = cg_trunc_str(g.capmap_names, 0);
+    g.capmap_types = cg_trunc_str(g.capmap_types, 0);
+    g.capmap_marks = cg_trunc_int(g.capmap_marks, 0);
+    g.shadow_names = cg_trunc_str(g.shadow_names, 0);
+    g.shadow_marks = cg_trunc_int(g.shadow_marks, 0);
+    g.subst_names = cg_trunc_str(g.subst_names, 0);
+    g.subst_types = cg_trunc_str(g.subst_types, 0);
     return g;
 }
 
@@ -6909,7 +7878,16 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     let mut g: HCodegen = g0;
     g.current_fn = fname;
     g.current_fn_idx = cg_fn_index(g, fname);
+    g.lam_fn = fname;
     g.current_ret = cg_subst(g, fn_node.sval);
+    // Closure state (Top-500 #101): a fresh function starts with
+    // no capture map and no shadow frames (the trampoline resets
+    // them the same way on entry).
+    g.capmap_names = cg_trunc_str(g.capmap_names, 0);
+    g.capmap_types = cg_trunc_str(g.capmap_types, 0);
+    g.capmap_marks = cg_trunc_int(g.capmap_marks, 0);
+    g.shadow_names = cg_trunc_str(g.shadow_names, 0);
+    g.shadow_marks = cg_trunc_int(g.shadow_marks, 0);
     g.moved_fields = cg_trunc_str(g.moved_fields, 0);
     if ends_with(fname, "__drop") {
         let params0: [str] = cg_param_entries(fn_node);
@@ -6949,7 +7927,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
         push(g.local_names, kv[0]);
         push(g.local_types, cg_subst(g, kv[1]));
         let pt: str = cg_subst(g, kv[1]);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) {
             g = cg_owned_add(g, kv[0], pt);
         }
         i = i + 1;
@@ -6969,7 +7947,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     while i < len(params) {
         let kv: [str] = split(params[i], ":");
         let pt: str = cg_subst(g, kv[1]);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) {
             g = cg_emit(g, "int " + cg_moved_flag(kv[0]) + " = 0;");
         }
         i = i + 1;
@@ -7003,6 +7981,126 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     return g;
 }
 
+// emit_lambda_support (codegen.py:2754): the closure support
+// block — one env struct + env-free function per lambda, one
+// wrapper per bare function used as a value, and one trampoline
+// per lambda. Order matters: wrappers come before trampolines
+// (a trampoline may reference a wrapper for a bare fn name in
+// the lambda body), and the whole block comes after the
+// prototypes (trampolines and wrappers call user functions) and
+// before the function bodies (which reference the trampolines
+// and wrappers).
+fn cg_emit_lambda_support(g0: HCodegen) -> HCodegen {
+    let mut g: HCodegen = g0;
+    if len(g.lam_nodes) == 0 && len(g.fn_uses) == 0 {
+        return g;
+    }
+    // Env structs + env-free functions.
+    let mut lid: int = 0;
+    while lid < len(g.lam_nodes) {
+        let lam: Node = g.lam_nodes[lid];
+        g = cg_lambda_ctx(g, lid);
+        let env_t: str = "ForgeEnv_" + itoa(lid);
+        let caps: str = cg_lambda_caps(g, lam);
+        let mut members: str = "long long ref; void (*drop)(void *)";
+        if caps != "" {
+            let parts: [str] = split(caps, ";");
+            let mut i: int = 0;
+            while i < len(parts) {
+                let kv: [str] = split(parts[i], ":");
+                if len(kv) >= 2 {
+                    members = members + "; " + cg_c_type(g, cg_subst(g, kv[1])) + " " + kv[0];
+                }
+                i = i + 1;
+            }
+        }
+        g = cg_emit(g, "typedef struct { " + members + "; } " + env_t + ";");
+        let free_name: str = "__forge_env_free_" + itoa(lid);
+        g = cg_emit(g, "static void " + free_name + "(void *p) {");
+        g = cg_emit(g, "    " + env_t + " *e = (" + env_t + " *)p;");
+        if caps != "" {
+            let parts: [str] = split(caps, ";");
+            let mut i: int = 0;
+            while i < len(parts) {
+                let kv: [str] = split(parts[i], ":");
+                if len(kv) >= 2 {
+                    let fc: CGExpr = cg_closure_free_code(g, "e->" + kv[0], cg_subst(g, kv[1]));
+                    g = fc.g;
+                    if fc.code != "" {
+                        g = cg_emit(g, "    " + fc.code);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+        g = cg_emit(g, "    free(e);");
+        g = cg_emit(g, "}");
+        lid = lid + 1;
+    }
+    // Trampoline prototypes: a trampoline's body may contain a
+    // nested lambda literal, so it can reference a trampoline
+    // defined later (the inner one) — declare them all up front.
+    // Wrappers need none: they are defined before the
+    // trampolines and only call user functions (prototyped
+    // above this block).
+    lid = 0;
+    while lid < len(g.lam_nodes) {
+        let lam: Node = g.lam_nodes[lid];
+        g = cg_lambda_ctx(g, lid);
+        let ft: str = cg_expr_type(g, lam);
+        let params: [str] = fn_type_params(ft);
+        let ret: str = fn_type_ret(ft);
+        let mut sig: str = "void *";
+        let mut pj: int = 0;
+        while pj < len(params) {
+            sig = sig + ", " + cg_c_type(g, params[pj]);
+            pj = pj + 1;
+        }
+        g = cg_emit(g, "static " + cg_c_type(g, ret) + " __forge_lambda_" + itoa(lid) + "(" + sig + ");");
+        lid = lid + 1;
+    }
+    // Wrappers: a bare function used as a value needs a
+    // trampoline-shaped entry point (env first, ignored).
+    let mut ui: int = 0;
+    while ui < len(g.fn_uses) {
+        let name: str = g.fn_uses[ui];
+        let found: [str] = cg_fn_lookup(g, name);
+        let ret: str = found[1];
+        let params: [str] = infer_parse_params(found[2]);
+        let mut sig: str = "void *__forge_env";
+        let mut args: str = "";
+        let mut pj: int = 0;
+        while pj < len(params) {
+            let kv: [str] = infer_split_param(params[pj]);
+            if len(kv) >= 2 {
+                sig = sig + ", " + cg_c_type(g, kv[1]) + " " + kv[0];
+                if args == "" {
+                    args = kv[0];
+                } else {
+                    args = args + ", " + kv[0];
+                }
+            }
+            pj = pj + 1;
+        }
+        g = cg_emit(g, "static " + cg_c_type(g, ret) + " __forge_wrap_" + name + "(" + sig + ") {");
+        g = cg_emit(g, "    (void)__forge_env;");
+        if ret == "void" {
+            g = cg_emit(g, "    " + name + "(" + args + ");");
+        } else {
+            g = cg_emit(g, "    return " + name + "(" + args + ");");
+        }
+        g = cg_emit(g, "}");
+        ui = ui + 1;
+    }
+    // Trampolines.
+    lid = 0;
+    while lid < len(g.lam_nodes) {
+        g = cg_gen_lambda_trampoline(g, lid);
+        lid = lid + 1;
+    }
+    return g;
+}
+
 // ---- generate() ----
 
 fn cg_generate(g0: HCodegen, prog: Node) -> str {
@@ -7020,31 +8118,28 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
     if g.no_overflow_checks {
         g = cg_emit(g, "/* qasida: no-overflow-checks */");
     }
-    // Fn typedefs (Top-500 #103): sorted by (nesting depth,
-    // spelling) so an inner typedef precedes an outer one that
-    // references it — the same order Python's find_fn_types
-    // returns. Emitted right after HEADER, before enums/structs,
-    // because every one of those can reference a fn type through
-    // c_type.
+    // Fn typedefs (Top-500 #103, closures #101): sorted by
+    // (nesting depth, spelling) so an inner typedef precedes an
+    // outer one that references it — the same order Python's
+    // find_fn_types returns. Emitted right after HEADER, before
+    // enums/structs, because every one of those can reference a
+    // fn type through c_type. One trampoline typedef (the env
+    // pointer first) + one closure-struct typedef per fn type;
+    // the closure struct is what c_type returns for a fn type.
     let fns: [str] = cg_sorted_mode(g.fn_types, 3);
     let mut fi: int = 0;
     while fi < len(fns) {
         let ft: str = fns[fi];
         let params: [str] = fn_type_params(ft);
         let ret: str = fn_type_ret(ft);
-        let mut sig: str = "";
+        let mut sig: str = "void *";
         let mut pj: int = 0;
         while pj < len(params) {
-            if pj > 0 {
-                sig = sig + ", ";
-            }
-            sig = sig + cg_c_type(g, params[pj]);
+            sig = sig + ", " + cg_c_type(g, params[pj]);
             pj = pj + 1;
         }
-        if sig == "" {
-            sig = "void";
-        }
         g = cg_emit(g, "typedef " + cg_c_type(g, ret) + " (*" + infer_mangle_type(ft) + ")(" + sig + ");");
+        g = cg_emit(g, "typedef struct { " + infer_mangle_type(ft) + " fn; void *env; } " + cg_fn_closure_name(ft) + ";");
         fi = fi + 1;
     }
     // Enums: non-payload enums as C enums, in program order.
@@ -7534,9 +8629,9 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
         let nm: str = g.spawn_names[wi];
         g = cg_emit(g, "static void *forge_thread_" + nm + "(void *arg) {");
         if g.spawn_argc[wi] > 0 {
-            g = cg_emit(g, "    long long v = *(long long *)arg; memset(arg, 0, sizeof(long long)); free(arg); " + nm + "(v); return NULL;");
+            g = cg_emit(g, "    long long v = *(long long *)arg; memset(arg, 0, sizeof(long long)); free(arg); forge_in_task = 1; " + nm + "(v); return NULL;");
         } else {
-            g = cg_emit(g, "    (void)arg; " + nm + "(); return NULL;");
+            g = cg_emit(g, "    (void)arg; forge_in_task = 1; " + nm + "(); return NULL;");
         }
         g = cg_emit(g, "}");
         wi = wi + 1;
@@ -7544,6 +8639,10 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
     if len(g.spawn_names) > 0 {
         g = cg_emit_raw(g, "");
     }
+    // Closure support (Top-500 #101): env structs, env-free
+    // functions, wrappers, trampolines — after prototypes,
+    // before function bodies.
+    g = cg_emit_lambda_support(g);
     // Function bodies: top-level functions first, then impl
     // methods under their mangled names.
     i = 0;
