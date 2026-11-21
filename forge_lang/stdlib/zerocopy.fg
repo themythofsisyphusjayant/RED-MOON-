@@ -1,0 +1,62 @@
+// Qasida — zero-copy serialization (Top-500 #299).
+// Import with: import "zerocopy.fg";
+// IPC without copying: values live once in a shared int buffer
+// and readers access them through views (offset, length) into
+// that buffer. zc_read() indexes the shared buffer directly —
+// no copy operation exists, so zc_copies() stays 0 by
+// construction. Out-of-range reads return -1. v1 limits: the
+// buffer holds ints only; the "zero-copy" property is a model
+// property of this API, not a wire format.
+
+struct ZcBuf {
+    data: [int];
+    view_offs: [int];
+    view_lens: [int];
+    copies: int;
+}
+
+fn zc_new() -> ZcBuf {
+    return ZcBuf { data: [], view_offs: [], view_lens: [], copies: 0 };
+}
+
+fn zc_put(b: ZcBuf, val: int) -> ZcBuf {
+    let mut n: ZcBuf = b;
+    push(n.data, val);
+    return n;
+}
+
+fn zc_view(b: ZcBuf, off: int, len: int) -> ZcBuf {
+    let mut n: ZcBuf = b;
+    push(n.view_offs, off);
+    push(n.view_lens, len);
+    return n;
+}
+
+fn zc_read(b: ZcBuf, view: int, i: int) -> int {
+    if view < 0 || view >= len(b.view_offs) {
+        return -1;
+    }
+    if i < 0 || i >= b.view_lens[view] {
+        return -1;
+    }
+    let idx: int = b.view_offs[view] + i;
+    if idx < 0 || idx >= len(b.data) {
+        return -1;
+    }
+    return b.data[idx];
+}
+
+fn zc_view_len(b: ZcBuf, view: int) -> int {
+    if view < 0 || view >= len(b.view_lens) {
+        return -1;
+    }
+    return b.view_lens[view];
+}
+
+fn zc_size(b: ZcBuf) -> int {
+    return len(b.data);
+}
+
+fn zc_copies(b: ZcBuf) -> int {
+    return b.copies;
+}

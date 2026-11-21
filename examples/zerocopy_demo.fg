@@ -1,0 +1,19 @@
+import "zerocopy.fg";
+
+fn main() {
+    let mut b: ZcBuf = zc_new();
+    b = zc_put(b, 42);
+    b = zc_put(b, 7);
+    b = zc_put(b, 99);
+    b = zc_put(b, 13);
+    b = zc_view(b, 0, 2);
+    b = zc_view(b, 2, 2);
+    println(zc_size(b));
+    println(zc_read(b, 0, 0));
+    println(zc_read(b, 0, 1));
+    println(zc_read(b, 1, 0));
+    println(zc_read(b, 1, 1));
+    println(zc_read(b, 0, 5));
+    println(zc_view_len(b, 1));
+    println(zc_copies(b));
+}

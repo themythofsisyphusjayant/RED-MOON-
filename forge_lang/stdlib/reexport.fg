@@ -1,0 +1,56 @@
+// Qasida — re-exports (Top-500 #499).
+// Import with: import "reexport.fg";
+// `pub use` for clean public APIs: a table of (module, symbol,
+// origin) rows, where origin is "module::symbol". re_symbols()
+// lists a module's re-exported symbols in insertion order.
+// v1 limits: re-exports are data only — nothing is actually
+// re-exported by the compiler from this table.
+
+struct Reexport {
+    mods: [str];
+    syms: [str];
+    origins: [str];
+}
+
+fn re_new() -> Reexport {
+    return Reexport { mods: [], syms: [], origins: [] };
+}
+
+fn re_add(r: Reexport, module: str, sym: str, origin: str) -> Reexport {
+    let mut m: Reexport = r;
+    push(m.mods, module);
+    push(m.syms, sym);
+    push(m.origins, origin);
+    return m;
+}
+
+fn re_resolve(r: Reexport, module: str, sym: str) -> str {
+    let mut i: int = 0;
+    while i < len(r.mods) {
+        if r.mods[i] == module && r.syms[i] == sym {
+            return r.origins[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn re_symbols(r: Reexport, module: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(r.mods) {
+        if r.mods[i] == module {
+            push(out, r.syms[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn re_count(r: Reexport, module: str) -> int {
+    return len(re_symbols(r, module));
+}
+
+fn re_has(r: Reexport, module: str, sym: str) -> bool {
+    return re_resolve(r, module, sym) != "";
+}

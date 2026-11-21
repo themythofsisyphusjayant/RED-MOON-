@@ -1,0 +1,18 @@
+import "latch.fg";
+
+fn main() {
+    let mut l: Latch = la_new(3);
+    println(la_remaining(l));
+    l = la_arrive(l);
+    println(la_remaining(l));
+    l = la_arrive(l);
+    println(la_remaining(l));
+    println(la_is_open(l));
+    l = la_arrive(l);
+    println(la_remaining(l));
+    println(la_is_open(l));
+    println(la_arrivals(l));
+    l = la_arrive(l);
+    println(la_remaining(l));
+    println(la_arrivals(l));
+}

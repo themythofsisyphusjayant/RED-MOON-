@@ -1,0 +1,99 @@
+// Qasida — multiline strings (Top-500 #142).
+// Import with: import "mlstr.fg";
+// Triple-quote blocks, modelled as a list of lines: ml_join()
+// joins with newlines, ml_dedent() strips the common leading
+// indent (blank lines do not count), ml_trim_blank() drops
+// leading/trailing empty lines. v1 limits: no triple-quote
+// syntax in the language itself — blocks are built line by line.
+
+struct Ml {
+    lines: [str];
+}
+
+fn ml_new() -> Ml {
+    return Ml { lines: [] };
+}
+
+fn ml_add(m: Ml, line: str) -> Ml {
+    let mut n: Ml = m;
+    push(n.lines, line);
+    return n;
+}
+
+fn ml_count(m: Ml) -> int {
+    return len(m.lines);
+}
+
+fn ml_line(m: Ml, i: int) -> str {
+    if i < 0 || i >= len(m.lines) {
+        return "";
+    }
+    return m.lines[i];
+}
+
+fn ml_join(m: Ml) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(m.lines) {
+        if i > 0 {
+            out = out + "\n";
+        }
+        out = out + m.lines[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ml_trim_blank(m: Ml) -> Ml {
+    let mut start: int = 0;
+    while start < len(m.lines) && m.lines[start] == "" {
+        start = start + 1;
+    }
+    let mut end: int = len(m.lines);
+    while end > start && m.lines[end - 1] == "" {
+        end = end - 1;
+    }
+    let mut out: Ml = ml_new();
+    let mut i: int = start;
+    while i < end {
+        out = ml_add(out, m.lines[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ml_leading(line: str) -> int {
+    let mut n: int = 0;
+    while n < len(line) && substr(line, n, 1) == " " {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn ml_dedent(m: Ml) -> Ml {
+    let mut common: int = -1;
+    let mut i: int = 0;
+    while i < len(m.lines) {
+        if len(m.lines[i]) > 0 {
+            let lead: int = ml_leading(m.lines[i]);
+            if common < 0 || lead < common {
+                common = lead;
+            }
+        }
+        i = i + 1;
+    }
+    if common < 0 {
+        return m;
+    }
+    let mut out: Ml = ml_new();
+    let mut j: int = 0;
+    while j < len(m.lines) {
+        if len(m.lines[j]) == 0 {
+            out = ml_add(out, "");
+        } else {
+            out = ml_add(out, substr(m.lines[j], common, len(m.lines[j]) - common));
+        }
+        j = j + 1;
+    }
+    return out;
+}

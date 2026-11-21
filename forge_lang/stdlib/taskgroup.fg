@@ -1,0 +1,73 @@
+// Qasida — task groups (Top-500 #271).
+// Import with: import "taskgroup.fg";
+// Collections of spawned tasks: a group tracks named tasks and
+// whether each is done. tg_group_done() is true only when the
+// group is non-empty and every task is done; marking an unknown
+// task done is a no-op. v1 limits: in-task model only — tasks
+// are names, completion is recorded explicitly.
+
+struct TaskGroup {
+    names: [str];
+    dones: [bool];
+}
+
+fn tg_new() -> TaskGroup {
+    return TaskGroup { names: [], dones: [] };
+}
+
+fn tg_add(g: TaskGroup, name: str) -> TaskGroup {
+    let mut n: TaskGroup = g;
+    push(n.names, name);
+    push(n.dones, false);
+    return n;
+}
+
+fn tg_done(g: TaskGroup, name: str) -> TaskGroup {
+    let mut n: TaskGroup = g;
+    let mut i: int = 0;
+    while i < len(n.names) {
+        if n.names[i] == name {
+            n.dones[i] = true;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn tg_is_done(g: TaskGroup, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(g.names) {
+        if g.names[i] == name {
+            return g.dones[i];
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn tg_done_count(g: TaskGroup) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(g.dones) {
+        if g.dones[i] {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn tg_pending(g: TaskGroup) -> int {
+    return len(g.names) - tg_done_count(g);
+}
+
+fn tg_total(g: TaskGroup) -> int {
+    return len(g.names);
+}
+
+fn tg_group_done(g: TaskGroup) -> bool {
+    if len(g.names) == 0 {
+        return false;
+    }
+    return tg_done_count(g) == len(g.names);
+}

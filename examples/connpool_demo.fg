@@ -1,0 +1,23 @@
+import "connpool.fg";
+
+fn main() {
+    let mut p: Pool = cp_new(2);
+    p = cp_checkout(p, "a");
+    println(cp_ok(p));
+    println(cp_in_use(p));
+    p = cp_checkout(p, "b");
+    println(cp_ok(p));
+    println(cp_in_use(p));
+    p = cp_checkout(p, "c");
+    println(cp_ok(p));
+    println(cp_waits(p));
+    p = cp_checkin(p, "a");
+    println(cp_ok(p));
+    println(cp_in_use(p));
+    p = cp_checkout(p, "c");
+    println(cp_ok(p));
+    println(cp_in_use(p));
+    println(cp_has(p, "a"));
+    println(cp_has(p, "c"));
+    println(cp_size(p));
+}

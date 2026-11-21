@@ -1,0 +1,22 @@
+import "observ.fg";
+
+fn main() {
+    let mut o: Observ = ob_new();
+    o = ob_subscribe(o, "tick");
+    println(ob_last_id(o));
+    o = ob_subscribe(o, "tick");
+    println(ob_last_id(o));
+    o = ob_subscribe(o, "tock");
+    println(ob_last_id(o));
+    o = ob_emit(o, "tick", 5);
+    println(ob_deliveries(o));
+    println(ob_last(o, 0));
+    println(ob_last(o, 2));
+    o = ob_unsubscribe(o, 1);
+    o = ob_emit(o, "tick", 7);
+    println(ob_deliveries(o));
+    println(ob_last(o, 0));
+    println(ob_last(o, 1));
+    println(ob_active_count(o, "tick"));
+    println(ob_active_count(o, "tock"));
+}

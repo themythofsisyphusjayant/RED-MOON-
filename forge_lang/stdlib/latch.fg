@@ -1,0 +1,38 @@
+// Qasida — barriers and latches (Top-500 #255).
+// Import with: import "latch.fg";
+// Rendezvous points for tasks: a countdown latch. la_arrive()
+// decrements the count (never below zero) and counts arrivals;
+// la_is_open() is true once the count reaches zero. Extra
+// arrivals after opening are ignored. v1 limits: in-task model
+// only — no cross-task waiting.
+
+struct Latch {
+    count: int;
+    total: int;
+    arrivals: int;
+}
+
+fn la_new(n: int) -> Latch {
+    return Latch { count: n, total: n, arrivals: 0 };
+}
+
+fn la_arrive(l: Latch) -> Latch {
+    let mut n: Latch = l;
+    if n.count > 0 {
+        n.count = n.count - 1;
+        n.arrivals = n.arrivals + 1;
+    }
+    return n;
+}
+
+fn la_is_open(l: Latch) -> bool {
+    return l.count == 0;
+}
+
+fn la_remaining(l: Latch) -> int {
+    return l.count;
+}
+
+fn la_arrivals(l: Latch) -> int {
+    return l.arrivals;
+}

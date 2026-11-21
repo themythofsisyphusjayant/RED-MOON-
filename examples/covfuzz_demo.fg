@@ -1,0 +1,18 @@
+import "covfuzz.fg";
+
+fn main() {
+    let mut f: CovFuzz = cf_new(42);
+    f = cf_add_seed(f, "A");
+    f = cf_add_seed(f, "D");
+    println(cf_edge_count(f));
+    f = cf_run(f, 60);
+    println(cf_runs(f));
+    println(cf_edge_count(f));
+    println(cf_corpus_size(f));
+    let edges: [int] = cf_edges(f);
+    let mut i: int = 0;
+    while i < len(edges) {
+        println(edges[i]);
+        i = i + 1;
+    }
+}

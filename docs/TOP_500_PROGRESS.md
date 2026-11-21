@@ -1033,3 +1033,47 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (270 + 20 + 210 = 500). HAVE 270 of 500 = 54%. Next: sprint batch 11,
   same libs-only rule, target 20/day (the running count is the honest
   measure).
+
+- Sprint batch 11 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121k.py (80/80 PASS — 20
+  demos) with an independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch11/replica_20261121k.py):
+  threat.fg (#460 threat-model table with worst-risk ranking),
+  reflect.fg (#464 runtime type information registry),
+  annot.fg (#465 #[...] metadata rows with lookup),
+  cfg.fg (#466 target descriptor with os=/arch=/mode=/feat=/not:
+  predicates), alias.fg (#498 import x as y, conflicts recorded),
+  reexport.fg (#499 pub use table with resolution),
+  strinterp.fg (#141 "hello {name}" substitution, {{ and }} escape),
+  mlstr.fg (#142 triple-quote blocks: join, dedent, trim blank),
+  rawstr.fg (#143 raw/cooked string conversion),
+  memo.fg (#115 named-operation memo table with hit/miss counters),
+  recdepth.fg (#117 depth guard with overflow counting),
+  naninf.fg (#179 NaN/Infinity rules: NaN != itself, inf - inf is
+  NaN), connpool.fg (#212 named-connection pool with idle
+  eviction), future.fg (#246 pending/ready futures),
+  latch.fg (#255 countdown latch), evloop.fg (#262 FIFO event
+  loop), observ.fg (#265 topic subscriptions with delivery),
+  taskgroup.fg (#271 task groups with done tracking),
+  zerocopy.fg (#299 shared-buffer views, copies stay 0),
+  covfuzz.fg (#303 LCG mutational fuzzer over the ABCD-prefix
+  target; seed 42, 60 steps, edges 1/0/2/3 found).
+  Two fixes during verification: evloop.fg assigned a bare []
+  to a [str] field, which the checker rejects — replaced with
+  typed empty-array helpers; the first 12-step covfuzz run found
+  no new edge, so the run was extended to 60 steps (edge 2 at
+  step 15, edge 3 at step 48). The replica caught its own
+  strinterp bug first ({{name}} rendered with a stray }) and
+  both sides gained a }} escape. No #42/#43/#53 work (#42
+  resolved: helper-function slice). Skipped per brief: #273,
+  #129, #302 (need function values); #122/#164 not flipped
+  (known stale notes). #181/#187/#188/#189/#190 not buildable
+  in pure Qasida (no mkdir/readdir/rename builtins exist).
+  Counts after sprint batch 11: HAVE 290, PARTIAL 20, GAP 190, to build
+  210. Arithmetic from sprint batch 10 (HAVE 270, PARTIAL 20, GAP 210,
+  to build 230): 20 GAP-to-HAVE + 0 PARTIAL-to-HAVE = 20 flips;
+  270 + 20 = 290; 20 - 0 = 20; 210 - 20 = 190; 230 - 20 = 210
+  (290 + 20 + 190 = 500). HAVE 290 of 500 = 58%. Next: sprint batch 12,
+  same libs-only rule, target 20/day (the running count is the honest
+  measure).

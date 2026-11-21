@@ -1,0 +1,18 @@
+import "memo.fg";
+
+fn main() {
+    let mut m: Memo = me_new();
+    m = me_call(m, "square", 7);
+    println(me_last(m));
+    m = me_call(m, "square", 7);
+    println(me_last(m));
+    m = me_call(m, "double", 7);
+    println(me_last(m));
+    m = me_call(m, "fib", 10);
+    println(me_last(m));
+    m = me_call(m, "fib", 10);
+    println(me_last(m));
+    println(me_hits(m));
+    println(me_misses(m));
+    println(me_size(m));
+}

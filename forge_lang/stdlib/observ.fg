@@ -1,0 +1,89 @@
+// Qasida — observables / reactive streams (Top-500 #265).
+// Import with: import "observ.fg";
+// Push-based composition: subscribers register for a topic and
+// ob_emit() delivers the value to every active subscriber of
+// that topic. ob_last() is the last value a subscriber received
+// (-1 when it never received one); unsubscribing keeps the last
+// value but stops further deliveries. v1 limits: in-task model
+// only — delivery is synchronous, in subscription order.
+
+struct Observ {
+    sub_ids: [int];
+    sub_topics: [str];
+    sub_last: [int];
+    sub_active: [bool];
+    next_id: int;
+    last_id: int;
+    deliveries: int;
+}
+
+fn ob_new() -> Observ {
+    return Observ { sub_ids: [], sub_topics: [], sub_last: [], sub_active: [], next_id: 0, last_id: -1, deliveries: 0 };
+}
+
+fn ob_subscribe(o: Observ, topic: str) -> Observ {
+    let mut n: Observ = o;
+    push(n.sub_ids, n.next_id);
+    push(n.sub_topics, topic);
+    push(n.sub_last, -1);
+    push(n.sub_active, true);
+    n.last_id = n.next_id;
+    n.next_id = n.next_id + 1;
+    return n;
+}
+
+fn ob_unsubscribe(o: Observ, id: int) -> Observ {
+    let mut n: Observ = o;
+    let mut i: int = 0;
+    while i < len(n.sub_ids) {
+        if n.sub_ids[i] == id {
+            n.sub_active[i] = false;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ob_emit(o: Observ, topic: str, val: int) -> Observ {
+    let mut n: Observ = o;
+    let mut i: int = 0;
+    while i < len(n.sub_ids) {
+        if n.sub_active[i] && n.sub_topics[i] == topic {
+            n.sub_last[i] = val;
+            n.deliveries = n.deliveries + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ob_last_id(o: Observ) -> int {
+    return o.last_id;
+}
+
+fn ob_last(o: Observ, id: int) -> int {
+    let mut i: int = 0;
+    while i < len(o.sub_ids) {
+        if o.sub_ids[i] == id {
+            return o.sub_last[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn ob_deliveries(o: Observ) -> int {
+    return o.deliveries;
+}
+
+fn ob_active_count(o: Observ, topic: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(o.sub_ids) {
+        if o.sub_active[i] && o.sub_topics[i] == topic {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

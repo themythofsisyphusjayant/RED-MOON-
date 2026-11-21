@@ -1,0 +1,88 @@
+// Qasida — futures and promises (Top-500 #246).
+// Import with: import "future.fg";
+// Values that resolve later: a table of named futures, each
+// "pending" or "ready" with an int value. fu_value() is -1
+// while pending (or unknown); fu_all_ready() is true only when
+// at least one future exists and every one is ready. v1 limits:
+// resolution is explicit (fu_resolve) — no background tasks.
+
+struct Future {
+    ids: [str];
+    states: [str];
+    vals: [int];
+}
+
+fn fu_new() -> Future {
+    return Future { ids: [], states: [], vals: [] };
+}
+
+fn fu_index(f: Future, id: str) -> int {
+    let mut i: int = 0;
+    while i < len(f.ids) {
+        if f.ids[i] == id {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn fu_create(f: Future, id: str) -> Future {
+    let mut n: Future = f;
+    push(n.ids, id);
+    push(n.states, "pending");
+    push(n.vals, -1);
+    return n;
+}
+
+fn fu_resolve(f: Future, id: str, val: int) -> Future {
+    let mut n: Future = f;
+    let i: int = fu_index(n, id);
+    if i >= 0 {
+        n.states[i] = "ready";
+        n.vals[i] = val;
+    }
+    return n;
+}
+
+fn fu_state(f: Future, id: str) -> str {
+    let i: int = fu_index(f, id);
+    if i < 0 {
+        return "";
+    }
+    return f.states[i];
+}
+
+fn fu_value(f: Future, id: str) -> int {
+    let i: int = fu_index(f, id);
+    if i < 0 {
+        return -1;
+    }
+    if f.states[i] != "ready" {
+        return -1;
+    }
+    return f.vals[i];
+}
+
+fn fu_is_ready(f: Future, id: str) -> bool {
+    return fu_state(f, id) == "ready";
+}
+
+fn fu_ready_count(f: Future) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(f.states) {
+        if f.states[i] == "ready" {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn fu_all_ready(f: Future) -> bool {
+    if len(f.ids) == 0 {
+        return false;
+    }
+    return fu_ready_count(f) == len(f.ids);
+}

@@ -1,0 +1,22 @@
+import "taskgroup.fg";
+
+fn main() {
+    let mut g: TaskGroup = tg_new();
+    g = tg_add(g, "fetch");
+    g = tg_add(g, "parse");
+    g = tg_add(g, "render");
+    println(tg_total(g));
+    println(tg_pending(g));
+    g = tg_done(g, "fetch");
+    println(tg_pending(g));
+    println(tg_is_done(g, "fetch"));
+    g = tg_done(g, "parse");
+    println(tg_pending(g));
+    println(tg_group_done(g));
+    g = tg_done(g, "render");
+    println(tg_pending(g));
+    println(tg_group_done(g));
+    println(tg_done_count(g));
+    g = tg_done(g, "unknown");
+    println(tg_pending(g));
+}

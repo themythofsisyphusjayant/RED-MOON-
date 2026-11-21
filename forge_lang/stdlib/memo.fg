@@ -1,0 +1,84 @@
+// Qasida — memoization (Top-500 #115).
+// Import with: import "memo.fg";
+// Cache pure results automatically: a table keyed by (operation,
+// argument) for the named pure computations "square", "double",
+// "cube" and "fib". me_call() records a hit or a miss and stores
+// the result in me_last(); me_hits() / me_misses() report the
+// counters. v1 limits: no function values exist in the language,
+// so computations are named operations, not closures.
+
+struct Memo {
+    ops: [str];
+    args: [int];
+    results: [int];
+    hits: int;
+    misses: int;
+    last: int;
+}
+
+fn me_new() -> Memo {
+    return Memo { ops: [], args: [], results: [], hits: 0, misses: 0, last: 0 };
+}
+
+fn me_fib(n: int) -> int {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    return me_fib(n - 1) + me_fib(n - 2);
+}
+
+fn me_compute(op: str, arg: int) -> int {
+    if op == "square" {
+        return arg * arg;
+    }
+    if op == "double" {
+        return arg * 2;
+    }
+    if op == "cube" {
+        return arg * arg * arg;
+    }
+    if op == "fib" {
+        return me_fib(arg);
+    }
+    fail("me_compute: unknown op");
+    return 0;
+}
+
+fn me_call(m: Memo, op: str, arg: int) -> Memo {
+    let mut n: Memo = m;
+    let mut i: int = 0;
+    while i < len(n.ops) {
+        if n.ops[i] == op && n.args[i] == arg {
+            n.hits = n.hits + 1;
+            n.last = n.results[i];
+            return n;
+        }
+        i = i + 1;
+    }
+    let v: int = me_compute(op, arg);
+    push(n.ops, op);
+    push(n.args, arg);
+    push(n.results, v);
+    n.misses = n.misses + 1;
+    n.last = v;
+    return n;
+}
+
+fn me_last(m: Memo) -> int {
+    return m.last;
+}
+
+fn me_hits(m: Memo) -> int {
+    return m.hits;
+}
+
+fn me_misses(m: Memo) -> int {
+    return m.misses;
+}
+
+fn me_size(m: Memo) -> int {
+    return len(m.ops);
+}

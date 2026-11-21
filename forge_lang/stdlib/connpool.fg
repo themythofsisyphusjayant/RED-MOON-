@@ -1,0 +1,114 @@
+// Qasida — connection pooling (Top-500 #212).
+// Import with: import "connpool.fg";
+// Reuse sockets: a pool of named connections with a maximum
+// size. cp_checkout() checks out a named connection — creating
+// it when the pool has room, reusing it when idle. When the pool
+// is full and a new name arrives, the first idle connection is
+// evicted to make room; when every connection is busy the
+// checkout waits (cp_waits() counts it) and reports false via
+// cp_ok(). v1 limits: connections are names, not live sockets.
+
+struct Pool {
+    max: int;
+    ids: [str];
+    in_use: [bool];
+    waits: int;
+    last_ok: bool;
+}
+
+fn cp_new(max: int) -> Pool {
+    return Pool { max: max, ids: [], in_use: [], waits: 0, last_ok: true };
+}
+
+fn cp_index(p: Pool, id: str) -> int {
+    let mut i: int = 0;
+    while i < len(p.ids) {
+        if p.ids[i] == id {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn cp_first_idle(p: Pool) -> int {
+    let mut i: int = 0;
+    while i < len(p.ids) {
+        if !p.in_use[i] {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn cp_checkout(p: Pool, id: str) -> Pool {
+    let mut n: Pool = p;
+    let i: int = cp_index(n, id);
+    if i >= 0 {
+        if n.in_use[i] {
+            n.waits = n.waits + 1;
+            n.last_ok = false;
+            return n;
+        }
+        n.in_use[i] = true;
+        n.last_ok = true;
+        return n;
+    }
+    if len(n.ids) < n.max {
+        push(n.ids, id);
+        push(n.in_use, true);
+        n.last_ok = true;
+        return n;
+    }
+    let idle: int = cp_first_idle(n);
+    if idle >= 0 {
+        n.ids[idle] = id;
+        n.in_use[idle] = true;
+        n.last_ok = true;
+        return n;
+    }
+    n.waits = n.waits + 1;
+    n.last_ok = false;
+    return n;
+}
+
+fn cp_checkin(p: Pool, id: str) -> Pool {
+    let mut n: Pool = p;
+    let i: int = cp_index(n, id);
+    if i >= 0 && n.in_use[i] {
+        n.in_use[i] = false;
+        n.last_ok = true;
+        return n;
+    }
+    n.last_ok = false;
+    return n;
+}
+
+fn cp_ok(p: Pool) -> bool {
+    return p.last_ok;
+}
+
+fn cp_in_use(p: Pool) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(p.in_use) {
+        if p.in_use[i] {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn cp_size(p: Pool) -> int {
+    return len(p.ids);
+}
+
+fn cp_waits(p: Pool) -> int {
+    return p.waits;
+}
+
+fn cp_has(p: Pool, id: str) -> bool {
+    return cp_index(p, id) >= 0;
+}

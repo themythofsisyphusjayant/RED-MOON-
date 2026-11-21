@@ -1,0 +1,54 @@
+// Qasida — recursion depth limits (Top-500 #117).
+// Import with: import "recdepth.fg";
+// Configurable stack-safe recursion: a depth guard with a limit.
+// rd_enter() succeeds only below the limit and reports via
+// rd_ok(); a failed enter bumps rd_overflows() instead of
+// growing the depth. v1 limits: the guard is explicit — call
+// sites must enter/exit around the recursive call.
+
+struct Depth {
+    limit: int;
+    depth: int;
+    overflows: int;
+    last_ok: bool;
+}
+
+fn rd_new(limit: int) -> Depth {
+    return Depth { limit: limit, depth: 0, overflows: 0, last_ok: true };
+}
+
+fn rd_enter(d: Depth) -> Depth {
+    let mut n: Depth = d;
+    if n.depth < n.limit {
+        n.depth = n.depth + 1;
+        n.last_ok = true;
+    } else {
+        n.overflows = n.overflows + 1;
+        n.last_ok = false;
+    }
+    return n;
+}
+
+fn rd_exit(d: Depth) -> Depth {
+    let mut n: Depth = d;
+    if n.depth > 0 {
+        n.depth = n.depth - 1;
+    }
+    return n;
+}
+
+fn rd_ok(d: Depth) -> bool {
+    return d.last_ok;
+}
+
+fn rd_depth(d: Depth) -> int {
+    return d.depth;
+}
+
+fn rd_overflows(d: Depth) -> int {
+    return d.overflows;
+}
+
+fn rd_limit(d: Depth) -> int {
+    return d.limit;
+}

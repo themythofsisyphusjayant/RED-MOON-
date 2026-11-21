@@ -1,0 +1,101 @@
+// Qasida — threat-model documentation (Top-500 #460).
+// Import with: import "threat.fg";
+// A threat model is a table of (feature, threat, mitigation,
+// residual-risk) rows. th_risk() reports the worst residual risk
+// for a feature (low < medium < high). v1 limits: risks are the
+// three fixed levels; mitigations are free text, not verified.
+
+struct Threat {
+    feats: [str];
+    threats: [str];
+    mits: [str];
+    risks: [str];
+}
+
+fn th_new() -> Threat {
+    return Threat { feats: [], threats: [], mits: [], risks: [] };
+}
+
+fn th_add(t: Threat, feat: str, threat: str, mit: str, risk: str) -> Threat {
+    let mut m: Threat = t;
+    push(m.feats, feat);
+    push(m.threats, threat);
+    push(m.mits, mit);
+    push(m.risks, risk);
+    return m;
+}
+
+fn th_rank(risk: str) -> int {
+    if risk == "high" {
+        return 2;
+    }
+    if risk == "medium" {
+        return 1;
+    }
+    return 0;
+}
+
+fn th_risk(t: Threat, feat: str) -> str {
+    let mut best: int = -1;
+    let mut out: str = "none";
+    let mut i: int = 0;
+    while i < len(t.feats) {
+        if t.feats[i] == feat {
+            let r: int = th_rank(t.risks[i]);
+            if r > best {
+                best = r;
+                out = t.risks[i];
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn th_threats(t: Threat, feat: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(t.feats) {
+        if t.feats[i] == feat {
+            push(out, t.threats[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn th_count_threats(t: Threat, feat: str) -> int {
+    return len(th_threats(t, feat));
+}
+
+fn th_has(t: Threat, feat: str, threat: str) -> bool {
+    let found: [str] = th_threats(t, feat);
+    let mut i: int = 0;
+    while i < len(found) {
+        if found[i] == threat {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn th_features(t: Threat) -> int {
+    let mut seen: [str] = [];
+    let mut i: int = 0;
+    while i < len(t.feats) {
+        let mut dup: bool = false;
+        let mut j: int = 0;
+        while j < len(seen) {
+            if seen[j] == t.feats[i] {
+                dup = true;
+            }
+            j = j + 1;
+        }
+        if !dup {
+            push(seen, t.feats[i]);
+        }
+        i = i + 1;
+    }
+    return len(seen);
+}

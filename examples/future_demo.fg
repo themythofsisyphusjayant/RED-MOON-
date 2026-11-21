@@ -1,0 +1,18 @@
+import "future.fg";
+
+fn main() {
+    let mut f: Future = fu_new();
+    f = fu_create(f, "a");
+    f = fu_create(f, "b");
+    println(fu_state(f, "a"));
+    println(fu_value(f, "a"));
+    f = fu_resolve(f, "a", 42);
+    println(fu_state(f, "a"));
+    println(fu_value(f, "a"));
+    println(fu_is_ready(f, "b"));
+    println(fu_all_ready(f));
+    f = fu_resolve(f, "b", 7);
+    println(fu_all_ready(f));
+    println(fu_ready_count(f));
+    println(fu_value(f, "b"));
+}

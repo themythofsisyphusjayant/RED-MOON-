@@ -1,0 +1,59 @@
+// Qasida — raw strings (Top-500 #143).
+// Import with: import "rawstr.fg";
+// r"..." without escape processing: rs_raw_to_cooked() processes
+// \n, \t, \\ and \" escapes; rs_cooked_to_raw() escapes a plain
+// string back into its raw form. Unknown escapes (e.g. \x) are
+// kept as the two literal characters. v1 limits: no r"..." syntax
+// in the language itself — conversion is a library function.
+
+fn rs_raw_to_cooked(raw: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(raw) {
+        let c: str = substr(raw, i, 1);
+        if c == "\\" && i + 1 < len(raw) {
+            let n: str = substr(raw, i + 1, 1);
+            if n == "n" {
+                out = out + "\n";
+                i = i + 2;
+            } else if n == "t" {
+                out = out + "\t";
+                i = i + 2;
+            } else if n == "\\" {
+                out = out + "\\";
+                i = i + 2;
+            } else if n == "\"" {
+                out = out + "\"";
+                i = i + 2;
+            } else {
+                out = out + c + n;
+                i = i + 2;
+            }
+        } else {
+            out = out + c;
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+fn rs_cooked_to_raw(cooked: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(cooked) {
+        let c: str = substr(cooked, i, 1);
+        if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else if c == "\"" {
+            out = out + "\\\"";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}

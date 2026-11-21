@@ -1,0 +1,92 @@
+// Qasida — conditional compilation (Top-500 #466).
+// Import with: import "cfg.fg";
+// Target-gated code: a target descriptor (os, arch, mode) plus a
+// feature-flag list. Predicates are strings: "os=linux",
+// "arch=x86_64", "mode=debug", "feat=async", and "not:<pred>".
+// cfg_all2() / cfg_any2() combine two predicates. v1 limits:
+// predicates are evaluated against the recorded target only —
+// nothing is compiled or gated by this library itself.
+
+struct Cfg {
+    os: str;
+    arch: str;
+    mode: str;
+    feats: [str];
+}
+
+fn cfg_new(os: str, arch: str, mode: str) -> Cfg {
+    return Cfg { os: os, arch: arch, mode: mode, feats: [] };
+}
+
+fn cfg_feat(c: Cfg, feat: str) -> Cfg {
+    let mut m: Cfg = c;
+    push(m.feats, feat);
+    return m;
+}
+
+fn cfg_has_feat(c: Cfg, feat: str) -> bool {
+    let mut i: int = 0;
+    while i < len(c.feats) {
+        if c.feats[i] == feat {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cfg_is_os(c: Cfg, name: str) -> bool {
+    return c.os == name;
+}
+
+fn cfg_is_arch(c: Cfg, name: str) -> bool {
+    return c.arch == name;
+}
+
+fn cfg_is_mode(c: Cfg, name: str) -> bool {
+    return c.mode == name;
+}
+
+fn cfg_find_eq(pred: str) -> int {
+    let mut i: int = 0;
+    while i < len(pred) {
+        if substr(pred, i, 1) == "=" {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn cfg_eval_one(c: Cfg, pred: str) -> bool {
+    if len(pred) >= 4 && substr(pred, 0, 4) == "not:" {
+        return !cfg_eval_one(c, substr(pred, 4, len(pred) - 4));
+    }
+    let eq: int = cfg_find_eq(pred);
+    if eq < 0 {
+        return false;
+    }
+    let key: str = substr(pred, 0, eq);
+    let val: str = substr(pred, eq + 1, len(pred) - eq - 1);
+    if key == "os" {
+        return c.os == val;
+    }
+    if key == "arch" {
+        return c.arch == val;
+    }
+    if key == "mode" {
+        return c.mode == val;
+    }
+    if key == "feat" {
+        return cfg_has_feat(c, val);
+    }
+    return false;
+}
+
+fn cfg_all2(c: Cfg, p1: str, p2: str) -> bool {
+    return cfg_eval_one(c, p1) && cfg_eval_one(c, p2);
+}
+
+fn cfg_any2(c: Cfg, p1: str, p2: str) -> bool {
+    return cfg_eval_one(c, p1) || cfg_eval_one(c, p2);
+}

@@ -1,0 +1,91 @@
+// Qasida — string interpolation (Top-500 #141).
+// Import with: import "strinterp.fg";
+// "hello {name}": {name} is replaced from a binding table.
+// Unknown placeholders are left literal; "{{" renders a single
+// "{"; a lone "}" passes through unchanged. v1 limits: no format
+// specifiers ({n:03} is not supported — the braces must hold a
+// bare name).
+
+struct StrInterp {
+    names: [str];
+    vals: [str];
+}
+
+fn si_new() -> StrInterp {
+    return StrInterp { names: [], vals: [] };
+}
+
+fn si_bind(t: StrInterp, name: str, val: str) -> StrInterp {
+    let mut m: StrInterp = t;
+    push(m.names, name);
+    push(m.vals, val);
+    return m;
+}
+
+fn si_lookup(t: StrInterp, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(t.names) {
+        if t.names[i] == name {
+            return t.vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn si_has(t: StrInterp, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(t.names) {
+        if t.names[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn si_find_close(tmpl: str, start: int) -> int {
+    let mut i: int = start;
+    while i < len(tmpl) {
+        if substr(tmpl, i, 1) == "}" {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn si_render(t: StrInterp, tmpl: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(tmpl) {
+        let c: str = substr(tmpl, i, 1);
+        if c == "{" {
+            if i + 1 < len(tmpl) && substr(tmpl, i + 1, 1) == "{" {
+                out = out + "{";
+                i = i + 2;
+            } else {
+                let close: int = si_find_close(tmpl, i + 1);
+                if close < 0 {
+                    out = out + "{";
+                    i = i + 1;
+                } else {
+                    let name: str = substr(tmpl, i + 1, close - i - 1);
+                    if si_has(t, name) {
+                        out = out + si_lookup(t, name);
+                    } else {
+                        out = out + "{" + name + "}";
+                    }
+                    i = close + 1;
+                }
+            }
+        } else if c == "}" && i + 1 < len(tmpl) && substr(tmpl, i + 1, 1) == "}" {
+            out = out + "}";
+            i = i + 2;
+        } else {
+            out = out + c;
+            i = i + 1;
+        }
+    }
+    return out;
+}

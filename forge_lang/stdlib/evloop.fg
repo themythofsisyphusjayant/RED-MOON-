@@ -1,0 +1,83 @@
+// Qasida — event loops (Top-500 #262).
+// Import with: import "evloop.fg";
+// A single-threaded async runtime, modelled as a FIFO queue of
+// (operation, argument) events. ev_run() dispatches every queued
+// event in order and records the results; known operations are
+// "double", "square", "neg" and "inc" (an unknown operation
+// records -1). v1 limits: in-task model only — no I/O, no timers.
+
+struct EvLoop {
+    names: [str];
+    args: [int];
+    results: [int];
+    ran: int;
+}
+
+fn ev_new() -> EvLoop {
+    return EvLoop { names: [], args: [], results: [], ran: 0 };
+}
+
+fn ev_post(l: EvLoop, name: str, arg: int) -> EvLoop {
+    let mut n: EvLoop = l;
+    push(n.names, name);
+    push(n.args, arg);
+    return n;
+}
+
+fn ev_dispatch(name: str, arg: int) -> int {
+    if name == "double" {
+        return arg * 2;
+    }
+    if name == "square" {
+        return arg * arg;
+    }
+    if name == "neg" {
+        return -arg;
+    }
+    if name == "inc" {
+        return arg + 1;
+    }
+    return -1;
+}
+
+fn ev_run(l: EvLoop) -> EvLoop {
+    let mut n: EvLoop = l;
+    let mut i: int = 0;
+    while i < len(n.names) {
+        push(n.results, ev_dispatch(n.names[i], n.args[i]));
+        n.ran = n.ran + 1;
+        i = i + 1;
+    }
+    n.names = ev_empty_names();
+    n.args = ev_empty_args();
+    return n;
+}
+
+fn ev_empty_names() -> [str] {
+    let out: [str] = [];
+    return out;
+}
+
+fn ev_empty_args() -> [int] {
+    let out: [int] = [];
+    return out;
+}
+
+fn ev_pending(l: EvLoop) -> int {
+    return len(l.names);
+}
+
+fn ev_ran(l: EvLoop) -> int {
+    return l.ran;
+}
+
+fn ev_results(l: EvLoop) -> [int] {
+    return l.results;
+}
+
+fn ev_last(l: EvLoop) -> int {
+    if len(l.results) == 0 {
+        return -1;
+    }
+    return l.results[len(l.results) - 1];
+}

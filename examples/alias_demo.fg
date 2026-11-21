@@ -1,0 +1,16 @@
+import "alias.fg";
+
+fn main() {
+    let mut a: Alias = al_new();
+    a = al_add(a, "json", "stdlib/json.fg");
+    a = al_add(a, "http", "stdlib/http.fg");
+    a = al_add(a, "json", "stdlib/json.fg");
+    a = al_add(a, "json", "other/json.fg");
+    println(al_resolve(a, "json"));
+    println(al_resolve(a, "http"));
+    println(al_resolve(a, "yaml"));
+    println(al_has(a, "http"));
+    println(al_has(a, "yaml"));
+    println(al_conflicts(a));
+    println(al_count(a));
+}

@@ -1,0 +1,15 @@
+import "strinterp.fg";
+
+fn main() {
+    let mut t: StrInterp = si_new();
+    t = si_bind(t, "name", "Ada");
+    t = si_bind(t, "n", "5");
+    t = si_bind(t, "city", "Paris");
+    println(si_render(t, "hello {name}, you have {n} messages"));
+    println(si_render(t, "from {city} with love"));
+    println(si_render(t, "unknown {zz} stays"));
+    println(si_render(t, "brace {{name}} literal"));
+    println(si_render(t, "no placeholders"));
+    println(si_has(t, "name"));
+    println(si_has(t, "zz"));
+}

@@ -1,0 +1,16 @@
+import "rawstr.fg";
+
+fn main() {
+    let raw: str = "a\\nb";
+    let cooked: str = rs_raw_to_cooked(raw);
+    println(cooked);
+    println(len(cooked));
+    let cooked2: str = "a\nb";
+    let raw2: str = rs_cooked_to_raw(cooked2);
+    println(raw2);
+    println(len(raw2));
+    println(rs_raw_to_cooked("x\\ty"));
+    let rt: str = rs_cooked_to_raw(rs_raw_to_cooked("p\\\\q"));
+    println(rt);
+    println(len(rt));
+}

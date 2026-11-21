@@ -1,0 +1,47 @@
+// Qasida — documented NaN/Infinity semantics (Top-500 #179).
+// Import with: import "naninf.fg";
+// The float rules, written down and checked: NaN is the only
+// value not equal to itself (ni_is_nan); infinity is the only
+// finite-failing value whose difference from itself is not zero
+// (ni_is_inf); everything else is finite (ni_is_finite).
+// ni_sign() is 1 / -1 / 0 (NaN has no sign) and ni_classify()
+// names the class. Overflow of 1e308 * 10.0 yields infinity and
+// 0.0 / 0.0 yields NaN on both compilers, matching C %.6g.
+
+fn ni_is_nan(x: float) -> bool {
+    return x != x;
+}
+
+fn ni_is_inf(x: float) -> bool {
+    return x == x && (x - x) != 0.0;
+}
+
+fn ni_is_finite(x: float) -> bool {
+    return x == x && (x - x) == 0.0;
+}
+
+fn ni_sign(x: float) -> int {
+    if ni_is_nan(x) {
+        return 0;
+    }
+    if x > 0.0 {
+        return 1;
+    }
+    if x < 0.0 {
+        return -1;
+    }
+    return 0;
+}
+
+fn ni_classify(x: float) -> str {
+    if ni_is_nan(x) {
+        return "nan";
+    }
+    if ni_is_inf(x) {
+        if x > 0.0 {
+            return "inf";
+        }
+        return "-inf";
+    }
+    return "finite";
+}

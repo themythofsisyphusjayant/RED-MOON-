@@ -402,3 +402,23 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   inline cutoff), consteval.fg (integer const folds),
   determin.fg (recorded runs are consistent). HAVE 250 -> 270
   (54% of 500).
+
+- Sprint batch 11 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 (80/80 checks, 20 demos): threat.fg
+  (threat-model table, worst-risk ranking), reflect.fg (runtime
+  type information registry), annot.fg (#[...] metadata rows),
+  cfg.fg (target descriptor, os=/arch=/mode=/feat=/not:
+  predicates), alias.fg (import x as y, conflicts recorded),
+  reexport.fg (pub use table with resolution), strinterp.fg
+  ("hello {name}" substitution, {{ and }} escape), mlstr.fg
+  (triple-quote blocks: join, dedent, trim blank), rawstr.fg
+  (raw/cooked string conversion), memo.fg (named-operation memo
+  table, hit/miss counters), recdepth.fg (depth guard, overflow
+  counting), naninf.fg (NaN != itself, inf - inf is NaN),
+  connpool.fg (named-connection pool, idle eviction), future.fg
+  (pending/ready futures), latch.fg (countdown latch),
+  evloop.fg (FIFO event loop), observ.fg (topic subscriptions),
+  taskgroup.fg (task groups with done tracking), zerocopy.fg
+  (shared-buffer views, copies stay 0), covfuzz.fg (LCG
+  mutational fuzzer over the ABCD-prefix target; seed 42, 60
+  steps, edges 1/0/2/3 found). HAVE 270 -> 290 (58% of 500).

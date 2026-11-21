@@ -1,0 +1,22 @@
+import "evloop.fg";
+
+fn main() {
+    let mut l: EvLoop = ev_new();
+    l = ev_post(l, "double", 21);
+    l = ev_post(l, "square", 5);
+    l = ev_post(l, "neg", 9);
+    l = ev_post(l, "inc", 41);
+    println(ev_pending(l));
+    l = ev_run(l);
+    println(ev_pending(l));
+    println(ev_ran(l));
+    let res: [int] = ev_results(l);
+    println(res[0]);
+    println(res[1]);
+    println(res[2]);
+    println(res[3]);
+    l = ev_post(l, "double", 3);
+    l = ev_run(l);
+    println(ev_ran(l));
+    println(ev_last(l));
+}

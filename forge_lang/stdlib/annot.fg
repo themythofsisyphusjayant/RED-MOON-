@@ -1,0 +1,55 @@
+// Qasida — annotations / attributes (Top-500 #465).
+// Import with: import "annot.fg";
+// #[...] metadata on declarations, stored as (declaration, key,
+// value) rows. an_get() returns "" for a missing key; an_keys()
+// lists a declaration's keys in insertion order. v1 limits:
+// annotations are data only — the checker does not read them.
+
+struct Annot {
+    decls: [str];
+    keys: [str];
+    vals: [str];
+}
+
+fn an_new() -> Annot {
+    return Annot { decls: [], keys: [], vals: [] };
+}
+
+fn an_add(a: Annot, decl: str, key: str, val: str) -> Annot {
+    let mut m: Annot = a;
+    push(m.decls, decl);
+    push(m.keys, key);
+    push(m.vals, val);
+    return m;
+}
+
+fn an_get(a: Annot, decl: str, key: str) -> str {
+    let mut i: int = 0;
+    while i < len(a.decls) {
+        if a.decls[i] == decl && a.keys[i] == key {
+            return a.vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn an_has(a: Annot, decl: str, key: str) -> bool {
+    return an_get(a, decl, key) != "";
+}
+
+fn an_keys(a: Annot, decl: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(a.decls) {
+        if a.decls[i] == decl {
+            push(out, a.keys[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn an_count(a: Annot, decl: str) -> int {
+    return len(an_keys(a, decl));
+}

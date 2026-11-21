@@ -1,0 +1,16 @@
+import "mlstr.fg";
+
+fn main() {
+    let mut b0: Ml = ml_new();
+    b0 = ml_add(b0, "    fn main() {");
+    b0 = ml_add(b0, "        let x = 1;");
+    b0 = ml_add(b0, "    }");
+    b0 = ml_add(b0, "");
+    let b1: Ml = ml_trim_blank(b0);
+    println(ml_count(b1));
+    let b2: Ml = ml_dedent(b1);
+    println(ml_line(b2, 0));
+    println(ml_line(b2, 1));
+    println(ml_line(b2, 2));
+    println(ml_join(b2));
+}

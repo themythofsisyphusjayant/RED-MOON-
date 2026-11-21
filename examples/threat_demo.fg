@@ -1,0 +1,19 @@
+import "threat.fg";
+
+fn main() {
+    let mut t: Threat = th_new();
+    t = th_add(t, "login", "brute-force", "rate-limit", "high");
+    t = th_add(t, "login", "credential-stuffing", "captcha", "medium");
+    t = th_add(t, "upload", "malicious-file", "scan", "high");
+    t = th_add(t, "upload", "oversize", "size-cap", "low");
+    println(th_count_threats(t, "login"));
+    println(th_count_threats(t, "upload"));
+    println(th_risk(t, "login"));
+    println(th_risk(t, "upload"));
+    println(th_features(t));
+    let found: [str] = th_threats(t, "login");
+    println(found[0]);
+    println(found[1]);
+    println(th_has(t, "login", "brute-force"));
+    println(th_has(t, "login", "xss"));
+}

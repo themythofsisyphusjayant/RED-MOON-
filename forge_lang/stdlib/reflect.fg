@@ -1,0 +1,97 @@
+// Qasida — reflection (Top-500 #464).
+// Import with: import "reflect.fg";
+// Runtime type information: a registry of type names with a kind
+// ("int", "str", "struct", ...) and a comma-joined field list.
+// rf_field_count() counts the fields; rf_has_field() checks one
+// field by exact segment match. v1 limits: caller-supplied
+// metadata only — the registry cannot inspect real values.
+
+struct Reflect {
+    names: [str];
+    kinds: [str];
+    fields: [str];
+}
+
+fn rf_new() -> Reflect {
+    return Reflect { names: [], kinds: [], fields: [] };
+}
+
+fn rf_add(r: Reflect, name: str, kind: str, fields: str) -> Reflect {
+    let mut m: Reflect = r;
+    push(m.names, name);
+    push(m.kinds, kind);
+    push(m.fields, fields);
+    return m;
+}
+
+fn rf_index(r: Reflect, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn rf_kind(r: Reflect, name: str) -> str {
+    let i: int = rf_index(r, name);
+    if i < 0 {
+        return "";
+    }
+    return r.kinds[i];
+}
+
+fn rf_fields(r: Reflect, name: str) -> str {
+    let i: int = rf_index(r, name);
+    if i < 0 {
+        return "";
+    }
+    return r.fields[i];
+}
+
+fn rf_field_count(r: Reflect, name: str) -> int {
+    let f: str = rf_fields(r, name);
+    if len(f) == 0 {
+        return 0;
+    }
+    let mut n: int = 1;
+    let mut i: int = 0;
+    while i < len(f) {
+        if substr(f, i, 1) == "," {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn rf_has_field(r: Reflect, name: str, field: str) -> bool {
+    let f: str = rf_fields(r, name);
+    if len(f) == 0 {
+        return false;
+    }
+    let mut cur: str = "";
+    let mut i: int = 0;
+    while i <= len(f) {
+        if i == len(f) || substr(f, i, 1) == "," {
+            if cur == field {
+                return true;
+            }
+            cur = "";
+        } else {
+            cur = cur + substr(f, i, 1);
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn rf_is_struct(r: Reflect, name: str) -> bool {
+    return rf_kind(r, name) == "struct";
+}
+
+fn rf_count(r: Reflect) -> int {
+    return len(r.names);
+}

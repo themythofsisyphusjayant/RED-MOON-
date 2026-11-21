@@ -1,0 +1,15 @@
+import "reflect.fg";
+
+fn main() {
+    let mut r: Reflect = rf_new();
+    r = rf_add(r, "Point", "struct", "x,y");
+    r = rf_add(r, "User", "struct", "name,age,admin");
+    r = rf_add(r, "Score", "int", "");
+    println(rf_kind(r, "Point"));
+    println(rf_field_count(r, "User"));
+    println(rf_fields(r, "Point"));
+    println(rf_has_field(r, "User", "age"));
+    println(rf_has_field(r, "User", "email"));
+    println(rf_is_struct(r, "Score"));
+    println(rf_count(r));
+}

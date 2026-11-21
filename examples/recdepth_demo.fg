@@ -1,0 +1,23 @@
+import "recdepth.fg";
+
+fn main() {
+    let mut d: Depth = rd_new(3);
+    d = rd_enter(d);
+    println(rd_ok(d));
+    println(rd_depth(d));
+    d = rd_enter(d);
+    println(rd_ok(d));
+    println(rd_depth(d));
+    d = rd_enter(d);
+    println(rd_ok(d));
+    println(rd_depth(d));
+    d = rd_enter(d);
+    println(rd_ok(d));
+    println(rd_depth(d));
+    println(rd_overflows(d));
+    d = rd_exit(d);
+    println(rd_depth(d));
+    d = rd_exit(d);
+    println(rd_depth(d));
+    println(rd_limit(d));
+}

@@ -1,0 +1,20 @@
+import "naninf.fg";
+
+fn main() {
+    let inf: float = 1e308 * 10.0;
+    let neginf: float = -1e308 * 10.0;
+    let nan: float = 0.0 / 0.0;
+    println(ni_is_inf(inf));
+    println(ni_is_inf(neginf));
+    println(ni_is_nan(nan));
+    println(ni_is_finite(1.5));
+    println(ni_is_finite(inf));
+    println(ni_is_nan(1.5));
+    println(ni_sign(inf));
+    println(ni_sign(neginf));
+    println(ni_sign(nan));
+    println(ni_classify(inf));
+    println(ni_classify(neginf));
+    println(ni_classify(nan));
+    println(ni_classify(2.5));
+}

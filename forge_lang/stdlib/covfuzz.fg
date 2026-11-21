@@ -1,0 +1,155 @@
+// Qasida — coverage-guided fuzzing (Top-500 #303).
+// Import with: import "covfuzz.fg";
+// Fuzz inputs by coverage: a deterministic mutational fuzzer
+// over a toy target. The target scores an input string by its
+// longest matching prefix of "ABCD" (edge 0 = no match, 1..4 =
+// prefix length, 5 = full prefix with extra bytes). The fuzzer
+// keeps a corpus of seeds plus every input that discovers a new
+// edge, mutating a round-robin parent with a fixed-seed LCG
+// (set / append / truncate over the alphabet "ABCD"). v1 limits:
+// the target and alphabet are fixed; the fuzzer is a model, not
+// a general binary fuzzer.
+
+struct CovFuzz {
+    corpus: [str];
+    edges: [int];
+    state: int;
+    runs: int;
+    last_rand: int;
+    last_mut: str;
+}
+
+fn cf_new(seed: int) -> CovFuzz {
+    return CovFuzz { corpus: [], edges: [], state: seed, runs: 0, last_rand: 0, last_mut: "" };
+}
+
+fn cf_next(f: CovFuzz) -> CovFuzz {
+    let mut n: CovFuzz = f;
+    n.state = (n.state * 1103515245 + 12345) % 2147483648;
+    n.last_rand = n.state;
+    return n;
+}
+
+fn cf_has_edge(f: CovFuzz, e: int) -> bool {
+    let mut i: int = 0;
+    while i < len(f.edges) {
+        if f.edges[i] == e {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cf_target(input: str) -> int {
+    if len(input) == 0 {
+        return 0;
+    }
+    if substr(input, 0, 1) != "A" {
+        return 0;
+    }
+    let alpha: str = "ABCD";
+    let mut k: int = 1;
+    while k < len(input) && k < 4 && substr(input, k, 1) == substr(alpha, k, 1) {
+        k = k + 1;
+    }
+    if k == 4 && len(input) >= 5 {
+        return 5;
+    }
+    return k;
+}
+
+fn cf_add_seed(f: CovFuzz, input: str) -> CovFuzz {
+    let mut n: CovFuzz = f;
+    push(n.corpus, input);
+    let e: int = cf_target(input);
+    if !cf_has_edge(n, e) {
+        push(n.edges, e);
+    }
+    return n;
+}
+
+fn cf_mutate(f: CovFuzz, input: str) -> CovFuzz {
+    let mut n: CovFuzz = f;
+    let alpha: str = "ABCD";
+    n = cf_next(n);
+    let kind: int = n.last_rand % 3;
+    if kind == 0 {
+        if len(input) == 0 {
+            n = cf_next(n);
+            let code: int = 65 + (n.last_rand % 4);
+            n.last_mut = input + substr(alpha, code - 65, 1);
+            return n;
+        }
+        n = cf_next(n);
+        let idx: int = n.last_rand % len(input);
+        n = cf_next(n);
+        let code2: int = 65 + (n.last_rand % 4);
+        let ch: str = substr(alpha, code2 - 65, 1);
+        n.last_mut = substr(input, 0, idx) + ch + substr(input, idx + 1, len(input) - idx - 1);
+        return n;
+    }
+    if kind == 1 {
+        if len(input) < 6 {
+            n = cf_next(n);
+            let code3: int = 65 + (n.last_rand % 4);
+            n.last_mut = input + substr(alpha, code3 - 65, 1);
+            return n;
+        }
+        n = cf_next(n);
+        let idx2: int = n.last_rand % len(input);
+        n = cf_next(n);
+        let code4: int = 65 + (n.last_rand % 4);
+        let ch2: str = substr(alpha, code4 - 65, 1);
+        n.last_mut = substr(input, 0, idx2) + ch2 + substr(input, idx2 + 1, len(input) - idx2 - 1);
+        return n;
+    }
+    if len(input) > 1 {
+        n.last_mut = substr(input, 0, len(input) - 1);
+        return n;
+    }
+    n = cf_next(n);
+    let code5: int = 65 + (n.last_rand % 4);
+    n.last_mut = input + substr(alpha, code5 - 65, 1);
+    return n;
+}
+
+fn cf_step(f: CovFuzz) -> CovFuzz {
+    let mut n: CovFuzz = f;
+    let parent: str = n.corpus[n.runs % len(n.corpus)];
+    n = cf_mutate(n, parent);
+    let m: str = n.last_mut;
+    n.runs = n.runs + 1;
+    let e: int = cf_target(m);
+    if !cf_has_edge(n, e) {
+        push(n.edges, e);
+        push(n.corpus, m);
+    }
+    return n;
+}
+
+fn cf_run(f: CovFuzz, n: int) -> CovFuzz {
+    let mut m: CovFuzz = f;
+    let mut i: int = 0;
+    while i < n {
+        m = cf_step(m);
+        i = i + 1;
+    }
+    return m;
+}
+
+fn cf_edges(f: CovFuzz) -> [int] {
+    return f.edges;
+}
+
+fn cf_edge_count(f: CovFuzz) -> int {
+    return len(f.edges);
+}
+
+fn cf_corpus_size(f: CovFuzz) -> int {
+    return len(f.corpus);
+}
+
+fn cf_runs(f: CovFuzz) -> int {
+    return f.runs;
+}

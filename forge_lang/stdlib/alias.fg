@@ -1,0 +1,62 @@
+// Qasida — import aliasing (Top-500 #498).
+// Import with: import "alias.fg";
+// `import x as y`: an alias table from short names to canonical
+// module paths. Re-adding the same alias with the same target is
+// idempotent; re-adding it with a different target records a
+// conflict (the first target wins) and bumps al_conflicts().
+// v1 limits: aliases are data only — imports are not rewritten.
+
+struct Alias {
+    names: [str];
+    targets: [str];
+    conflicts: int;
+}
+
+fn al_new() -> Alias {
+    return Alias { names: [], targets: [], conflicts: 0 };
+}
+
+fn al_index(a: Alias, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(a.names) {
+        if a.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn al_add(a: Alias, name: str, target: str) -> Alias {
+    let mut m: Alias = a;
+    let i: int = al_index(m, name);
+    if i >= 0 {
+        if m.targets[i] != target {
+            m.conflicts = m.conflicts + 1;
+        }
+        return m;
+    }
+    push(m.names, name);
+    push(m.targets, target);
+    return m;
+}
+
+fn al_resolve(a: Alias, name: str) -> str {
+    let i: int = al_index(a, name);
+    if i < 0 {
+        return "";
+    }
+    return a.targets[i];
+}
+
+fn al_has(a: Alias, name: str) -> bool {
+    return al_index(a, name) >= 0;
+}
+
+fn al_conflicts(a: Alias) -> int {
+    return a.conflicts;
+}
+
+fn al_count(a: Alias) -> int {
+    return len(a.names);
+}

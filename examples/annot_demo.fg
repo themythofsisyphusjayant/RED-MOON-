@@ -1,0 +1,17 @@
+import "annot.fg";
+
+fn main() {
+    let mut a: Annot = an_new();
+    a = an_add(a, "User", "derive", "Debug,Clone");
+    a = an_add(a, "User", "serde", "rename_all=snake");
+    a = an_add(a, "Handler", "route", "/api/users");
+    println(an_get(a, "User", "derive"));
+    println(an_get(a, "User", "serde"));
+    println(an_get(a, "Handler", "route"));
+    println(an_get(a, "User", "route"));
+    println(an_count(a, "User"));
+    let keys: [str] = an_keys(a, "User");
+    println(keys[0]);
+    println(keys[1]);
+    println(an_has(a, "Handler", "derive"));
+}

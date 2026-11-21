@@ -1,0 +1,21 @@
+import "reexport.fg";
+
+fn main() {
+    let mut r: Reexport = re_new();
+    r = re_add(r, "prelude", "max", "math::max");
+    r = re_add(r, "prelude", "len", "core::len");
+    r = re_add(r, "prelude", "push", "core::push");
+    r = re_add(r, "serde", "to_json", "json::to_json");
+    println(re_resolve(r, "prelude", "max"));
+    println(re_resolve(r, "prelude", "len"));
+    println(re_resolve(r, "serde", "to_json"));
+    println(re_resolve(r, "prelude", "min"));
+    println(re_count(r, "prelude"));
+    println(re_count(r, "serde"));
+    let syms: [str] = re_symbols(r, "prelude");
+    println(syms[0]);
+    println(syms[1]);
+    println(syms[2]);
+    println(re_has(r, "serde", "to_json"));
+    println(re_has(r, "serde", "max"));
+}

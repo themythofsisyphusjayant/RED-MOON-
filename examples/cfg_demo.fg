@@ -1,0 +1,17 @@
+import "cfg.fg";
+
+fn main() {
+    let mut c: Cfg = cfg_new("linux", "x86_64", "debug");
+    c = cfg_feat(c, "async");
+    c = cfg_feat(c, "tls");
+    println(cfg_is_os(c, "linux"));
+    println(cfg_is_os(c, "windows"));
+    println(cfg_is_arch(c, "x86_64"));
+    println(cfg_has_feat(c, "async"));
+    println(cfg_has_feat(c, "http2"));
+    println(cfg_all2(c, "os=linux", "arch=x86_64"));
+    println(cfg_all2(c, "os=linux", "arch=arm64"));
+    println(cfg_any2(c, "os=windows", "os=linux"));
+    println(cfg_all2(c, "not:os=windows", "mode=debug"));
+    println(cfg_eval_one(c, "feat=tls"));
+}
