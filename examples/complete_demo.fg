@@ -1,0 +1,14 @@
+import "complete.fg";
+
+fn main() {
+    let s: Scope = cp_new(["map", "max", "min", "match", "Point", "println"]);
+    let ma: [str] = cp_suggest(s, "ma");
+    println(cp_count(s, "ma"));
+    println(ma[0]);
+    println(ma[1]);
+    println(ma[2]);
+    let p: [str] = cp_suggest(s, "P");
+    println(cp_count(s, "P"));
+    println(p[0]);
+    println(cp_count(s, "z"));
+}

@@ -1,0 +1,11 @@
+import "consteval.fg";
+
+fn main() {
+    println(ce_bin("+", 2, 3));
+    println(ce_bin("*", 4, 5));
+    println(ce_bin("/", 7, 2));
+    println(ce_bin("%", 7, 3));
+    println(ce_unary("neg", 9));
+    println(ce_chain(2, ["+", "*"], [3, 4]));
+    println(ce_bin("/", 5, 0));
+}

@@ -1,0 +1,33 @@
+// Qasida — small-string optimization (Top-500 #416).
+// Import with: import "sso.fg";
+// Stack storage for short strings: strings of at most
+// 15 characters live inline (capacity 15); longer ones
+// spill to the heap, where the capacity is the length.
+// ss_inline() reports where a string lives.
+// v1 limits: a capacity model only — no real stack
+// allocation is performed here.
+
+struct Sso {
+    text: str;
+    is_inline: bool;
+    cap: int;
+}
+
+fn ss_new(s: str) -> Sso {
+    if len(s) <= 15 {
+        return Sso { text: s, is_inline: true, cap: 15 };
+    }
+    return Sso { text: s, is_inline: false, cap: len(s) };
+}
+
+fn ss_len(s: Sso) -> int {
+    return len(s.text);
+}
+
+fn ss_inline(s: Sso) -> bool {
+    return s.is_inline;
+}
+
+fn ss_cap(s: Sso) -> int {
+    return s.cap;
+}

@@ -1,0 +1,11 @@
+import "hover.fg";
+
+fn main() {
+    let mut h: Hover = hv_new();
+    h = hv_add(h, "max", "max: fn(int, int) -> int - returns the larger value");
+    h = hv_add(h, "Point", "Point: struct { x: int, y: int }");
+    println(hv_hover(h, "max"));
+    println(hv_hover(h, "Point"));
+    println(hv_has(h, "nope"));
+    println(hv_count(h));
+}

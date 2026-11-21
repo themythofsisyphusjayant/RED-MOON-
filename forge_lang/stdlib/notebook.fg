@@ -1,0 +1,56 @@
+// Qasida — notebook support (Top-500 #380).
+// Import with: import "notebook.fg";
+// .fg notebooks: ordered cells, each "md" or "code".
+// Code cells record an output string and an execution
+// number once run. nb_run() executes a code cell (its
+// output is caller-supplied here); nb_output() and
+// nb_exec_no() read the result. v1 limits: no real
+// kernel — execution is modelled, not performed.
+
+struct NbCell {
+    kind: str;
+    source: str;
+    output: str;
+    exec_no: int;
+}
+
+struct Notebook {
+    cells: [NbCell];
+    runs: int;
+}
+
+fn nb_new() -> Notebook {
+    return Notebook { cells: [], runs: 0 };
+}
+
+fn nb_add(nb: Notebook, kind: str, source: str) -> Notebook {
+    let mut m: Notebook = nb;
+    push(m.cells, NbCell { kind: kind, source: source, output: "", exec_no: 0 });
+    return m;
+}
+
+fn nb_run(nb: Notebook, i: int, output: str) -> Notebook {
+    let mut m: Notebook = nb;
+    let mut cell: NbCell = m.cells[i];
+    cell.output = output;
+    m.runs = m.runs + 1;
+    cell.exec_no = m.runs;
+    m.cells[i] = cell;
+    return m;
+}
+
+fn nb_count(nb: Notebook) -> int {
+    return len(nb.cells);
+}
+
+fn nb_kind(nb: Notebook, i: int) -> str {
+    return nb.cells[i].kind;
+}
+
+fn nb_output(nb: Notebook, i: int) -> str {
+    return nb.cells[i].output;
+}
+
+fn nb_exec_no(nb: Notebook, i: int) -> int {
+    return nb.cells[i].exec_no;
+}

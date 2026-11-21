@@ -1,0 +1,65 @@
+// Qasida — string marshalling (Top-500 #294).
+// Import with: import "marshal.fg";
+// UTF-8 across boundaries, modelled over ASCII: encode a
+// string to its byte values and decode bytes back to a
+// string. ma_encode() returns -1 for a character outside
+// the supported set; ma_decode() returns "?" for an
+// unsupported byte. v1 limits: printable ASCII only —
+// the double-quote and backslash bytes are unsupported
+// (they decode to "?"), no multi-byte UTF-8 yet.
+
+fn ma_table() -> str {
+    return " !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+fn ma_code_of(c: str) -> int {
+    let table: str = ma_table();
+    let mut i: int = 0;
+    while i < len(table) {
+        if substr(table, i, 1) == c {
+            if i < 2 {
+                return i + 32;
+            }
+            if i < 59 {
+                return i + 33;
+            }
+            return i + 34;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn ma_char_of(code: int) -> str {
+    let table: str = ma_table();
+    if code >= 32 && code <= 33 {
+        return substr(table, code - 32, 1);
+    }
+    if code >= 35 && code <= 91 {
+        return substr(table, code - 33, 1);
+    }
+    if code >= 93 && code <= 126 {
+        return substr(table, code - 34, 1);
+    }
+    return "?";
+}
+
+fn ma_encode(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(s) {
+        push(out, ma_code_of(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ma_decode(bytes: [int]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(bytes) {
+        out = out + ma_char_of(bytes[i]);
+        i = i + 1;
+    }
+    return out;
+}

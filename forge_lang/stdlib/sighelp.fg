@@ -1,0 +1,86 @@
+// Qasida — signature help (Top-500 #366).
+// Import with: import "sighelp.fg";
+// Parameter hints while typing: each registered function
+// carries its full signature text and its parameter names
+// as one "a, b" string. sh_signature() returns the
+// signature ("" when unknown); sh_param_count() counts
+// the parameters; sh_param_at() returns one by index.
+// v1 limits: signatures are caller-supplied text; no
+// overload resolution.
+
+struct SigHelp {
+    names: [str];
+    sigs: [str];
+    params: [str];
+}
+
+fn sh_new() -> SigHelp {
+    return SigHelp { names: [], sigs: [], params: [] };
+}
+
+fn sh_add(h: SigHelp, name: str, sig: str, params: str) -> SigHelp {
+    let mut m: SigHelp = h;
+    push(m.names, name);
+    push(m.sigs, sig);
+    push(m.params, params);
+    return m;
+}
+
+fn sh_find(h: SigHelp, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(h.names) {
+        if h.names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn sh_signature(h: SigHelp, name: str) -> str {
+    let i: int = sh_find(h, name);
+    if i < 0 {
+        return "";
+    }
+    return h.sigs[i];
+}
+
+fn sh_params(h: SigHelp, name: str) -> str {
+    let i: int = sh_find(h, name);
+    if i < 0 {
+        return "";
+    }
+    return h.params[i];
+}
+
+fn sh_found(h: SigHelp, name: str) -> bool {
+    return sh_find(h, name) >= 0;
+}
+
+fn sh_param_count(h: SigHelp, name: str) -> int {
+    let p: str = sh_params(h, name);
+    if len(p) == 0 {
+        return 0;
+    }
+    let mut n: int = 1;
+    let mut i: int = 0;
+    while i < len(p) {
+        if substr(p, i, 1) == "," {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn sh_param_at(h: SigHelp, name: str, i: int) -> str {
+    let p: str = sh_params(h, name);
+    if len(p) == 0 {
+        return "";
+    }
+    let parts: [str] = split(p, ", ");
+    if i < 0 || i >= len(parts) {
+        return "";
+    }
+    return parts[i];
+}

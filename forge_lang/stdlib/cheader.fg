@@ -1,0 +1,25 @@
+// Qasida — C header generation (Top-500 #298).
+// Import with: import "cheader.fg";
+// Emit C headers for Qasida libraries: ch_decl() renders
+// one "ret name(params);" declaration and ch_header()
+// wraps declarations in an include guard. The header is
+// a list of lines, one per line of the file.
+// v1 limits: plain declarations only — no structs,
+// enums or macros yet.
+
+fn ch_decl(ret: str, name: str, params: str) -> str {
+    return ret + " " + name + "(" + params + ");";
+}
+
+fn ch_header(guard: str, decls: [str]) -> [str] {
+    let mut out: [str] = [];
+    push(out, "#ifndef " + guard);
+    push(out, "#define " + guard);
+    let mut i: int = 0;
+    while i < len(decls) {
+        push(out, decls[i]);
+        i = i + 1;
+    }
+    push(out, "#endif");
+    return out;
+}

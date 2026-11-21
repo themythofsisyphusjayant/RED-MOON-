@@ -1,0 +1,13 @@
+import "godef.fg";
+
+fn main() {
+    let mut g: Godef = gd_new();
+    g = gd_add(g, "max", "math.fg:12");
+    g = gd_add(g, "Point", "geom.fg:3");
+    g = gd_add(g, "max", "util.fg:40");
+    println(gd_count(g));
+    println(gd_lookup(g, "max"));
+    println(gd_lookup(g, "Point"));
+    println(gd_found(g, "max"));
+    println(gd_found(g, "nope"));
+}

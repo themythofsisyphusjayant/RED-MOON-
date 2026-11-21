@@ -1,0 +1,17 @@
+import "replhist.fg";
+
+fn main() {
+    let mut h: ReplHist = rh_new();
+    h = rh_push_line(h, "let x = 1", false);
+    h = rh_push_line(h, "fn f() {", false);
+    h = rh_push_line(h, "  return 1;", true);
+    h = rh_push_line(h, "}", true);
+    h = rh_push_line(h, "f()", false);
+    println(rh_count(h));
+    println(rh_up(h, 4));
+    println(rh_up(h, 3));
+    println(rh_down(h, 2));
+    println(rh_entry(h, 0));
+    println(rh_block_size(h, 1));
+    println(rh_block_of(h, 3));
+}

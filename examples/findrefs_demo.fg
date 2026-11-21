@@ -1,0 +1,16 @@
+import "findrefs.fg";
+
+fn main() {
+    let mut r: FindRefs = fr_new();
+    r = fr_add(r, "max", "math.fg:20");
+    r = fr_add(r, "max", "main.fg:5");
+    r = fr_add(r, "Point", "geom.fg:9");
+    r = fr_add(r, "max", "math.fg:31");
+    let refs: [str] = fr_refs(r, "max");
+    println(fr_count(r, "max"));
+    println(refs[0]);
+    println(refs[1]);
+    println(refs[2]);
+    println(fr_count(r, "Point"));
+    println(fr_count(r, "nope"));
+}

@@ -1,0 +1,13 @@
+import "unreach.fg";
+
+fn main() {
+    let lines: [str] = ["code", "code", "return", "code", "code", "return", "code"];
+    let found: [int] = un_find(lines);
+    println(un_count(lines));
+    println(found[0]);
+    println(found[1]);
+    println(found[2]);
+    println(found[3]);
+    println(un_is_unreachable(lines, 4));
+    println(un_is_unreachable(lines, 2));
+}

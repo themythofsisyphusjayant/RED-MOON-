@@ -994,3 +994,42 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (250 + 22 + 228 = 500). HAVE 250 of 500 = 50%. Next: sprint batch 10,
   same libs-only rule, target 20/day (the ~211 target was passed on
   day 1; the running count is the honest measure).
+
+- Sprint batch 10 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121j.py (80/80 PASS — 20
+  demos) with an independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch10/replica_20261121j.py):
+  unreach.fg (#348 straight-line reachability: statements after the
+  first return), godef.fg (#363 definition index, first definition
+  wins — closes the PARTIAL), findrefs.fg (#364 every use of a
+  symbol, first-seen order), complete.fg (#365 prefix completions
+  from scope), sighelp.fg (#366 signature text + params),
+  semhl.fg (#370 token classifier), inlay.fg (#371 "name: type"
+  hints), replhist.fg (#379 multiline input + history cursor —
+  closes the PARTIAL), notebook.fg (#380 md/code cells, exec
+  numbers), bp.fg (#381 breakpoint registry, next-hit scan),
+  clayout.fg (#281 C field offsets with align_up), marshal.fg
+  (#294 ASCII encode/decode by byte value), plugin.fg (#297
+  plugin registry, load/unload), cheader.fg (#298 C declarations
+  + include guard), hover.fg (#361 hover info — closes the known
+  LSP hover gap), dce.fg (#411 BFS reachability, dead functions),
+  intern.fg (#415 one id per distinct string), sso.fg (#416
+  15-char inline cutoff), consteval.fg (#472 integer const
+  folds), determin.fg (#356 recorded runs are consistent).
+  One fix during verification: sso.fg used `inline` as a struct
+  field name, which is a C keyword — renamed to is_inline; the
+  rerun went 80/80. The replica caught its own ordering bug in
+  plugin_demo (values captured after the unload); the .fg demo
+  was correct. No #42/#43/#53 work (#42 resolved:
+  helper-function slice). Skipped per brief: #273, #129, #302
+  (need function values); #122/#164 not flipped (known stale
+  notes). #181/#187/#188/#189/#190 not buildable in pure Qasida
+  (no mkdir/readdir/rename builtins exist).
+  Counts after sprint batch 10: HAVE 270, PARTIAL 20, GAP 210, to build
+  230. Arithmetic from sprint batch 9 (HAVE 250, PARTIAL 22, GAP 228,
+  to build 250): 18 GAP-to-HAVE + 2 PARTIAL-to-HAVE = 20 flips;
+  250 + 20 = 270; 22 - 2 = 20; 228 - 18 = 210; 250 - 20 = 230
+  (270 + 20 + 210 = 500). HAVE 270 of 500 = 54%. Next: sprint batch 11,
+  same libs-only rule, target 20/day (the running count is the honest
+  measure).

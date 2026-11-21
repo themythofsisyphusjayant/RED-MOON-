@@ -1,0 +1,86 @@
+// Qasida — dead-code elimination (Top-500 #411).
+// Import with: import "dce.fg";
+// Remove unreachable functions: a call graph plus a
+// root set. dc_reachable() walks the graph breadth-first
+// from the roots, in first-seen order; dc_dead() lists
+// the registered functions never reached, in
+// registration order. v1 limits: static call lists only
+// (no indirect or dynamic calls).
+
+struct DcFn {
+    name: str;
+    callees: [str];
+}
+
+struct Dce {
+    fns: [DcFn];
+}
+
+fn dc_new() -> Dce {
+    return Dce { fns: [] };
+}
+
+fn dc_add(d: Dce, name: str, callees: [str]) -> Dce {
+    let mut m: Dce = d;
+    push(m.fns, DcFn { name: name, callees: callees });
+    return m;
+}
+
+fn dc_callees_of(d: Dce, name: str) -> [str] {
+    let mut i: int = 0;
+    while i < len(d.fns) {
+        if d.fns[i].name == name {
+            return d.fns[i].callees;
+        }
+        i = i + 1;
+    }
+    return [];
+}
+
+fn dc_seen(seen: [str], name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(seen) {
+        if seen[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn dc_reachable(d: Dce, roots: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(roots) {
+        if !dc_seen(out, roots[i]) {
+            push(out, roots[i]);
+        }
+        i = i + 1;
+    }
+    let mut head: int = 0;
+    while head < len(out) {
+        let callees: [str] = dc_callees_of(d, out[head]);
+        let mut j: int = 0;
+        while j < len(callees) {
+            if !dc_seen(out, callees[j]) {
+                push(out, callees[j]);
+            }
+            j = j + 1;
+        }
+        head = head + 1;
+    }
+    return out;
+}
+
+fn dc_dead(d: Dce, roots: [str]) -> [str] {
+    let reach: [str] = dc_reachable(d, roots);
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.fns) {
+        if !dc_seen(reach, d.fns[i].name) {
+            push(out, d.fns[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

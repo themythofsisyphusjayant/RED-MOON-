@@ -1,0 +1,59 @@
+// Qasida — C struct layout (Top-500 #281).
+// Import with: import "clayout.fg";
+// C field offsets with alignment and packing: each field
+// has a size and an alignment; its offset is the current
+// size rounded up to the alignment. cl_size() is the
+// total size rounded up to the largest alignment.
+// v1 limits: no bitfields, no packed-attribute override.
+
+struct ClField {
+    name: str;
+    size: int;
+    align: int;
+}
+
+struct ClLayout {
+    fields: [ClField];
+    offsets: [int];
+    size: int;
+    max_align: int;
+}
+
+fn cl_align_up(x: int, a: int) -> int {
+    return ((x + a - 1) / a) * a;
+}
+
+fn cl_new() -> ClLayout {
+    return ClLayout { fields: [], offsets: [], size: 0, max_align: 1 };
+}
+
+fn cl_add(l: ClLayout, name: str, size: int, align: int) -> ClLayout {
+    let mut m: ClLayout = l;
+    let off: int = cl_align_up(m.size, align);
+    push(m.fields, ClField { name: name, size: size, align: align });
+    push(m.offsets, off);
+    m.size = off + size;
+    if align > m.max_align {
+        m.max_align = align;
+    }
+    return m;
+}
+
+fn cl_offset(l: ClLayout, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(l.fields) {
+        if l.fields[i].name == name {
+            return l.offsets[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn cl_size(l: ClLayout) -> int {
+    return cl_align_up(l.size, l.max_align);
+}
+
+fn cl_field_count(l: ClLayout) -> int {
+    return len(l.fields);
+}

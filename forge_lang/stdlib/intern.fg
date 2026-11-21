@@ -1,0 +1,45 @@
+// Qasida — string interning (Top-500 #415).
+// Import with: import "intern.fg";
+// Deduplicate constant strings: each distinct string
+// gets one small integer id, and interning the same
+// string twice returns the same id. in_get() resolves
+// an id back to its string ("" when unknown).
+// v1 limits: no reference counting, no eviction.
+
+struct Intern {
+    strs: [str];
+}
+
+fn in_new() -> Intern {
+    return Intern { strs: [] };
+}
+
+fn in_id(t: Intern, s: str) -> int {
+    let mut i: int = 0;
+    while i < len(t.strs) {
+        if t.strs[i] == s {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn in_intern(t: Intern, s: str) -> Intern {
+    let mut m: Intern = t;
+    if in_id(m, s) < 0 {
+        push(m.strs, s);
+    }
+    return m;
+}
+
+fn in_count(t: Intern) -> int {
+    return len(t.strs);
+}
+
+fn in_get(t: Intern, id: int) -> str {
+    if id < 0 || id >= len(t.strs) {
+        return "";
+    }
+    return t.strs[id];
+}

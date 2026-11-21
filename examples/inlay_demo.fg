@@ -1,0 +1,13 @@
+import "inlay.fg";
+
+fn main() {
+    let mut h: Inlay = ih_new();
+    h = ih_add(h, "x", "x: int");
+    h = ih_add(h, "name", "name: str");
+    h = ih_add(h, "pts", "pts: [int]");
+    println(ih_hint(h, "x"));
+    println(ih_hint(h, "name"));
+    println(ih_hint(h, "pts"));
+    println(ih_has(h, "nope"));
+    println(ih_count(h));
+}

@@ -1,0 +1,38 @@
+// Qasida — context-aware completions (Top-500 #365).
+// Import with: import "complete.fg";
+// Completion candidates come from the names in scope:
+// cp_suggest() returns every in-scope name that starts
+// with the given prefix, in scope order. Case-sensitive.
+// v1 limits: prefix matching only (no fuzzy matching,
+// no type-based ranking).
+
+struct Scope {
+    names: [str];
+}
+
+fn cp_new(names: [str]) -> Scope {
+    return Scope { names: names };
+}
+
+fn cp_starts_with(name: str, prefix: str) -> bool {
+    if len(prefix) > len(name) {
+        return false;
+    }
+    return substr(name, 0, len(prefix)) == prefix;
+}
+
+fn cp_suggest(s: Scope, prefix: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(s.names) {
+        if cp_starts_with(s.names[i], prefix) {
+            push(out, s.names[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cp_count(s: Scope, prefix: str) -> int {
+    return len(cp_suggest(s, prefix));
+}

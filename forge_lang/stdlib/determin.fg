@@ -1,0 +1,43 @@
+// Qasida — determinism checks (Top-500 #356).
+// Import with: import "determin.fg";
+// Prove the same input gives the same output: record
+// (input, output) pairs and check that no input ever
+// maps to two different outputs. dt_check() is true
+// exactly when the recorded runs are consistent.
+// v1 limits: integer inputs/outputs only; the function
+// under test is run by the caller, not by this library.
+
+struct Determin {
+    inputs: [int];
+    outputs: [int];
+}
+
+fn dt_new() -> Determin {
+    return Determin { inputs: [], outputs: [] };
+}
+
+fn dt_record(d: Determin, input: int, output: int) -> Determin {
+    let mut m: Determin = d;
+    push(m.inputs, input);
+    push(m.outputs, output);
+    return m;
+}
+
+fn dt_runs(d: Determin) -> int {
+    return len(d.inputs);
+}
+
+fn dt_check(d: Determin) -> bool {
+    let mut i: int = 0;
+    while i < len(d.inputs) {
+        let mut j: int = i + 1;
+        while j < len(d.inputs) {
+            if d.inputs[j] == d.inputs[i] && d.outputs[j] != d.outputs[i] {
+                return false;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}

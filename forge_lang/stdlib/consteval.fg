@@ -1,0 +1,49 @@
+// Qasida — const evaluation (Top-500 #472).
+// Import with: import "consteval.fg";
+// Evaluate expressions at compile time: binary ops
+// over integers, unary negation, and left-to-right
+// chains. Division by zero folds to 0 (documented).
+// v1 limits: integers only; no floats, no function
+// calls, no branching in the evaluated expression.
+
+fn ce_bin(op: str, a: int, b: int) -> int {
+    if op == "+" {
+        return a + b;
+    }
+    if op == "-" {
+        return a - b;
+    }
+    if op == "*" {
+        return a * b;
+    }
+    if op == "/" {
+        if b == 0 {
+            return 0;
+        }
+        return a / b;
+    }
+    if op == "%" {
+        if b == 0 {
+            return 0;
+        }
+        return a % b;
+    }
+    return 0;
+}
+
+fn ce_unary(op: str, a: int) -> int {
+    if op == "neg" {
+        return 0 - a;
+    }
+    return a;
+}
+
+fn ce_chain(start: int, ops: [str], vals: [int]) -> int {
+    let mut acc: int = start;
+    let mut i: int = 0;
+    while i < len(ops) {
+        acc = ce_bin(ops[i], acc, vals[i]);
+        i = i + 1;
+    }
+    return acc;
+}

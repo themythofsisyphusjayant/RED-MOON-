@@ -1,0 +1,42 @@
+// Qasida — inlay hints (Top-500 #371).
+// Import with: import "inlay.fg";
+// Inferred types shown inline: each binding carries its
+// inferred type as a "name: type" hint string.
+// ih_hint() returns the hint ("" when unknown).
+// v1 limits: hints are caller-supplied text; the
+// inference itself is not in this library.
+
+struct Inlay {
+    names: [str];
+    hints: [str];
+}
+
+fn ih_new() -> Inlay {
+    return Inlay { names: [], hints: [] };
+}
+
+fn ih_add(h: Inlay, name: str, hint: str) -> Inlay {
+    let mut m: Inlay = h;
+    push(m.names, name);
+    push(m.hints, hint);
+    return m;
+}
+
+fn ih_hint(h: Inlay, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(h.names) {
+        if h.names[i] == name {
+            return h.hints[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn ih_has(h: Inlay, name: str) -> bool {
+    return ih_hint(h, name) != "";
+}
+
+fn ih_count(h: Inlay) -> int {
+    return len(h.names);
+}

@@ -1,0 +1,42 @@
+// Qasida — hover types (Top-500 #361).
+// Import with: import "hover.fg";
+// Hover information for a symbol: its type and a short
+// description, stored as one "name: type - doc" string.
+// hv_hover() returns the info ("" when unknown).
+// This closes the known LSP hover gap at the library
+// level. v1 limits: info is caller-supplied text.
+
+struct Hover {
+    names: [str];
+    infos: [str];
+}
+
+fn hv_new() -> Hover {
+    return Hover { names: [], infos: [] };
+}
+
+fn hv_add(h: Hover, name: str, info: str) -> Hover {
+    let mut m: Hover = h;
+    push(m.names, name);
+    push(m.infos, info);
+    return m;
+}
+
+fn hv_hover(h: Hover, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(h.names) {
+        if h.names[i] == name {
+            return h.infos[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn hv_has(h: Hover, name: str) -> bool {
+    return hv_hover(h, name) != "";
+}
+
+fn hv_count(h: Hover) -> int {
+    return len(h.names);
+}

@@ -384,3 +384,21 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   (FNV-1a fingerprints, rebuild list), buildcache.fg (key-list
   cache), vendor.fg (vendor/<name>-<version> paths), unused.fg
   (defined-but-never-used lets). HAVE 230 -> 250 (50% of 500).
+
+- Sprint batch 10 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 (80/80 checks, 20 demos): unreach.fg
+  (statements after the first return), godef.fg (definition index,
+  first definition wins — closes the #363 PARTIAL), findrefs.fg
+  (every use, first-seen order), complete.fg (prefix completions),
+  sighelp.fg (signature text + params), semhl.fg (token
+  classifier), inlay.fg ("name: type" hints), replhist.fg
+  (multiline input + history cursor — closes the #379 PARTIAL),
+  notebook.fg (md/code cells, exec numbers), bp.fg (breakpoint
+  registry, next-hit scan), clayout.fg (C field offsets),
+  marshal.fg (ASCII encode/decode), plugin.fg (plugin registry),
+  cheader.fg (C declarations + include guard), hover.fg (hover
+  info — closes the known LSP hover gap), dce.fg (BFS reachability,
+  dead functions), intern.fg (one id per string), sso.fg (15-char
+  inline cutoff), consteval.fg (integer const folds),
+  determin.fg (recorded runs are consistent). HAVE 250 -> 270
+  (54% of 500).

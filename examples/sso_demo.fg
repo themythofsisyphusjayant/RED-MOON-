@@ -1,0 +1,15 @@
+import "sso.fg";
+
+fn main() {
+    let a: Sso = ss_new("hi");
+    println(ss_len(a));
+    println(ss_inline(a));
+    println(ss_cap(a));
+    let b: Sso = ss_new("123456789012345");
+    println(ss_len(b));
+    println(ss_inline(b));
+    let c: Sso = ss_new("1234567890123456");
+    println(ss_len(c));
+    println(ss_inline(c));
+    println(ss_cap(c));
+}

@@ -1,0 +1,21 @@
+import "dce.fg";
+
+fn main() {
+    let mut d: Dce = dc_new();
+    d = dc_add(d, "main", ["helper", "render"]);
+    d = dc_add(d, "helper", ["util"]);
+    d = dc_add(d, "render", []);
+    d = dc_add(d, "util", []);
+    d = dc_add(d, "orphan", ["util"]);
+    d = dc_add(d, "dead2", []);
+    let reach: [str] = dc_reachable(d, ["main"]);
+    println(len(reach));
+    println(reach[0]);
+    println(reach[1]);
+    println(reach[2]);
+    println(reach[3]);
+    let dead: [str] = dc_dead(d, ["main"]);
+    println(len(dead));
+    println(dead[0]);
+    println(dead[1]);
+}

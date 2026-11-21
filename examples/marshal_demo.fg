@@ -1,0 +1,11 @@
+import "marshal.fg";
+
+fn main() {
+    let bytes: [int] = ma_encode("Hi!");
+    println(bytes[0]);
+    println(bytes[1]);
+    println(bytes[2]);
+    println(ma_decode(bytes));
+    println(ma_decode(ma_encode("Qasida")) == "Qasida");
+    println(len(ma_encode("abc")));
+}

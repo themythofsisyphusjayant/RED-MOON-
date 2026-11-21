@@ -1,0 +1,11 @@
+import "semhl.fg";
+
+fn main() {
+    println(sh_classify("fn"));
+    println(sh_classify("int"));
+    println(sh_classify("42"));
+    println(sh_classify("\"hi\""));
+    println(sh_classify("max("));
+    println(sh_classify("x"));
+    println(sh_classify("// note"));
+}

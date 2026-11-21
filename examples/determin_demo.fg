@@ -1,0 +1,13 @@
+import "determin.fg";
+
+fn main() {
+    let mut d: Determin = dt_new();
+    d = dt_record(d, 1, 10);
+    d = dt_record(d, 2, 20);
+    d = dt_record(d, 1, 10);
+    println(dt_check(d));
+    println(dt_runs(d));
+    d = dt_record(d, 2, 21);
+    println(dt_check(d));
+    println(dt_runs(d));
+}

@@ -1,0 +1,77 @@
+// Qasida — debugger breakpoints (Top-500 #381).
+// Import with: import "bp.fg";
+// Breakpoints and stepping, modelled over a breakpoint
+// registry: each breakpoint is a (file, line) pair with
+// an enabled flag. bp_hit() answers one location;
+// bp_next_hit() finds the first enabled breakpoint at or
+// after the lines given, in order (-1 when none).
+// v1 limits: a registry model — no live process control,
+// no conditional breakpoints yet.
+
+struct Bp {
+    files: [str];
+    lines: [int];
+    enabled: [bool];
+}
+
+fn bp_new() -> Bp {
+    return Bp { files: [], lines: [], enabled: [] };
+}
+
+fn bp_add(b: Bp, file: str, line: int) -> Bp {
+    let mut m: Bp = b;
+    push(m.files, file);
+    push(m.lines, line);
+    push(m.enabled, true);
+    return m;
+}
+
+fn bp_set(b: Bp, file: str, line: int, on: bool) -> Bp {
+    let mut m: Bp = b;
+    let mut i: int = 0;
+    while i < len(m.files) {
+        if m.files[i] == file && m.lines[i] == line {
+            m.enabled[i] = on;
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+fn bp_hit(b: Bp, file: str, line: int) -> bool {
+    let mut i: int = 0;
+    while i < len(b.files) {
+        if b.files[i] == file && b.lines[i] == line && b.enabled[i] {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn bp_count(b: Bp) -> int {
+    return len(b.files);
+}
+
+fn bp_enabled_count(b: Bp) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(b.enabled) {
+        if b.enabled[i] {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn bp_next_hit(b: Bp, file: str, lines: [int]) -> int {
+    let mut i: int = 0;
+    while i < len(lines) {
+        if bp_hit(b, file, lines[i]) {
+            return lines[i];
+        }
+        i = i + 1;
+    }
+    return -1;
+}

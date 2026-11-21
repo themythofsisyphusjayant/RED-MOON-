@@ -445,7 +445,7 @@ is not ownership-tracked (see #27).
 280. Async HTTP handlers (FastAPI) — [GAP] Async routes for servers.
 
 ## 15. FFI and interop (281-300)
-281. C struct layout compatibility (C) — [GAP] Match C field offsets; the known packing issue.
+281. C struct layout compatibility (C) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/clayout.fg — C field offsets with align_up, total size rounded to max alignment (80/80 checks both compilers, replica 20/20).
 282. Callbacks from C into Qasida (C) — [HAVE] extern FFI exists for calling out; add callbacks coming back in.
 283. C++ interop (Swift) — [GAP] Name-mangled calls.
 284. Python interop (Mojo) — [GAP] Call Python from Qasida and back.
@@ -458,11 +458,11 @@ is not ownership-tracked (see #27).
 291. Objective-C interop (Swift) — [GAP] Apple APIs.
 292. Stable module ABI (Swift) — [GAP] Binary compatibility promises.
 293. Bit-exact float passing (all) — [GAP] Float calling-convention rules.
-294. String marshalling (all) — [GAP] UTF-8 across boundaries.
+294. String marshalling (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/marshal.fg — ASCII encode/decode by byte value (printable ASCII except quote/backslash) (80/80 checks both compilers, replica 20/20).
 295. Callback lifetimes (all) — [GAP] Keep callbacks alive as long as C holds them.
 296. Dynamic loading: dlopen (C) — [GAP] Load shared libraries at runtime.
-297. Plugin systems (all) — [GAP] Loadable extensions.
-298. C header generation (cbindgen) — [GAP] Emit C headers for Qasida libraries.
+297. Plugin systems (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/plugin.fg — plugin registry with versions, provided functions and load/unload (80/80 checks both compilers, replica 20/20).
+298. C header generation (cbindgen) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/cheader.fg — C declarations + include-guard header lines (80/80 checks both compilers, replica 20/20).
 299. Zero-copy serialization (Cap'n Proto) — [GAP] IPC without copying.
 300. Cross-language hover (all) — [GAP] Editor support across FFI boundaries.
 
@@ -518,7 +518,7 @@ is not ownership-tracked (see #27).
 345. Source snippets in errors (Rust) — [GAP] Caret and context rendering.
 346. Warnings vs errors (all) — [GAP] Warn on unused code, deny on demand.
 347. Unused-code detection (Goboscript) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/unused.fg — top-level `let` bindings with no whole-word use on any other line (84/84 checks both compilers, replica 21/21).
-348. Unreachable-code warnings (all) — [GAP] Flag code that can never run.
+348. Unreachable-code warnings (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/unreach.fg — straight-line reachability: statements after the first return, 1-based lines in order (80/80 checks both compilers, replica 20/20).
 349. Error minimization (Elm) — [GAP] Shrink to the smallest failing snippet.
 350. Auto-fix suggestions (Rust) — [GAP] Apply safe fixes.
 351. Lint rules (Clippy/ESLint) — [HAVE] Already in the tree (lint.fg: long lines, trailing space, TODO lines, empty lines); verified 21 Nov 2026 (sprint batch 7) via the existing lint_demo.fg, 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Style and correctness lints over source text. v1 limits: the four rules only — no name checks, no complexity, no unused-code detection.
@@ -526,24 +526,24 @@ is not ownership-tracked (see #27).
 353. Import organization (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): imporg.fg + imporg_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ASCII-rank lexicographic sort (no string < in Qasida), exact-match dedupe; no grouping, no alias handling, no unused-import detection. Sort and dedupe imports.
 354. Complexity metrics (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): complexity.fg + complexity_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: base 1 + decision nodes (if/for/while/match_arm/and/or/catch/ternary) over a caller-supplied kind list; no per-function breakdown, no nesting depth. Cyclomatic complexity warnings.
 355. Unsafe-operation auditing (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): unsafecheck.fg + unsafecheck_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: name + checked flag + file per op; no severity levels, no allow-list, no dedupe across files. List unchecked operations per file.
-356. Determinism checks (all) — [GAP] Prove same input gives same output.
+356. Determinism checks (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/determin.fg — recorded (input, output) pairs are consistent — no input maps to two outputs (80/80 checks both compilers, replica 20/20).
 357. Compile-time evaluation errors (Zig) — [GAP] Clear comptime failure messages.
 358. Macro expansion view (Rust) — [GAP] Show expanded code; needs macros first.
 359. Incremental error caching (Rust) — [GAP] Fast re-checks.
 360. IDE-grade error recovery (TypeScript) — [GAP] Keep checking after errors.
 
 ## 19. Editor and LSP (361-380)
-361. Hover types (all LSP) — [GAP] The known LSP gap.
+361. Hover types (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/hover.fg — hover info ('name: type - doc') per symbol; closes the known LSP hover gap (80/80 checks both compilers, replica 20/20).
 362. Rename symbol (all LSP) — [GAP] The known LSP gap.
-363. Go to definition (all LSP) — [PARTIAL] An LSP exists; verify definition coverage.
-364. Find references (all LSP) — [GAP] Every use of a symbol.
-365. Context-aware completions (all LSP) — [GAP] Suggestions from scope and types.
-366. Signature help (all LSP) — [GAP] Parameter hints while typing.
+363. Go to definition (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/godef.fg — definition index (first definition wins, 'file:line' locations); closes the PARTIAL (80/80 checks both compilers, replica 20/20).
+364. Find references (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/findrefs.fg — reference index: every use of a symbol in first-seen order (80/80 checks both compilers, replica 20/20).
+365. Context-aware completions (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/complete.fg — prefix completions from the names in scope, in scope order (80/80 checks both compilers, replica 20/20).
+366. Signature help (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/sighelp.fg — signature text + parameter names, count and lookup by index (80/80 checks both compilers, replica 20/20).
 367. Code actions / quick fixes (all LSP) — [GAP] Apply suggestions from the editor.
 368. Document symbols / outline (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): docsym.fg + docsym_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: kind/name/line declarations supplied by the caller; no nesting, no ranges, input order kept. File outline view.
 369. Format via LSP (all LSP) — [PARTIAL] fmt exists; wire it into the LSP.
-370. Semantic highlighting (all LSP) — [GAP] Type-aware colours.
-371. Inlay hints (Rust) — [GAP] Inferred types shown inline.
+370. Semantic highlighting (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/semhl.fg — token classifier: keyword/type/number/string/comment/function/variable (80/80 checks both compilers, replica 20/20).
+371. Inlay hints (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/inlay.fg — 'name: type' hints for inferred bindings (80/80 checks both compilers, replica 20/20).
 372. Call hierarchy (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): callhier.fg + callhier_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: direct edges only, distinct callers/callees in first-seen order; no transitive closure, no recursion marking. Callers and callees.
 373. Type hierarchy (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/typehier.fg — "Trait:Struct" registry with implementors, implements-check and traits-of (84/84 checks both compilers, replica 21/21).
 374. Workspace symbols (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): wsym.fg + wsym_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: case-sensitive substring search, input order kept; no fuzzy matching, no ranking. Search symbols across the tree.
@@ -551,11 +551,11 @@ is not ownership-tracked (see #27).
 376. Snippets — [HAVE] 16 snippets ship in the VS Code extension; extend them per new feature.
 377. Syntax highlighting — [HAVE] A TextMate grammar ships; extend it per new syntax.
 378. Debugger protocol support (DAP) — [GAP] Breakpoints and stepping; ties to the debugger gap.
-379. REPL with history (all) — [PARTIAL] A repl exists; add multiline input and history.
-380. Notebook support (Jupyter) — [GAP] .fg notebooks; ties to the Kaggle work.
+379. REPL with history (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/replhist.fg — multiline input (block-grouped entries) + clamped history cursor; closes the PARTIAL (80/80 checks both compilers, replica 20/20).
+380. Notebook support (Jupyter) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/notebook.fg — ordered md/code cells with outputs and execution numbers (80/80 checks both compilers, replica 20/20).
 
 ## 20. Debugging and observability (381-400)
-381. Debugger: breakpoints and stepping (all) — [GAP] The known missing tool.
+381. Debugger: breakpoints and stepping (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/bp.fg — breakpoint registry with enable/disable, hit check and next-hit scan (80/80 checks both compilers, replica 20/20).
 382. dbg! print debugging (Rust) — [HAVE] Value-printing helpers. Landed 21 Nov 2026 (sprint batch 6): dbg.fg + dbg_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: dbg_int/dbg_float/dbg_str/dbg_bool print "name = value" and return the value; no array/struct pretty-printing.
 383. Logging framework (all) — [HAVE] A log library exists; add levels and structured logs. Landed 21 Nov 2026 (sprint batch 6): logfmt.fg + logfmt_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: structured key=value lines (lf_format/lf_format2) with level filtering (lf_emit); log.fg already had levels; string values only, no timestamps in the line.
 384. Tracing and spans (OpenTelemetry) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): trace.fg + trace_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: start/end named spans over explicit microsecond stamps, duration lookup, text report of closed spans; no trace IDs or exporters.
@@ -587,12 +587,12 @@ is not ownership-tracked (see #27).
 408. Link-time optimization (all) — [GAP] Cross-module optimization.
 409. Profile-guided optimization (all) — [GAP] Builds tuned by real profiles.
 410. Constant folding (all) — [GAP] Evaluate constants at compile time.
-411. Dead-code elimination (all) — [GAP] Remove unreachable functions.
+411. Dead-code elimination (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/dce.fg — BFS reachability from roots, dead functions in registration order (80/80 checks both compilers, replica 20/20).
 412. Register allocation quality (all) — [GAP] Better than today's scratch-register quirk.
 413. Instruction scheduling (all) — [GAP] Order instructions for pipelines.
 414. Cache-aware struct layouts (all) — [GAP] Reorder fields for cache lines.
-415. String interning (all) — [GAP] Deduplicate constant strings.
-416. Small-string optimization (C++) — [GAP] Stack storage for short strings.
+415. String interning (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/intern.fg — string interning: one id per distinct string, first id wins (80/80 checks both compilers, replica 20/20).
+416. Small-string optimization (C++) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/sso.fg — 15-char inline cutoff (capacity 15), heap spill reports length as capacity (80/80 checks both compilers, replica 20/20).
 417. Zero-cost abstractions (Rust) — [GAP] Abstractions that compile away entirely.
 418. Benchmark-driven tuning (all) — [GAP] A bench suite; the bench item already queued.
 419. Allocation-free hot paths (Zig) — [GAP] No allocation inside loops.
@@ -654,7 +654,7 @@ is not ownership-tracked (see #27).
 469. Type-level metaprogramming (C++) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/typemeta.fg — recursive type-level expression evaluator: add/sub/mul on type-level naturals, len of type lists, if by type-level bool, eq (84/84 checks both compilers, replica 21/21).
 470. Hygienic macros (Scheme) — [GAP] Capture-free expansion.
 471. Procedural macros (Rust) — [GAP] AST-transforming macros.
-472. Const evaluation (Rust/Zig) — [GAP] Evaluate expressions at compile time.
+472. Const evaluation (Rust/Zig) — [HAVE] Landed 21 Nov 2026 (sprint batch 10): forge_lang/stdlib/consteval.fg — integer const folds: binary ops, unary neg, left-to-right chains (div-by-zero folds to 0) (80/80 checks both compilers, replica 20/20).
 473. Type-level numbers (Haskell) — [GAP] Sizes carried in types.
 474. Custom compiler passes (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 9): forge_lang/stdlib/ccpass.fg — user lint/optimization passes as data (substring and max-length kinds, severity, per-line violations) (84/84 checks both compilers, replica 21/21).
 475. Rich documentation generation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): docgen2.fg + docgen2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single-level [#name] anchors, [[name]] rewritten for known names only (unknown names left visible); no section numbering. Examples and cross-links over docgen.fg.

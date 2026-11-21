@@ -1,0 +1,72 @@
+// Qasida — REPL history (Top-500 #379).
+// Import with: import "replhist.fg";
+// A REPL exists; this adds multiline input and history:
+// entries are grouped into blocks (one block per entered
+// command, however many lines it spans). rh_push_line()
+// appends one line to a block (cont=true marks a
+// continuation line of the block just started);
+// rh_up()/rh_down() move the history cursor, clamped to
+// the entry range. This closes the PARTIAL ("a repl
+// exists; add multiline input and history").
+// v1 limits: in-memory only; no persistence across
+// sessions; cont=true only follows a started block.
+
+struct ReplHist {
+    entries: [str];
+    blocks: [int];
+    next_block: int;
+}
+
+fn rh_new() -> ReplHist {
+    return ReplHist { entries: [], blocks: [], next_block: 0 };
+}
+
+fn rh_push_line(h: ReplHist, line: str, cont: bool) -> ReplHist {
+    let mut m: ReplHist = h;
+    push(m.entries, line);
+    if cont {
+        push(m.blocks, m.next_block - 1);
+    } else {
+        push(m.blocks, m.next_block);
+        m.next_block = m.next_block + 1;
+    }
+    return m;
+}
+
+fn rh_count(h: ReplHist) -> int {
+    return len(h.entries);
+}
+
+fn rh_entry(h: ReplHist, i: int) -> str {
+    return h.entries[i];
+}
+
+fn rh_block_of(h: ReplHist, i: int) -> int {
+    return h.blocks[i];
+}
+
+fn rh_block_size(h: ReplHist, block: int) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(h.blocks) {
+        if h.blocks[i] == block {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn rh_up(h: ReplHist, cur: int) -> int {
+    if cur <= 0 {
+        return 0;
+    }
+    return cur - 1;
+}
+
+fn rh_down(h: ReplHist, cur: int) -> int {
+    if cur >= len(h.entries) - 1 {
+        return len(h.entries) - 1;
+    }
+    return cur + 1;
+}

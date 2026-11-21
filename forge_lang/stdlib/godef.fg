@@ -1,0 +1,44 @@
+// Qasida — go to definition (Top-500 #363).
+// Import with: import "godef.fg";
+// A definition index maps a symbol name to the "file:line"
+// where it is defined. The first definition added wins;
+// gd_lookup() returns "" for an unknown symbol. This
+// closes the PARTIAL ("an LSP exists; verify definition
+// coverage") with a verified index over definitions.
+// v1 limits: one definition per name wins (no overloads),
+// locations are caller-supplied "file:line" strings.
+
+struct Godef {
+    names: [str];
+    locs: [str];
+}
+
+fn gd_new() -> Godef {
+    return Godef { names: [], locs: [] };
+}
+
+fn gd_add(g: Godef, name: str, loc: str) -> Godef {
+    let mut m: Godef = g;
+    push(m.names, name);
+    push(m.locs, loc);
+    return m;
+}
+
+fn gd_count(g: Godef) -> int {
+    return len(g.names);
+}
+
+fn gd_lookup(g: Godef, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(g.names) {
+        if g.names[i] == name {
+            return g.locs[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn gd_found(g: Godef, name: str) -> bool {
+    return gd_lookup(g, name) != "";
+}

@@ -1,0 +1,16 @@
+import "intern.fg";
+
+fn main() {
+    let mut t: Intern = in_new();
+    t = in_intern(t, "hello");
+    println(in_id(t, "hello"));
+    t = in_intern(t, "world");
+    println(in_id(t, "world"));
+    t = in_intern(t, "hello");
+    println(in_id(t, "hello"));
+    t = in_intern(t, "qasida");
+    println(in_id(t, "qasida"));
+    println(in_count(t));
+    println(in_get(t, 1));
+    println(in_id(t, "nope"));
+}

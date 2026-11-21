@@ -1,0 +1,39 @@
+// Qasida — find references (Top-500 #364).
+// Import with: import "findrefs.fg";
+// A reference index records every use of a symbol as a
+// "file:line" location. fr_refs() returns all uses of one
+// symbol in first-seen order; fr_count() counts them.
+// v1 limits: locations are caller-supplied strings; no
+// distinction between reads and writes.
+
+struct FindRefs {
+    names: [str];
+    locs: [str];
+}
+
+fn fr_new() -> FindRefs {
+    return FindRefs { names: [], locs: [] };
+}
+
+fn fr_add(r: FindRefs, name: str, loc: str) -> FindRefs {
+    let mut m: FindRefs = r;
+    push(m.names, name);
+    push(m.locs, loc);
+    return m;
+}
+
+fn fr_refs(r: FindRefs, name: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(r.names) {
+        if r.names[i] == name {
+            push(out, r.locs[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fr_count(r: FindRefs, name: str) -> int {
+    return len(fr_refs(r, name));
+}

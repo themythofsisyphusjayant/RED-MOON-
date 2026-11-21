@@ -1,0 +1,16 @@
+import "plugin.fg";
+
+fn main() {
+    let mut p: Plugins = pl_new();
+    p = pl_register(p, "json", "1.0", ["parse", "stringify"]);
+    p = pl_register(p, "yaml", "0.9", ["parse"]);
+    p = pl_load(p, "json");
+    p = pl_load(p, "toml");
+    println(pl_loaded(p, "json"));
+    println(pl_loaded(p, "toml"));
+    println(pl_provides(p, "json", "parse"));
+    println(pl_provides(p, "yaml", "stringify"));
+    println(pl_loaded_count(p));
+    p = pl_unload(p, "json");
+    println(pl_loaded_count(p));
+}

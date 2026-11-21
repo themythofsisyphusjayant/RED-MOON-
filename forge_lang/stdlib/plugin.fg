@@ -1,0 +1,97 @@
+// Qasida — plugin systems (Top-500 #297).
+// Import with: import "plugin.fg";
+// Loadable extensions: a registry of plugins, each with
+// a version, a list of provided functions and a loaded
+// flag. pl_load() succeeds only for a registered plugin
+// that provides at least one function; pl_provides()
+// answers one capability. v1 limits: registry only —
+// no dynamic-library loading, no sandboxing.
+
+struct Plugin {
+    name: str;
+    version: str;
+    provides: [str];
+    loaded: bool;
+}
+
+struct Plugins {
+    items: [Plugin];
+}
+
+fn pl_new() -> Plugins {
+    return Plugins { items: [] };
+}
+
+fn pl_register(p: Plugins, name: str, version: str, provides: [str]) -> Plugins {
+    let mut m: Plugins = p;
+    push(m.items, Plugin { name: name, version: version, provides: provides, loaded: false });
+    return m;
+}
+
+fn pl_find(p: Plugins, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(p.items) {
+        if p.items[i].name == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn pl_load(p: Plugins, name: str) -> Plugins {
+    let mut m: Plugins = p;
+    let i: int = pl_find(m, name);
+    if i >= 0 && len(m.items[i].provides) > 0 {
+        let mut item: Plugin = m.items[i];
+        item.loaded = true;
+        m.items[i] = item;
+    }
+    return m;
+}
+
+fn pl_unload(p: Plugins, name: str) -> Plugins {
+    let mut m: Plugins = p;
+    let i: int = pl_find(m, name);
+    if i >= 0 {
+        let mut item: Plugin = m.items[i];
+        item.loaded = false;
+        m.items[i] = item;
+    }
+    return m;
+}
+
+fn pl_provides(p: Plugins, name: str, fn_name: str) -> bool {
+    let i: int = pl_find(p, name);
+    if i < 0 {
+        return false;
+    }
+    let mut j: int = 0;
+    while j < len(p.items[i].provides) {
+        if p.items[i].provides[j] == fn_name {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn pl_loaded(p: Plugins, name: str) -> bool {
+    let i: int = pl_find(p, name);
+    if i < 0 {
+        return false;
+    }
+    return p.items[i].loaded;
+}
+
+fn pl_loaded_count(p: Plugins) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(p.items) {
+        if p.items[i].loaded {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

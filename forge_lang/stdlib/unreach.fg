@@ -1,0 +1,40 @@
+// Qasida — unreachable-code warnings (Top-500 #348).
+// Import with: import "unreach.fg";
+// Straight-line reachability: any statement after the first
+// "return" in a block can never run. un_find() returns the
+// 1-based line numbers of the unreachable statements, in
+// order; un_count() counts them; un_is_unreachable() answers
+// one line. v1 limits: straight-line blocks only (no
+// branches, loops or nested blocks).
+
+fn un_find(lines: [str]) -> [int] {
+    let mut out: [int] = [];
+    let mut seen_return: bool = false;
+    let mut i: int = 0;
+    while i < len(lines) {
+        if seen_return {
+            push(out, i + 1);
+        }
+        if lines[i] == "return" {
+            seen_return = true;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn un_count(lines: [str]) -> int {
+    return len(un_find(lines));
+}
+
+fn un_is_unreachable(lines: [str], line: int) -> bool {
+    let found: [int] = un_find(lines);
+    let mut i: int = 0;
+    while i < len(found) {
+        if found[i] == line {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}

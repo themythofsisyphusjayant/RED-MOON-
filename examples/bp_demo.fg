@@ -1,0 +1,15 @@
+import "bp.fg";
+
+fn main() {
+    let mut b: Bp = bp_new();
+    b = bp_add(b, "main.fg", 10);
+    b = bp_add(b, "main.fg", 20);
+    b = bp_add(b, "util.fg", 5);
+    b = bp_set(b, "main.fg", 20, false);
+    println(bp_hit(b, "main.fg", 10));
+    println(bp_hit(b, "main.fg", 20));
+    println(bp_hit(b, "util.fg", 5));
+    println(bp_enabled_count(b));
+    println(bp_next_hit(b, "main.fg", [8, 10, 15, 20, 25]));
+    println(bp_next_hit(b, "main.fg", [21, 25]));
+}

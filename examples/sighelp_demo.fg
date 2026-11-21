@@ -1,0 +1,12 @@
+import "sighelp.fg";
+
+fn main() {
+    let mut h: SigHelp = sh_new();
+    h = sh_add(h, "max", "max(a: int, b: int) -> int", "a, b");
+    h = sh_add(h, "len", "len(s: str) -> int", "s");
+    println(sh_signature(h, "max"));
+    println(sh_param_count(h, "max"));
+    println(sh_param_at(h, "max", 1));
+    println(sh_signature(h, "len"));
+    println(sh_found(h, "nope"));
+}

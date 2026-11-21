@@ -1,0 +1,16 @@
+import "notebook.fg";
+
+fn main() {
+    let mut nb: Notebook = nb_new();
+    nb = nb_add(nb, "md", "# Title");
+    nb = nb_add(nb, "code", "1 + 2");
+    nb = nb_add(nb, "code", "x * 2");
+    nb = nb_run(nb, 1, "3");
+    nb = nb_run(nb, 2, "4");
+    println(nb_count(nb));
+    println(nb_output(nb, 1));
+    println(nb_output(nb, 2));
+    println(nb_exec_no(nb, 1));
+    println(nb_exec_no(nb, 2));
+    println(nb_kind(nb, 0));
+}

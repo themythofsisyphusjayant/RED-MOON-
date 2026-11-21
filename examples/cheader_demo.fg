@@ -1,0 +1,12 @@
+import "cheader.fg";
+
+fn main() {
+    let decls: [str] = [ch_decl("int", "max", "int a, int b"), ch_decl("int", "min", "int a, int b")];
+    let lines: [str] = ch_header("MATH_H", decls);
+    println(len(lines));
+    println(lines[0]);
+    println(lines[1]);
+    println(lines[2]);
+    println(lines[3]);
+    println(lines[4]);
+}

@@ -1,0 +1,15 @@
+import "clayout.fg";
+
+fn main() {
+    let mut l: ClLayout = cl_new();
+    l = cl_add(l, "a", 1, 1);
+    l = cl_add(l, "b", 4, 4);
+    l = cl_add(l, "c", 1, 1);
+    l = cl_add(l, "d", 8, 8);
+    println(cl_offset(l, "a"));
+    println(cl_offset(l, "b"));
+    println(cl_offset(l, "c"));
+    println(cl_offset(l, "d"));
+    println(cl_size(l));
+    println(cl_field_count(l));
+}

@@ -1,0 +1,60 @@
+// Qasida — semantic highlighting (Top-500 #370).
+// Import with: import "semhl.fg";
+// Type-aware token colours, as a classifier: keywords,
+// types, numbers, strings, comments, function calls and
+// plain variables. sh_classify() returns one of
+// "keyword", "type", "number", "string", "comment",
+// "function" or "variable".
+// v1 limits: single tokens only (no full lexer state);
+// a token ending in "(" is a call.
+
+fn sh_is_in(token: str, words: [str]) -> bool {
+    let mut i: int = 0;
+    while i < len(words) {
+        if words[i] == token {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn sh_is_digit(c: str) -> bool {
+    let digits: str = "0123456789";
+    let mut i: int = 0;
+    while i < len(digits) {
+        if substr(digits, i, 1) == c {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn sh_classify(token: str) -> str {
+    let keywords: [str] = ["fn", "let", "mut", "return", "if", "else", "while", "struct", "import"];
+    let types: [str] = ["int", "float", "bool", "str"];
+    if sh_is_in(token, keywords) {
+        return "keyword";
+    }
+    if sh_is_in(token, types) {
+        return "type";
+    }
+    if len(token) == 0 {
+        return "variable";
+    }
+    let first: str = substr(token, 0, 1);
+    if first == "/" && len(token) >= 2 && substr(token, 1, 1) == "/" {
+        return "comment";
+    }
+    if first == "\"" {
+        return "string";
+    }
+    if sh_is_digit(first) {
+        return "number";
+    }
+    if substr(token, len(token) - 1, 1) == "(" {
+        return "function";
+    }
+    return "variable";
+}
