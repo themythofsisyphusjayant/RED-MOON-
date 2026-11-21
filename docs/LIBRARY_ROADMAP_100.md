@@ -251,3 +251,20 @@ OS kernels (now in MOON-OS — moved 12 Nov 2026 from `examples/os` +
 `tests/test_kernel_*.py` here; big32 model exact transcript + halt +
 final word): pwm, adc, spi, i2c, ringbuf, sem,
 mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
+
+## Sprint batch 2 status notes (21 Nov 2026, libs-only sprint)
+- Item 7 (fractions-decimal) — decimal.fg landed: fixed-scale-10000
+  Dec, add/sub/mul/div + to_string, verified 4/4.
+- Item 10 (optimization) — optimizers.fg landed: SGD + Adam with
+  state (bias-corrected moments), verified 4/4 in float64.
+- Item 1/8 (numpy/matrix) — ndarray.fg (true ndim, strides) and
+  vecmath.fg (general [float] vector ops) landed, verified 4/4;
+  they compose with day-1 linalg.fg.
+- Data formats — structpack.fg (LE u8/u16/u32/i32 struct layouts)
+  landed, verified 4/4; composes with day-1 binio/bincode.
+- Errors — errwrap.fg (#42 helper-function slice), multierr.fg,
+  resultx.fg, valerr.fg landed, verified 4/4.
+- Collections — hashmap.fg (real bucket hashing), setops.fg,
+  ordmap.fg, persist.fg, ringbuf.fg landed, verified 4/4.
+- Text — strbuild.fg, caseconv.fg, utf8.fg, unidiff.fg landed,
+  verified 4/4. Testing — junit.fg landed, verified 4/4.

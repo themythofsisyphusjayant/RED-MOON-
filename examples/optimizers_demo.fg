@@ -1,0 +1,29 @@
+// Optimizers demo — Top-500 #424.
+// Minimize (x-3)^2 + (y+1)^2 from (0,0): 3 SGD steps at
+// lr 0.1, then 3 Adam steps at lr 0.1 (b1 0.9, b2 0.999).
+import "optimizers.fg";
+
+fn main() -> int {
+    let mut p: [float] = [0.0, 0.0];
+    let mut i: int = 0;
+    while i < 3 {
+        let g: [float] = [2.0 * (p[0] - 3.0), 2.0 * (p[1] + 1.0)];
+        p = opt_sgd(p, g, 0.1);
+        i = i + 1;
+    }
+    println(p[0]);
+    println(p[1]);
+    let mut st: AdamState = opt_adam_new(2);
+    let mut q: [float] = [0.0, 0.0];
+    let mut j: int = 0;
+    while j < 3 {
+        let g: [float] = [2.0 * (q[0] - 3.0), 2.0 * (q[1] + 1.0)];
+        let r = opt_adam_step(st, q, g, 0.1, 0.9, 0.999, 0.00000001);
+        st = r.0;
+        q = r.1;
+        j = j + 1;
+    }
+    println(q[0]);
+    println(q[1]);
+    return 0;
+}

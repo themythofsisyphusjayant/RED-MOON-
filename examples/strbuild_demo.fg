@@ -1,0 +1,21 @@
+// String-builder demo — Top-500 #146.
+// Build "hello world=42:3.14" from str, int and float parts,
+// check the tracked length, then clear.
+import "strbuild.fg";
+
+fn main() -> int {
+    let mut b: Sb = sb_new();
+    b = sb_push(b, "hello");
+    b = sb_push(b, " ");
+    b = sb_push(b, "world");
+    b = sb_push(b, "=");
+    b = sb_push_int(b, 42);
+    b = sb_push(b, ":");
+    b = sb_push_float(b, 3.14);
+    println(sb_to_string(b));
+    println(sb_len(b));
+    b = sb_clear(b);
+    println(sb_len(b));
+    println(sb_to_string(b));
+    return 0;
+}

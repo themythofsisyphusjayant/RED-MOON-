@@ -1,0 +1,57 @@
+// Qasida — optimizers with state (Top-500 #424).
+// Import with: import "optimizers.fg";
+// Adam and SGD with state, over [float] parameters with explicit
+// gradient arrays. optimization.fg has only plain gradient
+// descent on one scalar and a least-squares fit; this module is
+// the stateful-optimizer slice. SGD is stateless (one step,
+// fresh array out); Adam carries m/v moments and a step count
+// in AdamState, with bias correction exactly as in the Adam
+// paper (mhat = m / (1 - b1^t)). Inputs are never mutated.
+
+fn opt_sgd(params: [float], grads: [float], lr: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(params) {
+        push(out, params[i] - lr * grads[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+struct AdamState {
+    m: [float];
+    v: [float];
+    t: int;
+}
+
+fn opt_adam_new(n: int) -> AdamState {
+    let mut m: [float] = [];
+    let mut v: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(m, 0.0);
+        push(v, 0.0);
+        i = i + 1;
+    }
+    return AdamState { m: m, v: v, t: 0 };
+}
+
+fn opt_adam_step(st: AdamState, params: [float], grads: [float], lr: float, b1: float, b2: float, eps: float) -> (AdamState, [float]) {
+    let t: int = st.t + 1;
+    let mut m: [float] = [];
+    let mut v: [float] = [];
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(params) {
+        let g: float = grads[i];
+        let mi: float = b1 * st.m[i] + (1.0 - b1) * g;
+        let vi: float = b2 * st.v[i] + (1.0 - b2) * g * g;
+        push(m, mi);
+        push(v, vi);
+        let mhat: float = mi / (1.0 - pow(b1, t as float));
+        let vhat: float = vi / (1.0 - pow(b2, t as float));
+        push(out, params[i] - lr * mhat / (sqrt(vhat) + eps));
+        i = i + 1;
+    }
+    return (AdamState { m: m, v: v, t: t }, out);
+}

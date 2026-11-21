@@ -1,0 +1,96 @@
+// Qasida — binary struct packing (Top-500 #235).
+// Import with: import "structpack.fg";
+// Pack and unpack C-struct-like layouts in memory. binio.fg
+// reads/writes whole files with endianness, and bincode.fg is a
+// tagged format; this module is the raw layout slice: u8, u16le,
+// u32le and i32le fields at byte offsets in an [int] byte array,
+// little-endian, built with division/modulo (no shifts needed).
+// set_* deep-copy the array, so the input is never mutated.
+// Out-of-range access fails loudly, except through the explicit
+// in_range check. v1 limits: no floats (bincode.fg's scaled
+// encoding covers those), no alignment padding, LE only.
+
+fn sp_copy(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sp_in_range(b: [int], off: int, n: int) -> bool {
+    if off < 0 || n < 0 {
+        return false;
+    }
+    return off + n <= len(b);
+}
+
+fn sp_get_u8(b: [int], off: int) -> int {
+    if sp_in_range(b, off, 1) == false {
+        fail("structpack: u8 read out of range");
+    }
+    return b[off];
+}
+
+fn sp_get_u16le(b: [int], off: int) -> int {
+    if sp_in_range(b, off, 2) == false {
+        fail("structpack: u16 read out of range");
+    }
+    return b[off] + b[off + 1] * 256;
+}
+
+fn sp_get_u32le(b: [int], off: int) -> int {
+    if sp_in_range(b, off, 4) == false {
+        fail("structpack: u32 read out of range");
+    }
+    return b[off] + b[off + 1] * 256 + b[off + 2] * 65536 + b[off + 3] * 16777216;
+}
+
+fn sp_get_i32le(b: [int], off: int) -> int {
+    let u: int = sp_get_u32le(b, off);
+    if u >= 2147483648 {
+        return u - 4294967296;
+    }
+    return u;
+}
+
+fn sp_set_u8(b: [int], off: int, v: int) -> [int] {
+    if sp_in_range(b, off, 1) == false {
+        fail("structpack: u8 write out of range");
+    }
+    let mut out: [int] = sp_copy(b);
+    out[off] = v % 256;
+    return out;
+}
+
+fn sp_set_u16le(b: [int], off: int, v: int) -> [int] {
+    if sp_in_range(b, off, 2) == false {
+        fail("structpack: u16 write out of range");
+    }
+    let mut out: [int] = sp_copy(b);
+    out[off] = v % 256;
+    out[off + 1] = (v / 256) % 256;
+    return out;
+}
+
+fn sp_set_u32le(b: [int], off: int, v: int) -> [int] {
+    if sp_in_range(b, off, 4) == false {
+        fail("structpack: u32 write out of range");
+    }
+    let mut out: [int] = sp_copy(b);
+    out[off] = v % 256;
+    out[off + 1] = (v / 256) % 256;
+    out[off + 2] = (v / 65536) % 256;
+    out[off + 3] = (v / 16777216) % 256;
+    return out;
+}
+
+fn sp_set_i32le(b: [int], off: int, v: int) -> [int] {
+    let mut u: int = v;
+    if v < 0 {
+        u = v + 4294967296;
+    }
+    return sp_set_u32le(b, off, u);
+}

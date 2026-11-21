@@ -1,0 +1,17 @@
+// Validation-error-types demo — Top-500 #53.
+// Field-level errors: age twice, name once; per-field counts
+// and the joined rendering.
+import "valerr.fg";
+
+fn main() -> int {
+    let mut v: VList = ve_new();
+    v = ve_add(v, "age", "must be >= 0");
+    v = ve_add(v, "name", "required");
+    v = ve_add(v, "age", "must be <= 150");
+    println(ve_count(v));
+    println(ve_has_field(v, "age"));
+    println(ve_has_field(v, "email"));
+    println(ve_render(v));
+    println(ve_count_field(v, "age"));
+    return 0;
+}

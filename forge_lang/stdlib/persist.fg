@@ -1,0 +1,104 @@
+// Qasida — persistent immutable collections (Top-500 #133).
+// Import with: import "persist.fg";
+// Structural sharing for safe sharing: every push / put returns a
+// NEW version and leaves the old version untouched. Plain Qasida
+// arrays alias on assignment (no language-default CoW), so this
+// module deep-copies the backing array on every update — the copy
+// is the persistence mechanism in v1, not structural sharing of
+// trie nodes (that needs a tree shape a later slice can add).
+// A list (int stack) and a map (str -> int) are covered.
+
+struct PList {
+    items: [int];
+}
+
+struct PMap {
+    keys: [str];
+    vals: [int];
+}
+
+fn pl_copy(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn pl_new() -> PList {
+    return PList { items: [] };
+}
+
+fn pl_push(v: PList, x: int) -> PList {
+    let mut items: [int] = pl_copy(v.items);
+    push(items, x);
+    return PList { items: items };
+}
+
+fn pl_pop(v: PList) -> (PList, int, bool) {
+    if len(v.items) == 0 {
+        return (v, 0, false);
+    }
+    let top: int = v.items[len(v.items) - 1];
+    let mut items: [int] = [];
+    let mut i: int = 0;
+    while i < len(v.items) - 1 {
+        push(items, v.items[i]);
+        i = i + 1;
+    }
+    return (PList { items: items }, top, true);
+}
+
+fn pl_peek(v: PList) -> (int, bool) {
+    if len(v.items) == 0 {
+        return (0, false);
+    }
+    return (v.items[len(v.items) - 1], true);
+}
+
+fn pl_len(v: PList) -> int {
+    return len(v.items);
+}
+
+fn pm_new() -> PMap {
+    return PMap { keys: [], vals: [] };
+}
+
+fn pm_put(m: PMap, key: str, val: int) -> PMap {
+    let mut keys: [str] = [];
+    let mut vals: [int] = [];
+    let mut i: int = 0;
+    let mut found: bool = false;
+    while i < len(m.keys) {
+        push(keys, m.keys[i]);
+        if m.keys[i] == key {
+            push(vals, val);
+            found = true;
+        } else {
+            push(vals, m.vals[i]);
+        }
+        i = i + 1;
+    }
+    if found == false {
+        push(keys, key);
+        push(vals, val);
+    }
+    return PMap { keys: keys, vals: vals };
+}
+
+fn pm_get(m: PMap, key: str, fallback: int) -> int {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            return m.vals[i];
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fn pm_len(m: PMap) -> int {
+    return len(m.keys);
+}

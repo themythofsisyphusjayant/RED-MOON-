@@ -1,0 +1,17 @@
+// Result-combinators demo — Top-500 #49.
+// Ok(5) mapped by +10, x3, and (x2)+1; an Err stays an Err
+// through a map, gets its message reworded, and falls back.
+import "resultx.fg";
+
+fn main() -> int {
+    let ok: Result<int, str> = Result { ok: true, value: 5, error: "" };
+    println(rx_unwrap_or(rx_map_add(ok, 10), 0));
+    println(rx_unwrap_or(rx_map_mul(ok, 3), 0));
+    println(rx_unwrap_or(rx_map_add(rx_map_mul(ok, 2), 1), 0));
+    let err: Result<int, str> = Result { ok: false, value: 0, error: "boom" };
+    println(rx_is_ok(err));
+    let reworded: Result<int, str> = rx_map_err(err, "wrap");
+    println(reworded.error);
+    println(rx_unwrap_or(rx_or_else(err, ok), 0));
+    return 0;
+}

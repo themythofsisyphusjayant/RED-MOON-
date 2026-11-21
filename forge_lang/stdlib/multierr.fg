@@ -1,0 +1,49 @@
+// Qasida — multi-error accumulation (Top-500 #43).
+// Import with: import "multierr.fg";
+// Collect every error, not just the first. A MultiErr is an
+// ordered list of error strings with count / has / first /
+// render (joined with "; "). The validator pattern: run every
+// check, add each failure, report them all at once instead of
+// failing fast on the first one.
+
+struct MultiErr {
+    errs: [str];
+}
+
+fn me_new() -> MultiErr {
+    return MultiErr { errs: [] };
+}
+
+fn me_add(m: MultiErr, err: str) -> MultiErr {
+    let mut errs: [str] = m.errs;
+    push(errs, err);
+    return MultiErr { errs: errs };
+}
+
+fn me_count(m: MultiErr) -> int {
+    return len(m.errs);
+}
+
+fn me_has(m: MultiErr) -> bool {
+    return len(m.errs) > 0;
+}
+
+fn me_first(m: MultiErr) -> str {
+    if len(m.errs) == 0 {
+        return "";
+    }
+    return m.errs[0];
+}
+
+fn me_render(m: MultiErr) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(m.errs) {
+        if i > 0 {
+            out = out + "; ";
+        }
+        out = out + m.errs[i];
+        i = i + 1;
+    }
+    return out;
+}

@@ -1,0 +1,14 @@
+// Error-wrapping demo — Top-500 #42.
+// "file not found" wrapped twice; render joins outer-first.
+import "errwrap.fg";
+
+fn main() -> int {
+    let mut e: ErrWrap = ew_new("file not found");
+    e = ew_wrap(e, "while reading config");
+    e = ew_wrap(e, "while starting server");
+    println(ew_render(e));
+    println(ew_msg(e));
+    println(ew_depth(e));
+    println(ew_render(ew_new("boom")));
+    return 0;
+}

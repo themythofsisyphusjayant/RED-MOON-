@@ -1,0 +1,38 @@
+// Ring-buffer demo — Top-500 #137.
+// Capacity 3: fill it, overflow fails, pop one, push again,
+// drain it, pop empty fails.
+import "ringbuf.fg";
+
+fn main() -> int {
+    let mut r: Ring = rb_new(3);
+    let a = rb_push(r, 1);
+    r = a.1;
+    let b = rb_push(r, 2);
+    r = b.1;
+    let c = rb_push(r, 3);
+    r = c.1;
+    println(rb_full(r));
+    let d = rb_push(r, 4);
+    println(d.0);
+    let e = rb_pop(r);
+    r = e.0;
+    println(e.1);
+    let f = rb_push(r, 4);
+    r = f.1;
+    println(f.0);
+    let g = rb_pop(r);
+    r = g.0;
+    println(g.1);
+    let h = rb_pop(r);
+    r = h.0;
+    println(h.1);
+    let k = rb_pop(r);
+    r = k.0;
+    println(k.1);
+    let z = rb_pop(r);
+    println(z.2);
+    println(z.1);
+    println(rb_len(r));
+    println(rb_empty(r));
+    return 0;
+}

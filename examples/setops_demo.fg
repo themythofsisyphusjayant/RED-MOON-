@@ -1,0 +1,38 @@
+// Set-algebra demo — Top-500 #122.
+// Int sets A={1,2,3,4}, B={3,4,5,6}: union, intersection,
+// difference, symmetric difference, subset. String sets
+// C={"a","b"}, D={"b","c"}: union, intersection, has.
+import "setops.fg";
+
+fn main() -> int {
+    let mut a: IntSet = set_new();
+    a = set_add(a, 1);
+    a = set_add(a, 2);
+    a = set_add(a, 3);
+    a = set_add(a, 4);
+    let mut b: IntSet = set_new();
+    b = set_add(b, 3);
+    b = set_add(b, 4);
+    b = set_add(b, 5);
+    b = set_add(b, 6);
+    let u: IntSet = so_union(a, b);
+    println(u.items[0], u.items[1], u.items[2], u.items[3], u.items[4], u.items[5]);
+    let n: IntSet = so_inter(a, b);
+    println(n.items[0], n.items[1]);
+    let d: IntSet = so_diff(a, b);
+    println(d.items[0], d.items[1]);
+    let s: IntSet = so_symdiff(a, b);
+    println(s.items[0], s.items[1], s.items[2], s.items[3]);
+    println(so_subset(a, u));
+    println(so_subset(b, a));
+    let mut c: StrSet = ss_new();
+    c = ss_add(c, "a");
+    c = ss_add(c, "b");
+    let mut e: StrSet = ss_new();
+    e = ss_add(e, "b");
+    e = ss_add(e, "c");
+    println(ss_len(ss_union(c, e)));
+    println(ss_len(ss_inter(c, e)));
+    println(ss_has(ss_union(c, e), "b"));
+    return 0;
+}

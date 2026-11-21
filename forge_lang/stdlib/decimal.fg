@@ -1,0 +1,139 @@
+// Qasida — decimal arithmetic (Top-500 #164).
+// Import with: import "decimal.fg";
+// A decimal type for exact money-style math. money.fg stores
+// integer cents with no decimal point; this module is the decimal
+// slice: a Dec is a scaled int at 4 fractional digits (scale
+// 10000), so add/sub are exact, mul/div truncate toward zero at
+// the 4th digit, and to_string always prints 4 decimals. Parsing
+// is by hand (digit accumulation), never through float.
+
+struct Dec {
+    v: int;
+}
+
+fn dec_scale() -> int {
+    return 10000;
+}
+
+fn dec_abs(n: int) -> int {
+    if n < 0 {
+        return 0 - n;
+    }
+    return n;
+}
+
+fn dec_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    let mut x: int = n;
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    return out;
+}
+
+fn dec_digits(s: str) -> int {
+    let mut v: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        let digits: str = "0123456789";
+        let mut j: int = 0;
+        while j < 10 {
+            if substr(digits, j, 1) == c {
+                v = v * 10 + j;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn dec_parse(s: str) -> Dec {
+    let mut neg: bool = false;
+    let mut body: str = s;
+    if substr(s, 0, 1) == "-" {
+        neg = true;
+        body = substr(s, 1, len(s) - 1);
+    }
+    let mut dot: int = 0 - 1;
+    let mut i: int = 0;
+    while i < len(body) {
+        if substr(body, i, 1) == "." {
+            dot = i;
+        }
+        i = i + 1;
+    }
+    let mut whole: int = 0;
+    let mut frac: int = 0;
+    if dot == 0 - 1 {
+        whole = dec_digits(body);
+    } else {
+        whole = dec_digits(substr(body, 0, dot));
+        let fs: str = substr(body, dot + 1, len(body) - dot - 1);
+        let mut f4: str = fs;
+        while len(f4) < 4 {
+            f4 = f4 + "0";
+        }
+        if len(f4) > 4 {
+            f4 = substr(f4, 0, 4);
+        }
+        frac = dec_digits(f4);
+    }
+    let mut v: int = whole * dec_scale() + frac;
+    if neg {
+        v = 0 - v;
+    }
+    return Dec { v: v };
+}
+
+fn dec_from_int(n: int) -> Dec {
+    return Dec { v: n * dec_scale() };
+}
+
+fn dec_add(a: Dec, b: Dec) -> Dec {
+    return Dec { v: a.v + b.v };
+}
+
+fn dec_sub(a: Dec, b: Dec) -> Dec {
+    return Dec { v: a.v - b.v };
+}
+
+fn dec_mul(a: Dec, b: Dec) -> Dec {
+    return Dec { v: a.v * b.v / dec_scale() };
+}
+
+fn dec_div(a: Dec, b: Dec) -> Dec {
+    return Dec { v: a.v * dec_scale() / b.v };
+}
+
+fn dec_cmp(a: Dec, b: Dec) -> int {
+    if a.v > b.v {
+        return 1;
+    }
+    if a.v < b.v {
+        return 0 - 1;
+    }
+    return 0;
+}
+
+fn dec_to_string(d: Dec) -> str {
+    let neg: bool = d.v < 0;
+    let av: int = dec_abs(d.v);
+    let whole: int = av / dec_scale();
+    let frac: int = av % dec_scale();
+    let mut fs: str = dec_int_str(frac);
+    while len(fs) < 4 {
+        fs = "0" + fs;
+    }
+    let out: str = dec_int_str(whole) + "." + fs;
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}

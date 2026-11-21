@@ -1,0 +1,21 @@
+// Insertion-ordered-map demo — Top-500 #125.
+// Put b, a, c; update a (order must not move); remove b.
+import "ordmap.fg";
+
+fn main() -> int {
+    let mut m: OrdMap = om_new();
+    m = om_put(m, "b", 2);
+    m = om_put(m, "a", 1);
+    m = om_put(m, "c", 3);
+    m = om_put(m, "a", 10);
+    println(om_key_at(m, 0));
+    println(om_key_at(m, 1));
+    println(om_key_at(m, 2));
+    println(om_get(m, "a", 0 - 1));
+    println(om_len(m));
+    m = om_remove(m, "b");
+    println(om_key_at(m, 0));
+    println(om_key_at(m, 1));
+    println(om_get(m, "b", 0 - 1));
+    return 0;
+}

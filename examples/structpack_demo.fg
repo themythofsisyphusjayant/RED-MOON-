@@ -1,0 +1,21 @@
+// Binary-struct-packing demo — Top-500 #235.
+// Pack {u8 tag=171, u16le count=0x1234, u32le total=0x12345678}
+// into 7 bytes, unpack them, check bounds, pack i32 -7.
+import "structpack.fg";
+
+fn main() -> int {
+    let mut b: [int] = [0, 0, 0, 0, 0, 0, 0];
+    b = sp_set_u8(b, 0, 171);
+    b = sp_set_u16le(b, 1, 4660);
+    b = sp_set_u32le(b, 3, 305419896);
+    println(b[0], b[1], b[2], b[3], b[4], b[5], b[6]);
+    println(sp_get_u8(b, 0));
+    println(sp_get_u16le(b, 1));
+    println(sp_get_u32le(b, 3));
+    println(sp_in_range(b, 5, 4));
+    let mut c: [int] = [0, 0, 0, 0];
+    c = sp_set_i32le(c, 0, 0 - 7);
+    println(c[0], c[1], c[2], c[3]);
+    println(sp_get_i32le(c, 0));
+    return 0;
+}

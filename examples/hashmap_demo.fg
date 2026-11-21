@@ -1,0 +1,22 @@
+// Hash-map demo — Top-500 #121.
+// str -> int with real bucket hashing (8 buckets): put, update,
+// get with fallback, has, len, remove.
+import "hashmap.fg";
+
+fn main() -> int {
+    let mut m: HashMap = hm_new(8);
+    m = hm_put(m, "apple", 5);
+    m = hm_put(m, "banana", 7);
+    m = hm_put(m, "cherry", 3);
+    m = hm_put(m, "apple", 9);
+    println(hm_get(m, "apple", 0 - 1));
+    println(hm_get(m, "banana", 0 - 1));
+    println(hm_get(m, "cherry", 0 - 1));
+    println(hm_get(m, "plum", 0 - 1));
+    println(hm_has(m, "plum"));
+    println(hm_len(m));
+    m = hm_remove(m, "banana");
+    println(hm_len(m));
+    println(hm_get(m, "banana", 0 - 1));
+    return 0;
+}

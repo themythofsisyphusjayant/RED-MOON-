@@ -1,0 +1,85 @@
+// Qasida — ring buffer (Top-500 #137).
+// Import with: import "ringbuf.fg";
+// A fixed-capacity FIFO over [int]: push appends at the tail,
+// pop takes from the head, both wrap modulo the capacity. The
+// kernel ring IPC exists, but there was no stdlib ring type —
+// this is that slice. Value semantics: push/pop deep-copy the
+// backing buffer, so the ring passed in is never mutated.
+// Full push and empty pop fail as values (bool), never crash.
+
+struct Ring {
+    buf: [int];
+    head: int;
+    tail: int;
+    count: int;
+    cap: int;
+}
+
+fn rb_copy(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn rb_new(cap: int) -> Ring {
+    let mut buf: [int] = [];
+    let mut i: int = 0;
+    while i < cap {
+        push(buf, 0);
+        i = i + 1;
+    }
+    return Ring { buf: buf, head: 0, tail: 0, count: 0, cap: cap };
+}
+
+fn rb_len(r: Ring) -> int {
+    return r.count;
+}
+
+fn rb_full(r: Ring) -> bool {
+    return r.count == r.cap;
+}
+
+fn rb_empty(r: Ring) -> bool {
+    return r.count == 0;
+}
+
+fn rb_push(r: Ring, v: int) -> (bool, Ring) {
+    if r.count == r.cap {
+        return (false, r);
+    }
+    let mut buf: [int] = rb_copy(r.buf);
+    buf[r.tail] = v;
+    let tail: int = (r.tail + 1) % r.cap;
+    return (true, Ring { buf: buf, head: r.head, tail: tail, count: r.count + 1, cap: r.cap });
+}
+
+fn rb_pop(r: Ring) -> (Ring, int, bool) {
+    if r.count == 0 {
+        return (r, 0 - 1, false);
+    }
+    let mut buf: [int] = rb_copy(r.buf);
+    let v: int = buf[r.head];
+    let head: int = (r.head + 1) % r.cap;
+    return (Ring { buf: buf, head: head, tail: r.tail, count: r.count - 1, cap: r.cap }, v, true);
+}
+
+fn rb_peek(r: Ring) -> (int, bool) {
+    if r.count == 0 {
+        return (0 - 1, false);
+    }
+    return (r.buf[r.head], true);
+}
+
+fn rb_to_array(r: Ring) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < r.count {
+        push(out, r.buf[(r.head + i) % r.cap]);
+        i = i + 1;
+    }
+    return out;
+}

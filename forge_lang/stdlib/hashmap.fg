@@ -1,0 +1,111 @@
+// Qasida — real hash map (Top-500 #121).
+// Import with: import "hashmap.fg";
+// The map library (map.fg) is a linear assoc list: every lookup
+// scans all keys. This module is the real hashing slice: FNV-style
+// polynomial hash over the key's characters (no ord() builtin, so
+// characters map via an alphabet search, as in checksum.fg /
+// base64.fg) into a fixed bucket table with separate chaining
+// (parallel heads / next arrays). str -> int only in v1.
+// Mutation follows the map.fg pattern: put mutates the shared
+// backing arrays and returns the map; remove rebuilds instead.
+
+struct HashMap {
+    heads: [int];
+    nxt: [int];
+    keys: [str];
+    vals: [int];
+    nbuckets: int;
+    count: int;
+}
+
+fn hm_char_code(c: str) -> int {
+    let alpha: str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.,:;!?@#$%^&*()[]{}<>/'+=~`|";
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if substr(alpha, j, 1) == c {
+            return j + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+fn hm_hash(key: str, nbuckets: int) -> int {
+    let mut h: int = 7;
+    let mut i: int = 0;
+    while i < len(key) {
+        h = (h * 31 + hm_char_code(substr(key, i, 1))) % 2147483647;
+        i = i + 1;
+    }
+    return h % nbuckets;
+}
+
+fn hm_new(nbuckets: int) -> HashMap {
+    let mut heads: [int] = [];
+    let mut i: int = 0;
+    while i < nbuckets {
+        push(heads, 0 - 1);
+        i = i + 1;
+    }
+    return HashMap { heads: heads, nxt: [], keys: [], vals: [], nbuckets: nbuckets, count: 0 };
+}
+
+fn hm_find(m: HashMap, key: str) -> int {
+    let b: int = hm_hash(key, m.nbuckets);
+    let mut idx: int = m.heads[b];
+    while idx != 0 - 1 {
+        if m.keys[idx] == key {
+            return idx;
+        }
+        idx = m.nxt[idx];
+    }
+    return 0 - 1;
+}
+
+fn hm_put(m: HashMap, key: str, val: int) -> HashMap {
+    let mut mm: HashMap = m;
+    let found: int = hm_find(mm, key);
+    if found != 0 - 1 {
+        mm.vals[found] = val;
+        return mm;
+    }
+    let idx: int = len(mm.keys);
+    let b: int = hm_hash(key, mm.nbuckets);
+    push(mm.keys, key);
+    push(mm.vals, val);
+    push(mm.nxt, mm.heads[b]);
+    mm.heads[b] = idx;
+    mm.count = mm.count + 1;
+    return mm;
+}
+
+fn hm_get(m: HashMap, key: str, fallback: int) -> int {
+    let found: int = hm_find(m, key);
+    if found == 0 - 1 {
+        return fallback;
+    }
+    return m.vals[found];
+}
+
+fn hm_has(m: HashMap, key: str) -> bool {
+    return hm_find(m, key) != 0 - 1;
+}
+
+fn hm_len(m: HashMap) -> int {
+    return m.count;
+}
+
+fn hm_remove(m: HashMap, key: str) -> HashMap {
+    if hm_has(m, key) == false {
+        return m;
+    }
+    let mut out: HashMap = hm_new(m.nbuckets);
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] != key {
+            out = hm_put(out, m.keys[i], m.vals[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

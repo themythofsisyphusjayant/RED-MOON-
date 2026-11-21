@@ -1,0 +1,19 @@
+// Multi-error demo — Top-500 #43.
+// Three failures collected, then rendered together; an empty
+// accumulator has none.
+import "multierr.fg";
+
+fn main() -> int {
+    let mut m: MultiErr = me_new();
+    m = me_add(m, "bad age");
+    m = me_add(m, "bad name");
+    m = me_add(m, "bad email");
+    println(me_count(m));
+    println(me_has(m));
+    println(me_first(m));
+    println(me_render(m));
+    let e: MultiErr = me_new();
+    println(me_count(e));
+    println(me_has(e));
+    return 0;
+}

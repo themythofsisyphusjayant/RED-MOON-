@@ -1,0 +1,84 @@
+// Qasida — true multi-dimensional arrays (Top-500 #139).
+// Import with: import "ndarray.fg";
+// numpy.fg is flat row-major with the shape passed to every call,
+// and matrices.fg is 2-D only. This module is the real ndim slice:
+// an Nd carries its shape and row-major strides, so get/set take
+// an index array of any rank. set deep-copies the data (array
+// assignment aliases — no CoW), so the old array is untouched;
+// reshape shares the data and only re-derives the strides.
+
+struct Nd {
+    data: [float];
+    shape: [int];
+    strides: [int];
+}
+
+fn nd_strides(shape: [int]) -> [int] {
+    let mut st: [int] = [];
+    let mut i: int = 0;
+    while i < len(shape) {
+        push(st, 1);
+        i = i + 1;
+    }
+    let mut acc: int = 1;
+    let mut k: int = len(shape) - 1;
+    while k >= 0 {
+        st[k] = acc;
+        acc = acc * shape[k];
+        k = k - 1;
+    }
+    return st;
+}
+
+fn nd_new(shape: [int], fill: float) -> Nd {
+    let mut n: int = 1;
+    let mut i: int = 0;
+    while i < len(shape) {
+        n = n * shape[i];
+        i = i + 1;
+    }
+    let mut data: [float] = [];
+    let mut j: int = 0;
+    while j < n {
+        push(data, fill);
+        j = j + 1;
+    }
+    return Nd { data: data, shape: shape, strides: nd_strides(shape) };
+}
+
+fn nd_size(a: Nd) -> int {
+    return len(a.data);
+}
+
+fn nd_rank(a: Nd) -> int {
+    return len(a.shape);
+}
+
+fn nd_offset(a: Nd, idx: [int]) -> int {
+    let mut off: int = 0;
+    let mut k: int = 0;
+    while k < len(idx) {
+        off = off + idx[k] * a.strides[k];
+        k = k + 1;
+    }
+    return off;
+}
+
+fn nd_get(a: Nd, idx: [int]) -> float {
+    return a.data[nd_offset(a, idx)];
+}
+
+fn nd_set(a: Nd, idx: [int], v: float) -> Nd {
+    let mut data: [float] = [];
+    let mut i: int = 0;
+    while i < len(a.data) {
+        push(data, a.data[i]);
+        i = i + 1;
+    }
+    data[nd_offset(a, idx)] = v;
+    return Nd { data: data, shape: a.shape, strides: a.strides };
+}
+
+fn nd_reshape(a: Nd, shape: [int]) -> Nd {
+    return Nd { data: a.data, shape: shape, strides: nd_strides(shape) };
+}

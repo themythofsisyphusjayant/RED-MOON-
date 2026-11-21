@@ -1,0 +1,29 @@
+// Persistent-collections demo — Top-500 #133.
+// Every push/put returns a new version; the old version must
+// read exactly as before. List versions v1/v2/v3, pop v3, and
+// map versions m1/m2.
+import "persist.fg";
+
+fn main() -> int {
+    let v0: PList = pl_new();
+    let v1: PList = pl_push(v0, 10);
+    let v2: PList = pl_push(v1, 20);
+    let v3: PList = pl_push(v2, 30);
+    println(pl_len(v1));
+    println(pl_len(v2));
+    println(pl_len(v3));
+    let p = pl_pop(v3);
+    println(p.1);
+    println(p.2);
+    println(pl_len(v3));
+    let pk = pl_peek(v3);
+    println(pk.0);
+    let m0: PMap = pm_new();
+    let m1: PMap = pm_put(m0, "x", 1);
+    let m2: PMap = pm_put(m1, "y", 2);
+    println(pm_len(m1));
+    println(pm_len(m2));
+    println(pm_get(m1, "y", 0 - 1));
+    println(pm_get(m2, "y", 0 - 1));
+    return 0;
+}

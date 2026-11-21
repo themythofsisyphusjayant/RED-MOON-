@@ -724,3 +724,32 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (91 + 58 + 351 = 500). NOT pushed: batch stays local; the push
   decision is separate. Next: sprint day 2 (22 Nov), same libs-only
   rule, target 20/day toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 2 (21 Nov 2026, LIBS ONLY — OS track paused, back-to-back
+  after day 1): 20 library items landed, all verified: #42 errwrap,
+  #43 multierr, #49 resultx, #53 valerr, #121 hashmap, #122 setops,
+  #125 ordmap, #133 persist, #137 ringbuf, #139 ndarray, #146
+  strbuild, #148 caseconv, #151 utf8, #153 unidiff, #163 bigint,
+  #164 decimal, #165 vecmath, #235 structpack, #319 junit, #424
+  optimizers (20 stdlib modules + 20 demos, pure .fg, no compiler
+  change). Verification: tests/test_daily_20261121b.py 80/80 checks
+  (20 demos x 2 compilers x rc=0 + exact stdout); expected values
+  from an independent Python replica
+  (~/workspace/blackmoon-iso/daily-20261121-batch2/replica_20261121b.py,
+  20/20 match — replica re-derived the alphabet hash, the LCS-table
+  diff, the base-1e9 product, the float64 Adam steps in exact op
+  order, and the UTF-8 round-trip from first principles; no
+  discrepancies found). Counts after sprint batch 2: HAVE 111,
+  PARTIAL 51, GAP 338, to build 389. Arithmetic from sprint day 1
+  (HAVE 91, PARTIAL 58, GAP 351, to build 409): 13 GAP-to-HAVE + 7
+  PARTIAL-to-HAVE = 20 flips; 91 + 20 = 111; 58 - 7 = 51;
+  351 - 13 = 338; 409 - 20 = 389 (111 + 51 + 338 = 500). Note: the
+  day-1 entry above still says "NOT pushed" — the day-1 push landed
+  after it was written, as 66a9b7a8 (parent d6984c46, selective push,
+  44 files), verified via the Contents API; batch 2's push parents
+  on 66a9b7a8. Note: #42 was BLOCKED awaiting Jayant's pick (new
+  syntax vs helper function vs Result method); batch 2 lands the
+  helper-function slice (pure-Qasida error chain, errwrap.fg) per
+  the sprint task — the new-syntax and Result-method variants stay
+  open if he wants them. Next: sprint day 2 (22 Nov), same libs-only
+  rule, target 20/day toward HAVE ~211 by 27 Nov.

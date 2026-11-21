@@ -1,0 +1,17 @@
+// Unified-diff demo — Top-500 #153.
+// a has beta, b has beta2 and an extra epsilon line.
+import "unidiff.fg";
+
+fn main() -> int {
+    let a: [str] = ["alpha", "beta", "gamma", "delta"];
+    let b: [str] = ["alpha", "beta2", "gamma", "epsilon", "delta"];
+    let lines: [str] = ud_diff(a, b);
+    let mut i: int = 0;
+    while i < len(lines) {
+        println(lines[i]);
+        i = i + 1;
+    }
+    println(ud_added(lines));
+    println(ud_removed(lines));
+    return 0;
+}

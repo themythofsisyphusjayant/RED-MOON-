@@ -1,0 +1,93 @@
+// Qasida — case conversion (Top-500 #148).
+// Import with: import "caseconv.fg";
+// snake_case, camelCase and kebab-case conversion. strutils.fg
+// has only whole-string upper/lower/title; it has no
+// word-boundary conversions, so this is the missing slice.
+// v1 is ASCII letters/digits/underscore/hyphen only.
+
+import "strutils.fg";
+
+fn cc_is_upper(c: str) -> bool {
+    let upper: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut j: int = 0;
+    while j < len(upper) {
+        if substr(upper, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn cc_snake_to_camel(s: str) -> str {
+    let mut out: str = "";
+    let mut cap: bool = false;
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "_" {
+            cap = true;
+        } else {
+            if cap {
+                out = out + str_upper_char(c);
+                cap = false;
+            } else {
+                out = out + c;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cc_camel_to_snake(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if cc_is_upper(c) {
+            if i > 0 {
+                out = out + "_";
+            }
+            out = out + str_lower_char(c);
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cc_snake_to_kebab(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "_" {
+            out = out + "-";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cc_kebab_to_snake(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "-" {
+            out = out + "_";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cc_camel_to_kebab(s: str) -> str {
+    return cc_snake_to_kebab(cc_camel_to_snake(s));
+}

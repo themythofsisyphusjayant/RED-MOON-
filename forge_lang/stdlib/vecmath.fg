@@ -1,0 +1,79 @@
+// Qasida — general vector operations (Top-500 #165).
+// Import with: import "vecmath.fg";
+// numpy.fg is flat arrays with shape passed per call, and vec2 /
+// vec3 cover only 2-D and 3-D. This module is the general vector
+// slice: dot, norm, normalize, add, sub, scale, cross product
+// (3-D), distance and cosine similarity over [float] of any
+// length. Inputs are never mutated (every op builds a fresh
+// array — array assignment aliases, no CoW).
+
+fn vm_copy(a: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vm_dot(a: [float], b: [float]) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        s = s + a[i] * b[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn vm_norm(a: [float]) -> float {
+    return sqrt(vm_dot(a, a));
+}
+
+fn vm_add(a: [float], b: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] + b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vm_sub(a: [float], b: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] - b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vm_scale(a: [float], s: float) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i] * s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vm_normalize(a: [float]) -> [float] {
+    return vm_scale(a, 1.0 / vm_norm(a));
+}
+
+fn vm_cross(a: [float], b: [float]) -> [float] {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+fn vm_dist(a: [float], b: [float]) -> float {
+    let d: [float] = vm_sub(a, b);
+    return sqrt(vm_dot(d, d));
+}
+
+fn vm_cos(a: [float], b: [float]) -> float {
+    return vm_dot(a, b) / (vm_norm(a) * vm_norm(b));
+}

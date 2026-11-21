@@ -1,0 +1,16 @@
+// Decimal demo — Top-500 #164.
+// a = 12.3456, b = 2.5 at 4 fractional digits: add, sub, mul,
+// div (truncated at the 4th digit), to_string, compare.
+import "decimal.fg";
+
+fn main() -> int {
+    let a: Dec = dec_parse("12.3456");
+    let b: Dec = dec_parse("2.5");
+    println(dec_to_string(dec_add(a, b)));
+    println(dec_to_string(dec_sub(a, b)));
+    println(dec_to_string(dec_mul(a, b)));
+    println(dec_to_string(dec_div(a, b)));
+    println(dec_to_string(b));
+    println(dec_cmp(a, b));
+    return 0;
+}

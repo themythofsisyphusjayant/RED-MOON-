@@ -1,0 +1,76 @@
+// Qasida — insertion-ordered map (Top-500 #125).
+// Import with: import "ordmap.fg";
+// A str -> int map that iterates in insertion order: keys stay in
+// the order they were first put; updating a value never moves its
+// key. map.fg and hashmap.fg make no ordering promise, so this is
+// the ordered slice. Mutation follows the map.fg pattern (put
+// mutates the shared backing arrays and returns the map); remove
+// rebuilds, preserving the order of the survivors.
+
+struct OrdMap {
+    keys: [str];
+    vals: [int];
+}
+
+fn om_new() -> OrdMap {
+    return OrdMap { keys: [], vals: [] };
+}
+
+fn om_find(m: OrdMap, key: str) -> int {
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] == key {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn om_put(m: OrdMap, key: str, val: int) -> OrdMap {
+    let mut mm: OrdMap = m;
+    let found: int = om_find(mm, key);
+    if found != 0 - 1 {
+        mm.vals[found] = val;
+        return mm;
+    }
+    push(mm.keys, key);
+    push(mm.vals, val);
+    return mm;
+}
+
+fn om_get(m: OrdMap, key: str, fallback: int) -> int {
+    let found: int = om_find(m, key);
+    if found == 0 - 1 {
+        return fallback;
+    }
+    return m.vals[found];
+}
+
+fn om_has(m: OrdMap, key: str) -> bool {
+    return om_find(m, key) != 0 - 1;
+}
+
+fn om_len(m: OrdMap) -> int {
+    return len(m.keys);
+}
+
+fn om_key_at(m: OrdMap, i: int) -> str {
+    return m.keys[i];
+}
+
+fn om_val_at(m: OrdMap, i: int) -> int {
+    return m.vals[i];
+}
+
+fn om_remove(m: OrdMap, key: str) -> OrdMap {
+    let mut out: OrdMap = om_new();
+    let mut i: int = 0;
+    while i < len(m.keys) {
+        if m.keys[i] != key {
+            out = om_put(out, m.keys[i], m.vals[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

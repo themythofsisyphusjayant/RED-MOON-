@@ -1,0 +1,102 @@
+// Qasida — JUnit XML reporting (Top-500 #319).
+// Import with: import "junit.fg";
+// CI-friendly test output: collect named cases with a status
+// (0 pass, 1 fail, 2 skip), a time in ms and a failure message,
+// then render one <testsuite> XML document. v1 limits: no XML
+// escaping of names/messages (callers must pass plain text),
+// no per-case stdout/stderr capture, one suite per document.
+
+struct JuCase {
+    name: str;
+    status: int;
+    time_ms: int;
+    msg: str;
+}
+
+struct JuSuite {
+    name: str;
+    cases: [JuCase];
+}
+
+fn ju_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    let mut x: int = n;
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    return out;
+}
+
+fn ju_new(name: str) -> JuSuite {
+    return JuSuite { name: name, cases: [] };
+}
+
+fn ju_add(s: JuSuite, name: str, status: int, time_ms: int, msg: str) -> JuSuite {
+    let mut cases: [JuCase] = s.cases;
+    push(cases, JuCase { name: name, status: status, time_ms: time_ms, msg: msg });
+    return JuSuite { name: s.name, cases: cases };
+}
+
+fn ju_total(s: JuSuite) -> int {
+    return len(s.cases);
+}
+
+fn ju_pass(s: JuSuite) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s.cases) {
+        if s.cases[i].status == 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ju_fail(s: JuSuite) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s.cases) {
+        if s.cases[i].status == 1 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ju_skip(s: JuSuite) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(s.cases) {
+        if s.cases[i].status == 2 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ju_xml(s: JuSuite) -> str {
+    let mut out: str = "<testsuite name=\"" + s.name + "\" tests=\"" + ju_int_str(ju_total(s)) + "\" failures=\"" + ju_int_str(ju_fail(s)) + "\" skipped=\"" + ju_int_str(ju_skip(s)) + "\">";
+    let mut i: int = 0;
+    while i < len(s.cases) {
+        let c: JuCase = s.cases[i];
+        if c.status == 0 {
+            out = out + "<testcase name=\"" + c.name + "\" time=\"" + ju_int_str(c.time_ms) + "\"/>";
+        } else {
+            if c.status == 1 {
+                out = out + "<testcase name=\"" + c.name + "\" time=\"" + ju_int_str(c.time_ms) + "\"><failure message=\"" + c.msg + "\"/></testcase>";
+            } else {
+                out = out + "<testcase name=\"" + c.name + "\" time=\"" + ju_int_str(c.time_ms) + "\"><skipped/></testcase>";
+            }
+        }
+        i = i + 1;
+    }
+    return out + "</testsuite>";
+}

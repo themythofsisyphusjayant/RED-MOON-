@@ -1,0 +1,53 @@
+// Qasida — Result combinators (Top-500 #49).
+// Import with: import "resultx.fg";
+// Chain Results without nesting. result.fg has only value_or.
+// There are no closures or function values yet, so the
+// combinators are named transforms over Result<int, str>: map by
+// adding or multiplying a constant, reword the error, or fall
+// back to another Result. v1 limits: int results only, and only
+// named transforms — a general map(f) needs closures (#101).
+
+import "result.fg";
+
+fn rx_map_add(r: Result<int, str>, k: int) -> Result<int, str> {
+    if r.ok {
+        return Result { ok: true, value: r.value + k, error: "" };
+    }
+    return r;
+}
+
+fn rx_map_mul(r: Result<int, str>, k: int) -> Result<int, str> {
+    if r.ok {
+        return Result { ok: true, value: r.value * k, error: "" };
+    }
+    return r;
+}
+
+fn rx_map_err(r: Result<int, str>, prefix: str) -> Result<int, str> {
+    if r.ok {
+        return r;
+    }
+    return Result { ok: false, value: 0, error: prefix + ": " + r.error };
+}
+
+fn rx_or_else(r: Result<int, str>, fb: Result<int, str>) -> Result<int, str> {
+    if r.ok {
+        return r;
+    }
+    return fb;
+}
+
+fn rx_is_ok(r: Result<int, str>) -> bool {
+    return r.ok;
+}
+
+fn rx_is_err(r: Result<int, str>) -> bool {
+    return r.ok == false;
+}
+
+fn rx_unwrap_or(r: Result<int, str>, fallback: int) -> int {
+    if r.ok {
+        return r.value;
+    }
+    return fallback;
+}

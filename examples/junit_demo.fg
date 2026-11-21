@@ -1,0 +1,17 @@
+// JUnit-XML demo — Top-500 #319.
+// Suite "math": one pass, one fail with a message, one skip.
+// Counts, then the single XML document.
+import "junit.fg";
+
+fn main() -> int {
+    let mut s: JuSuite = ju_new("math");
+    s = ju_add(s, "add", 0, 12, "");
+    s = ju_add(s, "sub", 1, 5, "expected 3 got 2");
+    s = ju_add(s, "skipme", 2, 0, "");
+    println(ju_pass(s));
+    println(ju_fail(s));
+    println(ju_skip(s));
+    println(ju_total(s));
+    println(ju_xml(s));
+    return 0;
+}

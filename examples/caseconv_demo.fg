@@ -1,0 +1,13 @@
+// Case-conversion demo — Top-500 #148.
+// snake <-> camel <-> kebab, both directions.
+import "caseconv.fg";
+
+fn main() -> int {
+    println(cc_snake_to_camel("hello_world_foo"));
+    println(cc_camel_to_snake("helloWorldFoo"));
+    println(cc_snake_to_kebab("hello_world"));
+    println(cc_kebab_to_snake("hello-world"));
+    println(cc_camel_to_kebab("helloWorld"));
+    println(cc_snake_to_camel("a"));
+    return 0;
+}

@@ -1,0 +1,45 @@
+// Qasida — error wrapping with context (Top-500 #42).
+// Import with: import "errwrap.fg";
+// "while reading X: ..." chains. An ErrWrap is a message plus a
+// stack of contexts, outermost last added; render joins them
+// outer-first with ": ", so the deepest cause reads last. Pure
+// strings — no Result plumbing needed, and no exceptions exist
+// to wrap. v1 limits: contexts are plain strings, not typed
+// error values; there is no cause chain across Result types.
+
+struct ErrWrap {
+    msg: str;
+    ctx: [str];
+}
+
+fn ew_new(msg: str) -> ErrWrap {
+    return ErrWrap { msg: msg, ctx: [] };
+}
+
+fn ew_wrap(e: ErrWrap, context: str) -> ErrWrap {
+    let mut ctx: [str] = [context];
+    let mut i: int = 0;
+    while i < len(e.ctx) {
+        push(ctx, e.ctx[i]);
+        i = i + 1;
+    }
+    return ErrWrap { msg: e.msg, ctx: ctx };
+}
+
+fn ew_render(e: ErrWrap) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(e.ctx) {
+        out = out + e.ctx[i] + ": ";
+        i = i + 1;
+    }
+    return out + e.msg;
+}
+
+fn ew_msg(e: ErrWrap) -> str {
+    return e.msg;
+}
+
+fn ew_depth(e: ErrWrap) -> int {
+    return len(e.ctx);
+}

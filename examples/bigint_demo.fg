@@ -1,0 +1,16 @@
+// Big-integer demo — Top-500 #163.
+// 20-digit operands: sum, difference, x3, full product,
+// comparison, and a small from_int.
+import "bigint.fg";
+
+fn main() -> int {
+    let a: Bi = bi_from_str("12345678901234567890");
+    let b: Bi = bi_from_str("98765432109876543210");
+    println(bi_to_string(bi_add(a, b)));
+    println(bi_to_string(bi_sub(b, a)));
+    println(bi_to_string(bi_mul(a, bi_from_int(3))));
+    println(bi_to_string(bi_mul(a, b)));
+    println(bi_cmp(a, b));
+    println(bi_to_string(bi_from_int(42)));
+    return 0;
+}

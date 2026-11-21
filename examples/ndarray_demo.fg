@@ -1,0 +1,42 @@
+// Multi-dimensional-array demo — Top-500 #139.
+// 2x3 matrix [[1,2,3],[4,5,6]]: get, size, rank; set copies
+// (original untouched); reshape to 3x2; 2x2x2 cube 1..8.
+import "ndarray.fg";
+
+fn main() -> int {
+    let m: Nd = nd_new([2, 3], 0.0);
+    let mut filled: Nd = m;
+    filled = nd_set(filled, [0, 0], 1.0);
+    filled = nd_set(filled, [0, 1], 2.0);
+    filled = nd_set(filled, [0, 2], 3.0);
+    filled = nd_set(filled, [1, 0], 4.0);
+    filled = nd_set(filled, [1, 1], 5.0);
+    filled = nd_set(filled, [1, 2], 6.0);
+    println(nd_get(filled, [1, 2]));
+    println(nd_size(filled));
+    println(nd_rank(filled));
+    let changed: Nd = nd_set(filled, [0, 1], 20.0);
+    println(nd_get(filled, [0, 1]));
+    println(nd_get(changed, [0, 1]));
+    let flat: Nd = nd_reshape(filled, [3, 2]);
+    println(nd_get(flat, [2, 1]));
+    let mut cube: Nd = nd_new([2, 2, 2], 0.0);
+    let mut v: int = 1;
+    let mut i: int = 0;
+    while i < 2 {
+        let mut j: int = 0;
+        while j < 2 {
+            let mut k: int = 0;
+            while k < 2 {
+                cube = nd_set(cube, [i, j, k], v as float);
+                v = v + 1;
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    println(nd_get(cube, [1, 1, 1]));
+    println(nd_size(cube));
+    return 0;
+}

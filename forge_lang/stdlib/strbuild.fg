@@ -1,0 +1,91 @@
+// Qasida — string builder (Top-500 #146).
+// Import with: import "strbuild.fg";
+// Efficient repeated concatenation: parts accumulate in a [str]
+// list and are joined once by to_string, instead of rebuilding
+// the whole string on every `+`. int and float parts format with
+// the same helpers json2.fg uses (digits via an alphabet search;
+// floats print up to 6 decimals, trailing zeros trimmed).
+
+fn sb_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = 0 - x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn sb_num_str(f: float) -> str {
+    if f < 0.0 {
+        return "-" + sb_num_str(0.0 - f);
+    }
+    let whole: int = f as int;
+    if f == whole as float {
+        return sb_int_str(whole);
+    }
+    let scaled: int = (f * 1000000.0) as int;
+    let w: int = scaled / 1000000;
+    let frac: int = scaled % 1000000;
+    let mut fs: str = sb_int_str(frac);
+    while len(fs) < 6 {
+        fs = "0" + fs;
+    }
+    while len(fs) > 0 && substr(fs, len(fs) - 1, 1) == "0" {
+        fs = substr(fs, 0, len(fs) - 1);
+    }
+    return sb_int_str(w) + "." + fs;
+}
+
+struct Sb {
+    parts: [str];
+    total: int;
+}
+
+fn sb_new() -> Sb {
+    return Sb { parts: [], total: 0 };
+}
+
+fn sb_push(b: Sb, s: str) -> Sb {
+    let mut parts: [str] = b.parts;
+    push(parts, s);
+    return Sb { parts: parts, total: b.total + len(s) };
+}
+
+fn sb_push_int(b: Sb, n: int) -> Sb {
+    return sb_push(b, sb_int_str(n));
+}
+
+fn sb_push_float(b: Sb, f: float) -> Sb {
+    return sb_push(b, sb_num_str(f));
+}
+
+fn sb_to_string(b: Sb) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(b.parts) {
+        out = out + b.parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sb_len(b: Sb) -> int {
+    return b.total;
+}
+
+fn sb_clear(b: Sb) -> Sb {
+    return Sb { parts: [], total: 0 };
+}
