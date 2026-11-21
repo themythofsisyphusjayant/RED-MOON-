@@ -1,0 +1,90 @@
+// Qasida — full autograd coverage: tape freeing + new ops
+// (Top-500 #422). Import with: import "autograd2.fg";
+// Extends tensor_autograd.fg in two directions. First, the
+// missing elementwise ops live in tensor_autograd.fg itself
+// as op codes 22 (div), 23 (exp) and 24 (log), each with its
+// exact backward rule, checked against finite differences
+// in autograd2_demo.fg. Second, this module adds tape
+// management: tape_size() counts nodes, tape_floats() counts
+// stored values, and tape_free() truncates a tape to its
+// first `keep` nodes (node ids below `keep` stay valid, so a
+// freed tape can still be read — it just cannot grow past
+// the cut). sub()/neg() are compositions of the existing
+// add/scale rules, so their gradients need no new rule.
+// v1 limits: no tape checkpointing, no per-op memory
+// accounting, div/exp/log are elementwise only (no
+// broadcasting).
+
+import "tensor_autograd.fg";
+
+fn ag2_tape_size(s: TAg) -> int {
+    return len(s.tape.voff);
+}
+
+fn ag2_tape_floats(s: TAg) -> int {
+    return len(s.tape.vals);
+}
+
+fn ag2_tape_free(s: TAg, keep: int) -> TAg {
+    let t: TTape = s.tape;
+    if keep < 0 || keep > len(t.voff) {
+        fail("ag2_tape_free: keep out of range");
+    }
+    let mut nt: TTape = TTape {
+        vals: [], voff: [], vlen: [], shapes: [], soff: [], slen: [],
+        op: [], a: [], b: [], c: [], aux: [], auxoff: [], auxlen: [],
+        auxi: [], auxioff: [], auxilen: []
+    };
+    let mut i: int = 0;
+    while i < keep {
+        push(nt.voff, t.voff[i]);
+        push(nt.vlen, t.vlen[i]);
+        push(nt.soff, t.soff[i]);
+        push(nt.slen, t.slen[i]);
+        push(nt.op, t.op[i]);
+        push(nt.a, t.a[i]);
+        push(nt.b, t.b[i]);
+        push(nt.c, t.c[i]);
+        push(nt.auxoff, t.auxoff[i]);
+        push(nt.auxlen, t.auxlen[i]);
+        push(nt.auxioff, t.auxioff[i]);
+        push(nt.auxilen, t.auxilen[i]);
+        i = i + 1;
+    }
+    if keep > 0 {
+        let nv: int = t.voff[keep - 1] + t.vlen[keep - 1];
+        let mut j: int = 0;
+        while j < nv {
+            push(nt.vals, t.vals[j]);
+            j = j + 1;
+        }
+        let ns: int = t.soff[keep - 1] + t.slen[keep - 1];
+        j = 0;
+        while j < ns {
+            push(nt.shapes, t.shapes[j]);
+            j = j + 1;
+        }
+        let na: int = t.auxoff[keep - 1] + t.auxlen[keep - 1];
+        j = 0;
+        while j < na {
+            push(nt.aux, t.aux[j]);
+            j = j + 1;
+        }
+        let ni: int = t.auxioff[keep - 1] + t.auxilen[keep - 1];
+        j = 0;
+        while j < ni {
+            push(nt.auxi, t.auxi[j]);
+            j = j + 1;
+        }
+    }
+    return TAg { tape: nt, last: keep - 1 };
+}
+
+fn ag2_sub(s: TAg, a: int, b: int) -> TAg {
+    let neg: TAg = t_scale(s, b, 0.0 - 1.0);
+    return t_add(neg, a, neg.last);
+}
+
+fn ag2_neg(s: TAg, a: int) -> TAg {
+    return t_scale(s, a, 0.0 - 1.0);
+}

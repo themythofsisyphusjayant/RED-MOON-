@@ -1,0 +1,26 @@
+import "doccomment.fg";
+
+fn main() {
+    let lines: [str] = [
+        "/// Adds two numbers.",
+        "/// Pure function.",
+        "fn add(a: int, b: int) -> int {",
+        "    return a + b;",
+        "}",
+        "/// Greets.",
+        "fn greet(name: str) -> str {",
+        "    return name;",
+        "}",
+        "fn helper() {",
+        "    return;",
+        "}"
+    ];
+    let entries: [DocEntry] = dc_entries(lines);
+    println(dc_count(lines));
+    let mut i: int = 0;
+    while i < len(entries) {
+        println(entries[i].name);
+        println(entries[i].text);
+        i = i + 1;
+    }
+}

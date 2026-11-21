@@ -351,3 +351,17 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   vulnerability audit), license.fg (allowed-license enforcement),
   tasks.fg (Kahn topological order + ready sets), flags.fg (named
   on/off switches), lint.fg (#351 flip — already in the tree).
+
+- Sprint batch 8 (21 Nov 2026, same day, LIBS ONLY): 20 items,
+  all verified 4/4: imporg.fg (import sort + dedupe),
+  complexity.fg (cyclomatic complexity), unsafecheck.fg (unchecked
+  ops per file), docsym.fg (file outline), callhier.fg (callers /
+  callees), wsym.fg (workspace symbol search), doccomment.fg (///
+  doc entries), todotrack.fg (TODO/FIXME marks), casestyle.fg
+  (snake_case / CamelCase), ffibind.fg (C to extern bindings),
+  schemagen.fg (.proto to structs), simd.fg (width-4 vector ops),
+  grapheme.fg (cluster segmentation), tensor2.fg (dtype-tagged
+  tensors), autograd2.fg (tape freeing + div/exp/log), onnx.fg
+  (#436 flip, already in the tree), signrel.fg (keyed signatures),
+  docgen2.fg (examples + cross-links), bpstream.fg (backpressured
+  streams), typedchan.fg (float + bool channels).

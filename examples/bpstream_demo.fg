@@ -1,0 +1,29 @@
+import "bpstream.fg";
+
+fn main() {
+    let mut s: BPStream = bs_new(3, 0);
+    s = bs_write(s, 1);
+    s = bs_write(s, 2);
+    s = bs_write(s, 3);
+    s = bs_write(s, 4);
+    println(bs_len(s));
+    println(bs_dropped(s));
+    println(bs_high(s));
+    let r: (BPStream, int, bool) = bs_read(s);
+    let s2: BPStream = r.0;
+    println(r.1);
+    println(r.2);
+    println(bs_len(s2));
+    let s3: BPStream = bs_write(s2, 5);
+    println(s3.buf[0]);
+    println(s3.buf[1]);
+    println(s3.buf[2]);
+    let mut t: BPStream = bs_new(3, 1);
+    t = bs_write(t, 1);
+    t = bs_write(t, 2);
+    t = bs_write(t, 3);
+    t = bs_write(t, 4);
+    println(bs_len(t));
+    println(bs_dropped(t));
+    println(t.buf[0]);
+}

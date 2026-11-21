@@ -1,0 +1,15 @@
+import "imporg.fg";
+
+fn main() {
+    let imports: [str] = ["tensor.fg", "autograd.fg", "tensor.fg", "nn.fg", "zlib.fg", "autograd.fg"];
+    let org: [str] = io_organize(imports);
+    println(len(org));
+    let mut i: int = 0;
+    while i < len(org) {
+        println(org[i]);
+        i = i + 1;
+    }
+    println(io_cmp("abc", "abd"));
+    println(io_cmp("b", "a"));
+    println(io_cmp("same", "same"));
+}

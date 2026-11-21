@@ -1,0 +1,21 @@
+import "typedchan.fg";
+
+fn main() {
+    let mut f: ChanF = chf_new();
+    f = chf_send(f, 1.5);
+    f = chf_send(f, 2.5);
+    println(chf_front(f));
+    println(chf_len(f));
+    f = chf_pop(f);
+    println(chf_front(f));
+    println(chf_len(f));
+    let mut b: ChanB = chb_new();
+    b = chb_send(b, true);
+    b = chb_send(b, false);
+    println(chb_front(b));
+    println(chb_len(b));
+    println(chb_empty(b));
+    b = chb_pop(b);
+    b = chb_pop(b);
+    println(chb_empty(b));
+}

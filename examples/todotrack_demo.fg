@@ -1,0 +1,17 @@
+import "todotrack.fg";
+
+fn main() {
+    let files: [TodoFile] = [
+        TodoFile { name: "a.fg", lines: ["// TODO fix this", "let x = 1;", "// FIXME: handle empty", "return x;"] },
+        TodoFile { name: "b.fg", lines: ["// TODO add tests", "// nothing here"] }
+    ];
+    let marks: [TodoMark] = td_scan(files);
+    println(len(marks));
+    println(td_count(marks, "TODO"));
+    println(td_count(marks, "FIXME"));
+    let mut i: int = 0;
+    while i < len(marks) {
+        println(td_format(marks[i]));
+        i = i + 1;
+    }
+}

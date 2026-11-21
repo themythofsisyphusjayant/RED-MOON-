@@ -1,0 +1,25 @@
+import "docsym.fg";
+
+fn main() {
+    let decls: [Decl] = [
+        Decl { kind: "fn", name: "main", line: 3 },
+        Decl { kind: "struct", name: "Tensor", line: 10 },
+        Decl { kind: "fn", name: "add", line: 15 },
+        Decl { kind: "fn", name: "mul", line: 20 },
+        Decl { kind: "struct", name: "Node", line: 25 }
+    ];
+    println(ds_count_kind(decls, "fn"));
+    println(ds_count_kind(decls, "struct"));
+    let fns: [str] = ds_names(decls, "fn");
+    let mut i: int = 0;
+    while i < len(fns) {
+        println(fns[i]);
+        i = i + 1;
+    }
+    let out: [str] = ds_outline(decls);
+    i = 0;
+    while i < len(out) {
+        println(out[i]);
+        i = i + 1;
+    }
+}

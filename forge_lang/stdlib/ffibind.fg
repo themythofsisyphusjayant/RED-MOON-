@@ -1,0 +1,62 @@
+// Qasida — FFI binding generation (Top-500 #476).
+// Import with: import "ffibind.fg";
+// Auto-generate extern bindings from C header declarations:
+// "int add(int a, int b);" becomes
+// "extern fn add(a: int, b: int) -> int;". Types map
+// int->int, long->int, float/double->float, char*->str,
+// void->void. The output is generated text, not compiled
+// code — the caller writes it out or feeds it onward.
+// v1 limits: one declarator per line, no pointers except
+// char*, no const/unsigned/struct types, no varargs, no
+// multi-word return types.
+
+fn fb_type_map(t: str) -> str {
+    if t == "int" {
+        return "int";
+    }
+    if t == "long" {
+        return "int";
+    }
+    if t == "float" {
+        return "float";
+    }
+    if t == "double" {
+        return "float";
+    }
+    if t == "char*" {
+        return "str";
+    }
+    if t == "void" {
+        return "void";
+    }
+    return "?";
+}
+
+fn fb_binding(decl: str) -> str {
+    let mut d: str = trim(decl);
+    if ends_with(d, ";") {
+        d = substr(d, 0, len(d) - 1);
+    }
+    let parts: [str] = split(d, "(");
+    let head: [str] = split(trim(parts[0]), " ");
+    let ret: str = fb_type_map(head[0]);
+    let name: str = head[len(head) - 1];
+    let inner: str = trim(parts[1]);
+    let inner2: str = split(inner, ")")[0];
+    let mut params: str = "";
+    if trim(inner2) != "" && trim(inner2) != "void" {
+        let raw: [str] = split(inner2, ",");
+        let mut i: int = 0;
+        while i < len(raw) {
+            let toks: [str] = split(trim(raw[i]), " ");
+            let ptype: str = fb_type_map(toks[0]);
+            let pname: str = toks[len(toks) - 1];
+            if i > 0 {
+                params = params + ", ";
+            }
+            params = params + pname + ": " + ptype;
+            i = i + 1;
+        }
+    }
+    return "extern fn " + name + "(" + params + ") -> " + ret + ";";
+}

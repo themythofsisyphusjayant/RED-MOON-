@@ -1,0 +1,21 @@
+import "schemagen.fg";
+
+fn main() {
+    let point: [ProtoField] = [
+        ProtoField { name: "x", ptype: "int32", num: 1 },
+        ProtoField { name: "y", ptype: "int32", num: 2 }
+    ];
+    println(sg_struct("Point", point));
+    println(sg_has_dup_nums(point));
+    let user: [ProtoField] = [
+        ProtoField { name: "name", ptype: "string", num: 1 },
+        ProtoField { name: "age", ptype: "int32", num: 2 },
+        ProtoField { name: "active", ptype: "bool", num: 3 }
+    ];
+    println(sg_struct("User", user));
+    let bad: [ProtoField] = [
+        ProtoField { name: "a", ptype: "int32", num: 1 },
+        ProtoField { name: "b", ptype: "string", num: 1 }
+    ];
+    println(sg_has_dup_nums(bad));
+}

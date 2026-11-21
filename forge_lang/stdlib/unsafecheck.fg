@@ -1,0 +1,49 @@
+// Qasida — unsafe-operation auditing (Top-500 #355).
+// Import with: import "unsafecheck.fg";
+// List unchecked operations per file. An operation is a name
+// plus whether it was checked and which file it came from;
+// unchecked() returns the offending names in input order,
+// for_file() narrows to one file. The caller supplies the
+// operation list — finding raw pointers in source text is
+// the parser's job.
+// v1 limits: no severity levels, no allow-list, no
+// deduplication (the same unchecked op in two files is
+// reported twice, once per file).
+
+struct UnsafeOp {
+    name: str;
+    checked: bool;
+    file: str;
+}
+
+fn uc_unchecked(ops: [UnsafeOp]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(ops) {
+        if !ops[i].checked {
+            push(out, ops[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn uc_count(ops: [UnsafeOp]) -> int {
+    return len(uc_unchecked(ops));
+}
+
+fn uc_has_unchecked(ops: [UnsafeOp]) -> bool {
+    return uc_count(ops) > 0;
+}
+
+fn uc_for_file(ops: [UnsafeOp], file: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(ops) {
+        if !ops[i].checked && ops[i].file == file {
+            push(out, ops[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

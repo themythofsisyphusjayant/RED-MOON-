@@ -1,0 +1,27 @@
+import "grapheme.fg";
+
+fn main() {
+    let c1: [int] = [72, 101, 769, 108, 108, 111];
+    let l1: [int] = gr_lengths(c1);
+    println(gr_count(c1));
+    let mut i: int = 0;
+    while i < len(l1) {
+        println(l1[i]);
+        i = i + 1;
+    }
+    let c2: [int] = [127467, 127479];
+    let l2: [int] = gr_lengths(c2);
+    println(gr_count(c2));
+    println(l2[0]);
+    let c3: [int] = [97, 8205, 98];
+    let l3: [int] = gr_lengths(c3);
+    println(gr_count(c3));
+    println(l3[0]);
+    let c4: [int] = [65, 66];
+    let l4: [int] = gr_lengths(c4);
+    println(gr_count(c4));
+    println(l4[0]);
+    println(l4[1]);
+    println(gr_is_combining(769));
+    println(gr_is_combining(65));
+}

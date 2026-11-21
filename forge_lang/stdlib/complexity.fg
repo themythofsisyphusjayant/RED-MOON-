@@ -1,0 +1,33 @@
+// Qasida — complexity metrics (Top-500 #354).
+// Import with: import "complexity.fg";
+// Cyclomatic complexity over a list of node kinds: the base
+// is 1, plus one per decision node (if, for, while, match arm,
+// and, or, catch, ternary). warn() reports when the count
+// exceeds a limit. The caller supplies the node kinds —
+// extracting them from source text is the parser's job.
+// v1 limits: no per-function breakdown (one kind list per
+// call), no nesting depth, no cognitive-complexity weights.
+
+fn cx_is_decision(kind: str) -> bool {
+    return kind == "if" || kind == "for" || kind == "while" || kind == "match_arm" || kind == "and" || kind == "or" || kind == "catch" || kind == "ternary";
+}
+
+fn cx_decisions(kinds: [str]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(kinds) {
+        if cx_is_decision(kinds[i]) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn cx_complexity(kinds: [str]) -> int {
+    return 1 + cx_decisions(kinds);
+}
+
+fn cx_warn(kinds: [str], limit: int) -> bool {
+    return cx_complexity(kinds) > limit;
+}

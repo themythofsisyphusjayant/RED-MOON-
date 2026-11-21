@@ -1,0 +1,10 @@
+import "docgen2.fg";
+
+fn main() {
+    let page: str = dg2_doc_with_example("add", "add(a: int, b: int) -> int", "Adds two numbers.", "add(2, 3) // 5");
+    println(page);
+    println(dg2_xref("mul"));
+    let text: str = "See [[add]] and [[mul]] and [[nope]].";
+    let names: [str] = ["add", "mul"];
+    println(dg2_resolve_links(text, names));
+}

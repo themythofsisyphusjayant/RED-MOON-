@@ -1,0 +1,8 @@
+import "ffibind.fg";
+
+fn main() {
+    println(fb_binding("int add(int a, int b);"));
+    println(fb_binding("void reset(void);"));
+    println(fb_binding("double mix(double x, int n);"));
+    println(fb_binding("char* greet(char* name);"));
+}

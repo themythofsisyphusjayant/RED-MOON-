@@ -1,0 +1,21 @@
+import "unsafecheck.fg";
+
+fn main() {
+    let ops: [UnsafeOp] = [
+        UnsafeOp { name: "raw_ptr", checked: false, file: "a.fg" },
+        UnsafeOp { name: "transmute", checked: true, file: "a.fg" },
+        UnsafeOp { name: "unchecked_add", checked: false, file: "b.fg" },
+        UnsafeOp { name: "raw_ptr", checked: false, file: "b.fg" }
+    ];
+    let bad: [str] = uc_unchecked(ops);
+    println(uc_count(ops));
+    println(uc_has_unchecked(ops));
+    let mut i: int = 0;
+    while i < len(bad) {
+        println(bad[i]);
+        i = i + 1;
+    }
+    let af: [str] = uc_for_file(ops, "a.fg");
+    println(len(af));
+    println(af[0]);
+}

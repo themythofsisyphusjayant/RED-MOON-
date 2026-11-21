@@ -1,0 +1,54 @@
+// Qasida — signed releases (Top-500 #454).
+// Import with: import "signrel.fg";
+// Sign release artifacts with a keyed checksum: sign()
+// hashes (key | name | version | sha) with FNV-1a (32-bit,
+// from checksum.fg) and renders "sig-<decimal>"; verify()
+// recomputes and compares. release_line() renders the
+// lockfile-style line "name==version #sha sig-...". Strings
+// are converted to bytes by printable-ASCII rank (Qasida has
+// no ord builtin); anything outside printable ASCII hashes
+// as '?'.
+// v1 limits: symmetric key only (no public-key crypto, no
+// Sigstore transparency log), FNV-1a is a checksum, not a
+// cryptographic signature — it proves the key holder signed
+// it, not that the bytes are tamper-proof against a
+// determined attacker.
+
+import "checksum.fg";
+import "fmtstr.fg";
+
+fn sr_byte(c: str) -> int {
+    let alpha: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if substr(alpha, j, 1) == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    return 63;
+}
+
+fn sr_bytes(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(s) {
+        push(out, sr_byte(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sr_sign(name: str, version: str, sha: str, key: str) -> str {
+    let msg: str = key + "|" + name + "|" + version + "|" + sha;
+    let h: int = fnv1a_bytes(sr_bytes(msg));
+    return "sig-" + fs_int_str(h);
+}
+
+fn sr_verify(name: str, version: str, sha: str, key: str, sig: str) -> bool {
+    return sr_sign(name, version, sha, key) == sig;
+}
+
+fn sr_release_line(name: str, version: str, sha: str, key: str) -> str {
+    return name + "==" + version + " #" + sha + " " + sr_sign(name, version, sha, key);
+}

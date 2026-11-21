@@ -1,0 +1,54 @@
+// Qasida — document symbols / outline (Top-500 #368).
+// Import with: import "docsym.fg";
+// A file outline view over a declaration list: each
+// declaration is a kind (fn, struct, enum, const), a name
+// and a line. format() renders one outline line
+// ("fn main @ 3"); count_kind() and names() narrow by kind.
+// The caller supplies the declarations — extracting them
+// from source text is the parser's job.
+// v1 limits: no nesting (methods are flat), no ranges
+// (only the start line), no sorting (input order is kept).
+
+import "fmtstr.fg";
+
+struct Decl {
+    kind: str;
+    name: str;
+    line: int;
+}
+
+fn ds_count_kind(decls: [Decl], kind: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(decls) {
+        if decls[i].kind == kind {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ds_names(decls: [Decl], kind: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(decls) {
+        if decls[i].kind == kind {
+            push(out, decls[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ds_format(d: Decl) -> str {
+    return d.kind + " " + d.name + " @ " + fs_int_str(d.line);
+}
+
+fn ds_outline(decls: [Decl]) -> [str] {
+    let mut out: [str] = [];
+    for d in decls {
+        push(out, ds_format(d));
+    }
+    return out;
+}

@@ -24,7 +24,8 @@
 //   8 mul, 9 scale, 10 gather, 11 cross_entropy,
 //   12 relu, 13 col_slice, 14 concat_cols, 15 reshape,
 //   16 causal_softmax_rows, 17 maxpool2d, 18 sigmoid,
-//   19 tanh, 20 mse_loss, 21 im2col (0.7.0).
+//   19 tanh, 20 mse_loss, 21 im2col (0.7.0),
+//   22 div, 23 exp, 24 log (sprint batch 8, autograd2).
 // Backward rules are in t_backward below; every rule was
 // checked against finite differences (see
 // examples/tensor_autograd_demo.fg).
@@ -445,6 +446,49 @@ fn t_tanh(s: TAg, a: int) -> TAg {
     return tnode(s.tape, tshape_of(s.tape, a), out, 19, a, -1, -1, [], []);
 }
 
+// Elementwise division. Backward: dL/da = g / b,
+// dL/db = -g * a / b^2 (op 22, sprint batch 8).
+fn t_div(s: TAg, a: int, b: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let y: [float] = tvals_of(s.tape, b);
+    if len(x) != len(y) {
+        fail("t_div: shape mismatch");
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, x[j] / y[j]);
+        j = j + 1;
+    }
+    return tnode(s.tape, tshape_of(s.tape, a), out, 22, a, b, -1, [], []);
+}
+
+// Elementwise exp. Backward uses the output: dL/da = g * y
+// (op 23, sprint batch 8).
+fn t_exp(s: TAg, a: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, exp(x[j]));
+        j = j + 1;
+    }
+    return tnode(s.tape, tshape_of(s.tape, a), out, 23, a, -1, -1, [], []);
+}
+
+// Elementwise natural log. Backward: dL/da = g / a
+// (op 24, sprint batch 8).
+fn t_log(s: TAg, a: int) -> TAg {
+    let x: [float] = tvals_of(s.tape, a);
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(x) {
+        push(out, log(x[j]));
+        j = j + 1;
+    }
+    return tnode(s.tape, tshape_of(s.tape, a), out, 24, a, -1, -1, [], []);
+}
+
 // Mean squared error against targets (stored in aux).
 // Output is a [1] loss node, like cross_entropy.
 fn t_mse_loss(s: TAg, a: int, targets: [float]) -> TAg {
@@ -787,6 +831,33 @@ fn t_backward(t: TTape, out: int) -> [float] {
                     pc = pc + 1;
                 }
                 pr = pr + 1;
+            }
+        } else if opc == 22 {
+            let av: [float] = tvals_of(t, t.a[i]);
+            let bv: [float] = tvals_of(t, t.b[i]);
+            let offa: int = t.voff[t.a[i]];
+            let offb: int = t.voff[t.b[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] / bv[j];
+                grads[offb + j] = grads[offb + j] - g[j] * av[j] / (bv[j] * bv[j]);
+                j = j + 1;
+            }
+        } else if opc == 23 {
+            let y: [float] = tvals_of(t, i);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] * y[j];
+                j = j + 1;
+            }
+        } else if opc == 24 {
+            let av: [float] = tvals_of(t, t.a[i]);
+            let offa: int = t.voff[t.a[i]];
+            let mut j: int = 0;
+            while j < len(g) {
+                grads[offa + j] = grads[offa + j] + g[j] / av[j];
+                j = j + 1;
             }
         }
         i = i - 1;

@@ -1,0 +1,79 @@
+// Qasida — backpressured streams (Top-500 #264).
+// Import with: import "bpstream.fg";
+// Readable and writable flows over a bounded buffer with a
+// drop policy: drop_new discards writes past capacity,
+// drop_oldest evicts the front element to make room. The
+// stream tracks drops and the high-water mark (the largest
+// length the buffer ever reached). read() returns the
+// stream, the value and an ok flag — reading an empty
+// stream yields ok=false instead of failing.
+// v1 limits: int values only, no blocking (a full stream
+// drops, it never waits), no close/end-of-stream marker,
+// no async push (the caller drives writes).
+
+struct BPStream {
+    buf: [int];
+    cap: int;
+    dropped: int;
+    high: int;
+    policy: int;
+}
+
+fn bs_new(cap: int, policy: int) -> BPStream {
+    return BPStream { buf: [], cap: cap, dropped: 0, high: 0, policy: policy };
+}
+
+fn bs_write(s: BPStream, v: int) -> BPStream {
+    let mut nb: [int] = [];
+    for x in s.buf {
+        push(nb, x);
+    }
+    let mut dropped: int = s.dropped;
+    if len(nb) < s.cap {
+        push(nb, v);
+    } else if s.policy == 1 {
+        let mut sh: [int] = [];
+        let mut i: int = 1;
+        while i < len(nb) {
+            push(sh, nb[i]);
+            i = i + 1;
+        }
+        push(sh, v);
+        nb = sh;
+        dropped = dropped + 1;
+    } else {
+        dropped = dropped + 1;
+    }
+    let mut high: int = s.high;
+    if len(nb) > high {
+        high = len(nb);
+    }
+    return BPStream { buf: nb, cap: s.cap, dropped: dropped, high: high, policy: s.policy };
+}
+
+fn bs_read(s: BPStream) -> (BPStream, int, bool) {
+    if len(s.buf) == 0 {
+        return (s, 0, false);
+    }
+    let v: int = s.buf[0];
+    let mut nb: [int] = [];
+    let mut i: int = 1;
+    while i < len(s.buf) {
+        push(nb, s.buf[i]);
+        i = i + 1;
+    }
+    let ns: BPStream = BPStream { buf: nb, cap: s.cap, dropped: s.dropped, high: s.high, policy: s.policy };
+    return (ns, v, true);
+}
+
+fn bs_len(s: BPStream) -> int {
+    return len(s.buf);
+}
+
+fn bs_dropped(s: BPStream) -> int {
+    return s.dropped;
+}
+
+fn bs_high(s: BPStream) -> int {
+    return s.high;
+}

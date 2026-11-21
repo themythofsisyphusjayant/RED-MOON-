@@ -1,0 +1,57 @@
+// Qasida — workspace symbols (Top-500 #374).
+// Import with: import "wsym.fg";
+// Search symbols across the tree: a symbol is a name, a file
+// and a kind; search() returns "file:name" for every symbol
+// whose name contains the query, in input order. Matching is
+// case-sensitive substring search (built on substr, since
+// Qasida has no contains builtin).
+// v1 limits: no fuzzy matching, no ranking (input order is
+// kept), no kind filter on the query itself — use
+// search_kind() for that.
+
+struct Sym {
+    name: str;
+    file: str;
+    kind: str;
+}
+
+fn ws_index_of(hay: str, needle: str) -> int {
+    if len(needle) == 0 {
+        return 0;
+    }
+    if len(needle) > len(hay) {
+        return -1;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn ws_search(syms: [Sym], query: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(syms) {
+        if ws_index_of(syms[i].name, query) >= 0 {
+            push(out, syms[i].file + ":" + syms[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ws_search_kind(syms: [Sym], query: str, kind: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(syms) {
+        if syms[i].kind == kind && ws_index_of(syms[i].name, query) >= 0 {
+            push(out, syms[i].file + ":" + syms[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

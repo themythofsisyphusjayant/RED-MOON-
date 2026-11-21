@@ -1,0 +1,14 @@
+import "simd.fg";
+
+fn main() {
+    let a: [float] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+    let b: [float] = [10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+    println(simd_width());
+    let s: [float] = simd_add(a, b);
+    println(s[0]);
+    println(s[9]);
+    let m: [float] = simd_mul(a, b);
+    println(m[0]);
+    println(m[9]);
+    println(simd_dot(a, b));
+}

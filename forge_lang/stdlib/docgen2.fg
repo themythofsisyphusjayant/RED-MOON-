@@ -1,0 +1,35 @@
+// Qasida — rich documentation generation: examples and
+// cross-links (Top-500 #475). Import with: import "docgen2.fg";
+// Extends docgen.fg: example() renders a fenced Qasida code
+// block under a heading, xref() renders a link anchor, and
+// resolve_links() rewrites [[name]] references into [#name]
+// anchors for every known name (built on split/join, since
+// Qasida has no replace builtin). Unknown names are left
+// as [[name]] so a broken link stays visible instead of
+// silently pointing nowhere. doc_with_example() combines a
+// doc_fn_markdown() page with its example block.
+// v1 limits: single-level anchors only, no section
+// numbering, no link checking beyond the known-name list.
+
+import "docgen.fg";
+
+fn dg2_example(name: str, code: str) -> str {
+    return "## Example: " + name + "\n```qasida\n" + code + "\n```";
+}
+
+fn dg2_xref(name: str) -> str {
+    return "[#" + name + "]";
+}
+
+fn dg2_resolve_links(text: str, names: [str]) -> str {
+    let mut out: str = text;
+    for n in names {
+        let parts: [str] = split(out, "[[" + n + "]]");
+        out = join(parts, "[#" + n + "]");
+    }
+    return out;
+}
+
+fn dg2_doc_with_example(name: str, sig: str, desc: str, example: str) -> str {
+    return doc_fn_markdown(name, sig, desc) + "\n" + dg2_example(name, example);
+}

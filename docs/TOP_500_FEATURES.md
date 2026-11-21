@@ -294,7 +294,7 @@ is not ownership-tracked (see #27).
 141. String interpolation (Swift/Kotlin/Python f-strings) — [GAP] "hello {name}".
 142. Multiline strings (all) — [GAP] Triple-quote blocks.
 143. Raw strings (Rust/Go) — [GAP] r"..." without escape processing.
-144. Unicode-correct length and iteration (Rust/Swift) — [GAP] Grapheme clusters, not bytes.
+144. Unicode-correct length and iteration (Rust/Swift) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): grapheme.fg + grapheme_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: combining marks are the five main ranges, regional-indicator pairing, ZWJ joins; no Hangul syllable rules, no emoji presentation rules. Grapheme clusters, not bytes.
 145. Regex groups and alternation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): regexfull.fg + regexfull_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: alternation + one capture group, groups do not nest. Regex groups and alternation.
 146. String builders (Java/C#) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): strbuild.fg + strbuild_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: str/int/float parts only; floats print up to 6 decimals, trailing zeros trimmed. Efficient repeated concatenation.
 147. Format specifiers (Python/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): fmtstr.fg + fmtstr_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: fixed-decimal float rendering (round-half-up), int rendering, left/right padding; no printf parser, callers pass value + width/precision directly.
@@ -318,7 +318,7 @@ is not ownership-tracked (see #27).
 163. Big integers (Python/Java) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): bigint.fg + bigint_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: non-negative only; add/sub/mul/compare + decimal strings; no division yet. Arbitrary precision integers.
 164. Decimal arithmetic (Python) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): decimal.fg + decimal_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: fixed scale 10000 (4 fractional digits); mul/div truncate toward zero at the 4th digit. A money library uses integer cents; add a decimal type.
 165. Vector and matrix types (NumPy/Julia) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): vecmath.fg + vecmath_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: [float] vectors; cross product is 3-D only; no matrix ops (see #170 linalg.fg). The numpy library is flat arrays; add native vector ops.
-166. SIMD operations (Mojo/Rust) — [PARTIAL] parallel_dot and parallel_matmul exist; add an explicit SIMD API.
+166. SIMD operations (Mojo/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): simd.fg + simd_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: float vectors only, width fixed at 4, chunks run in order (no true vector instructions yet — same honesty rule as parallel.fg), no masked lanes. Explicit SIMD API: width-4 chunked add/mul/dot with scalar tail.
 167. Probability distributions (SciPy) — [HAVE] A statistics library exists; add normal, Poisson and friends. Landed 21 Nov 2026 (sprint day 1): dist.fg + dist_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: normal + Poisson only; erf is the Abramowitz-Stegun approximation in mathex.fg.
 168. Random distributions (NumPy) — [HAVE] Normal, uniform and exponential sampling. Landed 21 Nov 2026 (sprint day 1): randdist.fg + randdist_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: LCG-based (rand.fg); normal discards the second Box-Muller variate.
 169. FFT — [HAVE] The fft library already does radix-2 plus inverse.
@@ -402,7 +402,7 @@ is not ownership-tracked (see #27).
 
 ## 13. Concurrency (241-260)
 241. M:N lightweight tasks (Go) — [PARTIAL] spawn exists; add a real scheduler over it.
-242. Typed channels (Go) — [GAP] Message passing between tasks; the kernel ring is not yet a language channel.
+242. Typed channels (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): typedchan.fg + typedchan_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: float and bool variants only (int/str live in channels.fg); single-owner in-task queues, no cross-task sharing (impossible in the language today), no capacity limit, no blocking receive. Typed channel variants (float, bool).
 243. Mutexes and read-write locks (all) — [GAP] The known missing thread primitives.
 244. Atomics (all) — [GAP] Atomic integers for lock-free code.
 245. Thread pools (all) — [GAP] Worker pools.
@@ -426,7 +426,7 @@ is not ownership-tracked (see #27).
 261. async/await syntax (JS/Rust/C#) — [GAP] The flagship missing feature.
 262. Event loops (Node/libuv) — [GAP] A single-threaded async runtime.
 263. Runtime timers (JS) — [PARTIAL] A timers library exists; add real runtime timers.
-264. Backpressured streams (Node) — [GAP] Readable and writable flows.
+264. Backpressured streams (Node) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): bpstream.fg + bpstream_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int values only, drop_new / drop_oldest policies, drops + high-water mark tracked; no blocking, no close/end-of-stream marker. Readable and writable flows over a bounded buffer.
 265. Observables / reactive streams (Rx) — [GAP] Push-based composition.
 266. Select over channels (Go) — [GAP] Wait on many channels at once.
 267. Async iterators (JS) — [GAP] for-await loops.
@@ -523,9 +523,9 @@ is not ownership-tracked (see #27).
 350. Auto-fix suggestions (Rust) — [GAP] Apply safe fixes.
 351. Lint rules (Clippy/ESLint) — [HAVE] Already in the tree (lint.fg: long lines, trailing space, TODO lines, empty lines); verified 21 Nov 2026 (sprint batch 7) via the existing lint_demo.fg, 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Style and correctness lints over source text. v1 limits: the four rules only — no name checks, no complexity, no unused-code detection.
 352. Formatter enforcement in CI (all) — [PARTIAL] fmt exists and is idempotent; enforce it in CI.
-353. Import organization (Go) — [GAP] Sort and dedupe imports.
-354. Complexity metrics (all) — [GAP] Cyclomatic complexity warnings.
-355. Unsafe-operation auditing (Rust) — [GAP] List unchecked operations per file.
+353. Import organization (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): imporg.fg + imporg_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ASCII-rank lexicographic sort (no string < in Qasida), exact-match dedupe; no grouping, no alias handling, no unused-import detection. Sort and dedupe imports.
+354. Complexity metrics (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): complexity.fg + complexity_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: base 1 + decision nodes (if/for/while/match_arm/and/or/catch/ternary) over a caller-supplied kind list; no per-function breakdown, no nesting depth. Cyclomatic complexity warnings.
+355. Unsafe-operation auditing (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): unsafecheck.fg + unsafecheck_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: name + checked flag + file per op; no severity levels, no allow-list, no dedupe across files. List unchecked operations per file.
 356. Determinism checks (all) — [GAP] Prove same input gives same output.
 357. Compile-time evaluation errors (Zig) — [GAP] Clear comptime failure messages.
 358. Macro expansion view (Rust) — [GAP] Show expanded code; needs macros first.
@@ -540,13 +540,13 @@ is not ownership-tracked (see #27).
 365. Context-aware completions (all LSP) — [GAP] Suggestions from scope and types.
 366. Signature help (all LSP) — [GAP] Parameter hints while typing.
 367. Code actions / quick fixes (all LSP) — [GAP] Apply suggestions from the editor.
-368. Document symbols / outline (all LSP) — [GAP] File outline view.
+368. Document symbols / outline (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): docsym.fg + docsym_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: kind/name/line declarations supplied by the caller; no nesting, no ranges, input order kept. File outline view.
 369. Format via LSP (all LSP) — [PARTIAL] fmt exists; wire it into the LSP.
 370. Semantic highlighting (all LSP) — [GAP] Type-aware colours.
 371. Inlay hints (Rust) — [GAP] Inferred types shown inline.
-372. Call hierarchy (all LSP) — [GAP] Callers and callees.
+372. Call hierarchy (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): callhier.fg + callhier_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: direct edges only, distinct callers/callees in first-seen order; no transitive closure, no recursion marking. Callers and callees.
 373. Type hierarchy (all LSP) — [GAP] Interface implementors.
-374. Workspace symbols (all LSP) — [GAP] Search symbols across the tree.
+374. Workspace symbols (all LSP) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): wsym.fg + wsym_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: case-sensitive substring search, input order kept; no fuzzy matching, no ranking. Search symbols across the tree.
 375. Extract-function refactoring (all) — [GAP] Turn a block into a function.
 376. Snippets — [HAVE] 16 snippets ship in the VS Code extension; extend them per new feature.
 377. Syntax highlighting — [HAVE] A TextMate grammar ships; extend it per new syntax.
@@ -599,8 +599,8 @@ is not ownership-tracked (see #27).
 420. Fast compile speed (Go) — [GAP] Quick rebuilds for big trees.
 
 ## 22. ML and data (421-440)
-421. First-class tensors (PyTorch/JAX) — [PARTIAL] A tensor library exists; raise it to a real type.
-422. Full autograd coverage (PyTorch) — [PARTIAL] tensor_autograd covers 20 ops; finish coverage plus tape freeing, the 0.5.0 unlock.
+421. First-class tensors (PyTorch/JAX) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): tensor2.fg + tensor2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: dtype is a tag only (data is always [float]); add() requires matching dtype + shape, reshape() matching numel, transpose2d() rank 2; no broadcasting, no dtype conversion. A dtype-tagged tensor type over tensor.fg.
+422. Full autograd coverage (PyTorch) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): autograd2.fg + autograd2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers); tensor_autograd.fg extended with op codes 22 (div), 23 (exp), 24 (log) + exact backward rules, each checked against central finite differences in the replica (gaps ~1e-9). v1 limits: tape_free() truncates to the first N nodes; sub()/neg() are add/scale compositions; elementwise ops only, no broadcasting. Full autograd coverage: div/exp/log + tape freeing.
 423. Neural layers: conv, attention, norm (PyTorch) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): conv1d.fg + conv1d_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: 1-D convolution (valid + same, stride), the missing layer — nn.fg already had linear, layernorm, GELU, MLP and attention; no dilation, no bias term, single channel. An nn library exists; add the missing layers.
 424. Optimizers with state (PyTorch) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): optimizers.fg + optimizers_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: SGD + Adam over [float] with explicit grad arrays; no lr schedules, no other optimizers. Adam and SGD with state.
 425. Datasets and dataloaders (PyTorch) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): dataset.fg + dataset_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: sliding-window sequences with train/test split, seq_batch and seeded seq_shuffle; no file-backed loading. A dataset library exists; add batching and shuffling.
@@ -614,7 +614,7 @@ is not ownership-tracked (see #27).
 433. Plotting (matplotlib) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): plot.fg + plot_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: integer data only; bar/line/scatter SVG charts on svg.fg; no axes, labels or legends. The plot-lite item already queued.
 434. SVG generation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): svg.fg + svg_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: integer coordinates only (digit-table int strings); rect/circle/line/text/polyline; no groups, transforms or CSS. The svg-gen item already queued.
 435. ML run profiling (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): profiler.fg + profiler_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: section timers over caller-supplied clock_micros stamps, totals + plain-text report; nested same-name sections share one total. The profiler item already queued.
-436. ONNX model export (all) — [GAP] Portable models.
+436. ONNX model export (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 8): onnx.fg + onnx_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: text-form graph export (MLP params, node counts, op list, attention FLOPs); no binary protobuf writer. Portable models.
 437. Weight quantization (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): quant.fg + quant_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: per-range int8 calibration (scale + zero point, round-half-up, clamp 0..255), quantize/dequantize + max reconstruction error; extends nn.fg's scalar int8 steps. int8 weights.
 438. Distributed training (PyTorch) — [GAP] Long-term only; needs a cluster, honestly not a near-term build.
 439. Real GPU codegen (CUDA) — [PARTIAL] codegen_cuda emits only a limited subset today.
@@ -634,7 +634,7 @@ is not ownership-tracked (see #27).
 451. JWT issue and verify (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 5): jwt.fg + jwt_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: HS256 sign + verify over HMAC-SHA256 (hashlib.fg), base64url without padding; no expiry or claim validation. Token handling.
 452. TLS certificate verification (all) — [GAP] Cert validation; ties to TLS itself.
 453. Dependency pinning with hashes (all) — [HAVE] Lockfile hashes. Landed 21 Nov 2026 (sprint batch 6): lock.fg + lock_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: "name==version #hash" lines (format/parse/check); hash caller-supplied (sha256_hex demo over "hello"); no lockfile reading.
-454. Signed releases (Sigstore) — [GAP] Signed artifacts.
+454. Signed releases (Sigstore) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): signrel.fg + signrel_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: symmetric key only, FNV-1a checksum rendered as sig-<decimal> (a checksum, not cryptographic proof); no public-key crypto, no transparency log. Signed artifacts.
 455. SBOM generation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 5): sbom.fg + sbom_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: CycloneDX 1.5 JSON from a package list (name/version/license id); no hashes, dependencies or SPDX expressions. Software bill of materials.
 456. Vulnerability feeds (all) — [HAVE] Alerts for bad dependencies. Landed 21 Nov 2026 (sprint batch 6): vuln.fg + vuln_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: exact (name, version) feed matches; no version ranges; feed is caller-supplied data, not a live feed.
 457. Safe deserialization (all) — [HAVE] Never evaluate data as code. Landed 21 Nov 2026 (sprint batch 6): safedeser.fg + safedeser_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: max-length + max-bracket-depth limits enforced before j2_parse (rejected docs return root -1); genuinely malformed JSON still fails loudly inside j2_parse by design; braces in strings count toward depth.
@@ -657,9 +657,9 @@ is not ownership-tracked (see #27).
 472. Const evaluation (Rust/Zig) — [GAP] Evaluate expressions at compile time.
 473. Type-level numbers (Haskell) — [GAP] Sizes carried in types.
 474. Custom compiler passes (Rust) — [GAP] User lints and optimizations.
-475. Rich documentation generation (all) — [PARTIAL] docgen exists; add examples and cross-links.
-476. FFI binding generation (bindgen) — [GAP] Auto-generate bindings from C headers.
-477. Schema-first codegen (protobuf) — [GAP] Generate code from .proto files.
+475. Rich documentation generation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): docgen2.fg + docgen2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single-level [#name] anchors, [[name]] rewritten for known names only (unknown names left visible); no section numbering. Examples and cross-links over docgen.fg.
+476. FFI binding generation (bindgen) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): ffibind.fg + ffibind_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one declarator per line, no pointers except char*, no const/unsigned/struct types, no varargs; output is generated text, not compiled code. Auto-generate bindings from C headers.
+477. Schema-first codegen (protobuf) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): schemagen.fg + schemagen_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: flat messages only (no nesting/repeated/enum/oneof), field-number uniqueness check; output is struct text, not compiled code. Generate code from .proto files.
 478. Stable AST API for tools (all) — [GAP] Let tools read and rewrite programs.
 479. User-defined syntax (all) — [GAP] Extend the grammar safely.
 480. Staged compilation (MetaOCaml) — [GAP] Multi-stage programs.
@@ -675,13 +675,13 @@ is not ownership-tracked (see #27).
 488. Block expressions (Rust) — [GAP] { ...; value } used as a value.
 489. Semicolon-optional style (Go/Swift) — [GAP] A low-priority style choice; only if it never hides errors.
 490. Trailing commas (all) — [GAP] Allow trailing commas in lists and calls.
-491. Doc comments (Rust) — [GAP] /// comments that feed docgen.
-492. TODO and FIXME tracking (all) — [GAP] Collect markers across the tree.
+491. Doc comments (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): doccomment.fg + doccomment_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: fn lines only, /// runs directly above the fn, multi-line docs join with a single space. /// comments that feed docgen.
+492. TODO and FIXME tracking (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): todotrack.fg + todotrack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: TODO/FIXME only, substring match anywhere in the line, first marker wins per line; no assignee/date parsing. Collect markers across the tree.
 493. Fluent multi-line chains (Kotlin) — [GAP] Readable chained calls.
 494. Shadowing (Rust) — [GAP] let x = x + 1 rebinding; needs a rule change, since same-scope let repeats are rejected today.
 495. Inline type ascription (Rust) — [GAP] x: Type annotations where inference needs help.
 496. Underscore for unused bindings (all) — [GAP] _ prefix silences unused warnings.
-497. Case-style lints (Rust) — [GAP] snake_case and CamelCase enforcement.
+497. Case-style lints (Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 8): casestyle.fg + casestyle_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ASCII letters only; snake_case = lower/digit/single _; CamelCase = UpperCamelCase with at least one lowercase; no acronym rules, no auto-fix. snake_case and CamelCase enforcement.
 498. Import aliasing (Python/Go) — [GAP] import x as y.
 499. Re-exports (Rust) — [GAP] pub use for clean public APIs.
 500. Tour and Book rewritten for 1.3.0 (own) — [GAP] The docs catch up with ecall3, hex literals and the new libraries.

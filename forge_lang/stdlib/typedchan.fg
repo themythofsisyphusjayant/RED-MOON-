@@ -1,0 +1,104 @@
+// Qasida — typed channels, float and bool variants
+// (Top-500 #242). Import with: import "typedchan.fg";
+// Extends channels.fg (which already has int and string
+// variants) with float and bool channels. A channel is a
+// single-owner FIFO queue: send appends, front peeks, pop
+// drops the front. There is deliberately no shared-memory
+// channel and no cross-task handoff here: Qasida has no
+// shared-mutable primitive, so one queue cannot be owned by
+// two tasks at once — these are the in-task typed queues
+// for staged work, and cross-task handoff goes through
+// files (see async.fg).
+// v1 limits: float and bool only (int/str live in
+// channels.fg), no capacity limit, no blocking receive,
+// front() on an empty channel fails.
+
+struct ChanF {
+    items: [float];
+}
+
+struct ChanB {
+    items: [bool];
+}
+
+fn chf_new() -> ChanF {
+    return ChanF { items: [] };
+}
+
+fn chf_send(c: ChanF, v: float) -> ChanF {
+    let mut items: [float] = [];
+    for x in c.items {
+        push(items, x);
+    }
+    push(items, v);
+    return ChanF { items: items };
+}
+
+fn chf_front(c: ChanF) -> float {
+    if len(c.items) == 0 {
+        fail("chf_front: empty channel");
+    }
+    return c.items[0];
+}
+
+fn chf_pop(c: ChanF) -> ChanF {
+    if len(c.items) == 0 {
+        fail("chf_pop: empty channel");
+    }
+    let mut items: [float] = [];
+    let mut i: int = 1;
+    while i < len(c.items) {
+        push(items, c.items[i]);
+        i = i + 1;
+    }
+    return ChanF { items: items };
+}
+
+fn chf_len(c: ChanF) -> int {
+    return len(c.items);
+}
+
+fn chf_empty(c: ChanF) -> bool {
+    return len(c.items) == 0;
+}
+
+fn chb_new() -> ChanB {
+    return ChanB { items: [] };
+}
+
+fn chb_send(c: ChanB, v: bool) -> ChanB {
+    let mut items: [bool] = [];
+    for x in c.items {
+        push(items, x);
+    }
+    push(items, v);
+    return ChanB { items: items };
+}
+
+fn chb_front(c: ChanB) -> bool {
+    if len(c.items) == 0 {
+        fail("chb_front: empty channel");
+    }
+    return c.items[0];
+}
+
+fn chb_pop(c: ChanB) -> ChanB {
+    if len(c.items) == 0 {
+        fail("chb_pop: empty channel");
+    }
+    let mut items: [bool] = [];
+    let mut i: int = 1;
+    while i < len(c.items) {
+        push(items, c.items[i]);
+        i = i + 1;
+    }
+    return ChanB { items: items };
+}
+
+fn chb_len(c: ChanB) -> int {
+    return len(c.items);
+}
+
+fn chb_empty(c: ChanB) -> bool {
+    return len(c.items) == 0;
+}

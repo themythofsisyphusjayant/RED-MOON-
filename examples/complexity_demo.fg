@@ -1,0 +1,12 @@
+import "complexity.fg";
+
+fn main() {
+    let kinds: [str] = ["call", "if", "for", "call", "and", "while", "match_arm", "call"];
+    println(cx_complexity(kinds));
+    println(cx_decisions(kinds));
+    println(cx_warn(kinds, 5));
+    println(cx_warn(kinds, 6));
+    let empty: [str] = [];
+    println(cx_complexity(empty));
+    println(cx_warn(empty, 0));
+}

@@ -1,0 +1,26 @@
+import "wsym.fg";
+
+fn main() {
+    let syms: [Sym] = [
+        Sym { name: "main", file: "main.fg", kind: "fn" },
+        Sym { name: "tensor_add", file: "tensor.fg", kind: "fn" },
+        Sym { name: "Tensor", file: "tensor.fg", kind: "struct" },
+        Sym { name: "main_loop", file: "util.fg", kind: "fn" }
+    ];
+    let t: [str] = ws_search(syms, "tensor");
+    println(len(t));
+    let mut i: int = 0;
+    while i < len(t) {
+        println(t[i]);
+        i = i + 1;
+    }
+    let m: [str] = ws_search(syms, "main");
+    println(len(m));
+    i = 0;
+    while i < len(m) {
+        println(m[i]);
+        i = i + 1;
+    }
+    let z: [str] = ws_search(syms, "zzz");
+    println(len(z));
+}

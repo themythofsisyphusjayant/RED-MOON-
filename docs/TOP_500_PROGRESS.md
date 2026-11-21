@@ -915,3 +915,38 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   day early (HAVE 210 of 500 = 42%); the target was an estimate,
   the running count is the honest measure. Next: sprint batch 8,
   same libs-only rule, target 20/day toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 8 (21 Nov 2026, same day, LIBS ONLY): 20 items,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121h.py (80/80 PASS) with an
+  independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch8/replica_20261121h.py):
+  imporg.fg (#353 import sort + dedupe by ASCII rank), complexity.fg
+  (#354 cyclomatic complexity over node kinds), unsafecheck.fg
+  (#355 unchecked ops per file), docsym.fg (#368 file outline),
+  callhier.fg (#372 callers/callees), wsym.fg (#374 case-sensitive
+  symbol search), doccomment.fg (#491 /// doc entries), todotrack.fg
+  (#492 TODO/FIXME marks), casestyle.fg (#497 snake_case/CamelCase),
+  ffibind.fg (#476 C declarations to extern bindings), schemagen.fg
+  (#477 .proto messages to structs), simd.fg (#166 width-4 chunked
+  add/mul/dot), grapheme.fg (#144 cluster segmentation),
+  tensor2.fg (#421 dtype-tagged tensors), autograd2.fg (#422 tape
+  freeing + div/exp/log ops 22-24, gradients checked against central
+  finite differences in the replica, gaps ~1e-9; tensor_autograd.fg
+  extended), onnx.fg (#436 flip — already in the tree, verified via
+  the existing onnx_demo.fg), signrel.fg (#454 FNV-1a keyed
+  signatures), docgen2.fg (#475 examples + cross-links),
+  bpstream.fg (#264 drop_new/drop_oldest streams), typedchan.fg
+  (#242 float + bool channel variants, in-task only). No #42 work
+  (#42 resolved: helper-function slice). Skipped per brief: #468
+  (not picked — overlaps #477), #273, #129, #302 (need function
+  values); #122/#164 not flipped (known stale notes). #181/#187/
+  #188/#189/#190 not buildable in pure Qasida (no mkdir/readdir/
+  rename builtins exist).
+  Counts after sprint batch 8: HAVE 230, PARTIAL 22, GAP 248, to build
+  270. Arithmetic from sprint batch 7 (HAVE 210, PARTIAL 26, GAP 264,
+  to build 290): 16 GAP-to-HAVE + 4 PARTIAL-to-HAVE = 20 flips;
+  210 + 20 = 230; 26 - 4 = 22; 264 - 16 = 248; 290 - 20 = 270
+  (230 + 22 + 248 = 500). HAVE 230 of 500 = 46%. Next: sprint batch 9,
+  same libs-only rule, target 20/day (the ~211 target was passed a
+  day early; the running count is the honest measure).

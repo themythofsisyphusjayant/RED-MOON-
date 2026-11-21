@@ -1,0 +1,94 @@
+// Qasida — import organization (Top-500 #353).
+// Import with: import "imporg.fg";
+// Sort and dedupe import paths. Sorting is lexicographic by
+// ASCII rank (Qasida has no string < operator); dedupe is
+// exact-match. organize() dedupes first, then sorts, so the
+// output is a canonical import block.
+// v1 limits: no grouping (stdlib vs local), no alias handling,
+// no unused-import detection (that needs the resolver).
+
+fn io_rank(c: str) -> int {
+    let alpha: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if substr(alpha, j, 1) == c {
+            return j;
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+fn io_cmp(a: str, b: str) -> int {
+    let mut i: int = 0;
+    while i < len(a) && i < len(b) {
+        let ca: str = substr(a, i, 1);
+        let cb: str = substr(b, i, 1);
+        if ca != cb {
+            let ra: int = io_rank(ca);
+            let rb: int = io_rank(cb);
+            if ra < rb {
+                return -1;
+            }
+            return 1;
+        }
+        i = i + 1;
+    }
+    if len(a) == len(b) {
+        return 0;
+    }
+    if len(a) < len(b) {
+        return -1;
+    }
+    return 1;
+}
+
+fn io_sort(imports: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(imports) {
+        let mut j: int = 0;
+        while j < len(out) && io_cmp(out[j], imports[i]) < 0 {
+            j = j + 1;
+        }
+        let mut nout: [str] = [];
+        let mut k: int = 0;
+        while k < len(out) {
+            if k == j {
+                push(nout, imports[i]);
+            }
+            push(nout, out[k]);
+            k = k + 1;
+        }
+        if j == len(out) {
+            push(nout, imports[i]);
+        }
+        out = nout;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn io_dedupe(imports: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(imports) {
+        let mut seen: bool = false;
+        let mut j: int = 0;
+        while j < len(out) {
+            if out[j] == imports[i] {
+                seen = true;
+            }
+            j = j + 1;
+        }
+        if !seen {
+            push(out, imports[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn io_organize(imports: [str]) -> [str] {
+    return io_sort(io_dedupe(imports));
+}

@@ -1,0 +1,80 @@
+// Qasida — explicit SIMD API (Top-500 #166).
+// Import with: import "simd.fg";
+// Vector ops over [float] in fixed width-4 chunks, with a
+// scalar tail for the remainder — the same honesty rule as
+// parallel.fg: Qasida has no true vector instructions yet,
+// so chunks run in order and the results are identical to
+// the single-pass versions. The chunking shape (width, tail)
+// is exactly what a vectorized version would do. Length
+// mismatches fail; width() reports the chunk width.
+// v1 limits: float vectors only, width fixed at 4, no
+// masked lanes, no horizontal reductions beyond dot.
+
+fn simd_width() -> int {
+    return 4;
+}
+
+fn simd_add(a: [float], b: [float]) -> [float] {
+    if len(a) != len(b) {
+        fail("simd_add: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut end: int = i + 4;
+        if end > len(a) {
+            end = len(a);
+        }
+        let mut j: int = i;
+        while j < end {
+            push(out, a[j] + b[j]);
+            j = j + 1;
+        }
+        i = end;
+    }
+    return out;
+}
+
+fn simd_mul(a: [float], b: [float]) -> [float] {
+    if len(a) != len(b) {
+        fail("simd_mul: length mismatch");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut end: int = i + 4;
+        if end > len(a) {
+            end = len(a);
+        }
+        let mut j: int = i;
+        while j < end {
+            push(out, a[j] * b[j]);
+            j = j + 1;
+        }
+        i = end;
+    }
+    return out;
+}
+
+fn simd_dot(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("simd_dot: length mismatch");
+    }
+    let mut total: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut end: int = i + 4;
+        if end > len(a) {
+            end = len(a);
+        }
+        let mut part: float = 0.0;
+        let mut j: int = i;
+        while j < end {
+            part = part + a[j] * b[j];
+            j = j + 1;
+        }
+        total = total + part;
+        i = end;
+    }
+    return total;
+}

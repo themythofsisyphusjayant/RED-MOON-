@@ -1,0 +1,10 @@
+import "signrel.fg";
+
+fn main() {
+    let sig: str = sr_sign("qasida", "2.3.0", "abc123", "key-1");
+    println(sig);
+    println(sr_verify("qasida", "2.3.0", "abc123", "key-1", sig));
+    println(sr_verify("qasida", "2.3.0", "abc123", "key-2", sig));
+    println(sr_verify("qasida", "2.3.0", "abc124", "key-1", sig));
+    println(sr_release_line("qasida", "2.3.0", "abc123", "key-1"));
+}

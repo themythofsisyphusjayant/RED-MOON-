@@ -1,0 +1,58 @@
+// Qasida — call hierarchy (Top-500 #372).
+// Import with: import "callhier.fg";
+// Callers and callees over a call-edge list. callers()
+// returns the distinct functions that call a symbol, in
+// first-seen order; callees() returns the distinct functions
+// a symbol calls. The caller supplies the edges —
+// extracting them from source text is the parser's job.
+// v1 limits: no transitive closure (direct edges only),
+// no recursion marking, no call-site line numbers.
+
+struct Edge {
+    from: str;
+    to: str;
+}
+
+fn ch_callers(edges: [Edge], sym: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(edges) {
+        if edges[i].to == sym {
+            let mut seen: bool = false;
+            let mut j: int = 0;
+            while j < len(out) {
+                if out[j] == edges[i].from {
+                    seen = true;
+                }
+                j = j + 1;
+            }
+            if !seen {
+                push(out, edges[i].from);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ch_callees(edges: [Edge], sym: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(edges) {
+        if edges[i].from == sym {
+            let mut seen: bool = false;
+            let mut j: int = 0;
+            while j < len(out) {
+                if out[j] == edges[i].to {
+                    seen = true;
+                }
+                j = j + 1;
+            }
+            if !seen {
+                push(out, edges[i].to);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}

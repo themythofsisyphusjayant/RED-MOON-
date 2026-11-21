@@ -1,0 +1,19 @@
+import "tensor2.fg";
+
+fn main() {
+    let a: TTensor = tt_from([2, 3], "f32", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let b: TTensor = tt_from([2, 3], "f32", [6.0, 5.0, 4.0, 3.0, 2.0, 1.0]);
+    println(tt_numel(a));
+    println(a.dtype);
+    let c: TTensor = tt_add(a, b);
+    println(c.data[0]);
+    println(c.data[5]);
+    let r: TTensor = tt_reshape(a, [3, 2]);
+    println(r.shape[0]);
+    println(r.shape[1]);
+    let tr: TTensor = tt_transpose2d(a);
+    println(tr.shape[0]);
+    println(tr.shape[1]);
+    println(tr.data[1]);
+    println(tr.data[5]);
+}

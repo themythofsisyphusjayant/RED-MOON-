@@ -1,0 +1,70 @@
+// Qasida — first-class tensors, dtype-tagged (Top-500 #421).
+// Import with: import "tensor2.fg";
+// Raises tensor.fg's Tensor to a real typed value: a TTensor
+// carries its dtype tag ("f32", "i32", ...) alongside shape
+// and data, and every op checks it. add() requires matching
+// dtype and shape; reshape() requires matching element
+// count; transpose2d() requires rank 2. Mismatches fail
+// loudly instead of silently producing wrong-shaped data.
+// v1 limits: dtype is a tag only (data is always [float] —
+// i32 values are stored as floats, no separate storage),
+// no broadcasting, no dtype conversion (cast is a later
+// slice).
+
+import "tensor.fg";
+
+struct TTensor {
+    data: [float];
+    shape: [int];
+    dtype: str;
+}
+
+fn tt_new(shape: [int], dtype: str, fill: float) -> TTensor {
+    let t: Tensor = tensor_new(shape, fill);
+    return TTensor { data: t.data, shape: t.shape, dtype: dtype };
+}
+
+fn tt_from(shape: [int], dtype: str, data: [float]) -> TTensor {
+    let t: Tensor = tensor_from(shape, data);
+    return TTensor { data: t.data, shape: t.shape, dtype: dtype };
+}
+
+fn tt_numel(t: TTensor) -> int {
+    return tensor_numel(t.shape);
+}
+
+fn tt_reshape(t: TTensor, shape: [int]) -> TTensor {
+    if tensor_numel(shape) != tensor_numel(t.shape) {
+        fail("tt_reshape: numel mismatch");
+    }
+    return TTensor { data: t.data, shape: shape, dtype: t.dtype };
+}
+
+fn tt_transpose2d(t: TTensor) -> TTensor {
+    if len(t.shape) != 2 {
+        fail("tt_transpose2d: need 2-D");
+    }
+    let m: Tensor = Tensor { data: t.data, shape: t.shape };
+    let tr: Tensor = tensor_transpose2(m);
+    return TTensor { data: tr.data, shape: tr.shape, dtype: t.dtype };
+}
+
+fn tt_add(a: TTensor, b: TTensor) -> TTensor {
+    if a.dtype != b.dtype {
+        fail("tt_add: dtype mismatch");
+    }
+    if len(a.shape) != len(b.shape) {
+        fail("tt_add: rank mismatch");
+    }
+    let mut i: int = 0;
+    while i < len(a.shape) {
+        if a.shape[i] != b.shape[i] {
+            fail("tt_add: shape mismatch");
+        }
+        i = i + 1;
+    }
+    let ta: Tensor = Tensor { data: a.data, shape: a.shape };
+    let tb: Tensor = Tensor { data: b.data, shape: b.shape };
+    let s: Tensor = tensor_add(ta, tb);
+    return TTensor { data: s.data, shape: s.shape, dtype: a.dtype };
+}

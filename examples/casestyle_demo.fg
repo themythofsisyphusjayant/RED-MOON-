@@ -1,0 +1,22 @@
+import "casestyle.fg";
+
+fn main() {
+    println(cs_is_snake("my_func"));
+    println(cs_is_camel("Tensor"));
+    let fns: [str] = ["my_func", "MyFunc", "bad__name", "ok2", "x"];
+    let bad_fn: [str] = cs_check_snake(fns);
+    println(len(bad_fn));
+    let mut i: int = 0;
+    while i < len(bad_fn) {
+        println(bad_fn[i]);
+        i = i + 1;
+    }
+    let types: [str] = ["Tensor", "tensor", "My_Type", "HTTPServer"];
+    let bad_ty: [str] = cs_check_camel(types);
+    println(len(bad_ty));
+    i = 0;
+    while i < len(bad_ty) {
+        println(bad_ty[i]);
+        i = i + 1;
+    }
+}

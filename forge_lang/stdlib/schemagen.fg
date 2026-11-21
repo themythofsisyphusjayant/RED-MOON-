@@ -1,0 +1,66 @@
+// Qasida — schema-first codegen (Top-500 #477).
+// Import with: import "schemagen.fg";
+// Generate Qasida structs from .proto-style message schemas:
+// a message name plus (name, type, field-number) fields
+// becomes a struct definition as text. Types map
+// int32/int64->int, float/double->float, string->str,
+// bool->bool, bytes->[int]. Field numbers are validated
+// only for uniqueness in v1 — the generated struct keeps
+// field order, not numbers.
+// v1 limits: no nested messages, no repeated/enum/oneof,
+// no packages or imports, output is text (not compiled).
+
+struct ProtoField {
+    name: str;
+    ptype: str;
+    num: int;
+}
+
+fn sg_type_map(t: str) -> str {
+    if t == "int32" {
+        return "int";
+    }
+    if t == "int64" {
+        return "int";
+    }
+    if t == "float" {
+        return "float";
+    }
+    if t == "double" {
+        return "float";
+    }
+    if t == "string" {
+        return "str";
+    }
+    if t == "bool" {
+        return "bool";
+    }
+    if t == "bytes" {
+        return "[int]";
+    }
+    return "?";
+}
+
+fn sg_struct(name: str, fields: [ProtoField]) -> str {
+    let mut out: str = "struct " + name + " {";
+    for f in fields {
+        out = out + "\n    " + f.name + ": " + sg_type_map(f.ptype) + ";";
+    }
+    out = out + "\n}";
+    return out;
+}
+
+fn sg_has_dup_nums(fields: [ProtoField]) -> bool {
+    let mut i: int = 0;
+    while i < len(fields) {
+        let mut j: int = i + 1;
+        while j < len(fields) {
+            if fields[i].num == fields[j].num {
+                return true;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}

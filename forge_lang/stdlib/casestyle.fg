@@ -1,0 +1,126 @@
+// Qasida — case-style lints (Top-500 #497).
+// Import with: import "casestyle.fg";
+// snake_case and CamelCase enforcement over names, built on
+// substr + alphabet lookup (Qasida has no ord builtin).
+// snake_case: starts with a lowercase letter, then lowercase
+// letters, digits or single underscores (no leading/trailing
+// underscore, no "__"). CamelCase (UpperCamelCase, for type
+// names): starts uppercase, alphanumerics only, and contains
+// at least one lowercase letter. check_snake() /
+// check_camel() return the violators in input order.
+// v1 limits: ASCII letters only, no acronym rules (HTTPServer
+// passes CamelCase), no auto-fix suggestions.
+
+fn cs_is_lower_letter(c: str) -> bool {
+    let lower: str = "abcdefghijklmnopqrstuvwxyz";
+    let mut j: int = 0;
+    while j < len(lower) {
+        if substr(lower, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn cs_is_upper_letter(c: str) -> bool {
+    let upper: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut j: int = 0;
+    while j < len(upper) {
+        if substr(upper, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn cs_is_digit(c: str) -> bool {
+    let digits: str = "0123456789";
+    let mut j: int = 0;
+    while j < len(digits) {
+        if substr(digits, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn cs_is_snake(name: str) -> bool {
+    if len(name) == 0 {
+        return false;
+    }
+    if !cs_is_lower_letter(substr(name, 0, 1)) {
+        return false;
+    }
+    if substr(name, len(name) - 1, 1) == "_" {
+        return false;
+    }
+    let mut prev_us: bool = false;
+    let mut i: int = 0;
+    while i < len(name) {
+        let c: str = substr(name, i, 1);
+        if c == "_" {
+            if prev_us {
+                return false;
+            }
+            prev_us = true;
+        } else {
+            prev_us = false;
+            if !cs_is_lower_letter(c) && !cs_is_digit(c) {
+                return false;
+            }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn cs_is_camel(name: str) -> bool {
+    if len(name) == 0 {
+        return false;
+    }
+    if !cs_is_upper_letter(substr(name, 0, 1)) {
+        return false;
+    }
+    let mut has_lower: bool = false;
+    let mut i: int = 1;
+    while i < len(name) {
+        let c: str = substr(name, i, 1);
+        if c == "_" {
+            return false;
+        }
+        if cs_is_lower_letter(c) {
+            has_lower = true;
+        } else if !cs_is_upper_letter(c) && !cs_is_digit(c) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return has_lower;
+}
+
+fn cs_check_snake(names: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(names) {
+        if !cs_is_snake(names[i]) {
+            push(out, names[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cs_check_camel(names: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(names) {
+        if !cs_is_camel(names[i]) {
+            push(out, names[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

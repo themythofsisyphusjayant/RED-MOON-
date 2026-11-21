@@ -1,0 +1,82 @@
+// Qasida — TODO and FIXME tracking (Top-500 #492).
+// Import with: import "todotrack.fg";
+// Collect markers across the tree: scan files line by line
+// for TODO and FIXME (a line holding both counts as TODO,
+// the first marker wins). A mark records file, 1-based line,
+// kind and the trimmed line text; format() renders it as
+// "file:line KIND text".
+// v1 limits: TODO/FIXME only (no NOTE/HACK/XXX), substring
+// match anywhere in the line (a TODO inside a string literal
+// still counts), no assignee or date parsing.
+
+import "fmtstr.fg";
+
+struct TodoFile {
+    name: str;
+    lines: [str];
+}
+
+struct TodoMark {
+    file: str;
+    line: int;
+    kind: str;
+    text: str;
+}
+
+fn td_index_of(hay: str, needle: str) -> int {
+    if len(needle) == 0 {
+        return 0;
+    }
+    if len(needle) > len(hay) {
+        return -1;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn td_kind_of(line: str) -> str {
+    if td_index_of(line, "TODO") >= 0 {
+        return "TODO";
+    }
+    if td_index_of(line, "FIXME") >= 0 {
+        return "FIXME";
+    }
+    return "";
+}
+
+fn td_scan(files: [TodoFile]) -> [TodoMark] {
+    let mut out: [TodoMark] = [];
+    for f in files {
+        let mut i: int = 0;
+        while i < len(f.lines) {
+            let kind: str = td_kind_of(f.lines[i]);
+            if kind != "" {
+                push(out, TodoMark { file: f.name, line: i + 1, kind: kind, text: trim(f.lines[i]) });
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+fn td_count(marks: [TodoMark], kind: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(marks) {
+        if marks[i].kind == kind {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn td_format(m: TodoMark) -> str {
+    return m.file + ":" + fs_int_str(m.line) + " " + m.kind + " " + m.text;
+}
