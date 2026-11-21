@@ -1,0 +1,39 @@
+// Qasida — log rotation (Top-500 #196).
+// Import with: import "logrot.fg";
+// Size-based rotation over a line buffer in pure Qasida: the
+// buffer holds up to max_lines lines; adding one more rotates
+// the whole buffer out (returned as `rotated`) and starts a
+// fresh buffer with the new line. Callers persist `rotated`
+// wherever they keep archives; no filesystem in v1.
+
+struct LogRot {
+    lines: [str];
+    max_lines: int;
+}
+
+struct LrOut {
+    rot: LogRot;
+    rotated: [str];
+}
+
+fn lr_new(max_lines: int) -> LogRot {
+    return LogRot { lines: [], max_lines: max_lines };
+}
+
+fn lr_add(r: LogRot, line: str) -> LrOut {
+    if len(r.lines) < r.max_lines {
+        let mut rr: LogRot = r;
+        push(rr.lines, line);
+        return LrOut { rot: rr, rotated: [] };
+    }
+    let fresh: LogRot = LogRot { lines: [line], max_lines: r.max_lines };
+    return LrOut { rot: fresh, rotated: r.lines };
+}
+
+fn lr_lines(r: LogRot) -> [str] {
+    return r.lines;
+}
+
+fn lr_len(r: LogRot) -> int {
+    return len(r.lines);
+}

@@ -1,0 +1,66 @@
+// Qasida — append-only journals (Top-500 #200).
+// Import with: import "journal.fg";
+// Change logs for files in pure Qasida: jn_open truncates
+// (fresh journal), jn_append adds one record per line via
+// fs_append, jn_read replays the file back into records.
+// Records are single-line ASCII strings in v1 (a record
+// containing "\n" would split on replay — documented).
+
+import "fsutils.fg";
+import "binio.fg";
+
+struct Journal {
+    path: str;
+    count: int;
+}
+
+fn jn_table() -> str {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+fn jn_code_char(n: int) -> str {
+    if n == 10 {
+        return "\n";
+    }
+    if n >= 32 && n <= 126 {
+        return substr(jn_table(), n - 32, 1);
+    }
+    return "?";
+}
+
+fn jn_bytes_str(b: [int]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(b) {
+        out = out + jn_code_char(b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn jn_open(path: str) -> Journal {
+    let ok: bool = bio_write_file(path, []);
+    return Journal { path: path, count: 0 };
+}
+
+fn jn_append(j: Journal, record: str) -> Journal {
+    let ok: bool = fs_append(j.path, record + "\n");
+    let mut jj: Journal = j;
+    jj.count = jj.count + 1;
+    return jj;
+}
+
+fn jn_read(path: str) -> [str] {
+    let data: [int] = bio_read_file(path);
+    let text: str = jn_bytes_str(data);
+    let parts: [str] = split(text, "\n");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(parts) {
+        if i < len(parts) - 1 || len(parts[i]) > 0 {
+            push(out, parts[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

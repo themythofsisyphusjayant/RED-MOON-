@@ -1,0 +1,50 @@
+// Qasida — debounce and throttle (Top-500 #272).
+// Import with: import "throttle.fg";
+// Rate-shaped handlers in pure Qasida, over explicit
+// microsecond timestamps (deterministic, testable — the
+// caller supplies now, usually clock_micros). A throttle
+// allows at most one event per window; a debounce fires
+// only after a quiet period with no new event.
+
+struct Throttle {
+    last_us: int;
+    window_us: int;
+    has: bool;
+}
+
+struct ThOut {
+    allow: bool;
+    t: Throttle;
+}
+
+struct Debounce {
+    pending_us: int;
+    quiet_us: int;
+    has: bool;
+}
+
+fn th_new(window_us: int) -> Throttle {
+    return Throttle { last_us: 0, window_us: window_us, has: false };
+}
+
+fn th_allow(t: Throttle, now_us: int) -> ThOut {
+    if t.has == false || now_us - t.last_us >= t.window_us {
+        return ThOut { allow: true, t: Throttle { last_us: now_us, window_us: t.window_us, has: true } };
+    }
+    return ThOut { allow: false, t: t };
+}
+
+fn db_new(quiet_us: int) -> Debounce {
+    return Debounce { pending_us: 0, quiet_us: quiet_us, has: false };
+}
+
+fn db_event(d: Debounce, now_us: int) -> Debounce {
+    return Debounce { pending_us: now_us, quiet_us: d.quiet_us, has: true };
+}
+
+fn db_fire(d: Debounce, now_us: int) -> bool {
+    if d.has == false {
+        return false;
+    }
+    return now_us - d.pending_us >= d.quiet_us;
+}

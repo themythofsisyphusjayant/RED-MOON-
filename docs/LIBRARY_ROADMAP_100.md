@@ -268,3 +268,31 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   ordmap.fg, persist.fg, ringbuf.fg landed, verified 4/4.
 - Text — strbuild.fg, caseconv.fg, utf8.fg, unidiff.fg landed,
   verified 4/4. Testing — junit.fg landed, verified 4/4.
+
+## Sprint batch 3 status notes (21 Nov 2026, libs-only sprint)
+- Formats — fmtstr.fg (fixed-decimal float rendering, int rendering,
+  padding), protobuf.fg (LEB128 varints + field tags, wire types 0/2),
+  sqlbuild.fg (safe SELECT/WHERE/INSERT/DELETE, quotes doubled),
+  valid.fg (int_range / str_len / str_nonempty rules over key/value
+  records), migrate.fg (migration plan/apply bookkeeping),
+  lockfile.fg ("name==version #checksum" parse/render), all verified 4/4.
+- Text — lines.fg (line scanner, no trailing empty line), plural.fg
+  (full English plurals: irregulars, -es/-ies/-ves), glob.fg
+  (`*`, `?`, `[...]` classes with ranges/negation), verified 4/4.
+- System/files — bufio.fg (chunked reader + accumulating writer),
+  logrot.fg (size-based rotation over a line buffer), checkread.fg
+  (CRC32-verified reads, matches Python zlib.crc32), journal.fg
+  (append-only journal via fs_append + replay), verified 4/4.
+- Config — config2.fg (layered merge over config.fg: defaults <
+  file < overrides), verified 4/4.
+- Testing/time — snap.fg (golden compare, first-diff line),
+  faketime.fg (fake clock), timeout.fg (deadline arithmetic),
+  throttle.fg (debounce + throttle over explicit timestamps),
+  verified 4/4.
+- Observability — trace.fg (named spans + duration report),
+  audit.fg ("ts|actor|action|target" trails + actor filter),
+  verified 4/4.
+- Held extra: icalparse.fg (parse a VEVENT block back out) built +
+  verified 4/4 but NOT counted here — item #239 iCalendar already
+  reads [HAVE] (ical-lite.fg builds VEVENT text), so the parse slice
+  is an extension of a HAVE item; it stays local for a later batch.

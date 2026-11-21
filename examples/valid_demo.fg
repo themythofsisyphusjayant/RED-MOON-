@@ -1,0 +1,25 @@
+// Validation-schema demo — Top-500 #233.
+// Rules: age int 0..150 required, name nonempty required,
+// city length 0..20 optional. One good record, one bad
+// record, one record missing a required field.
+import "valid.fg";
+
+fn main() -> int {
+    let mut rules: Rules = vd_new();
+    rules = vd_add_rule(rules, "age", "int_range", 0, 150, true);
+    rules = vd_add_rule(rules, "name", "str_nonempty", 0, 0, true);
+    rules = vd_add_rule(rules, "city", "str_len", 0, 20, false);
+    let good: VRes = vd_check(rules, ["age", "name", "city"], ["30", "ann", "Delhi"]);
+    println(good.ok);
+    println(len(good.errors));
+    let bad: VRes = vd_check(rules, ["age", "name", "city"], ["200", "", "x"]);
+    println(bad.ok);
+    println(len(bad.errors));
+    println(bad.errors[0]);
+    println(bad.errors[1]);
+    let missing: VRes = vd_check(rules, ["age"], ["30"]);
+    println(missing.ok);
+    println(len(missing.errors));
+    println(missing.errors[0]);
+    return 0;
+}

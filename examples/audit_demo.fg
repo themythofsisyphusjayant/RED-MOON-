@@ -1,0 +1,22 @@
+// Audit-log demo — Top-500 #396.
+// Three entries (alice login, bob login, alice write);
+// count 3, alice's entries 2.
+import "audit.fg";
+
+fn main() -> int {
+    let mut a: Audit = au_new();
+    a = au_log(a, 1000, "alice", "login", "console");
+    a = au_log(a, 2000, "bob", "login", "console");
+    a = au_log(a, 3000, "alice", "write", "config");
+    println(au_count(a));
+    let lines: [str] = au_lines(a);
+    println(lines[0]);
+    println(lines[2]);
+    let al: [str] = au_filter_actor(a, "alice");
+    println(len(al));
+    println(al[0]);
+    println(al[1]);
+    let bo: [str] = au_filter_actor(a, "bob");
+    println(len(bo));
+    return 0;
+}

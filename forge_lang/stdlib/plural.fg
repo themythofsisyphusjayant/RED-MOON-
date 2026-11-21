@@ -1,0 +1,48 @@
+// Qasida — full pluralization rules (Top-500 #160).
+// Import with: import "plural.fg";
+// Rails-style English plurals in pure Qasida: an irregular
+// table, uncountables, -es after s/x/z/ch/sh, consonant+y
+// -> -ies, -fe/-f -> -ves for the listed words, else +s.
+// i18n-lite has plural-lite only (one/other); this is the
+// full word-form rule set.
+
+fn pl_is_vowel(c: str) -> bool {
+    return c == "a" || c == "e" || c == "i" || c == "o" || c == "u";
+}
+
+fn pl_plural(w: str) -> str {
+    if w == "child" { return "children"; }
+    if w == "man" { return "men"; }
+    if w == "woman" { return "women"; }
+    if w == "foot" { return "feet"; }
+    if w == "tooth" { return "teeth"; }
+    if w == "mouse" { return "mice"; }
+    if w == "person" { return "people"; }
+    if w == "sheep" { return "sheep"; }
+    if w == "fish" { return "fish"; }
+    if w == "deer" { return "deer"; }
+    if w == "leaf" { return "leaves"; }
+    if w == "wolf" { return "wolves"; }
+    if w == "knife" { return "knives"; }
+    if w == "life" { return "lives"; }
+    if w == "wife" { return "wives"; }
+    if w == "half" { return "halves"; }
+    if w == "loaf" { return "loaves"; }
+    if ends_with(w, "s") || ends_with(w, "x") || ends_with(w, "z") || ends_with(w, "ch") || ends_with(w, "sh") {
+        return w + "es";
+    }
+    if ends_with(w, "y") {
+        let before: str = substr(w, len(w) - 2, 1);
+        if pl_is_vowel(before) == false {
+            return substr(w, 0, len(w) - 1) + "ies";
+        }
+        return w + "s";
+    }
+    if ends_with(w, "fe") {
+        return substr(w, 0, len(w) - 2) + "ves";
+    }
+    if ends_with(w, "f") {
+        return substr(w, 0, len(w) - 1) + "ves";
+    }
+    return w + "s";
+}

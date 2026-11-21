@@ -1,0 +1,43 @@
+// Qasida — safe SQL query construction (Top-500 #232).
+// Import with: import "sqlbuild.fg";
+// The remainder of #232: sql.fg parses SELECTs over a Table —
+// this module CONSTRUCTS queries safely. Values are always
+// quoted and single quotes are doubled, so a value can never
+// break out of its literal. v1 quotes every value as a string
+// literal; numeric literals are the caller's job.
+
+fn sb_escape(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == "'" {
+            out = out + "''";
+        } else {
+            out = out + substr(s, i, 1);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sb_select(table: str, cols: [str]) -> str {
+    return "SELECT " + join(cols, ", ") + " FROM " + table;
+}
+
+fn sb_where(q: str, col: str, op: str, val: str) -> str {
+    return q + " WHERE " + col + " " + op + " '" + sb_escape(val) + "'";
+}
+
+fn sb_insert(table: str, cols: [str], vals: [str]) -> str {
+    let mut qvals: [str] = [];
+    let mut i: int = 0;
+    while i < len(vals) {
+        push(qvals, "'" + sb_escape(vals[i]) + "'");
+        i = i + 1;
+    }
+    return "INSERT INTO " + table + " (" + join(cols, ", ") + ") VALUES (" + join(qvals, ", ") + ")";
+}
+
+fn sb_delete(table: str, col: str, op: str, val: str) -> str {
+    return "DELETE FROM " + table + " WHERE " + col + " " + op + " '" + sb_escape(val) + "'";
+}

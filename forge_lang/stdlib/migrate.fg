@@ -1,0 +1,64 @@
+// Qasida — versioned data migrations (Top-500 #234).
+// Import with: import "migrate.fg";
+// Schema migration steps in pure Qasida: a migration list
+// (version, name, SQL text) kept in parallel arrays, a plan
+// of the steps above the current version, and an apply that
+// reports which versions ran and the new version. Applying
+// is bookkeeping only in v1 — the SQL text is carried, not
+// executed (no SQL engine in the stdlib yet).
+
+struct MigList {
+    versions: [int];
+    names: [str];
+    sqls: [str];
+}
+
+struct MgOut {
+    applied: [int];
+    version: int;
+}
+
+fn mg_new() -> MigList {
+    return MigList { versions: [], names: [], sqls: [] };
+}
+
+fn mg_add(m: MigList, version: int, name: str, sql: str) -> MigList {
+    let mut mm: MigList = m;
+    push(mm.versions, version);
+    push(mm.names, name);
+    push(mm.sqls, sql);
+    return mm;
+}
+
+fn mg_plan(m: MigList, current: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(m.versions) {
+        if m.versions[i] > current {
+            push(out, m.versions[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mg_latest(m: MigList) -> int {
+    let mut mx: int = 0;
+    let mut i: int = 0;
+    while i < len(m.versions) {
+        if m.versions[i] > mx {
+            mx = m.versions[i];
+        }
+        i = i + 1;
+    }
+    return mx;
+}
+
+fn mg_apply(m: MigList, current: int) -> MgOut {
+    let plan: [int] = mg_plan(m, current);
+    let mut v: int = current;
+    if len(plan) > 0 {
+        v = plan[len(plan) - 1];
+    }
+    return MgOut { applied: plan, version: v };
+}

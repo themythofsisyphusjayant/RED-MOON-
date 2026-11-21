@@ -1,0 +1,52 @@
+// Qasida — line-oriented streaming (Top-500 #152).
+// Import with: import "lines.fg";
+// A scanner over a string: ls_next yields one line at a time
+// (no trailing empty line when the text ends with "\n").
+// ls_lines collects all lines at once.
+
+struct LineScan {
+    text: str;
+    pos: int;
+}
+
+struct LsOut {
+    line: str;
+    ok: bool;
+    s: LineScan;
+}
+
+fn ls_new(text: str) -> LineScan {
+    return LineScan { text: text, pos: 0 };
+}
+
+fn ls_next(s: LineScan) -> LsOut {
+    if s.pos >= len(s.text) {
+        return LsOut { line: "", ok: false, s: s };
+    }
+    let mut end: int = s.pos;
+    while end < len(s.text) {
+        if s.text[end] == "\n" {
+            let line: str = substr(s.text, s.pos, end - s.pos);
+            return LsOut { line: line, ok: true, s: LineScan { text: s.text, pos: end + 1 } };
+        }
+        end = end + 1;
+    }
+    let line2: str = substr(s.text, s.pos, end - s.pos);
+    return LsOut { line: line2, ok: true, s: LineScan { text: s.text, pos: end } };
+}
+
+fn ls_lines(text: str) -> [str] {
+    let mut out: [str] = [];
+    let mut sc: LineScan = ls_new(text);
+    let mut done: bool = false;
+    while done == false {
+        let r: LsOut = ls_next(sc);
+        if r.ok == false {
+            done = true;
+        } else {
+            push(out, r.line);
+            sc = r.s;
+        }
+    }
+    return out;
+}

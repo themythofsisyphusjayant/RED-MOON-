@@ -1,0 +1,16 @@
+// Format-specifier demo — Top-500 #147.
+// Fixed-decimal floats, int rendering, left/right padding.
+import "fmtstr.fg";
+
+fn main() -> int {
+    println(fs_float(3.14159, 2));
+    println(fs_float(2.5, 3));
+    println(fs_float(0.0 - 2.5, 2));
+    println(fs_float(0.999, 2));
+    println(fs_float(42.0, 0));
+    println(fs_int_str(0 - 123));
+    println(fs_pad_left("42", 5, " "));
+    println(fs_pad_right("hi", 5, "."));
+    println(fs_pad_left("x", 3, "0"));
+    return 0;
+}

@@ -1,0 +1,19 @@
+// Glob-pattern demo — Top-500 #191.
+// `*`, `?`, and `[...]` classes (ranges, negation).
+import "glob.fg";
+
+fn main() -> int {
+    println(gl_match("*.fg", "main.fg"));
+    println(gl_match("*.fg", "main.txt"));
+    println(gl_match("a?c", "abc"));
+    println(gl_match("a?c", "ac"));
+    println(gl_match("[a-c]x", "bx"));
+    println(gl_match("[a-c]x", "dx"));
+    println(gl_match("[!a-c]x", "dx"));
+    println(gl_match("src/*.fg", "src/main.fg"));
+    println(gl_match("a*b", "axxb"));
+    println(gl_match("a*b", "axxc"));
+    println(gl_match("*.txt", "notes.txt"));
+    println(gl_match("?", ""));
+    return 0;
+}

@@ -1,0 +1,25 @@
+// Migration demo — Top-500 #234.
+// Three steps (v1 init, v2 users, v3 index). From v1 the
+// plan is [2, 3]; applying lands on v3; from v3 the plan
+// is empty.
+import "migrate.fg";
+
+fn main() -> int {
+    let mut m: MigList = mg_new();
+    m = mg_add(m, 1, "init", "CREATE TABLE t (id INT)");
+    m = mg_add(m, 2, "users", "CREATE TABLE users (id INT)");
+    m = mg_add(m, 3, "index", "CREATE INDEX i ON users (id)");
+    println(mg_latest(m));
+    let plan: [int] = mg_plan(m, 1);
+    println(len(plan));
+    println(plan[0]);
+    println(plan[1]);
+    let done: MgOut = mg_apply(m, 1);
+    println(len(done.applied));
+    println(done.version);
+    let plan2: [int] = mg_plan(m, 3);
+    println(len(plan2));
+    let done2: MgOut = mg_apply(m, 3);
+    println(done2.version);
+    return 0;
+}

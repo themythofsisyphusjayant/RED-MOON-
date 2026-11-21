@@ -1,0 +1,26 @@
+// Snapshot-testing demo — Top-500 #307.
+// Equal texts match; one differing line reports line 1
+// with both sides; a missing line reports line 2.
+import "snap.fg";
+
+fn main() -> int {
+    let s1: SnRes = sn_compare("a\nb\nc", "a\nb\nc");
+    println(s1.ok);
+    println(s1.first_diff);
+    let s2: SnRes = sn_compare("a\nb\nc", "a\nB\nc");
+    println(s2.ok);
+    println(s2.first_diff);
+    println(s2.exp_line);
+    println(s2.act_line);
+    let s3: SnRes = sn_compare("a\nb", "a\nb\nc");
+    println(s3.ok);
+    println(s3.first_diff);
+    println(s3.exp_line);
+    println(s3.act_line);
+    let s4: SnRes = sn_compare("x", "y");
+    println(s4.ok);
+    println(s4.first_diff);
+    println(s4.exp_line);
+    println(s4.act_line);
+    return 0;
+}

@@ -1,0 +1,17 @@
+// Safe-SQL demo — Top-500 #232.
+// SELECT + WHERE with an O'Brien value (quote doubled),
+// INSERT with quoting, DELETE.
+import "sqlbuild.fg";
+
+fn main() -> int {
+    let q: str = sb_select("users", ["id", "name"]);
+    println(q);
+    let w: str = sb_where(q, "name", "=", "O'Brien");
+    println(w);
+    let ins: str = sb_insert("users", ["id", "name"], ["1", "ann"]);
+    println(ins);
+    let d: str = sb_delete("users", "id", "=", "7");
+    println(d);
+    println(sb_escape("it's"));
+    return 0;
+}

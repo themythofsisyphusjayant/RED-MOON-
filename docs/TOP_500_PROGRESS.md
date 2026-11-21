@@ -721,9 +721,10 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   409. Arithmetic from the reconciled baseline (HAVE 71, PARTIAL 62,
   GAP 367, to build 429): 16 GAP-to-HAVE + 4 PARTIAL-to-HAVE = 20
   flips; 71 + 20 = 91; 62 - 4 = 58; 367 - 16 = 351; 429 - 20 = 409
-  (91 + 58 + 351 = 500). NOT pushed: batch stays local; the push
-  decision is separate. Next: sprint day 2 (22 Nov), same libs-only
-  rule, target 20/day toward HAVE ~211 by 27 Nov.
+  (91 + 58 + 351 = 500). PUSHED as 66a9b7a8 (parent d6984c46,
+  selective push, 44 files — 20 stdlib + 20 demos + test + 3 docs),
+  verified via the Contents API. Next: sprint day 2 (22 Nov), same
+  libs-only rule, target 20/day toward HAVE ~211 by 27 Nov.
 
 - Sprint batch 2 (21 Nov 2026, LIBS ONLY — OS track paused, back-to-back
   after day 1): 20 library items landed, all verified: #42 errwrap,
@@ -753,3 +754,30 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   the sprint task — the new-syntax and Result-method variants stay
   open if he wants them. Next: sprint day 2 (22 Nov), same libs-only
   rule, target 20/day toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 3 (21 Nov 2026, LIBS ONLY — OS track paused, back-to-back
+  after batch 2, same day): 20 library items landed, all verified: #147
+  fmtstr, #152 lines, #160 plural, #186 bufio, #191 glob, #195 config2,
+  #196 logrot, #198 checkread, #200 journal, #226 protobuf, #232
+  sqlbuild, #233 valid, #234 migrate, #249 timeout, #272 throttle,
+  #307 snap, #311 faketime, #323 lockfile, #384 trace, #396 audit.
+  Daily test: tests/test_daily_20261121c.py — 80/80 checks PASS
+  (20 demos x 2 compilers x rc=0 + exact stdout); expected values
+  from an independent Python replica
+  (~/workspace/blackmoon-iso/daily-20261121-batch3/replica_20261121c.py,
+  20/20 match — replica re-derived the glob star-backtrack matcher,
+  the LEB128 varints, zlib.crc32 for the checksum file (222957957 for
+  "hello world", matching the program exactly), the plural rule table,
+  and the fixed-decimal float formatting from first principles; no
+  discrepancies found). Counts after sprint batch 3: HAVE 131,
+  PARTIAL 47, GAP 322, to build 369. Arithmetic from sprint batch 2
+  (HAVE 111, PARTIAL 51, GAP 338, to build 389): 16 GAP-to-HAVE + 4
+  PARTIAL-to-HAVE = 20 flips; 111 + 20 = 131; 51 - 4 = 47;
+  338 - 16 = 322; 389 - 20 = 369 (131 + 47 + 322 = 500). Held extra:
+  icalparse.fg + icalparse_demo.fg were also built and verified 4/4
+  in this batch (parse a VEVENT block back out) but NOT counted or
+  pushed here — its catalog item #239 iCalendar already reads [HAVE]
+  (ical-lite.fg builds VEVENT text), so the parse slice is an
+  extension of a HAVE item, not a flip; it stays local for a later
+  batch. Next: sprint batch 4, same libs-only rule, target 20/day
+  toward HAVE ~211 by 27 Nov.

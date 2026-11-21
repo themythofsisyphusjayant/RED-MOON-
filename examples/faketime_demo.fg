@@ -1,0 +1,15 @@
+// Fake-clock demo — Top-500 #311.
+// Start at 1000000us, advance 250000, set to 5000000.
+import "faketime.fg";
+
+fn main() -> int {
+    let mut c: FakeClock = fc_new(1000000);
+    println(fc_now(c));
+    c = fc_advance(c, 250000);
+    println(fc_now(c));
+    println(fc_elapsed(c, 1000000));
+    c = fc_set(c, 5000000);
+    println(fc_now(c));
+    println(fc_elapsed(c, 4000000));
+    return 0;
+}

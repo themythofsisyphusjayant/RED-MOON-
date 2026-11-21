@@ -1,0 +1,33 @@
+// Protocol Buffers demo — Top-500 #226.
+// varint(300) = [172, 2]; field 1 varint 42; field 2 string
+// "hi"; tag decoding.
+import "protobuf.fg";
+
+fn main() -> int {
+    let v: [int] = pb_varint(300);
+    println(len(v));
+    println(v[0]);
+    println(v[1]);
+    let u: PbVal = pb_unvarint(v, 0);
+    println(u.v);
+    println(u.next);
+    let e1: [int] = pb_encode_int(1, 42);
+    println(len(e1));
+    println(e1[0]);
+    println(e1[1]);
+    let e2: [int] = pb_encode_str(2, "hi");
+    println(len(e2));
+    println(e2[0]);
+    println(e2[1]);
+    println(e2[2]);
+    println(e2[3]);
+    let t1: PbTag = pb_decode_tag(e1, 0);
+    println(t1.field);
+    println(t1.wire);
+    println(t1.next);
+    let t2: PbTag = pb_decode_tag(e2, 0);
+    println(t2.field);
+    println(t2.wire);
+    println(t2.next);
+    return 0;
+}

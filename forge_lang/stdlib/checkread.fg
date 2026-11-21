@@ -1,0 +1,142 @@
+// Qasida — checksum-verified reads (Top-500 #198).
+// Import with: import "checkread.fg";
+// The remainder of #198: checksum.fg computes CRC32/Adler32,
+// this module VERIFIES on load. cr_write stores
+// "<crc32 decimal>\n<text>" via write_bytes; cr_read reads it
+// back, recomputes the CRC32 of the payload bytes, and reports
+// ok=false when the stored checksum does not match (corrupt
+// or tampered file). ASCII text only in v1 (bytes map through
+// the printable-ASCII table, the base64.fg idiom).
+
+import "checksum.fg";
+import "binio.fg";
+
+struct CrOut {
+    text: str;
+    ok: bool;
+    crc: int;
+}
+
+fn cr_table() -> str {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+fn cr_char_code(c: str) -> int {
+    if c == "\n" {
+        return 10;
+    }
+    let t: str = cr_table();
+    let mut j: int = 0;
+    while j < len(t) {
+        if substr(t, j, 1) == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    return 63;
+}
+
+fn cr_code_char(n: int) -> str {
+    if n == 10 {
+        return "\n";
+    }
+    if n >= 32 && n <= 126 {
+        return substr(cr_table(), n - 32, 1);
+    }
+    return "?";
+}
+
+fn cr_str_bytes(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(s) {
+        push(out, cr_char_code(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cr_bytes_str(b: [int]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(b) {
+        out = out + cr_code_char(b[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cr_digit(d: int) -> str {
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    return "9";
+}
+
+fn cr_int_str(n: int) -> str {
+    if n == 0 { return "0"; }
+    let mut v: int = n;
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + cr_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + substr(rev, i, 1);
+        i = i - 1;
+    }
+    return out;
+}
+
+fn cr_parse_int(s: str) -> int {
+    let mut v: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        let d: int = cr_char_code(substr(s, i, 1)) - 48;
+        if d >= 0 && d <= 9 {
+            v = v * 10 + d;
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn cr_write(path: str, text: str) -> int {
+    let crc: int = crc32_bytes(cr_str_bytes(text));
+    let body: str = cr_int_str(crc) + "\n" + text;
+    let ok: bool = bio_write_file(path, cr_str_bytes(body));
+    if ok == false {
+        return 0 - 1;
+    }
+    return crc;
+}
+
+fn cr_read(path: str) -> CrOut {
+    let data: [int] = bio_read_file(path);
+    let body: str = cr_bytes_str(data);
+    let mut nl: int = 0 - 1;
+    let mut i: int = 0;
+    while i < len(body) {
+        if substr(body, i, 1) == "\n" {
+            nl = i;
+            i = len(body);
+        } else {
+            i = i + 1;
+        }
+    }
+    if nl == 0 - 1 {
+        return CrOut { text: "", ok: false, crc: 0 - 1 };
+    }
+    let stored: int = cr_parse_int(substr(body, 0, nl));
+    let text: str = substr(body, nl + 1, len(body) - nl - 1);
+    let actual: int = crc32_bytes(cr_str_bytes(text));
+    return CrOut { text: text, ok: stored == actual, crc: actual };
+}

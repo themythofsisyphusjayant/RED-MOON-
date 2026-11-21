@@ -1,0 +1,18 @@
+// Lockfile demo — Top-500 #323.
+// Parse two pinned deps, look them up, add a third,
+// render the lockfile back.
+import "lockfile.fg";
+
+fn main() -> int {
+    let mut l: Lock = lf_parse("numpy==2.1.0 #a1b2\npandas==2.2.0 #c3d4\n");
+    println(lf_len(l));
+    println(lf_get(l, "numpy"));
+    println(lf_has(l, "pandas"));
+    println(lf_has(l, "scipy"));
+    println(lf_get(l, "scipy"));
+    l = lf_add(l, "scipy", "1.14.0", "e5f6");
+    println(lf_len(l));
+    println(lf_get(l, "scipy"));
+    println(lf_render(l));
+    return 0;
+}

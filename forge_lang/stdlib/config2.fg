@@ -1,0 +1,43 @@
+// Qasida — layered configuration (Top-500 #195).
+// Import with: import "config2.fg";
+// The remainder of #195: config.fg, toml.fg, ini.fg and
+// dotenv.fg all parse one source each — this module LAYERS
+// them. cfg2_merge folds one Config over another (the second
+// wins on conflicts, keys keep first-seen order); chaining
+// merges gives defaults < file < overrides. Built on
+// config.fg's Config type (parallel keys/vals arrays).
+
+import "config.fg";
+
+fn cfg2_merge(base: Config, over: Config) -> Config {
+    let mut keys: [str] = base.keys;
+    let mut vals: [str] = base.vals;
+    let mut i: int = 0;
+    while i < len(over.keys) {
+        let k: str = over.keys[i];
+        let mut j: int = 0;
+        let mut found: int = 0 - 1;
+        while j < len(keys) {
+            if keys[j] == k {
+                found = j;
+            }
+            j = j + 1;
+        }
+        if found == 0 - 1 {
+            push(keys, k);
+            push(vals, over.vals[i]);
+        } else {
+            vals[found] = over.vals[i];
+        }
+        i = i + 1;
+    }
+    return Config { keys: keys, vals: vals };
+}
+
+fn cfg2_keys(c: Config) -> [str] {
+    return c.keys;
+}
+
+fn cfg2_len(c: Config) -> int {
+    return len(c.keys);
+}

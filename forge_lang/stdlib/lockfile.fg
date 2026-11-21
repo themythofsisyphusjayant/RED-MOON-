@@ -1,0 +1,82 @@
+// Qasida — lockfiles (Top-500 #323).
+// Import with: import "lockfile.fg";
+// Reproducible-build lockfiles in pure Qasida: one line per
+// dependency, "name==version #checksum". lf_parse reads a
+// lockfile text, lf_get / lf_has look entries up, lf_add
+// appends one, lf_render writes the text back. v1 has no
+// hash verification of the checksums themselves (that is
+// the checksum-verified-install item).
+
+struct Lock {
+    names: [str];
+    versions: [str];
+    checksums: [str];
+}
+
+fn lf_find(s: str, sub: str, from: int) -> int {
+    let mut i: int = from;
+    while i + len(sub) <= len(s) {
+        if substr(s, i, len(sub)) == sub {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn lf_parse(text: str) -> Lock {
+    let mut l: Lock = Lock { names: [], versions: [], checksums: [] };
+    let lines: [str] = split(text, "\n");
+    let mut i: int = 0;
+    while i < len(lines) {
+        let line: str = lines[i];
+        if len(line) > 0 {
+            let eq: int = lf_find(line, "==", 0);
+            let hash: int = lf_find(line, " #", 0);
+            if eq != 0 - 1 && hash != 0 - 1 {
+                push(l.names, substr(line, 0, eq));
+                push(l.versions, substr(line, eq + 2, hash - eq - 2));
+                push(l.checksums, substr(line, hash + 2, len(line) - hash - 2));
+            }
+        }
+        i = i + 1;
+    }
+    return l;
+}
+
+fn lf_get(l: Lock, name: str) -> str {
+    let mut i: int = 0;
+    while i < len(l.names) {
+        if l.names[i] == name {
+            return l.versions[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn lf_has(l: Lock, name: str) -> bool {
+    return lf_get(l, name) != "";
+}
+
+fn lf_len(l: Lock) -> int {
+    return len(l.names);
+}
+
+fn lf_add(l: Lock, name: str, version: str, checksum: str) -> Lock {
+    let mut ll: Lock = l;
+    push(ll.names, name);
+    push(ll.versions, version);
+    push(ll.checksums, checksum);
+    return ll;
+}
+
+fn lf_render(l: Lock) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(l.names) {
+        out = out + l.names[i] + "==" + l.versions[i] + " #" + l.checksums[i] + "\n";
+        i = i + 1;
+    }
+    return out;
+}

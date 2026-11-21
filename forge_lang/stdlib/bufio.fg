@@ -1,0 +1,54 @@
+// Qasida — buffered readers and writers (Top-500 #186).
+// Import with: import "bufio.fg";
+// Buffered I/O over strings in pure Qasida: a BufReader hands
+// out up to n chars per read from a fixed string, and a
+// BufWriter accumulates parts and flushes them joined once
+// (the strbuild.fg idiom), instead of quadratic concat.
+
+struct BufReader {
+    data: str;
+    pos: int;
+}
+
+struct BrOut {
+    text: str;
+    r: BufReader;
+}
+
+struct BufWriter {
+    parts: [str];
+}
+
+fn br_new(data: str) -> BufReader {
+    return BufReader { data: data, pos: 0 };
+}
+
+fn br_read(r: BufReader, n: int) -> BrOut {
+    if r.pos >= len(r.data) {
+        return BrOut { text: "", r: r };
+    }
+    let mut take: int = n;
+    if r.pos + take > len(r.data) {
+        take = len(r.data) - r.pos;
+    }
+    let text: str = substr(r.data, r.pos, take);
+    return BrOut { text: text, r: BufReader { data: r.data, pos: r.pos + take } };
+}
+
+fn br_remaining(r: BufReader) -> int {
+    return len(r.data) - r.pos;
+}
+
+fn bw_new() -> BufWriter {
+    return BufWriter { parts: [] };
+}
+
+fn bw_write(w: BufWriter, s: str) -> BufWriter {
+    let mut ww: BufWriter = w;
+    push(ww.parts, s);
+    return ww;
+}
+
+fn bw_flush(w: BufWriter) -> str {
+    return join(w.parts, "");
+}

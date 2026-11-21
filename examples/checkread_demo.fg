@@ -1,0 +1,22 @@
+// Checksum-verified-read demo — Top-500 #198.
+// Write "hello world" with its CRC32, read it back (ok),
+// then read a file whose stored checksum is wrong (not ok).
+import "checkread.fg";
+import "binio.fg";
+
+fn main() -> int {
+    let p: str = "/tmp/checkread_demo.txt";
+    let crc: int = cr_write(p, "hello world");
+    println(crc);
+    let r: CrOut = cr_read(p);
+    println(r.ok);
+    println(r.text);
+    println(r.crc);
+    let p2: str = "/tmp/checkread_demo_bad.txt";
+    let ok2: bool = bio_write_file(p2, cr_str_bytes("12345\nhello world"));
+    println(ok2);
+    let r2: CrOut = cr_read(p2);
+    println(r2.ok);
+    println(r2.crc);
+    return 0;
+}

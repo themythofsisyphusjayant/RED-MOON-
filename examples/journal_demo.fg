@@ -1,0 +1,17 @@
+// Append-only journal demo — Top-500 #200.
+// Open (truncate), append three records, replay them back.
+import "journal.fg";
+
+fn main() -> int {
+    let mut j: Journal = jn_open("/tmp/journal_demo.txt");
+    j = jn_append(j, "open");
+    j = jn_append(j, "save");
+    j = jn_append(j, "close");
+    println(j.count);
+    let recs: [str] = jn_read("/tmp/journal_demo.txt");
+    println(len(recs));
+    println(recs[0]);
+    println(recs[1]);
+    println(recs[2]);
+    return 0;
+}

@@ -1,0 +1,15 @@
+// Operation-timeout demo — Top-500 #249.
+// Pure deadline arithmetic over explicit timestamps, plus
+// one live clock check.
+import "timeout.fg";
+
+fn main() -> int {
+    println(to_deadline(1000000, 500));
+    println(to_remaining(1500000, 1200000));
+    println(to_remaining(1500000, 1600000));
+    println(to_expired(1500000, 1500001));
+    println(to_expired(1500000, 1499999));
+    println(to_elapsed(1000000, 1250000));
+    println(to_new_deadline(1000) > 0);
+    return 0;
+}

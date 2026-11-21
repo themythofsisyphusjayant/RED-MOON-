@@ -1,0 +1,19 @@
+// Pluralization demo — Top-500 #160.
+// Regulars, -es, consonant+y, irregulars, uncountables.
+import "plural.fg";
+
+fn main() -> int {
+    println(pl_plural("cat"));
+    println(pl_plural("box"));
+    println(pl_plural("baby"));
+    println(pl_plural("child"));
+    println(pl_plural("leaf"));
+    println(pl_plural("sheep"));
+    println(pl_plural("church"));
+    println(pl_plural("day"));
+    println(pl_plural("knife"));
+    println(pl_plural("bus"));
+    println(pl_plural("wolf"));
+    println(pl_plural("city"));
+    return 0;
+}

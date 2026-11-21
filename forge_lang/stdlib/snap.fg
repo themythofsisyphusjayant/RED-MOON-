@@ -1,0 +1,43 @@
+// Qasida — snapshot testing (Top-500 #307).
+// Import with: import "snap.fg";
+// Golden outputs in pure Qasida: sn_compare diffs two
+// multi-line strings line by line and reports the first
+// differing line (0-based) with both sides, or ok=true
+// with first_diff -1 when they match exactly. File I/O
+// for golden files is the caller's job (read_bytes /
+// write_bytes); this module is the comparison itself.
+
+struct SnRes {
+    ok: bool;
+    first_diff: int;
+    exp_line: str;
+    act_line: str;
+}
+
+fn sn_compare(expected: str, actual: str) -> SnRes {
+    let el: [str] = split(expected, "\n");
+    let al: [str] = split(actual, "\n");
+    let mut i: int = 0;
+    while i < len(el) && i < len(al) {
+        if el[i] != al[i] {
+            return SnRes { ok: false, first_diff: i, exp_line: el[i], act_line: al[i] };
+        }
+        i = i + 1;
+    }
+    if len(el) == len(al) {
+        return SnRes { ok: true, first_diff: 0 - 1, exp_line: "", act_line: "" };
+    }
+    let mut d: int = len(el);
+    if len(al) < d {
+        d = len(al);
+    }
+    let mut e: str = "";
+    let mut a: str = "";
+    if len(el) > d {
+        e = el[d];
+    }
+    if len(al) > d {
+        a = al[d];
+    }
+    return SnRes { ok: false, first_diff: d, exp_line: e, act_line: a };
+}

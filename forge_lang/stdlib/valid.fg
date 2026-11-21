@@ -1,0 +1,109 @@
+// Qasida — data validation schemas (Top-500 #233).
+// Import with: import "valid.fg";
+// Validate shapes of data in pure Qasida: a rule list over
+// parallel key/value string arrays. Kinds in v1: int_range
+// (inclusive), str_len (inclusive), str_nonempty. A missing
+// required field is an error; a missing optional field is
+// fine. Distinct from schema.fg, which checks DataFrame
+// columns — this validates plain key/value records.
+
+struct Rules {
+    fields: [str];
+    kinds: [str];
+    mins: [int];
+    maxs: [int];
+    reqs: [bool];
+}
+
+struct VRes {
+    ok: bool;
+    errors: [str];
+}
+
+fn vd_new() -> Rules {
+    return Rules { fields: [], kinds: [], mins: [], maxs: [], reqs: [] };
+}
+
+fn vd_add_rule(r: Rules, field: str, kind: str, min: int, max: int, required: bool) -> Rules {
+    let mut rr: Rules = r;
+    push(rr.fields, field);
+    push(rr.kinds, kind);
+    push(rr.mins, min);
+    push(rr.maxs, max);
+    push(rr.reqs, required);
+    return rr;
+}
+
+fn vd_find(keys: [str], field: str) -> int {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == field {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn vd_int_of(s: str) -> int {
+    let mut neg: bool = false;
+    let mut start: int = 0;
+    if len(s) > 0 && substr(s, 0, 1) == "-" {
+        neg = true;
+        start = 1;
+    }
+    let mut v: int = 0;
+    let mut i: int = start;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        let mut d: int = 0 - 1;
+        let mut k: int = 0;
+        while k <= 9 {
+            let digit: str = "0123456789";
+            if substr(digit, k, 1) == c {
+                d = k;
+            }
+            k = k + 1;
+        }
+        if d >= 0 {
+            v = v * 10 + d;
+        }
+        i = i + 1;
+    }
+    if neg {
+        return 0 - v;
+    }
+    return v;
+}
+
+fn vd_check(r: Rules, keys: [str], vals: [str]) -> VRes {
+    let mut errors: [str] = [];
+    let mut i: int = 0;
+    while i < len(r.fields) {
+        let field: str = r.fields[i];
+        let idx: int = vd_find(keys, field);
+        if idx == 0 - 1 {
+            if r.reqs[i] {
+                push(errors, field + ": required");
+            }
+        } else {
+            let v: str = vals[idx];
+            if r.kinds[i] == "int_range" {
+                let n: int = vd_int_of(v);
+                if n < r.mins[i] || n > r.maxs[i] {
+                    push(errors, field + ": out of range");
+                }
+            } else if r.kinds[i] == "str_len" {
+                if len(v) < r.mins[i] || len(v) > r.maxs[i] {
+                    push(errors, field + ": bad length");
+                }
+            } else if r.kinds[i] == "str_nonempty" {
+                if len(v) == 0 {
+                    push(errors, field + ": required");
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return VRes { ok: len(errors) == 0, errors: errors };
+}

@@ -1,0 +1,25 @@
+// Line-scanner demo — Top-500 #152.
+// "alpha\nbeta\ngamma" (no trailing newline) and "one\ntwo\n"
+// (trailing newline yields no empty third line); empty input.
+import "lines.fg";
+
+fn main() -> int {
+    let ls: [str] = ls_lines("alpha\nbeta\ngamma");
+    println(len(ls));
+    println(ls[0]);
+    println(ls[1]);
+    println(ls[2]);
+    let ls2: [str] = ls_lines("one\ntwo\n");
+    println(len(ls2));
+    println(ls2[0]);
+    println(ls2[1]);
+    let ls3: [str] = ls_lines("");
+    println(len(ls3));
+    let sc: LineScan = ls_new("x");
+    let r: LsOut = ls_next(sc);
+    println(r.ok);
+    println(r.line);
+    let r2: LsOut = ls_next(r.s);
+    println(r2.ok);
+    return 0;
+}

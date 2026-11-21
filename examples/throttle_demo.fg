@@ -1,0 +1,31 @@
+// Debounce/throttle demo — Top-500 #272.
+// Throttle window 1000us: allow at 0, 1000, 2000; deny at
+// 500, 1500. Debounce quiet 500us: event at 0, re-event at
+// 450, fires only at 950.
+import "throttle.fg";
+
+fn main() -> int {
+    let mut t: Throttle = th_new(1000);
+    let a1: ThOut = th_allow(t, 0);
+    println(a1.allow);
+    t = a1.t;
+    let a2: ThOut = th_allow(t, 500);
+    println(a2.allow);
+    t = a2.t;
+    let a3: ThOut = th_allow(t, 1000);
+    println(a3.allow);
+    t = a3.t;
+    let a4: ThOut = th_allow(t, 1500);
+    println(a4.allow);
+    t = a4.t;
+    let a5: ThOut = th_allow(t, 2000);
+    println(a5.allow);
+    let mut d: Debounce = db_new(500);
+    println(db_fire(d, 100));
+    d = db_event(d, 0);
+    println(db_fire(d, 400));
+    d = db_event(d, 450);
+    println(db_fire(d, 900));
+    println(db_fire(d, 950));
+    return 0;
+}

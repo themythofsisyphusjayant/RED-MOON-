@@ -1,0 +1,29 @@
+// Buffered I/O demo — Top-500 #186.
+// Reader over "abcdefghij": read 3, read 4, remaining; writer
+// accumulates "foo" + "bar" and flushes once.
+import "bufio.fg";
+
+fn main() -> int {
+    let mut r: BufReader = br_new("abcdefghij");
+    let o1: BrOut = br_read(r, 3);
+    println(o1.text);
+    r = o1.r;
+    let o2: BrOut = br_read(r, 4);
+    println(o2.text);
+    r = o2.r;
+    println(br_remaining(r));
+    let o3: BrOut = br_read(r, 3);
+    println(o3.text);
+    r = o3.r;
+    println(br_remaining(r));
+    let o4: BrOut = br_read(r, 3);
+    println(o4.text);
+    println(o4.r.pos);
+    let mut w: BufWriter = bw_new();
+    w = bw_write(w, "foo");
+    w = bw_write(w, "bar");
+    w = bw_write(w, "!");
+    println(bw_flush(w));
+    println(len(w.parts));
+    return 0;
+}

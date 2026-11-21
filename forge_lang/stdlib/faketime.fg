@@ -1,0 +1,31 @@
+// Qasida — deterministic test time (Top-500 #311).
+// Import with: import "faketime.fg";
+// Fake clocks for time tests in pure Qasida: a FakeClock
+// holds an explicit microsecond stamp; tests advance or set
+// it instead of waiting on the real clock. Production code
+// takes the stamp as a parameter, so the same code runs
+// against clock_micros() live and against a fake in tests.
+
+struct FakeClock {
+    now_us: int;
+}
+
+fn fc_new(start_us: int) -> FakeClock {
+    return FakeClock { now_us: start_us };
+}
+
+fn fc_now(c: FakeClock) -> int {
+    return c.now_us;
+}
+
+fn fc_advance(c: FakeClock, delta_us: int) -> FakeClock {
+    return FakeClock { now_us: c.now_us + delta_us };
+}
+
+fn fc_set(c: FakeClock, t_us: int) -> FakeClock {
+    return FakeClock { now_us: t_us };
+}
+
+fn fc_elapsed(c: FakeClock, since_us: int) -> int {
+    return c.now_us - since_us;
+}

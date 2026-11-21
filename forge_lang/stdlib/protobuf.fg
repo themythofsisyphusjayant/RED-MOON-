@@ -1,0 +1,105 @@
+// Qasida — Protocol Buffers wire format (Top-500 #226).
+// Import with: import "protobuf.fg";
+// Schema-driven binary encoding in pure Qasida: LEB128 varints,
+// field tags (field * 8 + wire), length-delimited strings.
+// Wire types in v1: 0 (varint) and 2 (length-delimited).
+// No .proto schema compiler in v1 — callers pass field numbers.
+
+struct PbVal {
+    v: int;
+    next: int;
+}
+
+struct PbTag {
+    field: int;
+    wire: int;
+    next: int;
+}
+
+fn pb_varint(n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut v: int = n;
+    if v == 0 {
+        push(out, 0);
+        return out;
+    }
+    while v > 0 {
+        let b: int = v % 128;
+        v = v / 128;
+        if v > 0 {
+            push(out, b + 128);
+        } else {
+            push(out, b);
+        }
+    }
+    return out;
+}
+
+fn pb_unvarint(b: [int], off: int) -> PbVal {
+    let mut v: int = 0;
+    let mut shift: int = 0;
+    let mut i: int = off;
+    let mut done: bool = false;
+    while done == false {
+        let byte: int = b[i];
+        v = v + (byte % 128) * (1 << shift);
+        i = i + 1;
+        if byte < 128 {
+            done = true;
+        } else {
+            shift = shift + 7;
+        }
+    }
+    return PbVal { v: v, next: i };
+}
+
+fn pb_tag(field: int, wire: int) -> int {
+    return field * 8 + wire;
+}
+
+fn pb_encode_int(field: int, v: int) -> [int] {
+    let mut out: [int] = [pb_tag(field, 0)];
+    let enc: [int] = pb_varint(v);
+    let mut i: int = 0;
+    while i < len(enc) {
+        push(out, enc[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn pb_char_code(c: str) -> int {
+    if c == "\n" {
+        return 10;
+    }
+    let t: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(t) {
+        if substr(t, j, 1) == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    return 63;
+}
+
+fn pb_encode_str(field: int, s: str) -> [int] {
+    let mut out: [int] = [pb_tag(field, 2)];
+    let lb: [int] = pb_varint(len(s));
+    let mut i: int = 0;
+    while i < len(lb) {
+        push(out, lb[i]);
+        i = i + 1;
+    }
+    let mut k: int = 0;
+    while k < len(s) {
+        push(out, pb_char_code(substr(s, k, 1)));
+        k = k + 1;
+    }
+    return out;
+}
+
+fn pb_decode_tag(b: [int], off: int) -> PbTag {
+    let t: PbVal = pb_unvarint(b, off);
+    return PbTag { field: t.v / 8, wire: t.v % 8, next: t.next };
+}

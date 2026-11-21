@@ -297,12 +297,12 @@ is not ownership-tracked (see #27).
 144. Unicode-correct length and iteration (Rust/Swift) — [GAP] Grapheme clusters, not bytes.
 145. Regex groups and alternation (all) — [PARTIAL] The regex library lacks both; the known gap.
 146. String builders (Java/C#) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): strbuild.fg + strbuild_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: str/int/float parts only; floats print up to 6 decimals, trailing zeros trimmed. Efficient repeated concatenation.
-147. Format specifiers (Python/Rust) — [GAP] {x:.2f}, padding and alignment.
+147. Format specifiers (Python/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): fmtstr.fg + fmtstr_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: fixed-decimal float rendering (round-half-up), int rendering, left/right padding; no printf parser, callers pass value + width/precision directly.
 148. Case conversion (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): caseconv.fg + caseconv_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ASCII letters/digits/underscore/hyphen only. snake, camel and kebab conversion.
 149. Split with limits and regex split (all) — [HAVE] split/join/trim builtins exist; extend them.
 150. Full template engine (Jinja/Go) — [PARTIAL] A template library exists; grow it to a full engine.
 151. Text encodings UTF-8/16/32 (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): utf8.fg + utf8_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: codepoints travel as [int] (no ord()/chr() builtins); UTF-8 only, no UTF-16/32. Encode and decode with validation.
-152. Line-oriented streaming (Go bufio) — [GAP] A scanner for large files.
+152. Line-oriented streaming (Go bufio) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): lines.fg + lines_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: scanner over a string (no file streaming yet); no trailing empty line when text ends with "\n".
 153. Unified diff output (Python difflib) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): unidiff.fg + unidiff_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one hunk, no @@ header lines; line arrays only. A difflib library exists; add unified diff format.
 154. Markdown parsing to AST (all) — [PARTIAL] markdown-lite renders to text only.
 155. CSV parsing and generation (all) — [PARTIAL] Parse and load exist; add quoted fields and generation.
@@ -310,7 +310,7 @@ is not ownership-tracked (see #27).
 157. Terminal-width-aware wrapping (all) — [PARTIAL] A textwrap library exists; make it width-aware.
 158. Slugify — [HAVE] The slugify library already does this; keep it.
 159. Sentence splitting and stemming (NLTK) — [PARTIAL] An nlp-words library exists; extend it.
-160. Full pluralization rules (Rails) — [PARTIAL] i18n-lite has plural-lite only.
+160. Full pluralization rules (Rails) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): plural.fg + plural_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: irregular table (17 words), uncountables, -es / -ies / -ves rules; English only.
 
 ## 9. Numerics (161-180)
 161. Complex numbers as a numeric type (Python) — [HAVE] A complex library exists; promote it toward builtin status.
@@ -340,21 +340,21 @@ is not ownership-tracked (see #27).
 183. File watching (inotify) — [GAP] React to file changes.
 184. Temporary files and directories (all) — [GAP] Safe temp creation.
 185. File locking (POSIX) — [GAP] flock-style locks.
-186. Buffered readers and writers (Go/Java) — [GAP] Buffered I/O for speed.
+186. Buffered readers and writers (Go/Java) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): bufio.fg + bufio_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: chunked reads over a fixed string + accumulating writer flushed once; no file-backed buffering yet.
 187. Atomic file replace (all) — [GAP] Write-temp-then-rename.
 188. Symlink handling (POSIX) — [GAP] Read and create symlinks.
 189. Permissions API (POSIX) — [GAP] chmod, chown and stat modes.
 190. Recursive directory walking (Python os.walk) — [GAP] Walk a tree.
-191. Glob patterns (all) — [GAP] *.fg matching.
+191. Glob patterns (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): glob.fg + glob_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: `*`, `?`, `[...]` classes (ranges, negation) over strings; matching only, no filesystem listing.
 192. Standard streams stdin/stderr (all) — [PARTIAL] print exists; add stdin reading and stderr writes.
 193. Binary I/O with endianness (all) — [HAVE] Read and write little- and big-endian ints. Landed 21 Nov 2026 (sprint day 1): binio.fg + binio_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: file-based via read_bytes/write_bytes; 16/32-bit ints only.
 194. Compact binary serialization (Rust) — [HAVE] A bincode-style format. Landed 21 Nov 2026 (sprint day 1): bincode.fg + bincode_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: floats stored scaled by 1000 (3 decimals); printable-ASCII strings only.
-195. Layered configuration loading (all) — [PARTIAL] Config, toml, ini and dotenv libraries exist; layer them.
-196. Log rotation (all) — [GAP] Size- and time-based rotation.
+195. Layered configuration loading (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): config2.fg + config2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: cfg2_merge over config.fg Configs (later layer wins, first-seen key order); chaining merges gives defaults < file < overrides.
+196. Log rotation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): logrot.fg + logrot_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: size-based rotation over a line buffer (full buffer rotates out whole); no filesystem or time-based rotation yet.
 197. Tar and zip archives (all) — [GAP] Read and write archives.
-198. Checksum-verified reads (all) — [PARTIAL] A checksum library exists; verify on load.
+198. Checksum-verified reads (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): checkread.fg + checkread_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: "<crc32 decimal>\n<text>" files via write_bytes/read_bytes, CRC32 recomputed on load (matches Python zlib.crc32); ASCII text only.
 199. Non-blocking file I/O (Node) — [GAP] Async reads.
-200. Append-only journals (etcd) — [GAP] Change logs for files.
+200. Append-only journals (etcd) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): journal.fg + journal_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: truncate-on-open, one record per line via fs_append, replay by reading back; records are single-line ASCII strings.
 
 ## 11. Networking (201-220)
 201. TCP and UDP sockets (all) — [GAP] Raw sockets are the known missing piece.
@@ -384,15 +384,15 @@ is not ownership-tracked (see #27).
 223. TOML — [HAVE] A toml subset library already exists.
 224. INI — [HAVE] An ini library already exists.
 225. XML — [PARTIAL] An xml-lite library exists.
-226. Protocol Buffers (Google) — [GAP] Schema-driven binary encoding.
+226. Protocol Buffers (Google) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): protobuf.fg + protobuf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: LEB128 varints, field tags, wire types 0 (varint) and 2 (length-delimited); no .proto schema compiler.
 227. MessagePack and CBOR (all) — [HAVE] Compact binary JSON-like formats. Landed 21 Nov 2026 (sprint day 1): msgpack.fg + msgpack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: MessagePack slice only — CBOR not covered; ints -128..65535; printable-ASCII strings; arrays of ints only; maps str to int/bool; no floats, nil, binary or ext.
 228. Base64 — [HAVE] The base64 library already exists.
 229. Hex encode and decode — [HAVE] Hex support already exists beside base64.
 230. URL encoding — [HAVE] The url library already covers it.
 231. HTML parsing (all) — [HAVE] DOM-style parsing. Landed 21 Nov 2026 (sprint day 1): htmlparse.fg + htmlparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: no entities or namespaces; comments/doctype skipped; malformed input parsed best-effort.
-232. SQL query building (all) — [PARTIAL] A mini SQL query library exists; add safe query construction.
-233. Data validation schemas (JSON Schema) — [GAP] Validate shapes of data.
-234. Versioned data migrations (Rails) — [GAP] Schema migration steps.
+232. SQL query building (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): sqlbuild.fg + sqlbuild_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: SELECT/WHERE/INSERT/DELETE construction with values always quoted and single quotes doubled; every value quoted as a string literal.
+233. Data validation schemas (JSON Schema) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): valid.fg + valid_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int_range / str_len / str_nonempty rules over parallel key/value string arrays; missing required field is an error. Distinct from schema.fg (DataFrame columns).
+234. Versioned data migrations (Rails) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): migrate.fg + migrate_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: plan/apply bookkeeping over a migration list (version, name, SQL text); the SQL is carried, not executed (no SQL engine yet).
 235. Binary struct packing (Python struct) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): structpack.fg + structpack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: u8/u16le/u32le/i32le only, LE only; no floats, no alignment padding. Pack and unpack C structs; ties to FFI layout.
 236. Real compression codecs (all) — [HAVE] The compress library is RLE only; add gzip and deflate. Landed 21 Nov 2026 (sprint day 1): gzip2.fg + gzip2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single member only; dynamic-Huffman branch not exercised by the demo (stored + fixed-Huffman verified).
 237. Checksums inside file formats (all) — [PARTIAL] A checksum library exists; use it in formats.
@@ -409,7 +409,7 @@ is not ownership-tracked (see #27).
 246. Futures and promises (JS/Rust) — [GAP] Values that resolve later.
 247. Structured scopes with cancellation — [HAVE] scope exists; add cancellation to it.
 248. Cancellation tokens (C#/Go context) — [GAP] Cooperative cancellation.
-249. Operation timeouts (Go) — [GAP] Deadline propagation.
+249. Operation timeouts (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): timeout.fg + timeout_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: deadline arithmetic over explicit microsecond stamps (remaining clamps at 0); one clock-reading helper (to_new_deadline).
 250. Parallel iterators (Rayon) — [GAP] par_map over collections.
 251. Work-stealing schedulers (Go/Ray) — [GAP] Balanced parallelism.
 252. Actor model (Erlang/Akka) — [GAP] Isolated actors with mailboxes.
@@ -434,7 +434,7 @@ is not ownership-tracked (see #27).
 269. Non-blocking file and network APIs (Node) — [GAP] Async variants of I/O.
 270. Coroutine cancellation (Kotlin) — [GAP] Structured cancel for async work.
 271. Task groups (Swift) — [GAP] Collections of spawned tasks.
-272. Debounce and throttle (JS) — [GAP] Rate-shaped handlers.
+272. Debounce and throttle (JS) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): throttle.fg + throttle_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: throttle (one event per window) and debounce (fire after a quiet period) over explicit microsecond stamps; caller supplies now.
 273. Event emitters (Node) — [GAP] on/emit publish-subscribe.
 274. Signal handling in async runtimes (Tokio) — [GAP] Graceful shutdown.
 275. Backpressure strategies (Akka) — [GAP] Drop, buffer or keep-latest.
@@ -473,11 +473,11 @@ is not ownership-tracked (see #27).
 304. Benchmark harness (Go/Rust) — [GAP] Timing with statistics; the bench item already queued.
 305. Test coverage (all) — [GAP] Line and branch coverage.
 306. Mocking (all) — [GAP] Fake dependencies.
-307. Snapshot testing (Jest) — [GAP] Golden outputs.
+307. Snapshot testing (Jest) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): snap.fg + snap_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: line-by-line comparison reporting the first differing line (0-based) with both sides; golden-file I/O is the caller's job (read_bytes/write_bytes).
 308. Parameterized tests (pytest) — [GAP] One test, many inputs.
 309. Test doubles: stubs and spies (Mockito) — [GAP] Stand-ins with recorded calls.
 310. Integration test harness (all) — [GAP] Multi-process tests.
-311. Deterministic test time (Go) — [GAP] Fake clocks for time tests.
+311. Deterministic test time (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): faketime.fg + faketime_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: FakeClock with explicit microsecond stamp (new/now/advance/set/elapsed); production code takes the stamp as a parameter.
 312. Test parallelization (Go) — [GAP] Run tests concurrently.
 313. Flaky test detection (all) — [GAP] Rerun and quarantine unstable tests.
 314. Mutation testing (Stryker) — [GAP] Prove tests by killing mutants.
@@ -491,7 +491,7 @@ is not ownership-tracked (see #27).
 ## 17. Build and packages (321-340)
 321. Package manager with a public host (Cargo/npm) — [PARTIAL] A 30-package registry exists with no host; add hosting plus version resolution.
 322. Semantic versioning enforcement (Cargo) — [PARTIAL] A semver library exists; enforce resolver rules.
-323. Lockfiles (Cargo/npm) — [GAP] Reproducible builds.
+323. Lockfiles (Cargo/npm) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): lockfile.fg + lockfile_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: "name==version #checksum" lines, parse/get/has/add/render; no hash verification of the checksums themselves.
 324. Workspaces / monorepos (Cargo) — [GAP] Multi-package repositories.
 325. Build profiles: dev and release (Cargo) — [GAP] Debug vs optimized builds.
 326. Cross-compilation triples (Rust/Go) — [PARTIAL] Native, WASM, big32 and CUDA targets exist; add triples and sysroots.
@@ -558,7 +558,7 @@ is not ownership-tracked (see #27).
 381. Debugger: breakpoints and stepping (all) — [GAP] The known missing tool.
 382. dbg! print debugging (Rust) — [GAP] Value-printing helpers.
 383. Logging framework (all) — [PARTIAL] A log library exists; add levels and structured logs.
-384. Tracing and spans (OpenTelemetry) — [GAP] Distributed traces.
+384. Tracing and spans (OpenTelemetry) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): trace.fg + trace_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: start/end named spans over explicit microsecond stamps, duration lookup, text report of closed spans; no trace IDs or exporters.
 385. Metrics: counters and gauges (Prometheus) — [GAP] Runtime metrics.
 386. CPU profiling (all) — [GAP] A sampling profiler; the profiler item already queued.
 387. Memory profiling (all) — [GAP] Allocation tracking beyond the alloc_count builtins.
@@ -570,7 +570,7 @@ is not ownership-tracked (see #27).
 393. Live reload (all) — [GAP] Hot code swap for servers.
 394. Health endpoints (all) — [GAP] /health for services.
 395. Structured crash reports (Sentry) — [GAP] Symbolicated reports.
-396. Audit logs (all) — [GAP] Security event trails.
+396. Audit logs (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): audit.fg + audit_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: append-only "ts|actor|action|target" entries over explicit microsecond stamps, actor filter + count; no redaction or signing.
 397. Hardware performance counters (Linux perf) — [GAP] CPU counter access.
 398. Dynamic tracing probes (Linux eBPF) — [GAP] Attach probes without rebuilding.
 399. REPL-driven debugging (all) — [GAP] Inspect live program state.

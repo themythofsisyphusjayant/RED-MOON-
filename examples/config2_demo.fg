@@ -1,0 +1,18 @@
+// Layered-config demo — Top-500 #195.
+// defaults < file < overrides; the override wins on port,
+// the file wins on debug, defaults keep host.
+import "config.fg";
+import "config2.fg";
+
+fn main() -> int {
+    let defaults: Config = config_parse("host=localhost\nport=80\ndebug=false\n");
+    let file: Config = config_parse("port=8080\ndebug=true\n");
+    let over: Config = config_parse("port=9090\n");
+    let merged: Config = cfg2_merge(cfg2_merge(defaults, file), over);
+    println(config_get(merged, "host", "?"));
+    println(config_get(merged, "port", "?"));
+    println(config_get(merged, "debug", "?"));
+    println(cfg2_len(merged));
+    println(config_get(merged, "missing", "none"));
+    return 0;
+}

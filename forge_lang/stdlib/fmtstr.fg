@@ -1,0 +1,92 @@
+// Qasida — format specifiers (Top-500 #147).
+// Import with: import "fmtstr.fg";
+// {x:.2f}-style formatting in pure Qasida: fixed-decimal float
+// rendering (round-half-up via scaled ints), int rendering, and
+// left/right padding. No printf parser in v1 — callers pass the
+// value and the width/precision directly.
+
+fn fs_digit(d: int) -> str {
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    return "9";
+}
+
+fn fs_int_str(n: int) -> str {
+    if n == 0 { return "0"; }
+    let mut v: int = n;
+    let mut neg: bool = false;
+    if n < 0 { neg = true; v = 0 - n; }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + fs_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + substr(rev, i, 1);
+        i = i - 1;
+    }
+    if neg { out = "-" + out; }
+    return out;
+}
+
+fn fs_pow10(d: int) -> int {
+    let mut p: int = 1;
+    let mut i: int = 0;
+    while i < d {
+        p = p * 10;
+        i = i + 1;
+    }
+    return p;
+}
+
+fn fs_float(x: float, digits: int) -> str {
+    if digits == 0 {
+        let mut v0: float = x;
+        if x < 0.0 { v0 = 0.0 - x; }
+        let r0: int = (v0 + 0.5) as int;
+        if x < 0.0 { return "-" + fs_int_str(r0); }
+        return fs_int_str(r0);
+    }
+    let scale: int = fs_pow10(digits);
+    let mut neg: bool = false;
+    let mut v: float = x;
+    if x < 0.0 { neg = true; v = 0.0 - x; }
+    let scaled: int = (v * (scale as float) + 0.5) as int;
+    let whole: int = scaled / scale;
+    let frac: int = scaled % scale;
+    let fs: str = fs_int_str(frac);
+    let mut pad: str = "";
+    let mut i: int = len(fs);
+    while i < digits {
+        pad = pad + "0";
+        i = i + 1;
+    }
+    let mut out: str = fs_int_str(whole) + "." + pad + fs;
+    if neg { out = "-" + out; }
+    return out;
+}
+
+fn fs_pad_left(s: str, w: int, ch: str) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = ch + out;
+    }
+    return out;
+}
+
+fn fs_pad_right(s: str, w: int, ch: str) -> str {
+    let mut out: str = s;
+    while len(out) < w {
+        out = out + ch;
+    }
+    return out;
+}

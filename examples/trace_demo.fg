@@ -1,0 +1,20 @@
+// Tracing demo — Top-500 #384.
+// Spans "parse" 1000->1500 and "render" 2000->2600;
+// durations and a text report; unknown span is -1.
+import "trace.fg";
+
+fn main() -> int {
+    let mut t: Trace = tr_new();
+    t = tr_start(t, "parse", 1000);
+    t = tr_start(t, "render", 2000);
+    t = tr_end(t, "parse", 1500);
+    t = tr_end(t, "render", 2600);
+    println(tr_duration(t, "parse"));
+    println(tr_duration(t, "render"));
+    println(tr_duration(t, "missing"));
+    let rep: [str] = tr_report(t);
+    println(len(rep));
+    println(rep[0]);
+    println(rep[1]);
+    return 0;
+}

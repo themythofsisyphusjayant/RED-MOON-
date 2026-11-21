@@ -1,0 +1,32 @@
+// Qasida — operation timeouts (Top-500 #249).
+// Import with: import "timeout.fg";
+// Deadline arithmetic in pure Qasida: deadlines are
+// microsecond stamps over clock_micros. to_deadline /
+// to_remaining / to_expired / to_elapsed are pure functions
+// over explicit timestamps (deterministic, testable); the
+// one clock-reading helper is to_new_deadline. Remaining
+// time clamps at 0 instead of going negative.
+
+fn to_deadline(now_us: int, ms: int) -> int {
+    return now_us + ms * 1000;
+}
+
+fn to_remaining(deadline_us: int, now_us: int) -> int {
+    let r: int = deadline_us - now_us;
+    if r < 0 {
+        return 0;
+    }
+    return r;
+}
+
+fn to_expired(deadline_us: int, now_us: int) -> bool {
+    return now_us >= deadline_us;
+}
+
+fn to_elapsed(start_us: int, now_us: int) -> int {
+    return now_us - start_us;
+}
+
+fn to_new_deadline(ms: int) -> int {
+    return clock_micros() + ms * 1000;
+}
