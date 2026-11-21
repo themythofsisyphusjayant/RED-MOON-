@@ -1,4 +1,5 @@
 import "http_client.fg";
+import "json2.fg";
 
 fn rest_url(base: str, path: str, query: str) -> str {
     return http_url(base, path, query);
@@ -56,4 +57,82 @@ fn rest_error_text(code: int) -> str {
         return "Internal Server Error";
     }
     return "Unknown";
+}
+
+// --- Batch 4 extension (sprint batch 4, 21 Nov 2026): real REST
+// helpers on top of http_client.fg + json2.fg. Request
+// construction (GET with query, POST with a JSON body and a
+// correct Content-Length), response status/body extraction,
+// and typed one-field JSON lookup from a response body.
+// v1 limits: no live socket calls in this module (transport is
+// the caller's job — the demo verifies against canned
+// responses), no chunked encoding, no query escaping.
+
+fn rest_get(host: str, path: str, query: str) -> str {
+    let url: str = http_url("", path, query);
+    return http_build_get(host, url);
+}
+
+fn rest_post_json(host: str, path: str, body: str) -> str {
+    return "POST " + path + " HTTP/1.1\nHost: " + host + "\nContent-Type: application/json\nContent-Length: " + j2_int_str(len(body)) + "\n\n" + body;
+}
+
+fn rest_status_line(resp: str) -> str {
+    let lines: [str] = split(resp, "\n");
+    if len(lines) == 0 {
+        return "";
+    }
+    return lines[0];
+}
+
+fn rest_status(resp: str) -> int {
+    return http_status_code(rest_status_line(resp));
+}
+
+fn rest_is_ok(resp: str) -> bool {
+    return http_status_ok(rest_status(resp));
+}
+
+fn rest_body(resp: str) -> str {
+    let parts: [str] = split(resp, "\n\n");
+    if len(parts) < 2 {
+        return "";
+    }
+    let mut out: str = parts[1];
+    let mut i: int = 2;
+    while i < len(parts) {
+        out = out + "\n\n" + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn rest_json_field(resp: str, key: str) -> str {
+    let body: str = rest_body(resp);
+    if body == "" {
+        return "";
+    }
+    let parsed: JParse = j2_parse(body);
+    let d: JDoc = parsed.doc;
+    let id: int = j2_get(d, parsed.root, key);
+    if id < 0 {
+        return "";
+    }
+    let k: int = j2_kind(d, id);
+    if k == 3 {
+        return j2_str(d, id);
+    }
+    if k == 2 {
+        return j2_num_str(j2_num(d, id));
+    }
+    if k == 1 {
+        if j2_bool(d, id) {
+            return "true";
+        }
+        return "false";
+    }
+    if k == 0 {
+        return "null";
+    }
+    return j2_generate(d, id);
 }

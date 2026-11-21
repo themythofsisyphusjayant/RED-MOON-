@@ -1,0 +1,70 @@
+// Qasida — nested XML paths (Top-500 #225).
+// Import with: import "xmlpath.fg";
+// Grows xml.fg (first-element tag/attr/child-text) with nested
+// path lookup ("rss/channel/title"), all-children extraction
+// and element counting. v1 limits: exact "<tag>" matches only
+// (no attributes on matched tags, no namespaces, no entities),
+// first match wins for xp_path.
+
+import "xml.fg";
+
+fn xp_find(s: str, pat: str, from: int) -> int {
+    let mut i: int = from;
+    while i + len(pat) <= len(s) {
+        if substr(s, i, len(pat)) == pat {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn xp_path(doc: str, path: str) -> str {
+    let segs: [str] = split(path, "/");
+    let mut cur: str = doc;
+    let mut i: int = 0;
+    while i < len(segs) {
+        cur = xml_child_text(cur, segs[i]);
+        if cur == "" {
+            return "";
+        }
+        i = i + 1;
+    }
+    return cur;
+}
+
+fn xp_children(doc: str, tag: str) -> [str] {
+    let open: str = "<" + tag + ">";
+    let close: str = "</" + tag + ">";
+    let mut out: [str] = [];
+    let mut from: int = 0;
+    while 1 == 1 {
+        let p: int = xp_find(doc, open, from);
+        if p < 0 {
+            break;
+        }
+        let cs: int = p + len(open);
+        let q: int = xp_find(doc, close, cs);
+        if q < 0 {
+            break;
+        }
+        push(out, substr(doc, cs, q - cs));
+        from = q + len(close);
+    }
+    return out;
+}
+
+fn xp_count(doc: str, tag: str) -> int {
+    let open: str = "<" + tag + ">";
+    let mut n: int = 0;
+    let mut from: int = 0;
+    while 1 == 1 {
+        let p: int = xp_find(doc, open, from);
+        if p < 0 {
+            break;
+        }
+        n = n + 1;
+        from = p + len(open);
+    }
+    return n;
+}

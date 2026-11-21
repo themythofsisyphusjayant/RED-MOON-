@@ -1,0 +1,11 @@
+import "template2.fg";
+
+fn main() {
+    println(t2_render("Hello {{name}}!", ["name"], ["Ada"], []));
+    println(t2_render("{{#if show}}Visible{{/if}}", ["show"], ["true"], []));
+    println(t2_render("{{#if show}}Visible{{/if}}", ["show"], ["false"], []));
+    println(t2_render("{{#each}}<li>{{.}}</li>{{/each}}", [], [], ["a", "b"]));
+    println(t2_escape("<a & \"b\">"));
+    println(t2_render("{{#if admin}}Hi {{name}}{{/if}}", ["admin", "name"], ["true", "Bo"], []));
+    println(t2_render("{{#each}}[{{.}}]{{/each}}", [], [], []));
+}

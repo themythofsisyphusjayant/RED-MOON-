@@ -1,0 +1,20 @@
+import "testkit.fg";
+
+fn main() {
+    let mut t = tk_new();
+    t = tk_case(t, "one", true);
+    t = tk_eq_int(t, "sum", 2 + 2, 4);
+    t = tk_eq_str(t, "greet", "hi", "hi");
+    t = tk_eq_float(t, "pi", 3.14, 3.14, 0.001);
+    t = tk_ne_int(t, "diff", 3, 4);
+    t = tk_contains(t, "has", "hello world", "world");
+    t = tk_case(t, "bad", false);
+    println(tk_passed(t));
+    println(tk_failed(t));
+    println(tk_total(t));
+    println(tk_summary(t));
+    let f = fx_new("scores", [10, 20, 30]);
+    println(fx_sum(f));
+    let g = fx_reset(f);
+    println(len(fx_vals(g)));
+}

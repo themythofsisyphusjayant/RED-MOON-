@@ -1,0 +1,12 @@
+import "sentenc.fg";
+
+fn main() {
+    let text: str = "Dr. Smith went to Washington. He met Mr. Jones there! Did they talk? Yes, they did.";
+    println(stc_count(text));
+    println(stc_first(text));
+    let ss: [str] = stc_split(text);
+    println(ss[1]);
+    println(stc_longest(text));
+    println(stc_count("Hello world"));
+    println(stc_count(""));
+}

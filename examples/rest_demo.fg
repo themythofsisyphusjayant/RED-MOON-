@@ -10,4 +10,17 @@ fn main() {
     println(rest_field(body, "missing"));
     println(rest_error_text(404));
     println(rest_error_text(200));
+    // --- Batch 4 extension: request construction + response parsing.
+    let req: str = rest_post_json("api.example", "/users", "{\"name\":\"Ada\"}");
+    println(req);
+    let resp1: str = "HTTP/1.1 201 Created\nContent-Type: application/json\n\n{\"id\": 7, \"name\": \"Ada\"}";
+    println(rest_status(resp1));
+    println(rest_is_ok(resp1));
+    println(rest_json_field(resp1, "name"));
+    println(rest_json_field(resp1, "id"));
+    println(rest_body(resp1));
+    println(rest_get("api.example", "/users", "page=2"));
+    let resp2: str = "HTTP/1.1 404 Not Found\n\n{\"error\": \"nope\"}";
+    println(rest_status(resp2));
+    println(rest_is_ok(resp2));
 }

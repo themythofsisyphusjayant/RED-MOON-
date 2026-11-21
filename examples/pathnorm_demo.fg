@@ -1,0 +1,12 @@
+import "pathnorm.fg";
+
+fn main() {
+    println(pn_normalize("/a/b/../c"));
+    println(pn_normalize("a/./b"));
+    println(pn_normalize("a/../../b"));
+    println(pn_normalize("/a//b/"));
+    println(pn_normalize("."));
+    println(pn_join_clean("a/b", "../c"));
+    println(pn_is_clean("/a/c"));
+    println(pn_is_clean("/a/b/../c"));
+}

@@ -1,0 +1,54 @@
+// Qasida — iCalendar parsing (Top-500 #239).
+// Import with: import "icalparse.fg";
+// The remainder of #239: ical-lite.fg BUILDS one VEVENT block
+// as text — this module PARSES one back out (UID, SUMMARY,
+// DTSTART, DTEND, and whether a VEVENT block was found at
+// all). No recurrence rules, no timezone handling in v1;
+// times stay the UTC stamps ical-lite writes.
+
+struct ICal {
+    uid: str;
+    summary: str;
+    dtstart: str;
+    dtend: str;
+    found: bool;
+}
+
+fn ip_field(text: str, key: str) -> str {
+    let lines: [str] = split(text, "\n");
+    let want: str = key + ":";
+    let mut i: int = 0;
+    while i < len(lines) {
+        if starts_with(lines[i], want) {
+            return substr(lines[i], len(want), len(lines[i]) - len(want));
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn ip_has_line(text: str, line: str) -> bool {
+    let lines: [str] = split(text, "\n");
+    let mut i: int = 0;
+    while i < len(lines) {
+        if lines[i] == line {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ip_parse(text: str) -> ICal {
+    let found: bool = ip_has_line(text, "BEGIN:VEVENT");
+    if found == false {
+        return ICal { uid: "", summary: "", dtstart: "", dtend: "", found: false };
+    }
+    return ICal {
+        uid: ip_field(text, "UID"),
+        summary: ip_field(text, "SUMMARY"),
+        dtstart: ip_field(text, "DTSTART"),
+        dtend: ip_field(text, "DTEND"),
+        found: true
+    };
+}

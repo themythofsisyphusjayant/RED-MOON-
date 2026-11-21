@@ -781,3 +781,36 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   extension of a HAVE item, not a flip; it stays local for a later
   batch. Next: sprint batch 4, same libs-only rule, target 20/day
   toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 4 (21 Nov 2026, LIBS ONLY — OS track paused, back-to-back
+  after batch 3, same day): 20 library items landed, all verified: 12
+  verification flips (#134 bitset, #135 bloom, #136 lru, #123 deques,
+  #124 heaps, #240 RSS, #145 regexfull, #155 csv2, #156 json escaping,
+  #157 textwrap width, #184 tempfile, #214 ratelimit — the modules
+  already existed in the tree while the catalog wrongly said GAP/PARTIAL;
+  each was run under BOTH compilers and confirmed genuinely working
+  before flipping), the held icalparse slice (#239, parses a VEVENT
+  block back out — an extension of an already-HAVE item, no count
+  change), and 7 new libraries (#150 template2, #154 mdast, #159
+  sentenc, #182 pathnorm, #209 rest extension, #225 xmlpath, #301
+  testkit). Daily test: tests/test_daily_20261121d.py — 80/80 checks
+  PASS (20 items x 2 compilers x rc=0 + exact stdout); expected values
+  from an independent Python replica
+  (~/workspace/blackmoon-iso/daily-20261121-batch4/replica_20261121d.py,
+  20/20 match — replica re-derived the bloom double hash, FIFO LRU
+  eviction, heapq, the regexfull alternation/group matcher, the csv
+  module, json.loads plus the j2_num_str truncation rule, greedy word
+  wrap, the token-bucket simulation, iCalendar line parsing, the
+  template if/each/escape rules, the Markdown AST + HTML render,
+  sentence splitting with abbreviations, posixpath normalization,
+  XML path search, test-kit counting, and REST request/response
+  construction from first principles; no discrepancies found).
+  Counts after sprint batch 4: HAVE 150, PARTIAL 38, GAP 312, to build
+  350. Arithmetic from sprint batch 3 (HAVE 131, PARTIAL 47, GAP 322,
+  to build 369): 10 GAP-to-HAVE + 9 PARTIAL-to-HAVE = 19 flips (the
+  20th item, icalparse, extends already-HAVE #239 and adds no flip);
+  131 + 19 = 150; 47 - 9 = 38; 322 - 10 = 312; 369 - 19 = 350
+  (150 + 38 + 312 = 500). #42 is RESOLVED: Jayant picked the
+  helper-function slice (errwrap.fg) as #42's answer (21 Nov ~11:28
+  IST); no further error-wrapping variants. Next: sprint batch 5,
+  same libs-only rule, target 20/day toward HAVE ~211 by 27 Nov.

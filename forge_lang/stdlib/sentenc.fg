@@ -1,0 +1,107 @@
+// Qasida — sentence splitting (Top-500 #159).
+// Import with: import "sentenc.fg";
+// Splits text into sentences on . ! ? followed by a space or
+// end of text. A period does not split after a known
+// abbreviation (Dr Mr Mrs Ms St vs etc e.g. i.e. U.S.) or after
+// a single initial letter. Stemming already lives in nlp.fg —
+// this module is the splitting slice only. v1 limits: ASCII
+// text, no quote-aware splitting, "..." counts as one end.
+
+fn stc_is_abbrev(w: str) -> bool {
+    if len(w) == 1 {
+        return true;
+    }
+    if w == "Dr" || w == "Mr" || w == "Mrs" || w == "Ms" {
+        return true;
+    }
+    if w == "St" || w == "vs" || w == "etc" {
+        return true;
+    }
+    if w == "e.g" || w == "i.e" || w == "U.S" {
+        return true;
+    }
+    return false;
+}
+
+fn stc_word_before(s: str, i: int) -> str {
+    let mut j: int = i - 1;
+    while j >= 0 && substr(s, j, 1) != " " {
+        j = j - 1;
+    }
+    return substr(s, j + 1, i - j - 1);
+}
+
+fn stc_trim(s: str) -> str {
+    let mut a: int = 0;
+    while a < len(s) && substr(s, a, 1) == " " {
+        a = a + 1;
+    }
+    let mut b: int = len(s);
+    while b > a && substr(s, b - 1, 1) == " " {
+        b = b - 1;
+    }
+    return substr(s, a, b - a);
+}
+
+fn stc_split(text: str) -> [str] {
+    let mut out: [str] = [];
+    let mut start: int = 0;
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c == "." || c == "!" || c == "?" {
+            let mut is_end: bool = false;
+            if i + 1 >= len(text) {
+                is_end = true;
+            } else if substr(text, i + 1, 1) == " " {
+                is_end = true;
+            }
+            if is_end && c == "." {
+                let w: str = stc_word_before(text, i);
+                if stc_is_abbrev(w) {
+                    is_end = false;
+                }
+            }
+            if is_end {
+                let sent: str = stc_trim(substr(text, start, i + 1 - start));
+                if len(sent) > 0 {
+                    push(out, sent);
+                }
+                start = i + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if start < len(text) {
+        let tail: str = stc_trim(substr(text, start, len(text) - start));
+        if len(tail) > 0 {
+            push(out, tail);
+        }
+    }
+    return out;
+}
+
+fn stc_count(text: str) -> int {
+    return len(stc_split(text));
+}
+
+fn stc_first(text: str) -> str {
+    let ss: [str] = stc_split(text);
+    if len(ss) == 0 {
+        return "";
+    }
+    return ss[0];
+}
+
+fn stc_longest(text: str) -> str {
+    let ss: [str] = stc_split(text);
+    let mut best: str = "";
+    let mut i: int = 0;
+    while i < len(ss) {
+        if len(ss[i]) > len(best) {
+            best = ss[i];
+        }
+        i = i + 1;
+    }
+    return best;
+}

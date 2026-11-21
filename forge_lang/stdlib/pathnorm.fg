@@ -1,0 +1,60 @@
+// Qasida — path normalization (Top-500 #182).
+// Import with: import "pathnorm.fg";
+// Lexical normalization over POSIX '/' paths (no filesystem
+// access): resolves "." and ".." components, collapses
+// repeated slashes, drops a trailing slash. Absolute paths
+// stay absolute (".." at the root is dropped); relative paths
+// keep leading ".." components. pathlib.fg already has join /
+// dir / base / ext / stem; this module adds normalize and a
+// normalizing join. v1 limits: no Windows drive letters, no
+// symlink resolution (lexical only).
+
+fn pn_normalize(p: str) -> str {
+    let abs: bool = starts_with(p, "/");
+    let parts: [str] = split(p, "/");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(parts) {
+        let c: str = parts[i];
+        if c == "" || c == "." {
+            // skip
+        } else if c == ".." {
+            if len(out) > 0 && out[len(out) - 1] != ".." {
+                let mut kept: [str] = [];
+                let mut j: int = 0;
+                while j < len(out) - 1 {
+                    push(kept, out[j]);
+                    j = j + 1;
+                }
+                out = kept;
+            } else if !abs {
+                push(out, "..");
+            }
+        } else {
+            push(out, c);
+        }
+        i = i + 1;
+    }
+    let body: str = join(out, "/");
+    if abs {
+        return "/" + body;
+    }
+    if len(body) == 0 {
+        return ".";
+    }
+    return body;
+}
+
+fn pn_join_clean(a: str, b: str) -> str {
+    if starts_with(b, "/") {
+        return pn_normalize(b);
+    }
+    if a == "" {
+        return pn_normalize(b);
+    }
+    return pn_normalize(a + "/" + b);
+}
+
+fn pn_is_clean(p: str) -> bool {
+    return p == pn_normalize(p);
+}

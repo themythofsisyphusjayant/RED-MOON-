@@ -271,8 +271,8 @@ is not ownership-tracked (see #27).
 ## 7. Collections (121-140)
 121. Hash maps (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): hashmap.fg + hashmap_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: str -> int only; fixed bucket count; alphabet-search char codes (no ord() builtin). Linear assoc lists exist in the map library; real hashing is missing.
 122. Sets (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): setops.fg + setops_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int + str set algebra (union/inter/diff/symdiff/subset); fully generic sets still need generic equality. Int and string sets exist; generic sets do not.
-123. Deques (Python/Rust) — [GAP] Double-ended queues.
-124. Priority queues / heaps (all) — [GAP] Ordered-by-priority removal.
+123. Deques (Python/Rust) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): deque.fg + deque_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int items only; push/pop front/back, front/back/len. Double-ended queues.
+124. Priority queues / heaps (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): heap.fg + heap_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int min-heap only; push/pop/peek/len. Ordered-by-priority removal.
 125. Insertion-ordered maps (Java/Python) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): ordmap.fg + ordmap_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: str -> int only; update never moves a key. Iteration in insertion order.
 126. Slicing syntax (Rust/Go) — [HAVE] Bounds-checked indexing exists; add a[1..3] slices.
 127. Dict literals (Python/JS) — [GAP] {"a": 1} syntax.
@@ -282,9 +282,9 @@ is not ownership-tracked (see #27).
 131. zip / enumerate adapters (Python/Rust) — [HAVE] Pair up and number iterations. Landed 21 Nov 2026 (sprint day 1): zipenum.fg + zipenum_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int pairs only; eager arrays, not lazy adapters (no closures exist).
 132. Grouping / partitioning (Kotlin/Rust itertools) — [HAVE] Split collections by a key. Landed 21 Nov 2026 (sprint day 1): groupby.fg + groupby_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int values/keys only; keys passed as data.
 133. Persistent immutable collections (Clojure) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): persist.fg + persist_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: persistence is deep-copy-on-write, not trie structural sharing; int list + str->int map only. Structural sharing for safe sharing.
-134. Bitsets (Java/Rust) — [GAP] Compact flag sets.
-135. Bloom filters (Guava) — [GAP] Probabilistic membership tests.
-136. LRU caches (all) — [GAP] Bounded caches with eviction.
+134. Bitsets (Java/Rust) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): bitset.fg + bitset_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single-int mask (set/test/clear/count). Compact flag sets.
+135. Bloom filters (Guava) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): bloom.fg + bloom_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: 16-bit fixed, two hashes (k%16, (7k+3)%16); int keys only. Probabilistic membership tests.
+136. LRU caches (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): lru.fg + lru_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int keys/values, capacity-bounded; get does not reorder (FIFO eviction on put). Bounded caches with eviction.
 137. Ring buffers (embedded) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): ringbuf.fg + ringbuf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: [int] only; fixed capacity; full push / empty pop fail as values. A ring IPC kernel exists; add a stdlib ring type.
 138. Sparse arrays (SciPy) — [HAVE] For ML data with mostly zeros. Landed 21 Nov 2026 (sprint day 1): sparse.fg + sparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: float vectors only; no sparse matrix.
 139. True multi-dimensional arrays (NumPy) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): ndarray.fg + ndarray_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: [float] only; row-major strides; set deep-copies, reshape shares data. The numpy library is flat row-major; add real ndim indexing.
@@ -295,21 +295,21 @@ is not ownership-tracked (see #27).
 142. Multiline strings (all) — [GAP] Triple-quote blocks.
 143. Raw strings (Rust/Go) — [GAP] r"..." without escape processing.
 144. Unicode-correct length and iteration (Rust/Swift) — [GAP] Grapheme clusters, not bytes.
-145. Regex groups and alternation (all) — [PARTIAL] The regex library lacks both; the known gap.
+145. Regex groups and alternation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): regexfull.fg + regexfull_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: alternation + one capture group, groups do not nest. Regex groups and alternation.
 146. String builders (Java/C#) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): strbuild.fg + strbuild_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: str/int/float parts only; floats print up to 6 decimals, trailing zeros trimmed. Efficient repeated concatenation.
 147. Format specifiers (Python/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): fmtstr.fg + fmtstr_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: fixed-decimal float rendering (round-half-up), int rendering, left/right padding; no printf parser, callers pass value + width/precision directly.
 148. Case conversion (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): caseconv.fg + caseconv_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: ASCII letters/digits/underscore/hyphen only. snake, camel and kebab conversion.
 149. Split with limits and regex split (all) — [HAVE] split/join/trim builtins exist; extend them.
-150. Full template engine (Jinja/Go) — [PARTIAL] A template library exists; grow it to a full engine.
+150. Full template engine (Jinja/Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): template2.fg + template2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: {{#if}} conditionals, {{#each}} loops over [str] with {{.}}, HTML escaping; no nesting, no {{else}}. A template library exists; grow it to a full engine.
 151. Text encodings UTF-8/16/32 (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): utf8.fg + utf8_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: codepoints travel as [int] (no ord()/chr() builtins); UTF-8 only, no UTF-16/32. Encode and decode with validation.
 152. Line-oriented streaming (Go bufio) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): lines.fg + lines_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: scanner over a string (no file streaming yet); no trailing empty line when text ends with "\n".
 153. Unified diff output (Python difflib) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): unidiff.fg + unidiff_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one hunk, no @@ header lines; line arrays only. A difflib library exists; add unified diff format.
-154. Markdown parsing to AST (all) — [PARTIAL] markdown-lite renders to text only.
-155. CSV parsing and generation (all) — [PARTIAL] Parse and load exist; add quoted fields and generation.
-156. JSON string escaping (all) — [GAP] Correct escape and unescape.
-157. Terminal-width-aware wrapping (all) — [PARTIAL] A textwrap library exists; make it width-aware.
+154. Markdown parsing to AST (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): mdast.fg + mdast_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: heading/para/list/code/quote nodes, HTML render; no inline bold parsing, no tables, no nested lists. Markdown parsing to AST.
+155. CSV parsing and generation (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): csv2.fg + csv2_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: one line in/out, quoted fields with doubled quotes, generation quotes only when needed. Parse and load exist; add quoted fields and generation.
+156. JSON string escaping (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): json2.fg + json2_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: full recursive-descent parse + compact generate with correct escaping (j2_parse_str handles \" \\ / \n \t \r); no \\u escapes. Correct escape and unescape.
+157. Terminal-width-aware wrapping (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): textwrap.fg + textwrap_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: greedy word wrap at a given width (tw_wrap/tw_fill), plus tw_indent. A textwrap library exists; make it width-aware.
 158. Slugify — [HAVE] The slugify library already does this; keep it.
-159. Sentence splitting and stemming (NLTK) — [PARTIAL] An nlp-words library exists; extend it.
+159. Sentence splitting and stemming (NLTK) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): sentenc.fg + sentenc_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: splitting slice only (stemming already in nlp.fg); abbreviation guard (Dr Mr Mrs Ms St vs etc e.g. i.e. U.S.) + single initials; ASCII only. Sentence splitting and stemming.
 160. Full pluralization rules (Rails) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): plural.fg + plural_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: irregular table (17 words), uncountables, -es / -ies / -ves rules; English only.
 
 ## 9. Numerics (161-180)
@@ -336,9 +336,9 @@ is not ownership-tracked (see #27).
 
 ## 10. Files and I/O (181-200)
 181. mkdir and readdir (POSIX) — [GAP] The known missing pair.
-182. Full path manipulation (all) — [PARTIAL] A POSIX pathlib library exists; add join, normalize and glob.
+182. Full path manipulation (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): pathnorm.fg + pathnorm_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: lexical normalize (resolve . and .., collapse slashes) + normalizing join; pathlib.fg already had join/dir/base/ext/stem, glob.fg already exists. A POSIX pathlib library exists; add join, normalize and glob.
 183. File watching (inotify) — [GAP] React to file changes.
-184. Temporary files and directories (all) — [GAP] Safe temp creation.
+184. Temporary files and directories (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): tempfile.fg + tempfile_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: name/path helpers only (no file creation, no directories). Safe temp creation.
 185. File locking (POSIX) — [GAP] flock-style locks.
 186. Buffered readers and writers (Go/Java) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): bufio.fg + bufio_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: chunked reads over a fixed string + accumulating writer flushed once; no file-backed buffering yet.
 187. Atomic file replace (all) — [GAP] Write-temp-then-rename.
@@ -365,12 +365,12 @@ is not ownership-tracked (see #27).
 206. URL parsing and building — [HAVE] The url library already does this.
 207. HTTP client methods and cookies (all) — [HAVE] http_get exists; add methods, headers, redirects and cookies.
 208. HTTP server routing and middleware (all) — [HAVE] http_listen and friends exist; add routing and middleware.
-209. REST client helpers (all) — [GAP] JSON-in, JSON-out calls.
+209. REST client helpers (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): rest.fg extended + rest_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: GET/POST request construction with JSON bodies, response status/body extraction, typed one-field JSON lookup (rest.fg's thin slice already had URL building + string-field lookup); no live socket calls in the module, no chunked encoding. JSON-in, JSON-out calls.
 210. gRPC and protobuf RPC (Go) — [GAP] Typed remote calls.
 211. MQTT and AMQP messaging (all) — [GAP] Publish and subscribe protocols.
 212. Connection pooling (all) — [GAP] Reuse sockets.
 213. Retries with backoff in the client — [HAVE] A retry-backoff library exists; wire it into the HTTP client.
-214. Rate limiting (all) — [GAP] Token buckets.
+214. Rate limiting (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): ratelimit.fg + ratelimit_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: token bucket (cap, try, refill, capped at cap); int tokens only. Token buckets.
 215. Proxy support on servers (all) — [HAVE] CONNECT proxy exists in http_get; extend it to servers.
 216. IPv6 (all) — [GAP] Version 6 addresses and dual-stack.
 217. Network interface listing (all) — [GAP] Enumerate network cards.
@@ -383,7 +383,7 @@ is not ownership-tracked (see #27).
 222. YAML (all) — [HAVE] A YAML reader and writer. Landed 21 Nov 2026 (sprint day 1): yaml.fg + yaml_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: documented subset only — no anchors/aliases, flow style, multi-line scalars, or maps inside lists.
 223. TOML — [HAVE] A toml subset library already exists.
 224. INI — [HAVE] An ini library already exists.
-225. XML — [PARTIAL] An xml-lite library exists.
+225. XML — [HAVE] Landed 21 Nov 2026 (sprint batch 4): xmlpath.fg + xmlpath_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: nested path lookup, all-children extraction, element counting; exact "<tag>" matches only, no attributes/namespaces/entities. An xml-lite library exists.
 226. Protocol Buffers (Google) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): protobuf.fg + protobuf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: LEB128 varints, field tags, wire types 0 (varint) and 2 (length-delimited); no .proto schema compiler.
 227. MessagePack and CBOR (all) — [HAVE] Compact binary JSON-like formats. Landed 21 Nov 2026 (sprint day 1): msgpack.fg + msgpack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: MessagePack slice only — CBOR not covered; ints -128..65535; printable-ASCII strings; arrays of ints only; maps str to int/bool; no floats, nil, binary or ext.
 228. Base64 — [HAVE] The base64 library already exists.
@@ -397,8 +397,8 @@ is not ownership-tracked (see #27).
 236. Real compression codecs (all) — [HAVE] The compress library is RLE only; add gzip and deflate. Landed 21 Nov 2026 (sprint day 1): gzip2.fg + gzip2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single member only; dynamic-Huffman branch not exercised by the demo (stored + fixed-Huffman verified).
 237. Checksums inside file formats (all) — [PARTIAL] A checksum library exists; use it in formats.
 238. dotenv files — [HAVE] A dotenv library already exists.
-239. iCalendar — [HAVE] An ical-lite library already exists.
-240. RSS and Atom feeds (all) — [GAP] Feed parsing.
+239. iCalendar — [HAVE] An ical-lite library already exists. Parse slice landed 21 Nov 2026 (sprint batch 4): icalparse.fg + icalparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: parses one VEVENT block back out (UID/SUMMARY/DTSTART/DTEND); no recurrence, no timezones.
+240. RSS and Atom feeds (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): rss.fg + rss_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: RSS titles/links only (split on <item>); no Atom, no namespaces. Feed parsing.
 
 ## 13. Concurrency (241-260)
 241. M:N lightweight tasks (Go) — [PARTIAL] spawn exists; add a real scheduler over it.
@@ -467,7 +467,7 @@ is not ownership-tracked (see #27).
 300. Cross-language hover (all) — [GAP] Editor support across FFI boundaries.
 
 ## 16. Testing (301-320)
-301. Rich unit-test framework (all) — [PARTIAL] qasida test plus a test library exist; add fixtures and richer asserts.
+301. Rich unit-test framework (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 4): testkit.fg + testkit_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: named cases, string/float-epsilon/not-equal/substring asserts, one-line summary naming failures, data-level fixtures (no function values exist yet, so fixtures are data tables, not setup callbacks). qasida test plus a test library exist; add fixtures and richer asserts.
 302. Property-based testing (Hypothesis/QuickCheck) — [GAP] Generated cases with shrinking.
 303. Coverage-guided fuzzing (Rust cargo-fuzz) — [GAP] Fuzz inputs by coverage.
 304. Benchmark harness (Go/Rust) — [GAP] Timing with statistics; the bench item already queued.

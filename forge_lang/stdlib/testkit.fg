@@ -1,0 +1,140 @@
+// Qasida — rich test kit (Top-500 #301).
+// Import with: import "testkit.fg";
+// Grows unittest.fg (bare counts) with named cases, richer
+// asserts (string, float-with-epsilon, not-equal, substring),
+// a one-line summary naming the failures, and data-level
+// fixtures (named value tables with a fresh-state constructor).
+// No function values exist in the language yet, so fixtures
+// are data, not setup callbacks — that is the honest v1 limit.
+
+struct Tk {
+    passed: int;
+    failed: int;
+    names: [str];
+    ok: [bool];
+}
+
+struct Fx {
+    name: str;
+    vals: [int];
+}
+
+fn tk_new() -> Tk {
+    return Tk { passed: 0, failed: 0, names: [], ok: [] };
+}
+
+fn tk_record(t: Tk, name: str, cond: bool) -> Tk {
+    let mut names: [str] = t.names;
+    let mut ok: [bool] = t.ok;
+    push(names, name);
+    push(ok, cond);
+    if cond {
+        return Tk { passed: t.passed + 1, failed: t.failed, names: names, ok: ok };
+    }
+    return Tk { passed: t.passed, failed: t.failed + 1, names: names, ok: ok };
+}
+
+fn tk_case(t: Tk, name: str, cond: bool) -> Tk {
+    return tk_record(t, name, cond);
+}
+
+fn tk_eq_int(t: Tk, name: str, a: int, b: int) -> Tk {
+    return tk_record(t, name, a == b);
+}
+
+fn tk_eq_str(t: Tk, name: str, a: str, b: str) -> Tk {
+    return tk_record(t, name, a == b);
+}
+
+fn tk_eq_float(t: Tk, name: str, a: float, b: float, eps: float) -> Tk {
+    let d1: float = a - b;
+    let d2: float = b - a;
+    return tk_record(t, name, d1 < eps && d2 < eps);
+}
+
+fn tk_ne_int(t: Tk, name: str, a: int, b: int) -> Tk {
+    return tk_record(t, name, a != b);
+}
+
+fn tk_contains(t: Tk, name: str, hay: str, needle: str) -> Tk {
+    let parts: [str] = split(hay, needle);
+    return tk_record(t, name, len(parts) > 1);
+}
+
+fn tk_passed(t: Tk) -> int {
+    return t.passed;
+}
+
+fn tk_failed(t: Tk) -> int {
+    return t.failed;
+}
+
+fn tk_total(t: Tk) -> int {
+    return t.passed + t.failed;
+}
+
+fn tk_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = 0 - x;
+    }
+    let digits: str = "0123456789";
+    let mut rev: str = "";
+    while x > 0 {
+        rev = rev + substr(digits, x % 10, 1);
+        x = x / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + substr(rev, i, 1);
+        i = i - 1;
+    }
+    if neg {
+        out = "-" + out;
+    }
+    return out;
+}
+
+fn tk_summary(t: Tk) -> str {
+    let mut out: str = tk_int_str(t.passed) + " passed, " + tk_int_str(t.failed) + " failed";
+    if t.failed > 0 {
+        let mut bad: [str] = [];
+        let mut i: int = 0;
+        while i < len(t.names) {
+            if t.ok[i] == false {
+                push(bad, t.names[i]);
+            }
+            i = i + 1;
+        }
+        out = out + "\nfailed: " + join(bad, ", ");
+    }
+    return out;
+}
+
+fn fx_new(name: str, vals: [int]) -> Fx {
+    return Fx { name: name, vals: vals };
+}
+
+fn fx_vals(f: Fx) -> [int] {
+    return f.vals;
+}
+
+fn fx_sum(f: Fx) -> int {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(f.vals) {
+        s = s + f.vals[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn fx_reset(f: Fx) -> Fx {
+    return Fx { name: f.name, vals: f.vals };
+}

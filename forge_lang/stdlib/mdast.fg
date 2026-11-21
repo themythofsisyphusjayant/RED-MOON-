@@ -1,0 +1,133 @@
+// Qasida — Markdown AST (Top-500 #154).
+// Import with: import "mdast.fg";
+// Parses Markdown into a flat node list (kind + level + text):
+// 1 heading (#..######), 2 paragraph, 3 list item (- or *),
+// 4 fenced-code line, 5 blockquote (> ). md_html renders the
+// nodes to HTML lines. markdown.fg (md_to_text) only renders
+// to plain text — this module is the AST slice. v1 limits: no
+// inline **bold** parsing in the AST (text kept raw), no
+// tables, no nested lists, list items render as bare <li>
+// lines without a <ul> wrapper.
+
+struct MdDoc {
+    kind: [int];
+    level: [int];
+    text: [str];
+}
+
+fn md_head_level(ln: str) -> int {
+    let mut n: int = 0;
+    while n < len(ln) && substr(ln, n, 1) == "#" {
+        n = n + 1;
+    }
+    if n > 0 && n < len(ln) && substr(ln, n, 1) == " " {
+        return n;
+    }
+    return 0;
+}
+
+fn md_parse(doc: str) -> MdDoc {
+    let lines: [str] = split(doc, "\n");
+    let mut kind: [int] = [];
+    let mut level: [int] = [];
+    let mut text: [str] = [];
+    let mut in_code: bool = false;
+    let mut i: int = 0;
+    while i < len(lines) {
+        let ln: str = lines[i];
+        if ln == "```" {
+            in_code = !in_code;
+        } else if in_code {
+            push(kind, 4);
+            push(level, 0);
+            push(text, ln);
+        } else if len(ln) == 0 {
+            // blank line: skip
+        } else if md_head_level(ln) > 0 {
+            let lv: int = md_head_level(ln);
+            push(kind, 1);
+            push(level, lv);
+            push(text, substr(ln, lv + 1, len(ln) - lv - 1));
+        } else if starts_with(ln, "- ") || starts_with(ln, "* ") {
+            push(kind, 3);
+            push(level, 0);
+            push(text, substr(ln, 2, len(ln) - 2));
+        } else if starts_with(ln, "> ") {
+            push(kind, 5);
+            push(level, 0);
+            push(text, substr(ln, 2, len(ln) - 2));
+        } else {
+            push(kind, 2);
+            push(level, 0);
+            push(text, ln);
+        }
+        i = i + 1;
+    }
+    return MdDoc { kind: kind, level: level, text: text };
+}
+
+fn md_count(d: MdDoc, k: int) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(d.kind) {
+        if d.kind[i] == k {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn md_heading_texts(d: MdDoc) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.kind) {
+        if d.kind[i] == 1 {
+            push(out, d.text[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn md_level_str(lv: int) -> str {
+    if lv == 1 {
+        return "1";
+    }
+    if lv == 2 {
+        return "2";
+    }
+    if lv == 3 {
+        return "3";
+    }
+    if lv == 4 {
+        return "4";
+    }
+    if lv == 5 {
+        return "5";
+    }
+    return "6";
+}
+
+fn md_html(d: MdDoc) -> str {
+    let mut lines: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.kind) {
+        let k: int = d.kind[i];
+        let t: str = d.text[i];
+        if k == 1 {
+            let lv: str = md_level_str(d.level[i]);
+            push(lines, "<h" + lv + ">" + t + "</h" + lv + ">");
+        } else if k == 2 {
+            push(lines, "<p>" + t + "</p>");
+        } else if k == 3 {
+            push(lines, "<li>" + t + "</li>");
+        } else if k == 4 {
+            push(lines, "<pre>" + t + "</pre>");
+        } else if k == 5 {
+            push(lines, "<blockquote>" + t + "</blockquote>");
+        }
+        i = i + 1;
+    }
+    return join(lines, "\n");
+}

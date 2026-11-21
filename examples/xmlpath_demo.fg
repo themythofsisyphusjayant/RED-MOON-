@@ -1,0 +1,13 @@
+import "xmlpath.fg";
+
+fn main() {
+    let doc: str = "<rss><channel><title>News</title><item><title>First</title></item><item><title>Second</title></item></channel></rss>";
+    println(xp_path(doc, "rss/channel/title"));
+    println(xp_path(doc, "rss/channel/item/title"));
+    println(xp_count(doc, "item"));
+    let items: [str] = xp_children(doc, "item");
+    println(items[1]);
+    let titles: [str] = xp_children(doc, "title");
+    println(len(titles));
+    println(titles[2]);
+}

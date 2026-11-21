@@ -1,0 +1,13 @@
+import "mdast.fg";
+
+fn main() {
+    let doc: str = "# Guide\nIntro text here\n- alpha\n- beta\n> quoted\n```\ncode line\n```";
+    let d: MdDoc = md_parse(doc);
+    println(md_count(d, 1));
+    println(md_count(d, 3));
+    println(md_count(d, 4));
+    println(md_count(d, 5));
+    println(md_html(d));
+    let hs: [str] = md_heading_texts(d);
+    println(hs[0]);
+}

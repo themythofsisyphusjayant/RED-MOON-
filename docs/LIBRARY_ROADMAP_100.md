@@ -296,3 +296,17 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   verified 4/4 but NOT counted here — item #239 iCalendar already
   reads [HAVE] (ical-lite.fg builds VEVENT text), so the parse slice
   is an extension of a HAVE item; it stays local for a later batch.
+
+- Sprint batch 4 (21 Nov 2026, same day, LIBS ONLY): 12 verification
+  flips (bitset.fg, bloom.fg, lru.fg, deque.fg, heap.fg, rss.fg,
+  regexfull.fg, csv2.fg, json2.fg, textwrap.fg, tempfile.fg,
+  ratelimit.fg — all already in the tree, verified 4/4 under both
+  compilers before flipping), the held icalparse.fg slice counted
+  (#239 parse), and 7 new libraries: template2.fg ({{#if}} /
+  {{#each}} / HTML escaping over template.fg), mdast.fg (Markdown
+  AST + HTML render), sentenc.fg (abbreviation-aware sentence
+  splitting), pathnorm.fg (lexical . / .. normalization),
+  rest.fg extended (GET/POST construction, response status/body,
+  typed JSON field lookup), xmlpath.fg (nested path lookup,
+  all-children, counting), testkit.fg (named cases, richer asserts,
+  data-level fixtures), all verified 4/4.

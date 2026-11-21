@@ -1,0 +1,129 @@
+// Qasida — full template engine (Top-500 #150).
+// Import with: import "template2.fg";
+// Grows template.fg (plain {{name}} substitution) into a small
+// engine: {{#if name}}...{{/if}} conditionals (a key counts as
+// true when present and its value is not "" or "false") and
+// {{#each}}...{{/each}} loops over a [str] with {{.}} for the
+// item, plus t2_escape for HTML-safe output. v1 limits: no
+// nesting of if/each blocks, no {{else}}, no dotted paths.
+
+import "template.fg";
+
+fn t2_escape(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "&" {
+            out = out + "&amp;";
+        } else if c == "<" {
+            out = out + "&lt;";
+        } else if c == ">" {
+            out = out + "&gt;";
+        } else if c == "\"" {
+            out = out + "&quot;";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn t2_truthy(keys: [str], vals: [str], name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == name {
+            if vals[i] == "" {
+                return false;
+            }
+            if vals[i] == "false" {
+                return false;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn t2_rejoin(parts: [str], from: int, sep: str) -> str {
+    let mut out: str = "";
+    let mut i: int = from;
+    while i < len(parts) {
+        if i > from {
+            out = out + sep;
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn t2_render_if(tmpl: str, keys: [str], vals: [str]) -> str {
+    let parts: [str] = split(tmpl, "{{#if ");
+    if len(parts) < 2 {
+        return tmpl;
+    }
+    let mut out: str = parts[0];
+    let mut i: int = 1;
+    while i < len(parts) {
+        let seg: str = parts[i];
+        let close: [str] = split(seg, "}}");
+        if len(close) < 2 {
+            out = out + "{{#if " + seg;
+        } else {
+            let name: str = close[0];
+            let rest: str = t2_rejoin(close, 1, "}}");
+            let tail: [str] = split(rest, "{{/if}}");
+            let inner: str = tail[0];
+            let after: str = t2_rejoin(tail, 1, "{{/if}}");
+            if t2_truthy(keys, vals, name) {
+                out = out + inner;
+            }
+            out = out + after;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn t2_sub_dot(s: str, item: str) -> str {
+    let parts: [str] = split(s, "{{.}}");
+    let mut out: str = parts[0];
+    let mut i: int = 1;
+    while i < len(parts) {
+        out = out + item + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn t2_render_each(tmpl: str, items: [str]) -> str {
+    let parts: [str] = split(tmpl, "{{#each}}");
+    if len(parts) < 2 {
+        return tmpl;
+    }
+    let mut out: str = parts[0];
+    let mut i: int = 1;
+    while i < len(parts) {
+        let seg: str = parts[i];
+        let tail: [str] = split(seg, "{{/each}}");
+        let inner: str = tail[0];
+        let after: str = t2_rejoin(tail, 1, "{{/each}}");
+        let mut j: int = 0;
+        while j < len(items) {
+            out = out + t2_sub_dot(inner, items[j]);
+            j = j + 1;
+        }
+        out = out + after;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn t2_render(tmpl: str, keys: [str], vals: [str], items: [str]) -> str {
+    let s1: str = t2_render_if(tmpl, keys, vals);
+    let s2: str = t2_render_each(s1, items);
+    return template_render(s2, keys, vals);
+}

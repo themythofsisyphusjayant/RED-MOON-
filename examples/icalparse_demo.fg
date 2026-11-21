@@ -1,0 +1,19 @@
+// iCalendar-parse demo — Top-500 #239.
+// Build an event with ical-lite, parse it back with
+// icalparse; a non-event text parses to found=false.
+import "ical-lite.fg";
+import "icalparse.fg";
+
+fn main() -> int {
+    let ev: str = ical_event("evt-1", "Team sync", 2026, 11, 21, 10, 30, 0, 2026, 11, 21, 11, 30, 0);
+    let p: ICal = ip_parse(ev);
+    println(p.found);
+    println(p.uid);
+    println(p.summary);
+    println(p.dtstart);
+    println(p.dtend);
+    let q: ICal = ip_parse("hello, no event here");
+    println(q.found);
+    println(q.uid);
+    return 0;
+}
