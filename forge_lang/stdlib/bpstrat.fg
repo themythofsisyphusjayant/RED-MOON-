@@ -1,0 +1,76 @@
+// Qasida — backpressure strategies (Top-500 #275).
+// Import with: import "bpstrat.fg";
+// A bounded queue with three overflow policies: 0 drop_new
+// (reject the new item, queue unchanged), 1 drop_oldest
+// (evict the front, append the new item), 2 keep_latest
+// (clear the queue, keep only the new item). push() reports
+// whether the item landed. front() is -1 on an empty queue.
+// v1 limits: int items only; no blocking push, no consumer
+// side — the queue is the policy, not a runtime stream.
+
+struct BpQ {
+    items: [int];
+    cap: int;
+}
+
+struct BpRes {
+    q: BpQ;
+    ok: bool;
+}
+
+fn bp_new(cap: int) -> BpQ {
+    return BpQ { items: [], cap: cap };
+}
+
+fn bp_len(q: BpQ) -> int {
+    return len(q.items);
+}
+
+fn bp_front(q: BpQ) -> int {
+    if len(q.items) == 0 {
+        return 0 - 1;
+    }
+    return q.items[0];
+}
+
+fn bp_push(q: BpQ, v: int, policy: int) -> BpRes {
+    if len(q.items) < q.cap {
+        let mut items: [int] = [];
+        let mut i: int = 0;
+        while i < len(q.items) {
+            push(items, q.items[i]);
+            i = i + 1;
+        }
+        push(items, v);
+        return BpRes { q: BpQ { items: items, cap: q.cap }, ok: true };
+    }
+    if policy == 0 {
+        return BpRes { q: q, ok: false };
+    }
+    if policy == 1 {
+        let mut items: [int] = [];
+        let mut i: int = 1;
+        while i < len(q.items) {
+            push(items, q.items[i]);
+            i = i + 1;
+        }
+        push(items, v);
+        return BpRes { q: BpQ { items: items, cap: q.cap }, ok: true };
+    }
+    let mut items: [int] = [];
+    push(items, v);
+    return BpRes { q: BpQ { items: items, cap: q.cap }, ok: true };
+}
+
+fn bp_pop(q: BpQ) -> BpQ {
+    if len(q.items) == 0 {
+        return q;
+    }
+    let mut items: [int] = [];
+    let mut i: int = 1;
+    while i < len(q.items) {
+        push(items, q.items[i]);
+        i = i + 1;
+    }
+    return BpQ { items: items, cap: q.cap };
+}

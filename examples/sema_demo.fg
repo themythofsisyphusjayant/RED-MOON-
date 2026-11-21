@@ -1,0 +1,19 @@
+import "sema.fg";
+
+fn main() {
+    let mut s: Sema = sem_new(2);
+    println(sem_permits(s));
+    let a1: SemAcq = sem_try_acquire(s);
+    println(a1.ok);
+    println(sem_permits(a1.sem));
+    let a2: SemAcq = sem_try_acquire(a1.sem);
+    println(a2.ok);
+    println(sem_permits(a2.sem));
+    let a3: SemAcq = sem_try_acquire(a2.sem);
+    println(a3.ok);
+    println(sem_permits(a3.sem));
+    let s2: Sema = sem_release(a3.sem);
+    println(sem_permits(s2));
+    let s3: Sema = sem_release(s2);
+    println(sem_permits(s3));
+}

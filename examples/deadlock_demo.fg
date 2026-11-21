@@ -1,0 +1,19 @@
+import "deadlock.fg";
+
+fn main() {
+    let mut g: Wfg = dl_new();
+    g = dl_add(g, 1, 2);
+    g = dl_add(g, 2, 3);
+    g = dl_add(g, 3, 1);
+    println(dl_edges(g));
+    println(dl_has_cycle(g));
+    let mut g2: Wfg = dl_new();
+    g2 = dl_add(g2, 1, 2);
+    g2 = dl_add(g2, 2, 3);
+    println(dl_edges(g2));
+    println(dl_has_cycle(g2));
+    let mut g3: Wfg = dl_new();
+    g3 = dl_add(g3, 1, 1);
+    println(dl_edges(g3));
+    println(dl_has_cycle(g3));
+}

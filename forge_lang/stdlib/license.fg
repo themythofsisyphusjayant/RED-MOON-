@@ -1,0 +1,38 @@
+// Qasida — license policy checks (Top-500 #331).
+// Import with: import "license.fg";
+// Allowed-license enforcement over package metadata: a
+// package violates the policy when its license string is
+// not on the allowed list. Matching is exact and case
+// sensitive ("MIT" is not "mit"). violations() returns the
+// offending packages in input order.
+// v1 limits: no SPDX expression parsing ("MIT OR
+// Apache-2.0" is one opaque string), no license detection
+// from source text.
+
+struct Pkg {
+    name: str;
+    license: str;
+}
+
+fn li_allowed(allowed: [str], lic: str) -> bool {
+    let mut i: int = 0;
+    while i < len(allowed) {
+        if allowed[i] == lic {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn li_violations(pkgs: [Pkg], allowed: [str]) -> [Pkg] {
+    let mut out: [Pkg] = [];
+    let mut i: int = 0;
+    while i < len(pkgs) {
+        if !li_allowed(allowed, pkgs[i].license) {
+            push(out, pkgs[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

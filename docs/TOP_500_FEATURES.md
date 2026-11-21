@@ -217,11 +217,11 @@ is not ownership-tracked (see #27).
 72. Assignment expressions (Python walrus) — [GAP] Bind a value inside a condition.
 73. Loop else (Python) — [GAP] An else that runs when a loop is not broken out of.
 74. Generator functions / yield (Python) — [GAP] Lazy sequences.
-75. Iterator protocol (Go/Rust) — [GAP] A standard way to walk collections.
+75. Iterator protocol (Go/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): iter.fg + iter_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). A standard way to walk collections: has_next / current / next, sum / take / skip / count over [int]. v1 limits: int arrays only; no map/filter (needs function values, item 103, still GAP).
 76. Wildcard match arm (Rust _) — [GAP] A default arm for match.
 77. Nested function definitions (Python) — [GAP] Helpers scoped inside functions.
 78. Tail-call guarantee (Scheme/Erlang) — [GAP] Recursion without stack growth for state machines.
-79. State-machine syntax (Erlang/Rust) — [GAP] Explicit states and transitions for drivers.
+79. State-machine syntax (Erlang/Rust) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): fsm.fg + fsm_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Explicit states and transitions for drivers: transition table, step() on first match, can(); unmatched events stay put. v1 limits: no entry/exit actions, no hierarchical states.
 80. Single-threaded event loops (Node) — [GAP] A loop shape for servers without threads.
 
 ## 5. Systems and OS primitives (81-100)
@@ -234,12 +234,12 @@ is not ownership-tracked (see #27).
 87. DMA descriptors (C drivers) — [GAP] A safe DMA buffer API.
 88. Device-tree parsing (Linux) — [GAP] Read the DTB the firmware already passes in.
 89. Sleep with deadlines (all) — [PARTIAL] sleep ecall exists; add sleep_until and timeout primitives.
-90. Scheduler policies as libraries (Linux) — [PARTIAL] Round-robin exists; add priority, EDF and lottery policies.
+90. Scheduler policies as libraries (Linux) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): schedpol.fg + schedpol_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Round-robin exists; this adds priority, EDF and lottery picks over [Task] (ties to the first task; empty list returns -1; lottery is a seeded LCG, seed below 8,000,000,000). v1 limits: picking only — no preemption, no time slices.
 91. Typed IPC channels (Unix) — [PARTIAL] A ring IPC kernel exists; raise it to language channels.
 92. Signals / software interrupts (Unix) — [GAP] Kill and notify tasks.
 93. Capability handles (seL4) — [GAP] Unforgeable handles for devices and files.
 94. Full SBI call set (RISC-V) — [PARTIAL] The SBI demo exists; finish with the a6-carrying call after ecall3.
-95. ELF loading (Unix) — [GAP] Load programs from the filesystem.
+95. ELF loading (Unix) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): elf.fg + elf_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Load programs from the filesystem: ELF64 header parsing over [int] bytes (magic, class, data, type, machine, entry); out-of-range reads return 0/false, never a trap. v1 limits: header only — no section or program headers, no loading (that is the OS track's job); big-endian files report their data byte but multi-byte fields are not decoded.
 96. Syscall table definition (Linux) — [GAP] A numbered syscall ABI for the OS.
 97. Driver probe/remove lifecycle (Linux) — [GAP] Device setup and teardown.
 98. Power management hooks (Linux) — [GAP] Sleep and wake for devices.
@@ -372,7 +372,7 @@ is not ownership-tracked (see #27).
 213. Retries with backoff in the client — [HAVE] A retry-backoff library exists; wire it into the HTTP client.
 214. Rate limiting (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): ratelimit.fg + ratelimit_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: token bucket (cap, try, refill, capped at cap); int tokens only. Token buckets.
 215. Proxy support on servers (all) — [HAVE] CONNECT proxy exists in http_get; extend it to servers.
-216. IPv6 (all) — [GAP] Version 6 addresses and dual-stack.
+216. IPv6 (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): ipv6.fg + ipv6_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Version 6 addresses and dual-stack: parse to 8 groups (invalid text parses to []), expand to full form, compress the longest zero run of 2+ groups with "::" (a single zero group is never compressed, RFC 5952); uppercase hex accepted. v1 limits: addresses only — no sockets, no DNS (items 201 and 205, still GAP).
 217. Network interface listing (all) — [GAP] Enumerate network cards.
 218. Packet capture (libpcap) — [GAP] Raw packet reading.
 219. NAT traversal / STUN (WebRTC) — [GAP] Peer-to-peer setup.
@@ -395,7 +395,7 @@ is not ownership-tracked (see #27).
 234. Versioned data migrations (Rails) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): migrate.fg + migrate_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: plan/apply bookkeeping over a migration list (version, name, SQL text); the SQL is carried, not executed (no SQL engine yet).
 235. Binary struct packing (Python struct) — [HAVE] Landed 21 Nov 2026 (sprint batch 2): structpack.fg + structpack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: u8/u16le/u32le/i32le only, LE only; no floats, no alignment padding. Pack and unpack C structs; ties to FFI layout.
 236. Real compression codecs (all) — [HAVE] The compress library is RLE only; add gzip and deflate. Landed 21 Nov 2026 (sprint day 1): gzip2.fg + gzip2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single member only; dynamic-Huffman branch not exercised by the demo (stored + fixed-Huffman verified).
-237. Checksums inside file formats (all) — [PARTIAL] A checksum library exists; use it in formats.
+237. Checksums inside file formats (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): fmtcrc.fg + fmtcrc_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). A checksum library exists; this uses it in formats: "len:payload:crc" records with CRC32 over the payload's ASCII bytes, read() verifies length and CRC and reports ok=false on the first bad line. v1 limits: payloads must not contain ":"; bytes are printable ASCII 32..126 (other characters map to 0 consistently on both sides).
 238. dotenv files — [HAVE] A dotenv library already exists.
 239. iCalendar — [HAVE] An ical-lite library already exists. Parse slice landed 21 Nov 2026 (sprint batch 4): icalparse.fg + icalparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: parses one VEVENT block back out (UID/SUMMARY/DTSTART/DTEND); no recurrence, no timezones.
 240. RSS and Atom feeds (all) — [HAVE] Verified 21 Nov 2026 (sprint batch 4): rss.fg + rss_demo.fg already in the tree, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: RSS titles/links only (split on <item>); no Atom, no namespaces. Feed parsing.
@@ -408,7 +408,7 @@ is not ownership-tracked (see #27).
 245. Thread pools (all) — [GAP] Worker pools.
 246. Futures and promises (JS/Rust) — [GAP] Values that resolve later.
 247. Structured scopes with cancellation — [HAVE] scope exists; add cancellation to it.
-248. Cancellation tokens (C#/Go context) — [GAP] Cooperative cancellation.
+248. Cancellation tokens (C#/Go context) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): cancel.fg + cancel_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Cooperative cancellation: token as a plain value, cancel()/is_cancelled(), run() steps a loop up to n times and stops early when cancelled. v1 limits: no preemption, no async runtime behind it — the token is only a shared flag; no deadline, no linked tokens.
 249. Operation timeouts (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): timeout.fg + timeout_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: deadline arithmetic over explicit microsecond stamps (remaining clamps at 0); one clock-reading helper (to_new_deadline).
 250. Parallel iterators (Rayon) — [GAP] par_map over collections.
 251. Work-stealing schedulers (Go/Ray) — [GAP] Balanced parallelism.
@@ -416,9 +416,9 @@ is not ownership-tracked (see #27).
 253. Software transactional memory (Haskell/Clojure) — [GAP] Atomic multi-value updates.
 254. Read-copy-update (Linux) — [GAP] Lock-free reads.
 255. Barriers and latches (Java) — [GAP] Rendezvous points for tasks.
-256. Semaphores (all) — [GAP] Counting permits.
+256. Semaphores (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): sema.fg + sema_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Counting permits: try_acquire takes one when free and reports false without blocking at 0; release adds one back; acquire/release return a new semaphore. v1 limits: no blocking acquire, no fairness queue, no cross-task sharing (no shared-mutable primitive in the language).
 257. Condition variables (all) — [GAP] Wait and notify.
-258. Deadlock detection (Go) — [GAP] Runtime cycle checks.
+258. Deadlock detection (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): deadlock.fg + deadlock_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Runtime cycle checks: wait-for graph (waiter -> holder), depth-first search with three-colour marks; a self-edge is a cycle. v1 limits: detection only — no prevention, no lock-order enforcement, no runtime hook (there is no lock primitive to hook yet, item 243, still GAP).
 259. Data-race detector (Go/TSan) — [GAP] Find races in tests.
 260. Deterministic concurrency testing (Rust loom) — [GAP] Explore schedules on purpose.
 
@@ -437,11 +437,11 @@ is not ownership-tracked (see #27).
 272. Debounce and throttle (JS) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): throttle.fg + throttle_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: throttle (one event per window) and debounce (fire after a quiet period) over explicit microsecond stamps; caller supplies now.
 273. Event emitters (Node) — [GAP] on/emit publish-subscribe.
 274. Signal handling in async runtimes (Tokio) — [GAP] Graceful shutdown.
-275. Backpressure strategies (Akka) — [GAP] Drop, buffer or keep-latest.
+275. Backpressure strategies (Akka) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): bpstrat.fg + bpstrat_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Drop, buffer or keep-latest: a bounded queue with policies 0 drop_new (reject, queue unchanged), 1 drop_oldest (evict front, append), 2 keep_latest (clear, keep only the new item); push() reports whether the item landed. v1 limits: int items only; no blocking push, no consumer side — the queue is the policy, not a runtime stream.
 276. Async traits (Rust) — [GAP] Async functions in interfaces.
 277. Green threads (Erlang) — [GAP] Ultra-light tasks.
 278. I/O multiplexing: epoll/kqueue (Linux) — [GAP] Scalable readiness checks.
-279. Timer wheels (Linux) — [GAP] Efficient scheduling of many timers.
+279. Timer wheels (Linux) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): timerwheel.fg + timerwheel_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Efficient scheduling of many timers: register (id, due tick), tick(now) fires every timer due at or before now in registration order and returns the survivors plus the fired ids; ticks are caller-supplied ints. v1 limits: no repeating timers, no cancellation by id — removal is by firing only.
 280. Async HTTP handlers (FastAPI) — [GAP] Async routes for servers.
 
 ## 15. FFI and interop (281-300)
@@ -474,14 +474,14 @@ is not ownership-tracked (see #27).
 305. Test coverage (all) — [GAP] Line and branch coverage.
 306. Mocking (all) — [GAP] Fake dependencies.
 307. Snapshot testing (Jest) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): snap.fg + snap_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: line-by-line comparison reporting the first differing line (0-based) with both sides; golden-file I/O is the caller's job (read_bytes/write_bytes).
-308. Parameterized tests (pytest) — [GAP] One test, many inputs.
-309. Test doubles: stubs and spies (Mockito) — [GAP] Stand-ins with recorded calls.
+308. Parameterized tests (pytest) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): paramtest.fg + paramtest_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). One test, many inputs: table-driven cases (name, input, want); the caller computes each case's actual value and check() pairs actuals with the table, counts pass/fail and names the failures. v1 limits: int inputs and expected values only; the table cannot run the function itself (no function values, item 103, still GAP).
+309. Test doubles: stubs and spies (Mockito) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): doubles.fg + doubles_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Stand-ins with recorded calls: a spy records every call (name + one string argument) in order; called(), count_named(), arg(). v1 limits: one string argument per call; no return-value stubbing (there is no function to stub yet — spies record what the test itself reports, they cannot intercept).
 310. Integration test harness (all) — [GAP] Multi-process tests.
 311. Deterministic test time (Go) — [HAVE] Landed 21 Nov 2026 (sprint batch 3): faketime.fg + faketime_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: FakeClock with explicit microsecond stamp (new/now/advance/set/elapsed); production code takes the stamp as a parameter.
 312. Test parallelization (Go) — [GAP] Run tests concurrently.
-313. Flaky test detection (all) — [GAP] Rerun and quarantine unstable tests.
+313. Flaky test detection (all) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): flaky.fg + flaky_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Rerun and quarantine unstable tests: outcome history as "name:pass" / "name:fail" lines (save() overwrites the file so repeated runs are deterministic); a case is flaky when both outcomes appear for it; flaky_names() lists them. v1 limits: no re-running of tests (no function to re-run yet) — this tracks outcomes, it does not produce them.
 314. Mutation testing (Stryker) — [GAP] Prove tests by killing mutants.
-315. Contract testing (Pact) — [GAP] Consumer-driven contracts.
+315. Contract testing (Pact) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): contract.fg + contract_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Consumer-driven contracts: a contract names a method, a path and the required fields; check() reports ok plus the missing fields (a wrong method/path fails with "__method__" / "__path__"). v1 limits: field presence only — no types, no value shapes, no versions.
 316. Load testing (k6) — [GAP] HTTP load generation.
 317. Kernel model tests — [HAVE] The model-test pattern already exists; automate the SOC2 bench side too.
 318. Golden-file codegen tests (Rust) — [GAP] Expected assembly snapshots.
@@ -498,15 +498,15 @@ is not ownership-tracked (see #27).
 327. Incremental compilation (Rust) — [GAP] Rebuild only changed modules.
 328. Build caching (Bazel) — [GAP] Cached artifacts.
 329. Vendoring (Go) — [GAP] Offline dependency copies.
-330. Dependency auditing (cargo-audit) — [GAP] Known-vulnerability scanning.
-331. License policy checks (cargo-deny) — [GAP] Allowed-license enforcement.
+330. Dependency auditing (cargo-audit) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): depcheck.fg + depcheck_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Known-vulnerability scanning: a dependency is vulnerable when the feed holds an entry with the same name AND the same version; audit() returns the vulnerable dependencies. v1 limits: exact (name, version) matches only — no ranges, no transitive closure, no feed fetching (the caller supplies the feed; vuln.fg holds one).
+331. License policy checks (cargo-deny) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): license.fg + license_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Allowed-license enforcement over package metadata: a package violates the policy when its license string is not on the allowed list (exact, case-sensitive matching); violations() returns the offenders in input order. v1 limits: no SPDX expression parsing ("MIT OR Apache-2.0" is one opaque string), no license detection from source text.
 332. Registry publishes (PyPI/npm) — [GAP] The his-click publishes: PyPI, Marketplace, Pages.
 333. Checksum-verified install (all) — [HAVE] install.sh exists; add checksum verification.
 334. Prebuilt binary releases (GoReleaser) — [GAP] Binaries per platform.
 335. Container images (all) — [GAP] A containerized toolchain; deploy files exist, the image is not built.
 336. Reproducible dev shells (Nix) — [GAP] Flake-style environments.
-337. Task runner files (make/just) — [GAP] Standard task definitions.
-338. Feature flags (Cargo) — [GAP] Conditional compilation flags.
+337. Task runner files (make/just) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): tasks.fg + tasks_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Standard task definitions: each task names its dependencies; order() returns a topological run order (Kahn's algorithm, definition order breaks ties) and ready() lists the tasks runnable once a set of names is done. A cycle stops order() at the tasks it could place. v1 limits: ordering only — no execution, no shelling out, no file watching.
+338. Feature flags (Cargo) — [HAVE] Landed 21 Nov 2026 (sprint batch 7): flags.fg + flags_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Conditional compilation flags: a flag registry of named on/off switches as a plain value; set() returns a new registry, unknown flags read as off, enabled() lists the on flags in insertion order. v1 limits: boolean flags only, no rollout percentages, no per-user targeting; no persistence and no environment lookup — the caller owns where flags come from.
 339. Build-time code generation (Cargo build.rs) — [GAP] Generate code during builds.
 340. Bit-identical reproducible builds (Debian) — [GAP] Same input, same bytes.
 
@@ -521,7 +521,7 @@ is not ownership-tracked (see #27).
 348. Unreachable-code warnings (all) — [GAP] Flag code that can never run.
 349. Error minimization (Elm) — [GAP] Shrink to the smallest failing snippet.
 350. Auto-fix suggestions (Rust) — [GAP] Apply safe fixes.
-351. Lint rules (Clippy/ESLint) — [GAP] Style and correctness lints.
+351. Lint rules (Clippy/ESLint) — [HAVE] Already in the tree (lint.fg: long lines, trailing space, TODO lines, empty lines); verified 21 Nov 2026 (sprint batch 7) via the existing lint_demo.fg, 4/4 checks (rc=0 + exact stdout, hosted + python compilers). Style and correctness lints over source text. v1 limits: the four rules only — no name checks, no complexity, no unused-code detection.
 352. Formatter enforcement in CI (all) — [PARTIAL] fmt exists and is idempotent; enforce it in CI.
 353. Import organization (Go) — [GAP] Sort and dedupe imports.
 354. Complexity metrics (all) — [GAP] Cyclomatic complexity warnings.

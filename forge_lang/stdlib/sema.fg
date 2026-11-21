@@ -1,0 +1,37 @@
+// Qasida — semaphores (Top-500 #256).
+// Import with: import "sema.fg";
+// Counting permits as a plain value: try_acquire takes one
+// permit when one is free and reports false (without
+// blocking) when the count is 0; release adds one back.
+// Acquire/release return a new semaphore; callers rebind.
+// v1 limits: no blocking acquire, no fairness queue, no
+// cross-task sharing (Qasida has no shared-mutable
+// primitive, so this is the in-task permit counter).
+
+struct Sema {
+    permits: int;
+}
+
+struct SemAcq {
+    sem: Sema;
+    ok: bool;
+}
+
+fn sem_new(n: int) -> Sema {
+    return Sema { permits: n };
+}
+
+fn sem_permits(s: Sema) -> int {
+    return s.permits;
+}
+
+fn sem_try_acquire(s: Sema) -> SemAcq {
+    if s.permits > 0 {
+        return SemAcq { sem: Sema { permits: s.permits - 1 }, ok: true };
+    }
+    return SemAcq { sem: s, ok: false };
+}
+
+fn sem_release(s: Sema) -> Sema {
+    return Sema { permits: s.permits + 1 };
+}

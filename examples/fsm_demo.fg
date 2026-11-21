@@ -1,0 +1,20 @@
+import "fsm.fg";
+
+fn main() {
+    let mut trans: [Trans] = [];
+    push(trans, Trans { from: 0, event: 0, to: 1 });
+    push(trans, Trans { from: 1, event: 0, to: 2 });
+    push(trans, Trans { from: 2, event: 0, to: 0 });
+    let mut f: Fsm = fsm_new(0, trans);
+    println(fsm_state(f));
+    f = fsm_step(f, 0);
+    println(fsm_state(f));
+    f = fsm_step(f, 0);
+    println(fsm_state(f));
+    f = fsm_step(f, 0);
+    println(fsm_state(f));
+    println(fsm_can(f, 0));
+    println(fsm_can(f, 7));
+    f = fsm_step(f, 7);
+    println(fsm_state(f));
+}

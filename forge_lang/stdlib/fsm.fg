@@ -1,0 +1,52 @@
+// Qasida — state machines (Top-500 #79).
+// Import with: import "fsm.fg";
+// States and events are ints; transitions are an explicit
+// table. step() moves on the first matching transition and
+// stays put when no transition matches (no fail). can()
+// reports whether an event fires from the current state.
+// v1 limits: no entry/exit actions, no hierarchical states.
+
+struct Trans {
+    from: int;
+    event: int;
+    to: int;
+}
+
+struct Fsm {
+    state: int;
+    trans: [Trans];
+}
+
+fn fsm_new(state: int, trans: [Trans]) -> Fsm {
+    return Fsm { state: state, trans: trans };
+}
+
+fn fsm_state(f: Fsm) -> int {
+    return f.state;
+}
+
+fn fsm_can(f: Fsm, event: int) -> bool {
+    let mut i: int = 0;
+    while i < len(f.trans) {
+        if f.trans[i].from == f.state {
+            if f.trans[i].event == event {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fsm_step(f: Fsm, event: int) -> Fsm {
+    let mut i: int = 0;
+    while i < len(f.trans) {
+        if f.trans[i].from == f.state {
+            if f.trans[i].event == event {
+                return Fsm { state: f.trans[i].to, trans: f.trans };
+            }
+        }
+        i = i + 1;
+    }
+    return f;
+}

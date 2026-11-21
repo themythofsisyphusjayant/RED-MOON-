@@ -1,0 +1,13 @@
+import "flags.fg";
+
+fn main() {
+    let mut f: Flags = fl_new();
+    f = fl_set(f, "dark", true);
+    f = fl_set(f, "beta", false);
+    println(fl_is_on(f, "dark"));
+    println(fl_is_on(f, "beta"));
+    println(fl_is_on(f, "nope"));
+    let on: [str] = fl_enabled(f);
+    println(len(on));
+    println(on[0]);
+}

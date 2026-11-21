@@ -1,0 +1,56 @@
+// Qasida — scheduler policies (Top-500 #90).
+// Import with: import "schedpol.fg";
+// Priority, earliest-deadline-first and lottery picks over
+// a [Task] list. Ties go to the first task in the list.
+// Empty lists return -1. The lottery is a seeded LCG
+// (glibc constants); the seed must stay below 8,000,000,000
+// or the multiply overflows checked arithmetic.
+// v1 limits: picking only — no preemption, no time slices.
+
+struct Task {
+    id: int;
+    prio: int;
+    deadline: int;
+}
+
+fn sp_highest(tasks: [Task]) -> int {
+    if len(tasks) == 0 {
+        return 0 - 1;
+    }
+    let mut best: int = tasks[0].id;
+    let mut best_prio: int = tasks[0].prio;
+    let mut i: int = 1;
+    while i < len(tasks) {
+        if tasks[i].prio > best_prio {
+            best_prio = tasks[i].prio;
+            best = tasks[i].id;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn sp_earliest(tasks: [Task]) -> int {
+    if len(tasks) == 0 {
+        return 0 - 1;
+    }
+    let mut best: int = tasks[0].id;
+    let mut best_dl: int = tasks[0].deadline;
+    let mut i: int = 1;
+    while i < len(tasks) {
+        if tasks[i].deadline < best_dl {
+            best_dl = tasks[i].deadline;
+            best = tasks[i].id;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn sp_lottery(tasks: [Task], seed: int) -> int {
+    if len(tasks) == 0 {
+        return 0 - 1;
+    }
+    let s: int = (seed * 1103515245 + 12345) % 2147483648;
+    return tasks[s % len(tasks)].id;
+}

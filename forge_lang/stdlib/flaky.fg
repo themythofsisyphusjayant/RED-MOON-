@@ -1,0 +1,114 @@
+// Qasida — flaky test detection (Top-500 #313).
+// Import with: import "flaky.fg";
+// Outcome history as "name:pass" / "name:fail" lines: a
+// case is flaky when both outcomes appear for it. save()
+// overwrites the history file (write_file, so repeated
+// runs are deterministic), load() reads it back, and the
+// pure functions work on the lines in memory. is_flaky()
+// and flaky_names() are the checks; record() appends one
+// line for callers that keep a growing log.
+// v1 limits: no re-running of tests (there is no function
+// to re-run yet) — this tracks outcomes, it does not
+// produce them.
+
+fn fl_save(path: str, lines: [str]) -> bool {
+    let mut text: str = "";
+    let mut i: int = 0;
+    while i < len(lines) {
+        text = text + lines[i] + "\n";
+        i = i + 1;
+    }
+    let ok: bool = write_file(path, text);
+    return ok;
+}
+
+fn fl_load(path: str) -> [str] {
+    if !file_exists(path) {
+        return [];
+    }
+    let text: str = read_file(path);
+    let all: [str] = split(text, "\n");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(all) {
+        if len(all[i]) > 0 {
+            push(out, all[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fl_record(path: str, name: str, passed: bool) -> bool {
+    let mut line: str = name + ":";
+    if passed {
+        line = line + "pass";
+    } else {
+        line = line + "fail";
+    }
+    let lines: [str] = fl_load(path);
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        push(out, lines[i]);
+        i = i + 1;
+    }
+    push(out, line);
+    return fl_save(path, out);
+}
+
+fn fl_outcome(lines: [str], name: str) -> int {
+    let mut saw_pass: bool = false;
+    let mut saw_fail: bool = false;
+    let mut i: int = 0;
+    while i < len(lines) {
+        let parts: [str] = split(lines[i], ":");
+        if len(parts) == 2 {
+            if parts[0] == name {
+                if parts[1] == "pass" {
+                    saw_pass = true;
+                }
+                if parts[1] == "fail" {
+                    saw_fail = true;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if saw_pass && saw_fail {
+        return 2;
+    }
+    if saw_pass {
+        return 1;
+    }
+    return 0;
+}
+
+fn fl_is_flaky(lines: [str], name: str) -> bool {
+    return fl_outcome(lines, name) == 2;
+}
+
+fn fl_flaky_names(lines: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        let parts: [str] = split(lines[i], ":");
+        if len(parts) == 2 {
+            if fl_is_flaky(lines, parts[0]) {
+                let mut seen: bool = false;
+                let mut j: int = 0;
+                while j < len(out) {
+                    if out[j] == parts[0] {
+                        seen = true;
+                    }
+                    j = j + 1;
+                }
+                if !seen {
+                    push(out, parts[0]);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}

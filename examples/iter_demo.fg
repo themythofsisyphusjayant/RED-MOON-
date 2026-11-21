@@ -1,0 +1,18 @@
+import "iter.fg";
+
+fn main() {
+    let it: Iter = it_new([3, 1, 4, 1, 5]);
+    println(it_has_next(it));
+    println(it_current(it));
+    let it2: Iter = it_next(it);
+    println(it_current(it2));
+    println(it_sum(it_new([3, 1, 4, 1, 5])));
+    let taken: [int] = it_take(it_new([3, 1, 4, 1, 5]), 3);
+    println(taken[0]);
+    println(taken[1]);
+    println(taken[2]);
+    println(it_count(it_new([3, 1, 4, 1, 5])));
+    let skipped: Iter = it_skip(it_new([3, 1, 4, 1, 5]), 2);
+    println(it_current(skipped));
+    println(it_has_next(it_new([])));
+}

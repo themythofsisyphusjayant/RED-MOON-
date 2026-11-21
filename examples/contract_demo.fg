@@ -1,0 +1,14 @@
+import "contract.fg";
+
+fn main() {
+    let c: Contract = Contract { method: "GET", path: "/users", required: ["id", "name"] };
+    let r1: CtRes = ct_check(c, Req { method: "GET", path: "/users", fields: ["id", "name", "email"] });
+    println(r1.ok);
+    println(len(r1.missing));
+    let r2: CtRes = ct_check(c, Req { method: "GET", path: "/users", fields: ["id"] });
+    println(r2.ok);
+    println(len(r2.missing));
+    println(r2.missing[0]);
+    let r3: CtRes = ct_check(c, Req { method: "POST", path: "/users", fields: ["id", "name"] });
+    println(r3.ok);
+}

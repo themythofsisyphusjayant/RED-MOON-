@@ -1,0 +1,56 @@
+// Qasida — contract testing (Top-500 #315).
+// Import with: import "contract.fg";
+// Consumer-driven contracts: a contract names a method, a
+// path and the fields a response must carry; check() tests
+// a request against it and reports ok plus the missing
+// fields. A wrong method or path fails with the special
+// missing entry "__method__" / "__path__" so the caller can
+// tell a route miss from a field miss. v1 limits: field
+// presence only — no types, no value shapes, no versions.
+
+struct Contract {
+    method: str;
+    path: str;
+    required: [str];
+}
+
+struct Req {
+    method: str;
+    path: str;
+    fields: [str];
+}
+
+struct CtRes {
+    ok: bool;
+    missing: [str];
+}
+
+fn ct_check(c: Contract, r: Req) -> CtRes {
+    if r.method != c.method {
+        let mut m: [str] = [];
+        push(m, "__method__");
+        return CtRes { ok: false, missing: m };
+    }
+    if r.path != c.path {
+        let mut m: [str] = [];
+        push(m, "__path__");
+        return CtRes { ok: false, missing: m };
+    }
+    let mut missing: [str] = [];
+    let mut i: int = 0;
+    while i < len(c.required) {
+        let mut found: bool = false;
+        let mut j: int = 0;
+        while j < len(r.fields) {
+            if r.fields[j] == c.required[i] {
+                found = true;
+            }
+            j = j + 1;
+        }
+        if !found {
+            push(missing, c.required[i]);
+        }
+        i = i + 1;
+    }
+    return CtRes { ok: len(missing) == 0, missing: missing };
+}

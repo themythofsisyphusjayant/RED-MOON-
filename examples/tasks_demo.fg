@@ -1,0 +1,17 @@
+import "tasks.fg";
+
+fn main() {
+    let mut defs: [TaskDef] = [];
+    push(defs, TaskDef { name: "build", deps: ["test"] });
+    push(defs, TaskDef { name: "test", deps: [] });
+    push(defs, TaskDef { name: "lint", deps: [] });
+    push(defs, TaskDef { name: "deploy", deps: ["build", "lint"] });
+    let order: [str] = tk_order(defs);
+    println(order[0]);
+    println(order[1]);
+    println(order[2]);
+    println(order[3]);
+    let ready: [str] = tk_ready(defs, ["test"]);
+    println(ready[0]);
+    println(ready[1]);
+}

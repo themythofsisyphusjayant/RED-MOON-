@@ -1,0 +1,15 @@
+import "paramtest.fg";
+
+fn main() {
+    let mut cases: [Case] = [];
+    push(cases, Case { name: "two", input: 2, want: 4 });
+    push(cases, Case { name: "three", input: 3, want: 6 });
+    push(cases, Case { name: "neg", input: 0 - 1, want: 0 - 2 });
+    let r: PtRun = pt_check(cases, [4, 6, 5]);
+    println(r.passed);
+    println(r.failed);
+    println(r.failed_names[0]);
+    let r2: PtRun = pt_check(cases, [4, 6, 0 - 2]);
+    println(r2.passed);
+    println(r2.failed);
+}

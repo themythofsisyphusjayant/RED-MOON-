@@ -1,0 +1,73 @@
+// Qasida — iterator protocol (Top-500 #75).
+// Import with: import "iter.fg";
+// An iterator walks an [int] in order: has_next / current /
+// next (returns a new iterator; the old one is untouched).
+// sum / take / skip / count consume from a fresh iterator.
+// v1 limits: int arrays only; no map/filter (those need
+// function values, item 103, still GAP). current() returns 0
+// past the end; has_next() is the honest check.
+
+struct Iter {
+    items: [int];
+    pos: int;
+}
+
+fn it_new(items: [int]) -> Iter {
+    return Iter { items: items, pos: 0 };
+}
+
+fn it_has_next(it: Iter) -> bool {
+    return it.pos < len(it.items);
+}
+
+fn it_current(it: Iter) -> int {
+    if it.pos < len(it.items) {
+        return it.items[it.pos];
+    }
+    return 0;
+}
+
+fn it_next(it: Iter) -> Iter {
+    let mut p: int = it.pos + 1;
+    if p > len(it.items) {
+        p = len(it.items);
+    }
+    return Iter { items: it.items, pos: p };
+}
+
+fn it_sum(it: Iter) -> int {
+    let mut total: int = 0;
+    let mut i: int = it.pos;
+    while i < len(it.items) {
+        total = total + it.items[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+fn it_take(it: Iter, n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = it.pos;
+    let mut taken: int = 0;
+    while i < len(it.items) {
+        if taken >= n {
+            break;
+        }
+        push(out, it.items[i]);
+        taken = taken + 1;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn it_skip(it: Iter, n: int) -> Iter {
+    let mut p: int = it.pos + n;
+    if p > len(it.items) {
+        p = len(it.items);
+    }
+    return Iter { items: it.items, pos: p };
+}
+
+fn it_count(it: Iter) -> int {
+    return len(it.items) - it.pos;
+}

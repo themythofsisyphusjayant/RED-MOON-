@@ -1,0 +1,41 @@
+// Qasida — dependency auditing (Top-500 #330).
+// Import with: import "depcheck.fg";
+// Audits a dependency list against a vulnerability feed:
+// a dependency is vulnerable when the feed holds an entry
+// with the same name AND the same version. audit() returns
+// the vulnerable dependencies; count() is the short form.
+// v1 limits: exact (name, version) matches only — no
+// ranges, no transitive closure, no feed fetching (the
+// caller supplies the feed; vuln.fg holds one).
+
+struct Dep {
+    name: str;
+    version: str;
+}
+
+struct Vuln {
+    name: str;
+    version: str;
+}
+
+fn dc_audit(deps: [Dep], feed: [Vuln]) -> [Dep] {
+    let mut out: [Dep] = [];
+    let mut i: int = 0;
+    while i < len(deps) {
+        let mut j: int = 0;
+        while j < len(feed) {
+            if feed[j].name == deps[i].name {
+                if feed[j].version == deps[i].version {
+                    push(out, deps[i]);
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dc_count(deps: [Dep], feed: [Vuln]) -> int {
+    return len(dc_audit(deps, feed));
+}

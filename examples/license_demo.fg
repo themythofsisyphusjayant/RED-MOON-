@@ -1,0 +1,16 @@
+import "license.fg";
+
+fn main() {
+    let allowed: [str] = ["MIT", "Apache-2.0", "BSD-3-Clause"];
+    let mut pkgs: [Pkg] = [];
+    push(pkgs, Pkg { name: "a", license: "MIT" });
+    push(pkgs, Pkg { name: "b", license: "GPL-3.0" });
+    push(pkgs, Pkg { name: "c", license: "Apache-2.0" });
+    push(pkgs, Pkg { name: "d", license: "Proprietary" });
+    let bad: [Pkg] = li_violations(pkgs, allowed);
+    println(len(bad));
+    println(bad[0].name);
+    println(bad[1].name);
+    println(li_allowed(allowed, "MIT"));
+    println(li_allowed(allowed, "GPL-3.0"));
+}

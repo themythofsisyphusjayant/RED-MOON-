@@ -1,0 +1,57 @@
+// Qasida — timer wheels (Top-500 #279).
+// Import with: import "timerwheel.fg";
+// Timers with integer due ticks: add() registers (id, due),
+// tick(now) fires every timer due at or before now, in
+// registration order, and returns the survivors plus the
+// fired ids. Ticks are caller-supplied ints (microseconds,
+// frames, whatever the caller counts); nothing here reads
+// the clock. v1 limits: no repeating timers, no cancellation
+// by id — remove by firing only.
+
+struct Timer {
+    id: int;
+    due: int;
+}
+
+struct Wheel {
+    timers: [Timer];
+}
+
+struct TwDue {
+    wheel: Wheel;
+    due: [int];
+}
+
+fn tw_new() -> Wheel {
+    return Wheel { timers: [] };
+}
+
+fn tw_add(w: Wheel, id: int, due: int) -> Wheel {
+    let mut timers: [Timer] = [];
+    let mut i: int = 0;
+    while i < len(w.timers) {
+        push(timers, w.timers[i]);
+        i = i + 1;
+    }
+    push(timers, Timer { id: id, due: due });
+    return Wheel { timers: timers };
+}
+
+fn tw_pending(w: Wheel) -> int {
+    return len(w.timers);
+}
+
+fn tw_tick(w: Wheel, now: int) -> TwDue {
+    let mut keep: [Timer] = [];
+    let mut due: [int] = [];
+    let mut i: int = 0;
+    while i < len(w.timers) {
+        if w.timers[i].due <= now {
+            push(due, w.timers[i].id);
+        } else {
+            push(keep, w.timers[i]);
+        }
+        i = i + 1;
+    }
+    return TwDue { wheel: Wheel { timers: keep }, due: due };
+}

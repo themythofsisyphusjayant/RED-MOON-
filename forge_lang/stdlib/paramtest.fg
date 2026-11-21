@@ -1,0 +1,50 @@
+// Qasida — parameterized tests (Top-500 #308).
+// Import with: import "paramtest.fg";
+// Table-driven cases: the caller computes each case's
+// actual value (there are no function values in the
+// language yet, item 103, so the table cannot run the
+// function itself) and check() pairs actuals with the
+// table, counts pass/fail and names the failures. A case
+// list shorter than the actuals, or vice versa, counts the
+// missing side as a failure. v1 limits: int inputs and
+// expected values only.
+
+struct Case {
+    name: str;
+    input: int;
+    want: int;
+}
+
+struct PtRun {
+    passed: int;
+    failed: int;
+    failed_names: [str];
+}
+
+fn pt_check(cases: [Case], gots: [int]) -> PtRun {
+    let mut passed: int = 0;
+    let mut failed: int = 0;
+    let mut names: [str] = [];
+    let mut i: int = 0;
+    while i < len(cases) {
+        if i < len(gots) {
+            if gots[i] == cases[i].want {
+                passed = passed + 1;
+            } else {
+                failed = failed + 1;
+                push(names, cases[i].name);
+            }
+        } else {
+            failed = failed + 1;
+            push(names, cases[i].name);
+        }
+        i = i + 1;
+    }
+    let mut j: int = len(cases);
+    while j < len(gots) {
+        failed = failed + 1;
+        push(names, "?");
+        j = j + 1;
+    }
+    return PtRun { passed: passed, failed: failed, failed_names: names };
+}

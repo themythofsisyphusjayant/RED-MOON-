@@ -880,3 +880,38 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   170 + 20 = 190; 35 - 7 = 28; 295 - 13 = 282; 330 - 20 = 310
   (190 + 28 + 282 = 500). Next: sprint batch 7, same libs-only rule,
   target 20/day toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 7 (21 Nov 2026, same day, LIBS ONLY): 20 items,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121g.py (80/80 PASS) with an
+  independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch7/replica_20261121g.py):
+  iter.fg (#75 iterator protocol over [int]), fsm.fg (#79 state
+  machines, explicit transition table), schedpol.fg (#90 priority /
+  EDF / lottery picks), elf.fg (#95 ELF64 header parsing),
+  ipv6.fg (#216 parse / expand / compress), fmtcrc.fg (#237
+  "len:payload:crc" records, CRC32 over ASCII bytes), cancel.fg
+  (#248 cooperative cancellation tokens), sema.fg (#256 counting
+  permits), deadlock.fg (#258 wait-for-graph cycle detection),
+  bpstrat.fg (#275 drop_new / drop_oldest / keep_latest),
+  timerwheel.fg (#279 due-tick firing), paramtest.fg (#308
+  table-driven cases), doubles.fg (#309 spy call recording),
+  flaky.fg (#313 "name:pass/fail" history, flaky = both outcomes),
+  contract.fg (#315 method/path/required-field contracts),
+  depcheck.fg (#330 exact (name, version) vulnerability audit),
+  license.fg (#331 allowed-license enforcement), tasks.fg (#337
+  Kahn topological order + ready sets), flags.fg (#338 named
+  on/off switches), lint.fg (#351 flip — already in the tree,
+  verified via the existing lint_demo.fg). No #42/#43/#53 work
+  (#42 resolved: helper-function slice). Skipped per brief:
+  #273, #129, #302 (need function values); #122/#164 not flipped
+  (known stale notes). #181/#187/#188/#189/#190 not buildable in
+  pure Qasida (no mkdir/readdir/rename builtins exist).
+  Counts after sprint batch 7: HAVE 210, PARTIAL 26, GAP 264, to build
+  290. Arithmetic from sprint batch 6 (HAVE 190, PARTIAL 28, GAP 282,
+  to build 310): 18 GAP-to-HAVE + 2 PARTIAL-to-HAVE = 20 flips;
+  190 + 20 = 210; 28 - 2 = 26; 282 - 18 = 264; 310 - 20 = 290
+  (210 + 26 + 264 = 500). This crosses the sprint's ~211 target a
+  day early (HAVE 210 of 500 = 42%); the target was an estimate,
+  the running count is the honest measure. Next: sprint batch 8,
+  same libs-only rule, target 20/day toward HAVE ~211 by 27 Nov.

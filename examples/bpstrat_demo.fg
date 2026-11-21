@@ -1,0 +1,22 @@
+import "bpstrat.fg";
+
+fn main() {
+    let q: BpQ = bp_new(2);
+    let r1: BpRes = bp_push(q, 1, 0);
+    println(r1.ok);
+    let r2: BpRes = bp_push(r1.q, 2, 0);
+    println(r2.ok);
+    println(bp_len(r2.q));
+    let r3: BpRes = bp_push(r2.q, 3, 0);
+    println(r3.ok);
+    println(bp_len(r3.q));
+    println(bp_front(r3.q));
+    let r4: BpRes = bp_push(r3.q, 3, 1);
+    println(r4.ok);
+    println(bp_front(r4.q));
+    println(bp_len(r4.q));
+    let r5: BpRes = bp_push(r4.q, 4, 2);
+    println(r5.ok);
+    println(bp_len(r5.q));
+    println(bp_front(r5.q));
+}

@@ -1,0 +1,13 @@
+import "doubles.fg";
+
+fn main() {
+    let mut s: Spy = spy_new();
+    s = spy_call(s, "get", "x");
+    s = spy_call(s, "set", "y");
+    s = spy_call(s, "get", "z");
+    println(spy_count(s));
+    println(spy_called(s, "get"));
+    println(spy_called(s, "del"));
+    println(spy_count_named(s, "get"));
+    println(spy_arg(s, 1));
+}

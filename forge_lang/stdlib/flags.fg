@@ -1,0 +1,64 @@
+// Qasida — feature flags (Top-500 #338).
+// Import with: import "flags.fg";
+// A flag registry: named on/off switches as a plain value.
+// set() returns a new registry (rebind it); unknown flags
+// read as off; enabled() lists the on flags in insertion
+// order. There is no persistence and no environment lookup
+// in v1 — the caller owns where flags come from.
+// v1 limits: boolean flags only, no rollout percentages,
+// no per-user targeting.
+
+struct Flag {
+    name: str;
+    enabled: bool;
+}
+
+struct Flags {
+    flags: [Flag];
+}
+
+fn fl_new() -> Flags {
+    return Flags { flags: [] };
+}
+
+fn fl_set(f: Flags, name: str, on: bool) -> Flags {
+    let mut out: [Flag] = [];
+    let mut seen: bool = false;
+    let mut i: int = 0;
+    while i < len(f.flags) {
+        if f.flags[i].name == name {
+            push(out, Flag { name: name, enabled: on });
+            seen = true;
+        } else {
+            push(out, f.flags[i]);
+        }
+        i = i + 1;
+    }
+    if !seen {
+        push(out, Flag { name: name, enabled: on });
+    }
+    return Flags { flags: out };
+}
+
+fn fl_is_on(f: Flags, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(f.flags) {
+        if f.flags[i].name == name {
+            return f.flags[i].enabled;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn fl_enabled(f: Flags) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(f.flags) {
+        if f.flags[i].enabled {
+            push(out, f.flags[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}

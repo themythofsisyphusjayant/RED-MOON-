@@ -1,0 +1,12 @@
+import "fmtcrc.fg";
+
+fn main() {
+    let w: str = fc_write(["hello", "world"]);
+    print(w);
+    let r: FcRead = fc_read(w);
+    println(r.ok);
+    println(r.items[0]);
+    println(r.items[1]);
+    let bad: FcRead = fc_read("5:hello:00000000\n");
+    println(bad.ok);
+}

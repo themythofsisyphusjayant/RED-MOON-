@@ -1,0 +1,17 @@
+import "timerwheel.fg";
+
+fn main() {
+    let mut w: Wheel = tw_new();
+    w = tw_add(w, 1, 10);
+    w = tw_add(w, 2, 20);
+    w = tw_add(w, 3, 15);
+    let d1: TwDue = tw_tick(w, 12);
+    println(len(d1.due));
+    println(d1.due[0]);
+    println(tw_pending(d1.wheel));
+    let d2: TwDue = tw_tick(d1.wheel, 20);
+    println(len(d2.due));
+    println(d2.due[0]);
+    println(d2.due[1]);
+    println(tw_pending(d2.wheel));
+}

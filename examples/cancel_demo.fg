@@ -1,0 +1,32 @@
+import "cancel.fg";
+
+fn main() {
+    let c: Cancel = cx_new();
+    println(cx_is_cancelled(c));
+    let c2: Cancel = cx_cancel(c);
+    println(cx_is_cancelled(c2));
+    println(cx_run(cx_new(), 5));
+    println(cx_run(cx_cancel(cx_new()), 5));
+    let mut done: int = 0;
+    let mut i: int = 0;
+    let live: Cancel = cx_new();
+    while i < 10 {
+        if cx_is_cancelled(live) {
+            break;
+        }
+        done = done + 1;
+        i = i + 1;
+    }
+    println(done);
+    let dead: Cancel = cx_cancel(cx_new());
+    done = 0;
+    i = 0;
+    while i < 10 {
+        if cx_is_cancelled(dead) {
+            break;
+        }
+        done = done + 1;
+        i = i + 1;
+    }
+    println(done);
+}

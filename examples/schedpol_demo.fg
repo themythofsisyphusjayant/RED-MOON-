@@ -1,0 +1,14 @@
+import "schedpol.fg";
+
+fn main() {
+    let mut tasks: [Task] = [];
+    push(tasks, Task { id: 1, prio: 3, deadline: 50 });
+    push(tasks, Task { id: 2, prio: 5, deadline: 30 });
+    push(tasks, Task { id: 3, prio: 5, deadline: 20 });
+    println(sp_highest(tasks));
+    println(sp_earliest(tasks));
+    println(sp_lottery(tasks, 42));
+    let empty: [Task] = [];
+    println(sp_highest(empty));
+    println(sp_earliest(empty));
+}

@@ -1,0 +1,62 @@
+// Qasida — ELF header parsing (Top-500 #95).
+// Import with: import "elf.fg";
+// Reads the ELF64 header out of a [int] byte array: magic,
+// class (1=32-bit, 2=64-bit), data (1=little-endian,
+// 2=big-endian), type, machine and entry point. All fields
+// are little-endian reads; big-endian files report their
+// data byte but their multi-byte fields are not decoded.
+// Out-of-range reads return 0 / false, never a trap.
+// v1 limits: header only — no section or program headers,
+// no loading (that is the OS track's job).
+
+fn elf_u16le(b: [int], off: int) -> int {
+    return b[off] + 256 * b[off + 1];
+}
+
+fn elf_u32le(b: [int], off: int) -> int {
+    return b[off] + 256 * b[off + 1] + 65536 * b[off + 2] + 16777216 * b[off + 3];
+}
+
+fn elf_is_elf(b: [int]) -> bool {
+    if len(b) < 4 {
+        return false;
+    }
+    return b[0] == 127 && b[1] == 69 && b[2] == 76 && b[3] == 70;
+}
+
+fn elf_class(b: [int]) -> int {
+    if len(b) < 5 {
+        return 0;
+    }
+    return b[4];
+}
+
+fn elf_data(b: [int]) -> int {
+    if len(b) < 6 {
+        return 0;
+    }
+    return b[5];
+}
+
+fn elf_type(b: [int]) -> int {
+    if len(b) < 18 {
+        return 0;
+    }
+    return elf_u16le(b, 16);
+}
+
+fn elf_machine(b: [int]) -> int {
+    if len(b) < 20 {
+        return 0;
+    }
+    return elf_u16le(b, 18);
+}
+
+fn elf_entry(b: [int]) -> int {
+    if len(b) < 32 {
+        return 0;
+    }
+    let lo: int = elf_u32le(b, 24);
+    let hi: int = elf_u32le(b, 28);
+    return lo + 4294967296 * hi;
+}

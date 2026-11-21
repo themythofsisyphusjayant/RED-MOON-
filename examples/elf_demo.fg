@@ -1,0 +1,19 @@
+import "elf.fg";
+
+fn main() {
+    let hdr: [int] = [127, 69, 76, 70, 2, 1, 1, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0,
+                      2, 0, 243, 0, 1, 0, 0, 0,
+                      0, 0, 1, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0];
+    println(elf_is_elf(hdr));
+    println(elf_class(hdr));
+    println(elf_data(hdr));
+    println(elf_type(hdr));
+    println(elf_machine(hdr));
+    println(elf_entry(hdr));
+    println(elf_is_elf([1, 2, 3]));
+}

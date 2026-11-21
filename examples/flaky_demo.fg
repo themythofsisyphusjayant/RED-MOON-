@@ -1,0 +1,17 @@
+import "flaky.fg";
+
+fn main() {
+    let hist: [str] = ["a:pass", "a:fail", "b:pass", "b:pass", "c:fail"];
+    let saved: bool = fl_save("/tmp/flaky_demo_g.txt", hist);
+    if !saved {
+        println("save failed");
+    }
+    let back: [str] = fl_load("/tmp/flaky_demo_g.txt");
+    println(len(back));
+    println(fl_is_flaky(back, "a"));
+    println(fl_is_flaky(back, "b"));
+    println(fl_is_flaky(back, "c"));
+    let fl: [str] = fl_flaky_names(back);
+    println(len(fl));
+    println(fl[0]);
+}

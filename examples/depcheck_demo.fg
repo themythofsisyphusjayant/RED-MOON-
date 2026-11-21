@@ -1,0 +1,18 @@
+import "depcheck.fg";
+
+fn main() {
+    let mut deps: [Dep] = [];
+    push(deps, Dep { name: "zlib", version: "1.3.0" });
+    push(deps, Dep { name: "foo", version: "2.0.0" });
+    push(deps, Dep { name: "bar", version: "1.0.0" });
+    let mut feed: [Vuln] = [];
+    push(feed, Vuln { name: "zlib", version: "1.3.0" });
+    push(feed, Vuln { name: "bar", version: "2.0.0" });
+    let bad: [Dep] = dc_audit(deps, feed);
+    println(len(bad));
+    println(bad[0].name);
+    println(bad[0].version);
+    let mut clean: [Dep] = [];
+    push(clean, Dep { name: "foo", version: "2.0.0" });
+    println(dc_count(clean, feed));
+}

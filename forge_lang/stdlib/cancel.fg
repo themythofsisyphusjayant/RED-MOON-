@@ -1,0 +1,38 @@
+// Qasida — cancellation tokens (Top-500 #248).
+// Import with: import "cancel.fg";
+// Cooperative cancellation: a token is a plain value, so a
+// task copies it, cancels its own copy, and the caller's
+// token is untouched — the demo cancels by rebinding.
+// run() steps a loop up to n times and stops early when the
+// token is cancelled. There is no preemption and no async
+// runtime behind this; the token is only a shared flag.
+// v1 limits: no deadline, no linked tokens.
+
+struct Cancel {
+    cancelled: bool;
+}
+
+fn cx_new() -> Cancel {
+    return Cancel { cancelled: false };
+}
+
+fn cx_cancel(c: Cancel) -> Cancel {
+    return Cancel { cancelled: true };
+}
+
+fn cx_is_cancelled(c: Cancel) -> bool {
+    return c.cancelled;
+}
+
+fn cx_run(c: Cancel, n: int) -> int {
+    let mut done: int = 0;
+    let mut i: int = 0;
+    while i < n {
+        if c.cancelled {
+            break;
+        }
+        done = done + 1;
+        i = i + 1;
+    }
+    return done;
+}

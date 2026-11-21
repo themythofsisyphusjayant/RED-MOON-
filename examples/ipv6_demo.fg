@@ -1,0 +1,13 @@
+import "ipv6.fg";
+
+fn main() {
+    let g: [int] = ip6_parse("2001:db8::1");
+    println(g[0]);
+    println(g[1]);
+    println(g[7]);
+    println(ip6_expand(g));
+    println(ip6_compress(g));
+    println(ip6_is_valid("2001:db8::1"));
+    println(ip6_is_valid("2001:db8::1::2"));
+    println(ip6_is_valid("gggg::1"));
+}

@@ -1,0 +1,98 @@
+// Qasida — deadlock detection (Top-500 #258).
+// Import with: import "deadlock.fg";
+// A wait-for graph: edge (a -> b) means task a waits on a
+// lock held by task b. A cycle is a deadlock. Detection is
+// depth-first search with a three-colour mark (0 unvisited,
+// 1 on the current path, 2 done); a self-edge is a cycle.
+// v1 limits: detection only — no prevention, no lock-order
+// enforcement, no runtime hook (there is no lock primitive
+// to hook yet, item 243, still GAP).
+
+struct Edge {
+    from: int;
+    to: int;
+}
+
+struct Wfg {
+    edges: [Edge];
+}
+
+fn dl_new() -> Wfg {
+    return Wfg { edges: [] };
+}
+
+fn dl_add(g: Wfg, from: int, to: int) -> Wfg {
+    let mut edges: [Edge] = [];
+    let mut i: int = 0;
+    while i < len(g.edges) {
+        push(edges, g.edges[i]);
+        i = i + 1;
+    }
+    push(edges, Edge { from: from, to: to });
+    return Wfg { edges: edges };
+}
+
+fn dl_edges(g: Wfg) -> int {
+    return len(g.edges);
+}
+
+fn dl_mark(marks: [int], node: int, v: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(marks) {
+        push(out, marks[i]);
+        i = i + 1;
+    }
+    while len(out) <= node {
+        push(out, 0);
+    }
+    out[node] = v;
+    return out;
+}
+
+fn dl_get(marks: [int], node: int) -> int {
+    if node < len(marks) {
+        return marks[node];
+    }
+    return 0;
+}
+
+fn dl_dfs(g: Wfg, node: int, marks: [int]) -> ([int], bool) {
+    let mut m: [int] = dl_mark(marks, node, 1);
+    let mut i: int = 0;
+    while i < len(g.edges) {
+        if g.edges[i].from == node {
+            let nxt: int = g.edges[i].to;
+            if dl_get(m, nxt) == 1 {
+                return (m, true);
+            }
+            if dl_get(m, nxt) == 0 {
+                let res: ([int], bool) = dl_dfs(g, nxt, m);
+                m = res.0;
+                if res.1 {
+                    return (m, true);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    m = dl_mark(m, node, 2);
+    return (m, false);
+}
+
+fn dl_has_cycle(g: Wfg) -> bool {
+    let mut marks: [int] = [];
+    let mut i: int = 0;
+    while i < len(g.edges) {
+        let node: int = g.edges[i].from;
+        if dl_get(marks, node) == 0 {
+            let res: ([int], bool) = dl_dfs(g, node, marks);
+            marks = res.0;
+            if res.1 {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}

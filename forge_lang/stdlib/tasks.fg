@@ -1,0 +1,89 @@
+// Qasida — task runner files (Top-500 #337).
+// Import with: import "tasks.fg";
+// Task graphs: each task names its dependencies; order()
+// returns a topological run order (Kahn's algorithm,
+// definition order breaks ties) and ready() lists the
+// tasks runnable once a set of names is done. A cycle
+// stops order() at the tasks it could place — the rest
+// are silently dropped, so callers should compare lengths.
+// v1 limits: ordering only — no execution, no shelling
+// out, no file watching.
+
+struct TaskDef {
+    name: str;
+    deps: [str];
+}
+
+fn tk_deps_done(defs: [TaskDef], idx: int, done: [str]) -> bool {
+    let mut j: int = 0;
+    while j < len(defs[idx].deps) {
+        let mut found: bool = false;
+        let mut k: int = 0;
+        while k < len(done) {
+            if done[k] == defs[idx].deps[j] {
+                found = true;
+            }
+            k = k + 1;
+        }
+        if !found {
+            return false;
+        }
+        j = j + 1;
+    }
+    return true;
+}
+
+fn tk_order(defs: [TaskDef]) -> [str] {
+    let mut done: [str] = [];
+    let mut order: [str] = [];
+    let mut placed: int = 0;
+    while placed < len(defs) {
+        let mut moved: bool = false;
+        let mut i: int = 0;
+        while i < len(defs) {
+            let mut done_already: bool = false;
+            let mut k: int = 0;
+            while k < len(done) {
+                if done[k] == defs[i].name {
+                    done_already = true;
+                }
+                k = k + 1;
+            }
+            if !done_already {
+                if tk_deps_done(defs, i, done) {
+                    push(done, defs[i].name);
+                    push(order, defs[i].name);
+                    placed = placed + 1;
+                    moved = true;
+                }
+            }
+            i = i + 1;
+        }
+        if !moved {
+            break;
+        }
+    }
+    return order;
+}
+
+fn tk_ready(defs: [TaskDef], done: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(defs) {
+        let mut done_already: bool = false;
+        let mut k: int = 0;
+        while k < len(done) {
+            if done[k] == defs[i].name {
+                done_already = true;
+            }
+            k = k + 1;
+        }
+        if !done_already {
+            if tk_deps_done(defs, i, done) {
+                push(out, defs[i].name);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}

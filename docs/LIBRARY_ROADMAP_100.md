@@ -336,3 +336,18 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   (redaction + zeroing), perms.fg (sandbox flags + path roots),
   lock.fg (lockfile hashes), vuln.fg (vulnerability feed),
   safedeser.fg (length + depth limits before parse).
+
+- Sprint batch 7 (21 Nov 2026, same day, LIBS ONLY): 20 items,
+  all verified 4/4: iter.fg (iterator protocol), fsm.fg (state
+  machines), schedpol.fg (priority / EDF / lottery picks), elf.fg
+  (ELF64 header parsing), ipv6.fg (parse / expand / compress),
+  fmtcrc.fg ("len:payload:crc" records), cancel.fg (cancellation
+  tokens), sema.fg (counting permits), deadlock.fg (wait-for-graph
+  cycle detection), bpstrat.fg (drop_new / drop_oldest /
+  keep_latest), timerwheel.fg (due-tick firing), paramtest.fg
+  (table-driven cases), doubles.fg (spy call recording), flaky.fg
+  (flaky = both outcomes in history), contract.fg (method/path/
+  required-field contracts), depcheck.fg (exact (name, version)
+  vulnerability audit), license.fg (allowed-license enforcement),
+  tasks.fg (Kahn topological order + ready sets), flags.fg (named
+  on/off switches), lint.fg (#351 flip — already in the tree).
