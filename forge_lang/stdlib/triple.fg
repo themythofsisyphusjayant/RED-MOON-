@@ -1,0 +1,51 @@
+// Qasida — cross-compilation triples (Top-500 #326).
+// Import with: import "triple.fg";
+// Triples and sysroots, on top of the targets that
+// already exist (native, WASM, big32, CUDA): a triple
+// is arch-vendor-os, where the os part may itself hold
+// dashes ("linux-gnu"). tr_arch()/tr_vendor()/tr_os()
+// split one out, tr_known() checks it against the
+// supported list, and tr_is_host() compares it with
+// the host triple.
+// v1 limits: known-triple list only (no sysroot paths
+// yet — that is the remaining half of this item), no
+// parsing of the os into kernel plus ABI parts.
+
+fn tr_parts(triple: str) -> [str] {
+    return split(triple, "-");
+}
+
+fn tr_arch(triple: str) -> str {
+    return tr_parts(triple)[0];
+}
+
+fn tr_vendor(triple: str) -> str {
+    return tr_parts(triple)[1];
+}
+
+fn tr_os(triple: str) -> str {
+    let parts: [str] = tr_parts(triple);
+    let mut out: str = parts[2];
+    let mut i: int = 3;
+    while i < len(parts) {
+        out = out + "-" + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn tr_known(triple: str) -> bool {
+    let known: [str] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "wasm32-unknown-unknown", "riscv64-unknown-none", "x86_64-pc-windows-msvc"];
+    let mut i: int = 0;
+    while i < len(known) {
+        if known[i] == triple {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn tr_is_host(triple: str, host: str) -> bool {
+    return triple == host;
+}

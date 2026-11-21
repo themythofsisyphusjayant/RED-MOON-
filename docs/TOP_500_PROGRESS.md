@@ -950,3 +950,47 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   (230 + 22 + 248 = 500). HAVE 230 of 500 = 46%. Next: sprint batch 9,
   same libs-only rule, target 20/day (the ~211 target was passed a
   day early; the running count is the honest measure).
+- Sprint batch 9 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121i.py (84/84 PASS — 21
+  demos: the 20 flips plus triple.fg, which advances #326 without
+  closing it) with an independent Python replica 21/21 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch9/replica_20261121i.py):
+  srcgen.fg (#468 annotation-driven builder generation from Qasida
+  source, distinct from #477 schemagen and from #463 derive
+  attributes), genspec.fg (#467 per-type specialized names),
+  typemeta.fg (#469 recursive type-level evaluator: add/sub/mul,
+  len, if, eq), ccpass.fg (#474 substring and max-length passes),
+  astapi.fg (#478 fn/struct/let nodes, find, whole-word rename),
+  typehier.fg (#373 "Trait:Struct" implementor registry),
+  extractfn.fg (#375 fn text + call-site rendering), cov.fg (#305
+  line/branch coverage, once-only hits), mock.fg (#306 flip —
+  already in the tree since 2 Nov 2026 as mock-lite, verified via
+  the existing mock_demo.fg), itharness.fg (#310 setup-aware
+  cases, one-line summary), muttest.fg (#314 one-operator
+  evaluator, operator-swap mutants, kill rate), loadtest.fg
+  (#316 users/ramp/duration/rps plan), golden.fg (#318 golden
+  vs actual line diffs), doctest.fg (#320 "/// >>> expr"
+  extraction + checks), workspace.fg (#324 member registry +
+  "from->to" edges), buildprof.fg (#325 dev -O0/-g/--checks vs
+  release -O3), triple.fg (#326 triples landed: arch-vendor-os
+  parse, known list, host check — sysroots still missing, so
+  #326 stays PARTIAL and does NOT count as a flip), incr.fg
+  (#327 FNV-1a fingerprints, stale check, rebuild list),
+  buildcache.fg (#328 key-list cache, hit rate), vendor.fg
+  (#329 vendor/<name>-<version> paths, missing list),
+  unused.fg (#347 top-level let bindings with no whole-word use).
+  One fix during verification: golden_demo.fg used `short` as a
+  variable name, which is a C keyword — renamed to missing_one;
+  the rerun went 84/84. No #42/#43/#53 work (#42 resolved:
+  helper-function slice). Skipped per brief: #273, #129, #302
+  (need function values); #122/#164 not flipped (known stale
+  notes). #181/#187/#188/#189/#190 not buildable in pure Qasida
+  (no mkdir/readdir/rename builtins exist).
+  Counts after sprint batch 9: HAVE 250, PARTIAL 22, GAP 228, to build
+  250. Arithmetic from sprint batch 8 (HAVE 230, PARTIAL 22, GAP 248,
+  to build 270): 20 GAP-to-HAVE + 0 PARTIAL-to-HAVE = 20 flips;
+  230 + 20 = 250; 22 - 0 = 22; 248 - 20 = 228; 270 - 20 = 250
+  (250 + 22 + 228 = 500). HAVE 250 of 500 = 50%. Next: sprint batch 10,
+  same libs-only rule, target 20/day (the ~211 target was passed on
+  day 1; the running count is the honest measure).

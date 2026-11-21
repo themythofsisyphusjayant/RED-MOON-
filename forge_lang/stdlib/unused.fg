@@ -1,0 +1,87 @@
+// Qasida — unused-code detection (Top-500 #347).
+// Import with: import "unused.fg";
+// Find defined-but-never-used bindings: uc_defined()
+// collects the names bound by top-level `let` lines,
+// uc_uses_word() answers whether a name occurs as a
+// whole word in a line, and uc_unused() lists the
+// defined names with no use on any other line.
+// v1 limits: top-level `let` lines only (no nested
+// scopes, no function parameters, no struct fields),
+// whole-word matching only (a use inside a longer
+// name does not count).
+
+struct UCDef {
+    name: str;
+    line: int;
+}
+
+fn uc_is_ident(c: str) -> bool {
+    let letters: str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+    let mut j: int = 0;
+    while j < len(letters) {
+        if substr(letters, j, 1) == c {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+fn uc_name_until(line: str, start: int) -> str {
+    let mut out: str = "";
+    let mut i: int = start;
+    while i < len(line) && uc_is_ident(substr(line, i, 1)) {
+        out = out + substr(line, i, 1);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn uc_uses_word(line: str, name: str) -> bool {
+    let mut i: int = 0;
+    while i + len(name) <= len(line) {
+        if substr(line, i, len(name)) == name {
+            let before_ok: bool = i == 0 || !uc_is_ident(substr(line, i - 1, 1));
+            let after_idx: int = i + len(name);
+            let after_ok: bool = after_idx >= len(line) || !uc_is_ident(substr(line, after_idx, 1));
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn uc_defined(lines: [str]) -> [UCDef] {
+    let mut out: [UCDef] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        if starts_with(lines[i], "let ") {
+            push(out, UCDef { name: uc_name_until(lines[i], 4), line: i });
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn uc_unused(lines: [str]) -> [str] {
+    let defs: [UCDef] = uc_defined(lines);
+    let mut out: [str] = [];
+    let mut d: int = 0;
+    while d < len(defs) {
+        let mut used: bool = false;
+        let mut i: int = 0;
+        while i < len(lines) {
+            if i != defs[d].line && uc_uses_word(lines[i], defs[d].name) {
+                used = true;
+            }
+            i = i + 1;
+        }
+        if !used {
+            push(out, defs[d].name);
+        }
+        d = d + 1;
+    }
+    return out;
+}

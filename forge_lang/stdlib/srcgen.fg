@@ -1,0 +1,43 @@
+// Qasida — source generators (Top-500 #468).
+// Import with: import "srcgen.fg";
+// Annotation-driven code generation: a `// @gen builder`
+// marker above a struct generates a builder struct plus
+// with_* setters and a build() that assembles the struct.
+// Distinct from #477 schemagen (which generates structs
+// from .proto schemas): srcgen generates code FROM Qasida
+// source, driven by annotations on the source itself.
+// v1 limits: builder only (no other generators), fields
+// given as "name:type" strings, no default values.
+
+fn sg_builder_name(struct_name: str) -> str {
+    return struct_name + "Builder";
+}
+
+fn sg_field_name(field: str) -> str {
+    let parts: [str] = split(field, ":");
+    return parts[0];
+}
+
+fn sg_field_type(field: str) -> str {
+    let parts: [str] = split(field, ":");
+    return parts[1];
+}
+
+fn sg_builder_text(struct_name: str, fields: [str]) -> str {
+    let mut out: str = "struct " + sg_builder_name(struct_name) + " {\n";
+    let mut i: int = 0;
+    while i < len(fields) {
+        out = out + "    " + sg_field_name(fields[i]) + ": " + sg_field_type(fields[i]) + ";\n";
+        i = i + 1;
+    }
+    out = out + "}";
+    return out;
+}
+
+fn sg_with_name(struct_name: str, field_name: str) -> str {
+    return sg_builder_name(struct_name) + "__with_" + field_name;
+}
+
+fn sg_build_sig(struct_name: str) -> str {
+    return "fn " + sg_builder_name(struct_name) + "__build(b: " + sg_builder_name(struct_name) + ") -> " + struct_name;
+}

@@ -1,0 +1,23 @@
+import "doctest.fg";
+
+fn main() {
+    let lines: [str] = ["/// Adds two numbers.", "/// >>> a+b", "/// >>> a*b", "fn add(a: int, b: int) -> int {"];
+    let ex: [str] = dt_extract(lines);
+    println(len(ex));
+    println(ex[0]);
+    println(ex[1]);
+    println(dt_check("a+b", 7, 3, 4));
+    println(dt_check("a*b", 12, 3, 4));
+    println(dt_check("a-b", 0, 3, 4));
+    let mut passed: int = 0;
+    if dt_check("a+b", 7, 3, 4) {
+        passed = passed + 1;
+    }
+    if dt_check("a*b", 12, 3, 4) {
+        passed = passed + 1;
+    }
+    if dt_check("a-b", 0, 3, 4) {
+        passed = passed + 1;
+    }
+    println(passed);
+}

@@ -1,0 +1,39 @@
+// Qasida — vendoring (Top-500 #329).
+// Import with: import "vendor.fg";
+// Offline dependency copies: every dependency lives
+// under vendor/ as "vendor/<name>-<version>".
+// vd_path() builds that path, vd_missing() lists the
+// dependencies with no vendored copy, and
+// vd_all_vendored() is true when nothing is missing.
+// v1 limits: path bookkeeping only — no downloading,
+// no checksum verification of the vendored copies.
+
+fn vd_path(pkg: str, version: str) -> str {
+    return "vendor/" + pkg + "-" + version;
+}
+
+fn vd_missing(vendored: [str], deps: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(deps) {
+        let parts: [str] = split(deps[i], "-");
+        let want: str = vd_path(parts[0], parts[1]);
+        let mut found: bool = false;
+        let mut j: int = 0;
+        while j < len(vendored) {
+            if vendored[j] == want {
+                found = true;
+            }
+            j = j + 1;
+        }
+        if !found {
+            push(out, deps[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vd_all_vendored(vendored: [str], deps: [str]) -> bool {
+    return len(vd_missing(vendored, deps)) == 0;
+}

@@ -1,0 +1,18 @@
+import "golden.fg";
+
+fn main() {
+    let golden: [str] = ["mov rax, 1", "ret"];
+    let same: [str] = ["mov rax, 1", "ret"];
+    let d0: [str] = gd_compare(golden, same);
+    println(len(d0));
+    println(gd_passed(d0));
+    let changed: [str] = ["mov rax, 2", "ret"];
+    let d1: [str] = gd_compare(golden, changed);
+    println(len(d1));
+    println(d1[0]);
+    println(gd_passed(d1));
+    let missing_one: [str] = ["mov rax, 1"];
+    let d2: [str] = gd_compare(golden, missing_one);
+    println(len(d2));
+    println(d2[0]);
+}

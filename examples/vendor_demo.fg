@@ -1,0 +1,12 @@
+import "vendor.fg";
+
+fn main() {
+    let vendored: [str] = ["vendor/foo-1.0", "vendor/bar-2.3"];
+    let deps: [str] = ["foo-1.0", "bar-2.3", "baz-0.9"];
+    println(vd_path("foo", "1.0"));
+    println(vd_all_vendored(vendored, deps));
+    let missing: [str] = vd_missing(vendored, deps);
+    println(len(missing));
+    println(missing[0]);
+    println(len(vendored));
+}

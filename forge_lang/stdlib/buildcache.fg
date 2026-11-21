@@ -1,0 +1,45 @@
+// Qasida — build caching (Top-500 #328).
+// Import with: import "buildcache.fg";
+// Cached artifacts: the cache is a key list (one key
+// per built artifact). bc_lookup() answers a hit,
+// bc_store() adds a key once (storing twice is a
+// no-op), bc_evict() drops a key, and bc_hit_rate()
+// is the whole-percent hit rate of a run.
+// v1 limits: keys only (no artifact bytes, no
+// eviction policy — the caller decides what to evict),
+// no persistence across runs.
+
+fn bc_lookup(keys: [str], key: str) -> bool {
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn bc_store(keys: [str], key: str) -> [str] {
+    let mut out: [str] = keys;
+    if !bc_lookup(out, key) {
+        push(out, key);
+    }
+    return out;
+}
+
+fn bc_evict(keys: [str], key: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(keys) {
+        if keys[i] != key {
+            push(out, keys[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bc_hit_rate(hits: int, total: int) -> int {
+    return hits * 100 / total;
+}

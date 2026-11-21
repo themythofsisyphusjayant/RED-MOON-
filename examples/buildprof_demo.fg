@@ -1,0 +1,11 @@
+import "buildprof.fg";
+
+fn main() {
+    let dev: BProfile = bp_dev();
+    let rel: BProfile = bp_release();
+    println(bp_flags(dev));
+    println(bp_flags(rel));
+    println(bp_faster(rel, dev));
+    println(dev.opt);
+    println(rel.opt);
+}

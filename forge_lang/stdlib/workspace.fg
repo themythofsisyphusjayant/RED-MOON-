@@ -1,0 +1,55 @@
+// Qasida — workspaces / monorepos (Top-500 #324).
+// Import with: import "workspace.fg";
+// Multi-package repositories: members are (name, path)
+// pairs and dependencies are "from->to" edges.
+// ws_path() resolves a member to its path ("" when the
+// member is not in the workspace), ws_depends() answers
+// one edge, and ws_dependents() lists the members that
+// depend on a given member, in first-seen order.
+// v1 limits: registry only — no manifest parsing, no
+// version resolution across members, no cycle check.
+
+struct WSMember {
+    name: str;
+    path: str;
+}
+
+fn ws_path(members: [WSMember], name: str) -> str {
+    let mut i: int = 0;
+    while i < len(members) {
+        if members[i].name == name {
+            return members[i].path;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn ws_has(members: [WSMember], name: str) -> bool {
+    return ws_path(members, name) != "";
+}
+
+fn ws_depends(deps: [str], from: str, to: str) -> bool {
+    let edge: str = from + "->" + to;
+    let mut i: int = 0;
+    while i < len(deps) {
+        if deps[i] == edge {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn ws_dependents(deps: [str], name: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(deps) {
+        let parts: [str] = split(deps[i], "->");
+        if parts[1] == name {
+            push(out, parts[0]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

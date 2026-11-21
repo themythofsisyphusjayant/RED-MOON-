@@ -1,0 +1,14 @@
+import "genspec.fg";
+
+fn main() {
+    let types: [str] = ["int", "float", "str"];
+    let specs: [str] = gs_spec_names("max", types);
+    println(len(specs));
+    println(specs[0]);
+    println(specs[1]);
+    println(specs[2]);
+    println(gs_has_spec(specs, "max_int"));
+    println(gs_has_spec(specs, "max_bool"));
+    println(gs_path("max", "int", specs));
+    println(gs_path("max", "bool", specs));
+}

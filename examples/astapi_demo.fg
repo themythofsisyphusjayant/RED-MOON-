@@ -1,0 +1,15 @@
+import "astapi.fg";
+
+fn main() {
+    let lines: [str] = ["fn main() {", "let x = add(2, 3);", "println(x);", "}", "struct Tensor {"];
+    let nodes: [ANode] = aa_parse(lines);
+    println(len(nodes));
+    println(aa_format(nodes[0]));
+    println(aa_format(nodes[1]));
+    println(aa_format(nodes[2]));
+    println(aa_find(nodes, "main"));
+    println(aa_find(nodes, "Tensor"));
+    println(aa_find(nodes, "add"));
+    let renamed: [str] = aa_rename(lines, "add", "sum");
+    println(renamed[1]);
+}

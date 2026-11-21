@@ -1,0 +1,79 @@
+// Qasida — custom compiler passes (Top-500 #474).
+// Import with: import "ccpass.fg";
+// User lints and optimizations as data: a pass is a name,
+// a kind ("substr" for a forbidden-substring lint, "len"
+// for a max-line-length lint), its pattern or limit, a
+// message and a severity ("warn" or "error"). cp_run()
+// applies every pass to every line and reports the
+// violations in line order as "severity name: line N:
+// message". cp_count() counts the violations of one
+// severity.
+// v1 limits: substring and length passes only (no AST
+// passes — those need #478's API as input), no auto-fix.
+
+import "fmtstr.fg";
+
+struct CPass {
+    name: str;
+    kind: str;
+    pattern: str;
+    limit: int;
+    message: str;
+    severity: str;
+}
+
+fn cp_contains(hay: str, needle: str) -> bool {
+    if len(needle) == 0 {
+        return true;
+    }
+    if len(needle) > len(hay) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cp_run(passes: [CPass], lines: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut li: int = 0;
+    while li < len(lines) {
+        let mut pi: int = 0;
+        while pi < len(passes) {
+            let p: CPass = passes[pi];
+            let mut hit: bool = false;
+            if p.kind == "substr" {
+                if cp_contains(lines[li], p.pattern) {
+                    hit = true;
+                }
+            } else if p.kind == "len" {
+                if len(lines[li]) > p.limit {
+                    hit = true;
+                }
+            }
+            if hit {
+                push(out, p.severity + " " + p.name + ": line " + fs_int_str(li + 1) + ": " + p.message);
+            }
+            pi = pi + 1;
+        }
+        li = li + 1;
+    }
+    return out;
+}
+
+fn cp_count(violations: [str], severity: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(violations) {
+        if starts_with(violations[i], severity) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}

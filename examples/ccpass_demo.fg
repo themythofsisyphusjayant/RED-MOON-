@@ -1,0 +1,13 @@
+import "ccpass.fg";
+
+fn main() {
+    let passes: [CPass] = [CPass { name: "no-println", kind: "substr", pattern: "println", limit: 0, message: "println in library code", severity: "warn" }, CPass { name: "max-len", kind: "len", pattern: "", limit: 20, message: "line too long", severity: "error" }];
+    let lines: [str] = ["fn add(a: int) -> int {", "    println(a);", "    return a + 111111111111111111111;", "}"];
+    let v: [str] = cp_run(passes, lines);
+    println(len(v));
+    println(v[0]);
+    println(v[1]);
+    println(v[2]);
+    println(cp_count(v, "error"));
+    println(cp_count(v, "warn"));
+}

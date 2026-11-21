@@ -1,0 +1,13 @@
+import "triple.fg";
+
+fn main() {
+    println(tr_arch("aarch64-unknown-linux-gnu"));
+    println(tr_vendor("aarch64-unknown-linux-gnu"));
+    println(tr_os("aarch64-unknown-linux-gnu"));
+    println(tr_known("aarch64-unknown-linux-gnu"));
+    println(tr_is_host("aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"));
+    println(tr_arch("wasm32-unknown-unknown"));
+    println(tr_os("wasm32-unknown-unknown"));
+    println(tr_known("wasm32-unknown-unknown"));
+    println(tr_known("mips-foo-bar"));
+}

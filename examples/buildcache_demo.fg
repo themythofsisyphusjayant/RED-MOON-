@@ -1,0 +1,11 @@
+import "buildcache.fg";
+
+fn main() {
+    let keys: [str] = ["a1", "b2"];
+    println(bc_lookup(keys, "a1"));
+    println(bc_lookup(keys, "c3"));
+    println(len(bc_store(keys, "c3")));
+    println(len(bc_store(keys, "a1")));
+    println(len(bc_evict(bc_store(keys, "c3"), "b2")));
+    println(bc_hit_rate(3, 4));
+}

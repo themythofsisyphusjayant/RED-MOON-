@@ -365,3 +365,22 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   (#436 flip, already in the tree), signrel.fg (keyed signatures),
   docgen2.fg (examples + cross-links), bpstream.fg (backpressured
   streams), typedchan.fg (float + bool channels).
+
+- Sprint batch 9 (21 Nov 2026, same day, LIBS ONLY): 20 flips,
+  all verified 4/4 (84/84 checks, 21 demos): srcgen.fg
+  (annotation-driven builder generation), genspec.fg (per-type
+  specialized names), typemeta.fg (recursive type-level
+  evaluator), ccpass.fg (substring + max-length passes),
+  astapi.fg (fn/struct/let nodes, whole-word rename),
+  typehier.fg ("Trait:Struct" implementor registry),
+  extractfn.fg (fn text + call site), cov.fg (line/branch
+  coverage), mock.fg (#306 flip, mock-lite since 2 Nov 2026),
+  itharness.fg (setup-aware cases), muttest.fg (operator-swap
+  mutants), loadtest.fg (users/ramp/duration/rps plan),
+  golden.fg (golden vs actual diffs), doctest.fg ("/// >>>"
+  extraction + checks), workspace.fg (member registry + edges),
+  buildprof.fg (dev vs release), triple.fg (#326 triples landed,
+  sysroots still missing — stays PARTIAL, not a flip), incr.fg
+  (FNV-1a fingerprints, rebuild list), buildcache.fg (key-list
+  cache), vendor.fg (vendor/<name>-<version> paths), unused.fg
+  (defined-but-never-used lets). HAVE 230 -> 250 (50% of 500).

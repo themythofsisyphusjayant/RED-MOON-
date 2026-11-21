@@ -1,0 +1,9 @@
+import "loadtest.fg";
+
+fn main() {
+    let p: LTPlan = LTPlan { users: 100, ramp_s: 10, dur_s: 60, rps: 2 };
+    println(lt_total(p));
+    println(lt_peak(p));
+    println(lt_ramp_users(p, 5));
+    println(lt_ramp_users(p, 15));
+}

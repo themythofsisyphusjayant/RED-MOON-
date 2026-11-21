@@ -1,0 +1,18 @@
+import "cov.fg";
+
+fn main() {
+    let mut c: Cov = cv_new(10, 4);
+    c = cv_hit_line(c, 1);
+    c = cv_hit_line(c, 2);
+    c = cv_hit_line(c, 3);
+    c = cv_hit_line(c, 5);
+    c = cv_hit_line(c, 5);
+    c = cv_hit_branch(c, 0);
+    c = cv_hit_branch(c, 2);
+    println(cv_line_pct(c));
+    println(cv_branch_pct(c));
+    println(cv_covered_line(c, 3));
+    println(cv_covered_line(c, 4));
+    println(cv_covered_branch(c, 2));
+    println(cv_covered_branch(c, 1));
+}

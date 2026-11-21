@@ -1,0 +1,72 @@
+// Qasida — incremental compilation (Top-500 #327).
+// Import with: import "incr.fg";
+// Rebuild only changed modules: ic_hash() fingerprints
+// a file's contents with FNV-1a (32-bit, from
+// checksum.fg, bytes by printable-ASCII rank as in
+// signrel.fg), ic_stale() is true when a file is new
+// or its fingerprint moved, and ic_rebuild() lists the
+// files that need rebuilding from parallel file, hash
+// and content arrays.
+// v1 limits: content hashes only (no dependency-graph
+// invalidation — a changed header does not rebuild its
+// importers yet), no on-disk cache.
+
+import "checksum.fg";
+import "fmtstr.fg";
+
+fn ic_byte(c: str) -> int {
+    let alpha: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if substr(alpha, j, 1) == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    return 63;
+}
+
+fn ic_bytes(s: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(s) {
+        push(out, ic_byte(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ic_hash(content: str) -> int {
+    return fnv1a_bytes(ic_bytes(content));
+}
+
+fn ic_find(files: [str], file: str) -> int {
+    let mut i: int = 0;
+    while i < len(files) {
+        if files[i] == file {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn ic_stale(files: [str], hashes: [int], file: str, content: str) -> bool {
+    let idx: int = ic_find(files, file);
+    if idx < 0 {
+        return true;
+    }
+    return hashes[idx] != ic_hash(content);
+}
+
+fn ic_rebuild(files: [str], hashes: [int], contents: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(files) {
+        if ic_stale(files, hashes, files[i], contents[i]) {
+            push(out, files[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

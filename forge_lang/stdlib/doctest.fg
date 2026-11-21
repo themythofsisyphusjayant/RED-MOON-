@@ -1,0 +1,66 @@
+// Qasida — doctests (Top-500 #320).
+// Import with: import "doctest.fg";
+// Tests inside doc comments: dt_extract() pulls the
+// "/// >>> expr" lines out of a comment block, and
+// dt_check() evaluates one int expression (the same
+// one-operator form as #314: "a+b", "a-b", "a*b", or a
+// literal, with the bindings a and b) against its
+// expected value.
+// v1 limits: int expressions only, one operator per
+// expression, no setup code between doctests.
+
+fn dt_is_doctest(line: str) -> bool {
+    return starts_with(line, "/// >>> ");
+}
+
+fn dt_extract(lines: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(lines) {
+        if dt_is_doctest(lines[i]) {
+            push(out, substr(lines[i], 8, len(lines[i]) - 8));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn dt_operand(tok: str, a: int, b: int) -> int {
+    if tok == "a" {
+        return a;
+    }
+    if tok == "b" {
+        return b;
+    }
+    return parse_int(tok);
+}
+
+fn dt_eval(expr: str, a: int, b: int) -> int {
+    let mut op: int = -1;
+    let mut opc: str = "";
+    let mut i: int = 0;
+    while i < len(expr) && op < 0 {
+        let c: str = substr(expr, i, 1);
+        if c == "+" || c == "-" || c == "*" {
+            op = i;
+            opc = c;
+        }
+        i = i + 1;
+    }
+    if op < 0 {
+        return dt_operand(expr, a, b);
+    }
+    let l: int = dt_operand(substr(expr, 0, op), a, b);
+    let r: int = dt_operand(substr(expr, op + 1, len(expr) - op - 1), a, b);
+    if opc == "+" {
+        return l + r;
+    }
+    if opc == "-" {
+        return l - r;
+    }
+    return l * r;
+}
+
+fn dt_check(expr: str, expected: int, a: int, b: int) -> bool {
+    return dt_eval(expr, a, b) == expected;
+}

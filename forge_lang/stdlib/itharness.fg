@@ -1,0 +1,50 @@
+// Qasida — integration test harness (Top-500 #310).
+// Import with: import "itharness.fg";
+// Multi-process tests, orchestrated: each case records
+// whether its setup succeeded, whether it passed, and
+// how long it took. A case counts as passed only when
+// setup AND the test both succeeded — a setup failure
+// fails the case even if the test body would have
+// passed. ih_summary() renders the one-line report.
+// v1 limits: orchestration and reporting only — the
+// harness does not spawn processes itself (use the
+// language's spawn for that), no retries, no sharding.
+
+import "fmtstr.fg";
+
+struct IHCase {
+    name: str;
+    setup_ok: bool;
+    passed: bool;
+    ms: int;
+}
+
+fn ih_passed(cases: [IHCase]) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(cases) {
+        if cases[i].setup_ok && cases[i].passed {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ih_failed(cases: [IHCase]) -> int {
+    return len(cases) - ih_passed(cases);
+}
+
+fn ih_total_ms(cases: [IHCase]) -> int {
+    let mut t: int = 0;
+    let mut i: int = 0;
+    while i < len(cases) {
+        t = t + cases[i].ms;
+        i = i + 1;
+    }
+    return t;
+}
+
+fn ih_summary(cases: [IHCase]) -> str {
+    return fs_int_str(ih_passed(cases)) + " passed, " + fs_int_str(ih_failed(cases)) + " failed, " + fs_int_str(ih_total_ms(cases)) + "ms";
+}

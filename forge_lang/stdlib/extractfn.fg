@@ -1,0 +1,28 @@
+// Qasida — extract-function refactoring (Top-500 #375).
+// Import with: import "extractfn.fg";
+// Turn a block into a function: ef_fn_text() renders the
+// extracted function (name, "name: type" params, return
+// type, indented body lines) and ef_call() renders the
+// call site that replaces the block.
+// v1 limits: text generation only — no free-variable
+// analysis (the caller supplies the params), no
+// automatic rewriting of the original block.
+
+fn ef_param_list(params: [str]) -> str {
+    return join(params, ", ");
+}
+
+fn ef_fn_text(name: str, params: [str], ret: str, body: [str]) -> str {
+    let mut out: str = "fn " + name + "(" + ef_param_list(params) + ") -> " + ret + " {\n";
+    let mut i: int = 0;
+    while i < len(body) {
+        out = out + "    " + body[i] + "\n";
+        i = i + 1;
+    }
+    out = out + "}";
+    return out;
+}
+
+fn ef_call(name: str, args: [str]) -> str {
+    return name + "(" + join(args, ", ") + ")";
+}

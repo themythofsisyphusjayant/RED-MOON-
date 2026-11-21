@@ -1,0 +1,47 @@
+// Qasida — type hierarchy (Top-500 #373).
+// Import with: import "typehier.fg";
+// Interface implementors: the registry records which
+// structs implement which traits as "Trait:Struct"
+// pairs. th_implementors() lists a trait's structs in
+// first-seen order, th_implements() answers one pair,
+// and th_traits_of() lists a struct's traits.
+// v1 limits: registry only — no checking that a struct
+// really has the trait's methods, no trait inheritance.
+
+fn th_implementors(impls: [str], trait_name: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(impls) {
+        let parts: [str] = split(impls[i], ":");
+        if parts[0] == trait_name {
+            push(out, parts[1]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn th_implements(impls: [str], struct_name: str, trait_name: str) -> bool {
+    let imps: [str] = th_implementors(impls, trait_name);
+    let mut i: int = 0;
+    while i < len(imps) {
+        if imps[i] == struct_name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn th_traits_of(impls: [str], struct_name: str) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(impls) {
+        let parts: [str] = split(impls[i], ":");
+        if parts[1] == struct_name {
+            push(out, parts[0]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

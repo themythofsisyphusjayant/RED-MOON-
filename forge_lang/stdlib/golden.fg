@@ -1,0 +1,37 @@
+// Qasida — golden-file codegen tests (Top-500 #318).
+// Import with: import "golden.fg";
+// Expected assembly snapshots: gd_compare() diffs the
+// actual output lines against the golden lines and
+// returns one diff string per mismatch — "line N:
+// expected 'x' got 'y'", "line N: missing 'x'", or
+// "line N: extra 'y'". gd_passed() is true when there
+// are no diffs at all.
+// v1 limits: exact line equality only (no wildcards,
+// no whitespace normalization), first diff is just
+// diffs[0].
+
+import "fmtstr.fg";
+
+fn gd_compare(golden: [str], actual: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut n: int = len(golden);
+    if len(actual) > n {
+        n = len(actual);
+    }
+    let mut i: int = 0;
+    while i < n {
+        if i >= len(golden) {
+            push(out, "line " + fs_int_str(i + 1) + ": extra '" + actual[i] + "'");
+        } else if i >= len(actual) {
+            push(out, "line " + fs_int_str(i + 1) + ": missing '" + golden[i] + "'");
+        } else if golden[i] != actual[i] {
+            push(out, "line " + fs_int_str(i + 1) + ": expected '" + golden[i] + "' got '" + actual[i] + "'");
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn gd_passed(diffs: [str]) -> bool {
+    return len(diffs) == 0;
+}

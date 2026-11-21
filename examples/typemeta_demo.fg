@@ -1,0 +1,13 @@
+import "typemeta.fg";
+
+fn main() {
+    println(tm_eval("add(2,3)"));
+    println(tm_eval("mul(4,5)"));
+    println(tm_eval("sub(10,4)"));
+    println(tm_eval("len([int,float,bool,str])"));
+    println(tm_eval("if(true,int,str)"));
+    println(tm_eval("if(false,int,str)"));
+    println(tm_eval("add(mul(2,3),4)"));
+    println(tm_eval("eq(int,int)"));
+    println(tm_eval("eq(int,str)"));
+}

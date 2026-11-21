@@ -1,0 +1,32 @@
+// Qasida — load testing (Top-500 #316).
+// Import with: import "loadtest.fg";
+// HTTP load generation, planned as data: a plan holds
+// the virtual-user count, the ramp time, the duration
+// and the requests per second per user. lt_total() is
+// the requests the plan generates, lt_peak() the peak
+// request rate, and lt_ramp_users() the users live at
+// second t of a linear ramp (capped at the full count).
+// v1 limits: planning only — no requests are actually
+// sent (that needs the HTTP client), linear ramp only.
+
+struct LTPlan {
+    users: int;
+    ramp_s: int;
+    dur_s: int;
+    rps: int;
+}
+
+fn lt_total(p: LTPlan) -> int {
+    return p.users * p.rps * p.dur_s;
+}
+
+fn lt_peak(p: LTPlan) -> int {
+    return p.users * p.rps;
+}
+
+fn lt_ramp_users(p: LTPlan, t: int) -> int {
+    if t >= p.ramp_s {
+        return p.users;
+    }
+    return p.users * t / p.ramp_s;
+}

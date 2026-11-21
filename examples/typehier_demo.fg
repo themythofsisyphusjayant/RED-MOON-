@@ -1,0 +1,16 @@
+import "typehier.fg";
+
+fn main() {
+    let impls: [str] = ["Display:Point", "Display:User", "Eq:Point", "Clone:User"];
+    let disp: [str] = th_implementors(impls, "Display");
+    println(len(disp));
+    println(disp[0]);
+    println(disp[1]);
+    println(th_implements(impls, "Point", "Display"));
+    println(th_implements(impls, "User", "Eq"));
+    let ut: [str] = th_traits_of(impls, "User");
+    println(len(ut));
+    println(ut[0]);
+    println(ut[1]);
+    println(len(th_implementors(impls, "Hash")));
+}

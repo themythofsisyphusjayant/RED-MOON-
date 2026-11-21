@@ -1,0 +1,97 @@
+// Qasida — type-level metaprogramming (Top-500 #469).
+// Import with: import "typemeta.fg";
+// Computation in the type system: tm_eval() evaluates a
+// type-level expression written as text. add/sub/mul work
+// on type-level naturals, len counts the members of a
+// type list, if picks a type by a type-level bool, and eq
+// compares two types. Nested calls compose (the evaluator
+// is recursive), so add(mul(2,3),4) is 10.
+// v1 limits: single expressions only (no let bindings or
+// type-level functions), ints and type names only — no
+// string or float type-level values.
+
+import "fmtstr.fg";
+
+fn tm_index_of(hay: str, needle: str) -> int {
+    if len(needle) == 0 {
+        return 0;
+    }
+    if len(needle) > len(hay) {
+        return -1;
+    }
+    let mut i: int = 0;
+    while i + len(needle) <= len(hay) {
+        if substr(hay, i, len(needle)) == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn tm_split_top(s: str) -> [str] {
+    let mut out: [str] = [];
+    let mut depth: int = 0;
+    let mut cur: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "(" || c == "[" {
+            depth = depth + 1;
+            cur = cur + c;
+        } else if c == ")" || c == "]" {
+            depth = depth - 1;
+            cur = cur + c;
+        } else if c == "," && depth == 0 {
+            push(out, cur);
+            cur = "";
+        } else {
+            cur = cur + c;
+        }
+        i = i + 1;
+    }
+    push(out, cur);
+    return out;
+}
+
+fn tm_eval(expr: str) -> str {
+    let p: int = tm_index_of(expr, "(");
+    if p < 0 {
+        return expr;
+    }
+    let name: str = substr(expr, 0, p);
+    let inner: str = substr(expr, p + 1, len(expr) - p - 2);
+    let args: [str] = tm_split_top(inner);
+    let mut ev: [str] = [];
+    let mut i: int = 0;
+    while i < len(args) {
+        push(ev, tm_eval(args[i]));
+        i = i + 1;
+    }
+    if name == "add" {
+        return fs_int_str(parse_int(ev[0]) + parse_int(ev[1]));
+    }
+    if name == "sub" {
+        return fs_int_str(parse_int(ev[0]) - parse_int(ev[1]));
+    }
+    if name == "mul" {
+        return fs_int_str(parse_int(ev[0]) * parse_int(ev[1]));
+    }
+    if name == "len" {
+        let list: str = substr(ev[0], 1, len(ev[0]) - 2);
+        return fs_int_str(len(split(list, ",")));
+    }
+    if name == "if" {
+        if ev[0] == "true" {
+            return ev[1];
+        }
+        return ev[2];
+    }
+    if name == "eq" {
+        if ev[0] == ev[1] {
+            return "true";
+        }
+        return "false";
+    }
+    return expr;
+}

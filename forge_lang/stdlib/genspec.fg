@@ -1,0 +1,43 @@
+// Qasida — generic specialization (Top-500 #467).
+// Import with: import "genspec.fg";
+// Faster paths for specific types: a generic function
+// `max<T>` gets a concrete copy per instantiated type,
+// named `max_int`, `max_float`, and so on. The registry
+// records which specializations exist; gs_path() answers
+// whether a call site takes the specialized path or falls
+// back to the generic one.
+// v1 limits: naming and registry only — the compiler does
+// not emit the specialized bodies yet; no specialization
+// of generic structs or methods.
+
+fn gs_spec_name(generic_name: str, type_name: str) -> str {
+    return generic_name + "_" + type_name;
+}
+
+fn gs_spec_names(generic_name: str, types: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(types) {
+        push(out, gs_spec_name(generic_name, types[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn gs_has_spec(specs: [str], name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(specs) {
+        if specs[i] == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn gs_path(generic_name: str, type_name: str, specs: [str]) -> str {
+    if gs_has_spec(specs, gs_spec_name(generic_name, type_name)) {
+        return "specialized";
+    }
+    return "generic";
+}

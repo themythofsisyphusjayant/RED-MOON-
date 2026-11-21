@@ -1,0 +1,12 @@
+import "unused.fg";
+
+fn main() {
+    let lines: [str] = ["let x = 5;", "let y = x + 1;", "println(y);", "let z = 9;", "let w = z;"];
+    let defs: [UCDef] = uc_defined(lines);
+    println(len(defs));
+    let un: [str] = uc_unused(lines);
+    println(len(un));
+    println(un[0]);
+    println(uc_uses_word("let y = x + 1;", "x"));
+    println(uc_uses_word("println(y);", "x"));
+}

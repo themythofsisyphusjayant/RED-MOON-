@@ -1,0 +1,14 @@
+import "workspace.fg";
+
+fn main() {
+    let members: [WSMember] = [WSMember { name: "core", path: "crates/core" }, WSMember { name: "cli", path: "crates/cli" }, WSMember { name: "web", path: "crates/web" }];
+    let deps: [str] = ["cli->core", "web->core", "web->cli"];
+    println(ws_path(members, "cli"));
+    println(ws_has(members, "db"));
+    println(ws_depends(deps, "web", "core"));
+    println(ws_depends(deps, "cli", "web"));
+    let d: [str] = ws_dependents(deps, "core");
+    println(len(d));
+    println(d[0]);
+    println(d[1]);
+}

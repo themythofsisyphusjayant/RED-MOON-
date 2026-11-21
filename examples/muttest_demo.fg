@@ -1,0 +1,10 @@
+import "muttest.fg";
+
+fn main() {
+    println(mt_eval("a+b", 3, 4));
+    println(mt_mutate("a+b", "+", "-"));
+    println(mt_killed("a+b", "a-b", 3, 4, 7));
+    println(mt_killed("a+b", "a*b", 3, 4, 7));
+    println(mt_killed("a+b", "a+b", 3, 4, 7));
+    println(mt_score(2, 3));
+}

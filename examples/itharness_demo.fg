@@ -1,0 +1,9 @@
+import "itharness.fg";
+
+fn main() {
+    let cases: [IHCase] = [IHCase { name: "login", setup_ok: true, passed: true, ms: 30 }, IHCase { name: "checkout", setup_ok: true, passed: true, ms: 50 }, IHCase { name: "refund", setup_ok: false, passed: true, ms: 10 }, IHCase { name: "search", setup_ok: true, passed: false, ms: 30 }];
+    println(ih_passed(cases));
+    println(ih_failed(cases));
+    println(ih_total_ms(cases));
+    println(ih_summary(cases));
+}

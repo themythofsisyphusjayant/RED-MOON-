@@ -1,0 +1,13 @@
+import "incr.fg";
+
+fn main() {
+    let files: [str] = ["a.fg", "b.fg"];
+    let hashes: [int] = [ic_hash("fn main() {}"), ic_hash("fn f() { return 1; }")];
+    println(ic_stale(files, hashes, "a.fg", "fn main() {}"));
+    println(ic_stale(files, hashes, "b.fg", "fn f() { return 2; }"));
+    println(ic_stale(files, hashes, "c.fg", "x"));
+    let contents: [str] = ["fn main() {}", "fn f() { return 2; }"];
+    let rb: [str] = ic_rebuild(files, hashes, contents);
+    println(len(rb));
+    println(rb[0]);
+}

@@ -1,0 +1,42 @@
+// Qasida — build profiles: dev and release (Top-500 #325).
+// Import with: import "buildprof.fg";
+// Debug vs optimized builds: a profile holds the
+// optimization level, the debug-info flag and the
+// checked-arithmetic flag. bp_dev() is -O0 with debug
+// info and checks; bp_release() is -O3 with neither.
+// bp_flags() renders the flag string and bp_faster()
+// compares two profiles by optimization level.
+// v1 limits: two fixed profiles only (no custom or
+// per-crate profiles), no link-time or codegen flags.
+
+import "fmtstr.fg";
+
+struct BProfile {
+    name: str;
+    opt: int;
+    debug: bool;
+    checks: bool;
+}
+
+fn bp_dev() -> BProfile {
+    return BProfile { name: "dev", opt: 0, debug: true, checks: true };
+}
+
+fn bp_release() -> BProfile {
+    return BProfile { name: "release", opt: 3, debug: false, checks: false };
+}
+
+fn bp_flags(p: BProfile) -> str {
+    let mut out: str = "-O" + fs_int_str(p.opt);
+    if p.debug {
+        out = out + " -g";
+    }
+    if p.checks {
+        out = out + " --checks";
+    }
+    return out;
+}
+
+fn bp_faster(a: BProfile, b: BProfile) -> bool {
+    return a.opt > b.opt;
+}

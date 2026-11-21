@@ -1,0 +1,75 @@
+// Qasida — mutation testing (Top-500 #314).
+// Import with: import "muttest.fg";
+// Prove tests by killing mutants: mt_eval() evaluates a
+// one-operator int expression ("a+b", "a-b", "a*b", or a
+// literal) with the bindings a and b; mt_mutate() swaps
+// one operator for another; mt_killed() is true when the
+// original passes the expected value but the mutant does
+// not; mt_score() is the whole-percent kill rate.
+// v1 limits: one binary operator per expression, int
+// operands only (a, b, or a non-negative literal), + - *
+// only (no division, comparison, or boolean mutants).
+
+fn mt_operand(tok: str, a: int, b: int) -> int {
+    if tok == "a" {
+        return a;
+    }
+    if tok == "b" {
+        return b;
+    }
+    return parse_int(tok);
+}
+
+fn mt_eval(expr: str, a: int, b: int) -> int {
+    let mut op: int = -1;
+    let mut opc: str = "";
+    let mut i: int = 0;
+    while i < len(expr) && op < 0 {
+        let c: str = substr(expr, i, 1);
+        if c == "+" || c == "-" || c == "*" {
+            op = i;
+            opc = c;
+        }
+        i = i + 1;
+    }
+    if op < 0 {
+        return mt_operand(expr, a, b);
+    }
+    let l: int = mt_operand(substr(expr, 0, op), a, b);
+    let r: int = mt_operand(substr(expr, op + 1, len(expr) - op - 1), a, b);
+    if opc == "+" {
+        return l + r;
+    }
+    if opc == "-" {
+        return l - r;
+    }
+    return l * r;
+}
+
+fn mt_mutate(expr: str, from_op: str, to_op: str) -> str {
+    let mut out: str = "";
+    let mut done: bool = false;
+    let mut i: int = 0;
+    while i < len(expr) {
+        let c: str = substr(expr, i, 1);
+        if !done && c == from_op {
+            out = out + to_op;
+            done = true;
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mt_killed(orig: str, mutant: str, a: int, b: int, expected: int) -> bool {
+    if mt_eval(orig, a, b) != expected {
+        return false;
+    }
+    return mt_eval(mutant, a, b) != expected;
+}
+
+fn mt_score(killed: int, total: int) -> int {
+    return killed * 100 / total;
+}

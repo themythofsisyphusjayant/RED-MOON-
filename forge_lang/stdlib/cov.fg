@@ -1,0 +1,66 @@
+// Qasida — test coverage (Top-500 #305).
+// Import with: import "cov.fg";
+// Line and branch coverage: a Cov records the totals
+// and the lines/branches hit so far. A hit counts once
+// no matter how often it fires; cv_line_pct() and
+// cv_branch_pct() are whole percents (integer division).
+// v1 limits: manual hit calls (no compiler
+// instrumentation yet), line numbers only (no column
+// or expression coverage).
+
+struct Cov {
+    total_lines: int;
+    total_branches: int;
+    hit_lines: [int];
+    hit_branches: [int];
+}
+
+fn cv_new(total_lines: int, total_branches: int) -> Cov {
+    return Cov { total_lines: total_lines, total_branches: total_branches, hit_lines: [], hit_branches: [] };
+}
+
+fn cv_covered_line(c: Cov, line: int) -> bool {
+    let mut i: int = 0;
+    while i < len(c.hit_lines) {
+        if c.hit_lines[i] == line {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cv_covered_branch(c: Cov, branch: int) -> bool {
+    let mut i: int = 0;
+    while i < len(c.hit_branches) {
+        if c.hit_branches[i] == branch {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cv_hit_line(c: Cov, line: int) -> Cov {
+    let mut m: Cov = c;
+    if !cv_covered_line(m, line) {
+        push(m.hit_lines, line);
+    }
+    return m;
+}
+
+fn cv_hit_branch(c: Cov, branch: int) -> Cov {
+    let mut m: Cov = c;
+    if !cv_covered_branch(m, branch) {
+        push(m.hit_branches, branch);
+    }
+    return m;
+}
+
+fn cv_line_pct(c: Cov) -> int {
+    return len(c.hit_lines) * 100 / c.total_lines;
+}
+
+fn cv_branch_pct(c: Cov) -> int {
+    return len(c.hit_branches) * 100 / c.total_branches;
+}

@@ -1,0 +1,12 @@
+import "srcgen.fg";
+
+fn main() {
+    let fields: [str] = ["x:int", "y:int"];
+    println(sg_builder_name("Point"));
+    println(len(fields));
+    println(sg_field_name(fields[0]));
+    println(sg_field_type(fields[1]));
+    println(sg_builder_text("Point", fields));
+    println(sg_with_name("Point", "x"));
+    println(sg_build_sig("Point"));
+}

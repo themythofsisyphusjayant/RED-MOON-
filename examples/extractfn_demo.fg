@@ -1,0 +1,9 @@
+import "extractfn.fg";
+
+fn main() {
+    let params: [str] = ["a: int", "b: int"];
+    let body: [str] = ["let s = a + b;", "return s;"];
+    println(len(params));
+    println(ef_fn_text("sum2", params, "int", body));
+    println(ef_call("sum2", ["a", "b"]));
+}
