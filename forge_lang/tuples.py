@@ -24,11 +24,23 @@ big32 and WASM reject tuple programs with named errors.
 
 
 def split_top_level(s, sep=","):
-    """Split s on sep at nesting depth 0 over (), [], and <>."""
+    """Split s on sep at nesting depth 0 over (), [], and <>.
+
+    The fn-type arrow `->` is a single token: its `>` must not
+    count as an angle-bracket close, or a tuple (or generic) holding
+    a fn type mis-splits (Top-500 #103).
+    """
     parts = []
     depth_paren = depth_brack = depth_angle = 0
     cur = []
-    for ch in s:
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "-" and i + 1 < len(s) and s[i + 1] == ">":
+            # Fn-type arrow, not a generic close.
+            cur.append("->")
+            i += 2
+            continue
         if ch == "(":
             depth_paren += 1
         elif ch == ")":
@@ -46,6 +58,7 @@ def split_top_level(s, sep=","):
             cur = []
         else:
             cur.append(ch)
+        i += 1
     parts.append("".join(cur).strip())
     return parts
 
@@ -67,6 +80,11 @@ def tuple_elems(t):
 
 def _elem_c_name(t):
     """Structure-preserving C-name fragment for one element."""
+    if t.startswith("fn("):
+        # A fn type inside a tuple mangles to its typedef name
+        # (Top-500 #103); the raw string is not a C identifier.
+        from .fntypes import fn_mangle
+        return fn_mangle(t)
     if is_tuple_type(t):
         return tuple_c_name(t)
     if t.startswith("[") and t.endswith("]"):
@@ -93,11 +111,17 @@ def tuple_c_name(t):
     return "ForgeTuple_" + "_".join(_elem_c_name(e) for e in tuple_elems(t))
 
 
-def find_tuples(program):
+def find_tuples(program, extra_types=None):
     """Every tuple type spelling used in a program, sorted by
     increasing length so nested tuples' inner types come first
     (an outer tuple's struct contains the inner's struct).
-    Mirrors the union/fixed/sized/readonly/never walks."""
+    Mirrors the union/fixed/sized/readonly/never walks.
+    extra_types (the infer pass's per-node types) covers tuple
+    types that only ever flow through inference — a
+    `let t = (1, 2);` with no annotation still needs its struct
+    (Top-500 #103: same gap as fn types; without this, tuples of
+    fn values are unusable in the common unannotated form).
+    """
     from . import ast_nodes as A
     found = set()
 
@@ -162,4 +186,6 @@ def find_tuples(program):
             add(getattr(m, "ret", None))
             if getattr(m, "body", None) is not None:
                 walk_block(m.body)
+    for t in extra_types or []:
+        add(t)
     return sorted(found, key=lambda t: (len(t), t))

@@ -24,7 +24,14 @@ FAILURES = []
 EXPECTED = {
     "unicode_demo": "5\n3\n1\n1\n1\n4\nhello\nABC\n7\n-1\n",
     "http_client_demo": "q=qasida&page=2\nhttps://example.com/search?q=qasida&page=2\n404\nNot Found\ntrue\nfalse\ntext/html\n42\n49\ntrue\n",
-    "rest_demo": "https://api.example.com/v1/langs?q=qasida\ntrue\nfalse\n2.0.0\nqasida\n\nNot Found\nOK\n",
+    "rest_demo": ("https://api.example.com/v1/langs?q=qasida\ntrue\nfalse\n"
+                  "2.0.0\nqasida\n\nNot Found\nOK\n"
+                  "POST /users HTTP/1.1\nHost: api.example\n"
+                  "Content-Type: application/json\nContent-Length: 14\n\n"
+                  "{\"name\":\"Ada\"}\n201\ntrue\nAda\n7\n"
+                  "{\"id\": 7, \"name\": \"Ada\"}\n"
+                  "GET /users?page=2 HTTP/1.1\nHost: api.example\n\n\n"
+                  "404\nfalse\n"),
     "fsutils_demo": "true\ntrue\n5\ntrue\nhello world\n-1\nfalse\ntrue\n",
     "osinfo_demo": "linux\n/\n0\nfalse\nnone\ntrue\n0.05\n",
     "archive_demo": "3780\n007304\n104\n48\n53\n48\n117\n",

@@ -3,8 +3,9 @@
 // An iterator walks an [int] in order: has_next / current /
 // next (returns a new iterator; the old one is untouched).
 // sum / take / skip / count consume from a fresh iterator.
-// v1 limits: int arrays only; no map/filter (those need
-// function values, item 103, still GAP). current() returns 0
+// v1 limits: int arrays only; map/filter now exist (item 102,
+// hof.fg, landed 21 Nov 2026 in the function-values slice).
+// current() returns 0
 // past the end; has_next() is the honest check.
 
 struct Iter {

@@ -1,0 +1,38 @@
+// Qasida — higher-order functions (Top-500 #102).
+// Import with: import "hof.fg";
+// map / filter / reduce over arrays, driven by function
+// values (item 103). Generic over T: one definition serves
+// [int], [str] and any other element type.
+//   map<T>(xs, f)       -> [f(x) for x in xs]
+//   filter<T>(xs, pred) -> [x for x in xs if pred(x)]
+//   reduce<T>(xs, f, init) -> f(...f(f(init, xs[0]), xs[1])...)
+// v1 limits: no closures (item 101 still GAP) — the function
+// must be a named function, not a lambda capturing locals.
+// Verified 21 Nov 2026 (function-values slice): hof_demo.fg
+// under both compilers + independent Python replica.
+
+fn map<T>(xs: [T], f: fn(T) -> T) -> [T] {
+    let mut out: [T] = [];
+    for x in xs {
+        push(out, f(x));
+    }
+    return out;
+}
+
+fn filter<T>(xs: [T], pred: fn(T) -> bool) -> [T] {
+    let mut out: [T] = [];
+    for x in xs {
+        if pred(x) {
+            push(out, x);
+        }
+    }
+    return out;
+}
+
+fn reduce<T>(xs: [T], f: fn(T, T) -> T, init: T) -> T {
+    let mut acc: T = init;
+    for x in xs {
+        acc = f(acc, x);
+    }
+    return acc;
+}

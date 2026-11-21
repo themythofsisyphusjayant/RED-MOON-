@@ -81,6 +81,11 @@ def fmt_expr(expr, parent_prec=0):
         return f"({text})" if p < parent_prec else text
     if isinstance(expr, A.Call):
         return f"{expr.name}({', '.join(fmt_expr(a) for a in expr.args)})"
+    if isinstance(expr, A.IndirectCall):
+        # handlers[i](x) — the callee is an expression, not a name
+        # (Top-500 #103).
+        return (f"{fmt_expr(expr.callee, 99)}"
+                f"({', '.join(fmt_expr(a) for a in expr.args)})")
     if isinstance(expr, A.Try):
         return f"{fmt_expr(expr.expr, 99)}?"
     raise ForgeError(f"formatter: unsupported expression {type(expr).__name__}")

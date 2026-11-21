@@ -1206,3 +1206,36 @@ Sprint batch 14 (21 Nov 2026, same day, LIBS ONLY): 15 flips,
   same libs-only rule — land what the pool honestly supports (the
   running count is the honest measure; a smaller honest batch beats
   a padded one).
+
+  Function-values slice (21 Nov 2026): the library-buildable pool
+  ran dry after sprint batch 14 (only #393 library-shaped), so
+  Jayant picked the function-values language slice. #103 function
+  values landed in both compilers (Python + hosted mirror):
+  fn types, bare function names as values, calls through values,
+  fn params/returns, arrays/tuples/structs of fn values, generic
+  fn types, fn ==/!=; proofs #102 hof.fg (generic map/filter/
+  reduce), #129 sortby.fg (sort_by with a comparator), #273
+  emitter.fg (on/emit/off). #101 closures, #114 currying and #116
+  composition stay GAP — they need the capture-lifetime decision
+  (DESIGN.md §7 in blackmoon-iso/function-values-slice/). Gates:
+  bootstrap 7/7 (64 MB stack — see the slice's DESIGN.md §12 item
+  7), parity 124/124, corpus 99/99, regression 62/62, fv fuzz
+  56/56, existing fuzz 102/102 both modes, suite 77/84 hosted +
+  77/84 python (7 known big32 pre-existing failures, identical
+  both modes), ASan clean (102/102 + fv 56/56), fmt idempotent,
+  benchmarks re-measured (bs 1.04x, bs_call 0.94x vs C-O3 after
+  a noise re-check; no regression — the bs emits contain zero
+  fn machinery). The slice also fixed three stale test
+  expectations, all pre-existing (not slice regressions):
+  test_daily_20261121i.py (batch 13 extended triple_demo, the
+  batch-9 file kept the old expectation), test_daily_20261110.py
+  (batch 4 extended rest_demo, the 10-Nov file kept the old
+  expectation), and run_tests.py's dbg section (the demo now
+  imports stdlib dbg.fg #382; needles updated, #line mapping
+  verified working). Counts after the slice: HAVE 349,
+  PARTIAL 12, GAP 139, to build 151. Arithmetic from sprint batch
+  14 (HAVE 345, PARTIAL 12, GAP 143, to build 155): 4 GAP-to-HAVE
+  (#102, #103, #129, #273); 345 + 4 = 349; 143 - 4 = 139;
+  155 - 4 = 151 (349 + 12 + 139 = 500). HAVE 349 of 500 = 69.8%.
+  Next: pipeline item #44 (panic vs recover boundary, GAP);
+  only #393 is library-shaped in the remaining pool.

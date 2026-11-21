@@ -1,0 +1,32 @@
+// Qasida — sorting with comparators (Top-500 #129).
+// Import with: import "sortby.fg";
+// sort_by(xs, cmp): insertion sort driven by a comparator
+// function value. cmp(a, b) returns negative when a < b,
+// zero when equal, positive when a > b (the C qsort
+// convention). The input array is untouched; a sorted copy
+// is returned.
+// v1 limits: [int] only; no closures (item 101 still GAP) —
+// the comparator must be a named function.
+// Verified 21 Nov 2026 (function-values slice): sortby_demo.fg
+// under both compilers + independent Python replica.
+
+fn sort_by(xs: [int], cmp: fn(int, int) -> int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, xs[i]);
+        i = i + 1;
+    }
+    let mut j: int = 1;
+    while j < len(out) {
+        let mut k: int = j;
+        while k > 0 && cmp(out[k], out[k - 1]) < 0 {
+            let tmp: int = out[k];
+            out[k] = out[k - 1];
+            out[k - 1] = tmp;
+            k = k - 1;
+        }
+        j = j + 1;
+    }
+    return out;
+}

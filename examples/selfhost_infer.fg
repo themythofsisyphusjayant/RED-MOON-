@@ -376,6 +376,19 @@ fn infer_lookup(h: HInfer, name: str) -> str {
     return "int";
 }
 
+// Type of a visible variable, or "" when absent (no failure).
+// Scopes only — no variant fallback, no "int" default.
+fn infer_scope_type(h: HInfer, name: str) -> str {
+    let mut i: int = h.scope_len - 1;
+    while i >= 0 {
+        if h.scope_names[i] == name {
+            return h.scope_types[i];
+        }
+        i = i - 1;
+    }
+    return "";
+}
+
 // Set a node's type by its infer key (last-wins in the table,
 // so this overrides the "[?]" the literal node got at its let).
 // In a template walk the old code stored under "T:" + key, a key
@@ -462,6 +475,32 @@ fn infer_is_generic(t: str) -> bool {
 }
 
 fn infer_mangle_type(t: str) -> str {
+    if is_fn_type(t) {
+        // A fn type mangles to its typedef name (Top-500 #103):
+        // fn(int, str) -> bool -> ForgeFn_int_str_bool; empty
+        // params -> "void" fragment. Nested fn types recurse
+        // through this same branch.
+        let params: [str] = fn_type_params(t);
+        let ret: str = fn_type_ret(t);
+        let mut out: str = "ForgeFn_";
+        if len(params) == 0 {
+            out = out + "void";
+        } else {
+            let mut i: int = 0;
+            while i < len(params) {
+                if i > 0 {
+                    out = out + "_";
+                }
+                if params[i] == "void" {
+                    out = out + "void";
+                } else {
+                    out = out + infer_mangle_type(params[i]);
+                }
+                i = i + 1;
+            }
+        }
+        return out + "_" + infer_mangle_type(ret);
+    }
     if infer_is_generic(t) {
         let base: str = generic_base(t);
         let args: [str] = generic_args(t);
@@ -1222,6 +1261,30 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         return infer_set(h, e, "bool");
     }
     if e.kind == 34 {
+        // A bare function name in value position is a fn value
+        // (Top-500 #103, FN-C1). The checker already rejected
+        // generic/extern names as values; only a plain function
+        // name reaches here.
+        if infer_scope_type(h, e.name) == "" && infer_table_find(h.variant_names, e.name) < 0 {
+            let found0: [str] = infer_fn_lookup(h, e.name);
+            if found0[0] == "1" {
+                let params0: [str] = infer_parse_params(found0[2]);
+                let mut pts: str = "";
+                let mut pi: int = 0;
+                while pi < len(params0) {
+                    let kv: [str] = infer_split_param(params0[pi]);
+                    if len(kv) >= 2 {
+                        if pts == "" {
+                            pts = kv[1];
+                        } else {
+                            pts = pts + ", " + kv[1];
+                        }
+                    }
+                    pi = pi + 1;
+                }
+                return infer_set(h, e, "fn(" + pts + ") -> " + found0[1]);
+            }
+        }
         return infer_set(h, e, infer_lookup(h, e.name));
     }
     if e.kind == 29 {
@@ -1437,6 +1500,32 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
         }
         return infer_set(h, e, "int");
     }
+    if e.kind == 46 {
+        // IndirectCall: kids[0] is the callee fn value, the rest
+        // are the args (Top-500 #103).
+        h = infer_walk_expr(h, e.kids[0]);
+        let ct: str = infer_type_of(h, e.kids[0]);
+        if is_fn_type(ct) {
+            let params: [str] = fn_type_params(ct);
+            let mut i: int = 1;
+            while i < len(e.kids) {
+                let a: Node = e.kids[i];
+                if i - 1 < len(params) {
+                    h = infer_walk_arg(h, a, params[i - 1]);
+                } else {
+                    h = infer_walk_expr(h, a);
+                }
+                i = i + 1;
+            }
+            return infer_set(h, e, fn_type_ret(ct));
+        }
+        let mut i: int = 1;
+        while i < len(e.kids) {
+            h = infer_walk_expr(h, e.kids[i]);
+            i = i + 1;
+        }
+        return infer_set(h, e, "int");
+    }
     if e.kind == 35 {
         // Call: name = fn, kids = [args].
         let vi: int = infer_table_find(h.variant_names, e.name);
@@ -1519,6 +1608,26 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
                 if ok {
                     return infer_set(h, e, substitute_type(tf[1], names, types));
                 }
+            }
+            // Indirect call through a fn-typed variable (Top-500
+            // #103, FN-C2): the variable's fn type gives the arg
+            // types and the return type. Expression builtins still
+            // win over a same-named variable (the checker resolves
+            // them first), so the probe skips them.
+            let vt: str = infer_scope_type(h, e.name);
+            if vt != "" && is_fn_type(vt) && !is_expr_builtin(e.name) {
+                let params: [str] = fn_type_params(vt);
+                let mut i: int = 0;
+                while i < len(e.kids) {
+                    let a: Node = e.kids[i];
+                    if i < len(params) {
+                        h = infer_walk_arg(h, a, params[i]);
+                    } else {
+                        h = infer_walk_expr(h, a);
+                    }
+                    i = i + 1;
+                }
+                return infer_set(h, e, fn_type_ret(vt));
             }
         }
         let mut i: int = 0;

@@ -105,7 +105,7 @@ struct HCodegen {
     // 4c: concrete generic enum types used, e.g. "OptionE<int>"
     // (base names alone do not name the C struct).
     enum_concrete: [str];
-    // 4c: trait methods ("name:params->ret" per method, names
+    // 4c: trait methods ("name:params=>ret" per method, names
     // repeated) and impl blocks (struct/trait pairs, in order).
     trait_names: [str];
     trait_sigs: [str];
@@ -116,6 +116,9 @@ struct HCodegen {
     // call names (deduped, program order).
     tuple_types: [str];
     union_types: [str];
+    // Top-500 #103: fn-type spellings (deduped, program order;
+    // generate() sorts them by (nesting depth, spelling)).
+    fn_types: [str];
     nested_arrays: [str];
     weak_found: bool;
     spawn_names: [str];
@@ -563,7 +566,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -981,7 +984,7 @@ fn cg_trait_sig(g: HCodegen, tname: str, method: str) -> [str] {
             let parts: [str] = split(sig, ":");
             if len(parts) >= 2 && parts[0] == method {
                 let rest: str = parts[1];
-                let ai: int = infer_find_str(rest, "->");
+                let ai: int = infer_find_str(rest, "=>");
                 if ai >= 0 {
                     let params: str = substr(rest, 0, ai);
                     let ret: str = substr(rest, ai + 2, len(rest) - ai - 2);
@@ -1144,7 +1147,7 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
         if n.kind == 5 {
             // TraitDef: kids are FuncDef-like method nodes (kind
             // 2, Param kids + an empty body Block). One
-            // "method:params->ret" entry per method (params are
+            // "method:params=>ret" entry per method (params are
             // types only, "~"-joined; the receiver is not listed).
             let tname: str = n.name;
             let mut j: int = 0;
@@ -1164,7 +1167,7 @@ fn cg_build_tables(g0: HCodegen, prog: Node) -> HCodegen {
                     }
                     pi = pi + 1;
                 }
-                enc = enc + "->" + m.sval;
+                enc = enc + "=>" + m.sval;
                 push(g.trait_names, tname);
                 push(g.trait_sigs, enc);
                 j = j + 1;
@@ -1289,6 +1292,11 @@ fn cg_union_c_name(t: str) -> str {
 
 // Structure-preserving C-name fragment for one tuple element.
 fn cg_elem_c_name(t: str) -> str {
+    if is_fn_type(t) {
+        // A fn type inside a tuple mangles to its typedef name
+        // (Top-500 #103); the raw string is not a C identifier.
+        return infer_mangle_type(t);
+    }
     if infer_is_tuple_type(t) {
         return cg_tuple_c_name(t);
     }
@@ -1385,6 +1393,11 @@ fn cg_c_type(g: HCodegen, t: str) -> str {
     if is_union_type(r) {
         return cg_union_c_name(r);
     }
+    if is_fn_type(r) {
+        // A fn value is a plain C function pointer; its typedef
+        // name is its mangled form (Top-500 #103).
+        return infer_mangle_type(r);
+    }
     if cg_is_opaque_type(r) {
         return "Opaque_" + cg_opaque_trait(r);
     }
@@ -1458,6 +1471,11 @@ fn cg_c_type(g: HCodegen, t: str) -> str {
         }
         if cg_is_fixed_int(inner) {
             fail("arrays of " + inner + " are not supported in v1");
+        }
+        if is_fn_type(inner) {
+            // An array of fn values: ForgeArray_<typedef>
+            // (Top-500 #103).
+            return "ForgeArray_" + infer_mangle_type(inner);
         }
         if starts_with(inner, "[") {
             return "ForgeArray_" + cg_c_type(g, inner);
@@ -3040,9 +3058,25 @@ fn cg_count_char(t: str, ch: str) -> int {
     return n;
 }
 
+// Count of "fn(" occurrences = nesting depth of a fn type
+// (Top-500 #103; Python's find_fn_types sorts by this, then
+// spelling, so inner typedefs precede outer ones).
+fn cg_count_fn(t: str) -> int {
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i + 3 <= len(t) {
+        if substr(t, i, 3) == "fn(" {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
 // Comparator for the sorted lists: 0 = lexicographic (unions,
 // concrete enums), 1 = (length, spelling) (tuples), 2 = number
-// of "[" (nested arrays, stable).
+// of "[" (nested arrays, stable), 3 = (number of "fn(", spelling)
+// (fn types, inner first).
 fn cg_cmp_mode(a: str, b: str, mode: int) -> int {
     if mode == 1 {
         if len(a) < len(b) {
@@ -3063,6 +3097,17 @@ fn cg_cmp_mode(a: str, b: str, mode: int) -> int {
             return 1;
         }
         return 0;
+    }
+    if mode == 3 {
+        let ca: int = cg_count_fn(a);
+        let cb: int = cg_count_fn(b);
+        if ca < cb {
+            return -1;
+        }
+        if ca > cb {
+            return 1;
+        }
+        return cg_str_cmp(a, b);
     }
     return cg_str_cmp(a, b);
 }
@@ -3185,6 +3230,61 @@ fn cg_normalize_sized(t: str) -> str {
     return t;
 }
 
+// True when a type mentions a bare type param — a single
+// uppercase letter, the Qasida convention for type params
+// (T, E, K, V, ...). Generic templates mention type params in
+// their fn types (fn(T) -> T) and have no C typedef; Python's
+// find_fn_types skips template signatures, so the hosted
+// collect must skip them too (Top-500 #103). A concrete
+// single-letter struct name would also match; none exists in
+// the stdlib or selfhost sources.
+fn cg_type_has_tparam(t: str) -> bool {
+    if t == "" {
+        return false;
+    }
+    if is_fn_type(t) {
+        let params: [str] = fn_type_params(t);
+        let mut i: int = 0;
+        while i < len(params) {
+            if cg_type_has_tparam(params[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return cg_type_has_tparam(fn_type_ret(t));
+    }
+    if len(t) == 1 {
+        let r: int = cg_char_rank(t);
+        return r >= 33 && r <= 58;
+    }
+    if infer_is_generic(t) {
+        let args: [str] = generic_args(t);
+        let mut i: int = 0;
+        while i < len(args) {
+            if cg_type_has_tparam(args[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    if is_array(t) {
+        return cg_type_has_tparam(infer_array_elem(t));
+    }
+    if infer_is_tuple_type(t) {
+        let elems: [str] = tuple_elems(t);
+        let mut i: int = 0;
+        while i < len(elems) {
+            if cg_type_has_tparam(elems[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    return false;
+}
+
 // Collect the composite types one type spelling uses, into the
 // generate() collections (concrete structs/enums, tuples,
 // unions, nested arrays).
@@ -3192,6 +3292,28 @@ fn cg_collect_type(g0: HCodegen, t: str) -> HCodegen {
     let mut g: HCodegen = g0;
     if t == "" {
         return g;
+    }
+    if is_fn_type(t) {
+        // Fn values need a C typedef (Top-500 #103). Collect
+        // the type itself, then recurse into its params and ret
+        // so nested fn types get their own typedefs. First,
+        // before the generic branch: a fn type ending in ">"
+        // (fn(T) -> Option<T>) would otherwise be misread as a
+        // generic instantiation. A fn type mentioning a bare
+        // type param belongs to a generic template and has no
+        // typedef (its concrete instantiations are collected
+        // from the infer map and call sites instead).
+        if cg_type_has_tparam(t) {
+            return g;
+        }
+        g.fn_types = cg_push_unique_str(g.fn_types, t);
+        let params: [str] = fn_type_params(t);
+        let mut i: int = 0;
+        while i < len(params) {
+            g = cg_collect_type(g, params[i]);
+            i = i + 1;
+        }
+        return cg_collect_type(g, fn_type_ret(t));
     }
     if starts_with(t, "readonly ") {
         return cg_collect_type(g, cg_readonly_inner(t));
@@ -3236,6 +3358,11 @@ fn cg_collect_type(g0: HCodegen, t: str) -> HCodegen {
         while starts_with(cur, "[") && substr(cur, len(cur) - 1, 1) == "]" {
             let inner: str = infer_array_elem(cur);
             if starts_with(inner, "[") {
+                g.nested_arrays = cg_push_unique_str(g.nested_arrays, cur);
+            }
+            if is_fn_type(inner) {
+                // Array of function values: its ForgeArray_
+                // typedef is not in the preamble (Top-500 #103).
                 g.nested_arrays = cg_push_unique_str(g.nested_arrays, cur);
             }
             cur = inner;
@@ -3443,7 +3570,7 @@ fn cg_collect(g0: HCodegen, prog: Node) -> HCodegen {
         let sig: str = g.trait_sigs[i];
         let colon: int = infer_find_str(sig, ":");
         let rest: str = substr(sig, colon + 1, len(sig) - colon - 1);
-        let ai: int = infer_find_str(rest, "->");
+        let ai: int = infer_find_str(rest, "=>");
         if ai >= 0 {
             let params: str = substr(rest, 0, ai);
             let ret: str = substr(rest, ai + 2, len(rest) - ai - 2);
@@ -3515,6 +3642,13 @@ fn cg_array_free_code(g0: HCodegen, var_code: str, typ: str) -> CGExpr {
     }
     if cg_is_struct_type(g, inner) {
         return CGExpr { g: g, code: "forge_" + cg_struct_type_name(g, inner) + "_array_free(" + var_code + ");" };
+    }
+    if is_fn_type(inner) {
+        // Array of function values: plain pointers, no
+        // per-element free — drop the refcount and the buffer
+        // only (Top-500 #103).
+        let code: str = "if (" + var_code + ".ref && --(*" + var_code + ".ref) == 0) { if (" + var_code + ".data) memset(" + var_code + ".data, 0, (size_t)" + var_code + ".cap * sizeof(*" + var_code + ".data)); free(" + var_code + ".data); if (" + var_code + ".ref) memset(" + var_code + ".ref, 0, sizeof(long long)); free(" + var_code + ".ref); forge_arr_frees++; }";
+        return CGExpr { g: g, code: code };
     }
     // Nested array: refcount the outer, free each element array,
     // then the outer buffer. Counter is read-then-incremented,
@@ -4237,6 +4371,30 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\"); " + ta + ".data[" + ti + "]; })";
             return CGExpr { g: g, code: code };
         }
+        if is_fn_type(et) {
+            // A fn value is a plain pointer: direct data access
+            // with the same bounds check as the array branch
+            // (Top-500 #103). The scalar forge_*_get helpers
+            // have no entry for fn types.
+            let idx_pure: bool = !cg_subtree_has_call(e.kids[0]) && !cg_subtree_has_call(e.kids[1]);
+            let key: str = cg_cache_key(["arr", bout.code, iout.code]);
+            if idx_pure && cg_cache_has(g, key) {
+                return CGExpr { g: g, code: "(" + bout.code + ").data[" + iout.code + "]" };
+            }
+            if g.no_bounds_checks || e.has_nul {
+                return CGExpr { g: g, code: cg_fix1_idx_wrap(e, "(" + bout.code + ").data[" + iout.code + "]", g.no_bounds_checks) };
+            }
+            let arr_t: str = cg_c_type(g, base_t);
+            let n: int = g.arr_counter;
+            g.arr_counter = g.arr_counter + 1;
+            let ta: str = "__forge_ia" + itoa(n);
+            let ti: str = "__forge_ii" + itoa(n);
+            if idx_pure {
+                g = cg_cache_add(g, key);
+            }
+            let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\"); " + ta + ".data[" + ti + "]; })";
+            return CGExpr { g: g, code: code };
+        }
         // Scalar element (codegen.py:3800): a pure repeat in this
         // statement reads the slot directly, no bounds check.
         let idx_pure2: bool = !cg_subtree_has_call(e.kids[0]) && !cg_subtree_has_call(e.kids[1]);
@@ -4442,6 +4600,34 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
     }
     if e.kind == 33 {
         return cg_gen_method_call(g, e);
+    }
+    if e.kind == 46 {
+        // IndirectCall: kids[0] is the callee fn value, the rest
+        // are the args (Top-500 #103). Same argument-ownership
+        // loop as a direct call, with the callee's fn type as
+        // the param types. Like a direct call it may mutate
+        // shared state, so it ends any duplicate-check run.
+        g = cg_cache_clear(g);
+        let cout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = cout.g;
+        let ct: str = cg_expr_type(g, e.kids[0]);
+        let params: [str] = fn_type_params(ct);
+        let mut arg_codes: [str] = [];
+        let mut i: int = 1;
+        while i < len(e.kids) {
+            let a: Node = e.kids[i];
+            let aout: CGExpr = cg_gen_expr(g, a);
+            g = aout.g;
+            let mut code: str = aout.code;
+            if i - 1 < len(params) {
+                let conv: CGExpr = cg_convert_owned(g, code, cg_expr_type(g, a), params[i - 1], a, false);
+                g = conv.g;
+                code = conv.code;
+            }
+            push(arg_codes, code);
+            i = i + 1;
+        }
+        return CGExpr { g: g, code: cout.code + "(" + join(arg_codes, ", ") + ")" };
     }
     if e.kind == 35 {
         return cg_gen_call(g, e);
@@ -5294,6 +5480,24 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     let mut call_name: str = e.name;
     let found: [str] = cg_fn_lookup(g, e.name);
     let mut params: [str] = infer_parse_params(found[2]);
+    if found[0] == "0" {
+        // Indirect call through a fn-typed variable (Top-500
+        // #103, FN-C2): the variable's fn type gives the param
+        // types for per-arg ownership conversion. A same-named
+        // function still wins (the lookup above), exactly as
+        // the checker resolves it.
+        let vt: str = cg_local_type(g, e.name);
+        if is_fn_type(vt) {
+            let fparams: [str] = fn_type_params(vt);
+            let mut fp: [str] = [];
+            let mut fi2: int = 0;
+            while fi2 < len(fparams) {
+                push(fp, "_:" + fparams[fi2]);
+                fi2 = fi2 + 1;
+            }
+            params = fp;
+        }
+    }
     let tf: [str] = cg_template_lookup(g, e.name);
     if tf[0] == "1" {
         let b: CGBind = cg_generic_bindings(g, tf, e.name, e);
@@ -5970,6 +6174,19 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = fc.g;
             g = cg_emit(g, fc.code);
             g = cg_emit(g, base_code + ".data[" + itmp + "] = " + val + ";");
+        } else if is_fn_type(et) {
+            // Assign a fn value through an index: plain pointer,
+            // direct store with a bounds check (Top-500 #103).
+            // No per-element free (the old value is a plain
+            // pointer); the index is bound to a temp first (it
+            // is used twice).
+            let itmp: str = "__forge_si" + itoa(g.assign_counter);
+            g.assign_counter = g.assign_counter + 1;
+            g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
+            if !g.no_bounds_checks && !target.has_nul {
+                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+            }
+            g = cg_emit(g, "(" + base_code + ").data[" + itmp + "] = " + val + ";");
         } else {
             let mut set_fn: str = "";
             if et == "int" {
@@ -6582,6 +6799,40 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, ptr + "->data[" + ptr + "->len++] = " + val + ";");
                 return g;
             }
+            if is_fn_type(et) {
+                // Push a function value: plain pointers, no
+                // per-element copy/free. Detach on shared (CoW)
+                // like the scalar helpers, then grow and append
+                // (Top-500 #103).
+                g.assign_counter = g.assign_counter + 1;
+                let ptr: str = "__forge_pf" + itoa(g.assign_counter - 1);
+                g.assign_counter = g.assign_counter + 1;
+                let ocap: str = "__forge_pfo" + itoa(g.assign_counter - 1);
+                g.assign_counter = g.assign_counter + 1;
+                let nbuf: str = "__forge_pfn" + itoa(g.assign_counter - 1);
+                g.assign_counter = g.assign_counter + 1;
+                let li: str = "__forge_pfi" + itoa(g.assign_counter - 1);
+                g.assign_counter = g.assign_counter + 1;
+                let ncap: str = "__forge_pfc" + itoa(g.assign_counter - 1);
+                let elem_c: str = cg_c_type(g, et);
+                g = cg_emit(g, cg_c_type(g, cg_expr_type(g, call.kids[0])) + " *" + ptr + " = &" + var_code + ";");
+                g = cg_emit(g, "if (" + ptr + "->ref && *" + ptr + "->ref > 1) {");
+                g = cg_emit(g, "    long long " + ocap + " = " + ptr + "->cap ? " + ptr + "->cap : 4;");
+                g = cg_emit(g, "    " + elem_c + " *" + nbuf + " = (" + elem_c + " *)malloc(sizeof(" + elem_c + ") * (size_t)" + ocap + ");");
+                g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    for (long long " + li + " = 0; " + li + " < " + ptr + "->len; " + li + "++) { " + nbuf + "[" + li + "] = " + ptr + "->data[" + li + "]; }");
+                g = cg_emit(g, "    (*" + ptr + "->ref)--;");
+                g = cg_emit(g, "    " + ptr + "->data = " + nbuf + "; " + ptr + "->cap = " + ocap + "; " + ptr + "->ref = forge_arr_ref_new();");
+                g = cg_emit(g, "}");
+                g = cg_emit(g, "if (" + ptr + "->len >= " + ptr + "->cap) {");
+                g = cg_emit(g, "    long long " + ncap + " = " + ptr + "->cap ? " + ptr + "->cap * 2 : 4;");
+                g = cg_emit(g, "    " + elem_c + " *nd = (" + elem_c + " *)realloc(" + ptr + "->data, sizeof(" + elem_c + ") * (size_t)" + ncap + ");");
+                g = cg_emit(g, "    if (!nd) forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    " + ptr + "->data = nd; " + ptr + "->cap = " + ncap + ";");
+                g = cg_emit(g, "}");
+                g = cg_emit(g, ptr + "->data[" + ptr + "->len++] = " + val + ";");
+                return g;
+            }
             let mut push_fn: str = "";
             if et == "int" {
                 push_fn = "forge_int_push";
@@ -6768,6 +7019,33 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
     }
     if g.no_overflow_checks {
         g = cg_emit(g, "/* qasida: no-overflow-checks */");
+    }
+    // Fn typedefs (Top-500 #103): sorted by (nesting depth,
+    // spelling) so an inner typedef precedes an outer one that
+    // references it — the same order Python's find_fn_types
+    // returns. Emitted right after HEADER, before enums/structs,
+    // because every one of those can reference a fn type through
+    // c_type.
+    let fns: [str] = cg_sorted_mode(g.fn_types, 3);
+    let mut fi: int = 0;
+    while fi < len(fns) {
+        let ft: str = fns[fi];
+        let params: [str] = fn_type_params(ft);
+        let ret: str = fn_type_ret(ft);
+        let mut sig: str = "";
+        let mut pj: int = 0;
+        while pj < len(params) {
+            if pj > 0 {
+                sig = sig + ", ";
+            }
+            sig = sig + cg_c_type(g, params[pj]);
+            pj = pj + 1;
+        }
+        if sig == "" {
+            sig = "void";
+        }
+        g = cg_emit(g, "typedef " + cg_c_type(g, ret) + " (*" + infer_mangle_type(ft) + ")(" + sig + ");");
+        fi = fi + 1;
     }
     // Enums: non-payload enums as C enums, in program order.
     let mut i: int = 0;

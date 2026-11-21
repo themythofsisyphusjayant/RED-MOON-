@@ -223,6 +223,10 @@ def main():
         failures.append(f"fuzz smoke failed: {r.stdout!r} {r.stderr!r}")
     # Debugger: --debug must emit #line directives for
     # BOTH the main file and an imported helper file.
+    # (21 Nov 2026: the demo now imports the stdlib dbg.fg
+    # (#382), not the orphaned dbg_helper.fg, and prints the
+    # dbg_* lines instead of "dbg = 42"; needles updated to
+    # match — the #line mapping itself is verified by the C.)
     c_path = os.path.join(ROOT, "dbg_demo_test.c")
     bin_path = os.path.join(ROOT, "dbg_demo_test")
     for p in (c_path, bin_path):
@@ -296,11 +300,11 @@ def main():
         failures.append(f"dbg build failed: {r.stdout!r} {r.stderr!r}")
     else:
         c_text = open(c_path, encoding="utf-8").read()
-        for needle in ('#line', "dbg_demo.fg", "dbg_helper.fg"):
+        for needle in ('#line', "dbg_demo.fg", "stdlib/dbg.fg"):
             if needle not in c_text:
                 failures.append(f"dbg_demo.c missing {needle!r}")
         r2 = subprocess.run([bin_path], capture_output=True, text=True)
-        if r2.returncode != 0 or "dbg = 42" not in r2.stdout:
+        if r2.returncode != 0 or "count = 5" not in r2.stdout or "name = ada" not in r2.stdout:
             failures.append(f"dbg binary failed: {r2.stdout!r} {r2.stderr!r}")
     for p in (c_path, bin_path):
         try:

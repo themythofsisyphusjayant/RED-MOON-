@@ -1,0 +1,18 @@
+import "emitter.fg";
+
+fn show(x: int) -> void { println(x); }
+fn show_twice(x: int) -> void { println(x * 2); }
+fn show_done(x: int) -> void { println(x + 100); }
+
+fn main() {
+    let e0: Emitter = emitter_new();
+    let e1: Emitter = on(e0, "tick", show);
+    let e2: Emitter = on(e1, "tick", show_twice);
+    let e3: Emitter = on(e2, "done", show_done);
+    println(emit(e3, "tick", 5));
+    println(emit(e3, "done", 0));
+    println(emit(e3, "unknown", 9));
+    let e4: Emitter = off(e3, "tick", show_twice);
+    println(emit(e4, "tick", 7));
+    println(emit(e3, "tick", 7));
+}

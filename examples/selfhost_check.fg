@@ -20,7 +20,7 @@
 // encoded into strings use "~" as the separator, never ",",
 // because generic types like Result<int, str> contain commas.
 // A struct's fields encode as "name:type~name:type"; a function
-// signature encodes as "type~type->rettype".
+// signature encodes as "type~type=>rettype".
 
 import "selfhost_parse.fg";
 
@@ -62,14 +62,14 @@ struct HChecker {
     enum_variants: [str];
     // Type params per enum ("T~E" or ""), parallel to enum_names.
     enum_tparams: [str];
-    // Methods: struct name -> "method:params->ret" entries, where
+    // Methods: struct name -> "method:params=>ret" entries, where
     // params are the "~"-joined types AFTER the receiver.
     method_structs: [str];
     method_sigs: [str];
     // Struct -> trait for "impl Trait for Struct" blocks.
     impl_structs: [str];
     impl_traits: [str];
-    // Traits: trait name -> "method:params->ret" entries.
+    // Traits: trait name -> "method:params=>ret" entries.
     trait_names: [str];
     trait_sigs: [str];
     // Newtypes (v1 #11): name -> underlying type, parallel arrays.
@@ -91,6 +91,10 @@ struct HChecker {
     func_pnames: [str];
     // Type params per function ("T~E" or ""), parallel to func_names.
     func_tparams: [str];
+    // Extern flag per function, parallel to func_names (Top-500
+    // #103: an extern fn cannot be used as a value — its C ABI
+    // type differs from the Qasida fn type).
+    func_extern: [bool];
     ret_type: str;
     // Branch/loop depth (conditional-move rule + break/continue).
     loop_depth: int;
@@ -121,7 +125,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", freestanding: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", freestanding: false };
 }
 
 // C keywords that are not Qasida keywords: user names colliding
@@ -500,10 +504,16 @@ fn trim_spaces(s: str) -> str {
 
 // Index of the first top-level occurrence of `ch` in s
 // (ignoring occurrences nested inside <>, [], ()), or -1.
+// The fn-type arrow `->` is a single token: its `>` must not
+// count as an angle-bracket close (Top-500 #103).
 fn find_top(s: str, ch: str) -> int {
     let mut depth: int = 0;
     let mut i: int = 0;
     while i < len(s) {
+        if substr(s, i, 1) == "-" && i + 1 < len(s) && substr(s, i + 1, 1) == ">" {
+            i = i + 2;
+            continue;
+        }
         let c: str = substr(s, i, 1);
         if c == "<" || c == "[" || c == "(" {
             depth = depth + 1;
@@ -527,6 +537,12 @@ fn split_top_bar(s: str) -> [str] {
     let mut i: int = 0;
     while i < len(s) {
         let ch: str = substr(s, i, 1);
+        if ch == "-" && i + 1 < len(s) && substr(s, i + 1, 1) == ">" {
+            // Fn-type arrow, not a generic close (Top-500 #103).
+            cur = cur + "->";
+            i = i + 2;
+            continue;
+        }
         if ch == "<" || ch == "[" || ch == "(" {
             depth = depth + 1;
             cur = cur + ch;
@@ -561,6 +577,11 @@ fn split_top_commas(s: str) -> [str] {
     let mut start: int = 0;
     let mut i: int = 0;
     while i < len(s) {
+        if substr(s, i, 1) == "-" && i + 1 < len(s) && substr(s, i + 1, 1) == ">" {
+            // Fn-type arrow, not a generic close (Top-500 #103).
+            i = i + 2;
+            continue;
+        }
         let c: str = substr(s, i, 1);
         if c == "<" || c == "[" || c == "(" {
             depth = depth + 1;
@@ -582,6 +603,92 @@ fn tuple_elems(t: str) -> [str] {
     }
     let inner: str = substr(t, 1, len(t) - 2);
     return split_top_commas(inner);
+}
+
+// Fn types (Top-500 #103): "fn(int, str) -> bool", "fn() -> void".
+// The parser is the single funnel producing these spellings;
+// these helpers are shared by the checker, infer and codegen.
+fn is_fn_type(t: str) -> bool {
+    return starts_with(t, "fn(");
+}
+
+// Index of the ')' closing the parameter list of a fn type, or -1.
+fn fn_type_close(t: str) -> int {
+    let mut depth: int = 1;
+    let mut i: int = 3;
+    while i < len(t) {
+        let c: str = substr(t, i, 1);
+        if c == "(" {
+            depth = depth + 1;
+        } else if c == ")" {
+            depth = depth - 1;
+            if depth == 0 {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Parameter types of a fn type, in order ([] for fn()).
+fn fn_type_params(t: str) -> [str] {
+    let close: int = fn_type_close(t);
+    if close < 0 {
+        fail_compile("fn_type_params called on malformed fn type " + t);
+    }
+    let inner: str = trim_spaces(substr(t, 3, close - 3));
+    if inner == "" {
+        return [];
+    }
+    return split_top_commas(inner);
+}
+
+// Return type of a fn type.
+fn fn_type_ret(t: str) -> str {
+    let close: int = fn_type_close(t);
+    if close < 0 {
+        fail_compile("fn_type_ret called on malformed fn type " + t);
+    }
+    let rest: str = trim_spaces(substr(t, close + 1, len(t) - close - 1));
+    if len(rest) < 2 || substr(rest, 0, 2) != "->" {
+        fail_compile("fn type without return arrow: " + t);
+    }
+    return trim_spaces(substr(rest, 2, len(rest) - 2));
+}
+
+// Fn-type string of a function from its checker sig
+// ("p1~p2=>ret"). The separator is "=>" (not "->") because a
+// fn type in the params or the ret contains "->" — "=>" never
+// appears in a type, so the split is unambiguous.
+fn fn_type_of_sig(sig: str) -> str {
+    let mut ai: int = -1;
+    let mut i: int = 0;
+    while i + 1 < len(sig) {
+        if substr(sig, i, 1) == "=" && substr(sig, i + 1, 1) == ">" {
+            ai = i;
+        }
+        i = i + 1;
+    }
+    if ai < 0 {
+        fail_compile("bad signature '" + sig + "'");
+    }
+    let param_part: str = substr(sig, 0, ai);
+    let ret: str = substr(sig, ai + 2, len(sig) - ai - 2);
+    let mut params: str = "";
+    if param_part != "" {
+        let parts: [str] = split(param_part, "~");
+        let mut j: int = 0;
+        while j < len(parts) {
+            if params == "" {
+                params = parts[j];
+            } else {
+                params = params + ", " + parts[j];
+            }
+            j = j + 1;
+        }
+    }
+    return "fn(" + params + ") -> " + ret;
 }
 
 // Whether value type `got` is acceptable where `want` is expected.
@@ -930,6 +1037,22 @@ fn substitute_type(t: str, names: [str], types: [str]) -> str {
         }
         i = i + 1;
     }
+    // A fn type may mention type params (generic map needs
+    // fn(T) -> T); substitute inside each param and the ret.
+    if is_fn_type(t) {
+        let params: [str] = fn_type_params(t);
+        let ret: str = fn_type_ret(t);
+        let mut out: str = "fn(";
+        let mut j: int = 0;
+        while j < len(params) {
+            if j > 0 {
+                out = out + ", ";
+            }
+            out = out + substitute_type(params[j], names, types);
+            j = j + 1;
+        }
+        return out + ") -> " + substitute_type(ret, names, types);
+    }
     // Otherwise substitute inside <...>, [...], (...).
     let lt: int = find_lt(t);
     if lt >= 0 && substr(t, len(t) - 1, 1) == ">" {
@@ -994,6 +1117,30 @@ fn unify(tmpl: str, conc: str, names0: [str], types0: [str]) -> UOut {
         i = i + 1;
     }
     // Both generic instantiations of the same base: unify args.
+    if is_fn_type(tmpl) || is_fn_type(conc) {
+        // Fn types unify structurally: same arity, each param and
+        // the ret unify in turn. A fn type never unifies with a
+        // non-fn type.
+        if !is_fn_type(tmpl) || !is_fn_type(conc) {
+            return UOut { ok: false, names: names, types: types };
+        }
+        let tp: [str] = fn_type_params(tmpl);
+        let cp: [str] = fn_type_params(conc);
+        if len(tp) != len(cp) {
+            return UOut { ok: false, names: names, types: types };
+        }
+        let mut j: int = 0;
+        while j < len(tp) {
+            let u: UOut = unify(tp[j], cp[j], names, types);
+            if !u.ok {
+                return UOut { ok: false, names: names, types: types };
+            }
+            names = u.names;
+            types = u.types;
+            j = j + 1;
+        }
+        return unify(fn_type_ret(tmpl), fn_type_ret(conc), names, types);
+    }
     if find_lt(tmpl) >= 0 && find_lt(conc) >= 0 {
         if generic_base(tmpl) != generic_base(conc) {
             return UOut { ok: false, names: names, types: types };
@@ -1573,6 +1720,42 @@ fn func_sig(c: HChecker, name: str) -> str {
     return "";
 }
 
+// Whether a named function is an extern declaration (Top-500 #103).
+fn func_is_extern(c: HChecker, name: str) -> bool {
+    let mut i: int = 0;
+    while i < len(c.func_names) {
+        if c.func_names[i] == name {
+            return c.func_extern[i];
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Whether a name is a visible variable (no failure when absent).
+fn var_known(c: HChecker, name: str) -> bool {
+    let mut i: int = len(c.var_names) - 1;
+    while i >= 0 {
+        if c.var_names[i] == name {
+            return true;
+        }
+        i = i - 1;
+    }
+    return false;
+}
+
+// Type of a visible variable, or "" when absent (no failure).
+fn var_type_or_empty(c: HChecker, name: str) -> str {
+    let mut i: int = len(c.var_names) - 1;
+    while i >= 0 {
+        if c.var_names[i] == name {
+            return c.var_types[i];
+        }
+        i = i - 1;
+    }
+    return "";
+}
+
 // Parameter names of a function ("~"-joined), or [] if unknown.
 fn func_param_names(c: HChecker, name: str) -> [str] {
     let mut i: int = 0;
@@ -1737,7 +1920,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
                     }
                     pi = pi + 1;
                 }
-                enc = enc + "->" + m.sval;
+                enc = enc + "=>" + m.sval;
                 push(c.trait_names, tname);
                 push(c.trait_sigs, enc);
                 j = j + 1;
@@ -1793,7 +1976,7 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
                     }
                     pi = pi + 1;
                 }
-                enc = enc + "->" + m.sval;
+                enc = enc + "=>" + m.sval;
                 push(c.method_structs, sname);
                 push(c.method_sigs, enc);
                 j = j + 1;
@@ -1824,9 +2007,10 @@ fn collect_defs(c0: HChecker, prog: Node) -> HChecker {
                 j = j + 1;
             }
             push(c.func_names, fname);
-            push(c.func_sigs, params + "->" + n.sval);
+            push(c.func_sigs, params + "=>" + n.sval);
             push(c.func_pnames, pnames);
             push(c.func_tparams, sp[1]);
+            push(c.func_extern, n.bval);
         }
         i = i + 1;
     }
@@ -2002,7 +2186,7 @@ fn underlying_newtype(c: HChecker, t: str) -> str {
     return cur;
 }
 
-// "params->ret" for a method on a struct, or "" if none.
+// "params=>ret" for a method on a struct, or "" if none.
 fn method_sig(c: HChecker, sname: str, mname: str) -> str {
     let mut i: int = 0;
     while i < len(c.method_structs) {
@@ -2023,7 +2207,7 @@ fn has_method(c: HChecker, sname: str, mname: str) -> bool {
     return method_sig(c, sname, mname) != "";
 }
 
-// "params->ret" for a method on a trait, or "" if none.
+// "params=>ret" for a method on a trait, or "" if none.
 fn trait_sig(c: HChecker, tname: str, mname: str) -> str {
     let mut i: int = 0;
     while i < len(c.trait_names) {
@@ -2279,11 +2463,11 @@ fn struct_has_any_method(c: HChecker, sname: str) -> bool {
     return false;
 }
 
-// Check a call's args against an encoded "params->ret" sig
+// Check a call's args against an encoded "params=>ret" sig
 // (params "~"-joined), returning the return type.
 fn check_sig_args(c0: HChecker, n: Node, sig: str) -> COut {
     let mut c: HChecker = c0;
-    let parts: [str] = split(sig, "->");
+    let parts: [str] = split(sig, "=>");
     if len(parts) != 2 {
         fail_at(n.line, n.col, "bad method signature '" + sig + "'");
     }
@@ -2344,6 +2528,21 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         let en: str = enum_of_variant(c, n.name);
         if en != "" {
             return COut { c: c, typ: en };
+        }
+        // A bare function name in value position is a fn value
+        // (Top-500 #103, FN-C1): no visible variable of that name,
+        // but a function of that name exists. Generic functions
+        // cannot be values (no instantiation from a bare name);
+        // extern functions cannot be values (their C ABI type
+        // differs from the Qasida fn type).
+        if !var_known(c, n.name) && func_sig(c, n.name) != "" {
+            if func_tparams(c, n.name) != "" {
+                fail_at(n.line, n.col, "generic function '" + n.name + "' cannot be used as a value; call it (the call instantiates it)");
+            }
+            if func_is_extern(c, n.name) {
+                fail_at(n.line, n.col, "extern function '" + n.name + "' cannot be used as a value (its C ABI type differs from the Qasida type)");
+            }
+            return COut { c: c, typ: fn_type_of_sig(func_sig(c, n.name)) };
         }
         let t: str = env_lookup(c, n.name, n.line, n.col);
         return COut { c: c, typ: t };
@@ -2718,6 +2917,11 @@ fn check_expr_inner(c0: HChecker, n: Node) -> COut {
         // Call: name is the function; kids are the args.
         return check_call(c, n);
     }
+    if n.kind == 46 {
+        // IndirectCall: kids[0] is the callee fn value, the rest
+        // are the args (Top-500 #103).
+        return check_indirect_call(c, n);
+    }
     if n.kind == 33 {
         // MethodCall: kids[0] is the receiver, name is the method.
         return check_method_call(c, n);
@@ -2742,6 +2946,58 @@ fn concrete_enum(ven: str, args: [str]) -> str {
         i = i + 1;
     }
     return out + ">";
+}
+
+// Check a call's args against a fn type (FN-C2). Mirrors the
+// direct-call argument loop exactly (empty-array resolution,
+// placeholder filling, accepts, sized-literal rule). Returns
+// the fn type's return type. No node stamp: the hosted infer
+// pass re-derives the type from the variable, and codegen reads
+// it from the infer map. kids[first..] are the args: a Call
+// node has no callee kid (first 0), an IndirectCall node has
+// the callee at kids[0] (first 1).
+fn check_indirect_args(c0: HChecker, n: Node, fn_type: str, what: str, first: int) -> COut {
+    let mut c: HChecker = c0;
+    let params: [str] = fn_type_params(fn_type);
+    let ret: str = fn_type_ret(fn_type);
+    let nargs: int = len(n.kids) - first;
+    if nargs != len(params) {
+        fail_at(n.line, n.col, what + " takes " + itoa(len(params)) + " argument(s), got " + itoa(nargs));
+    }
+    let mut j: int = 0;
+    while j < len(params) {
+        let kid: Node = n.kids[first + j];
+        let mut a: COut = check_expr(c, kid);
+        c = a.c;
+        if kid.kind == 34 {
+            let rr: ResOut = try_resolve_empty(c, kid.name, params[j]);
+            c = rr.c;
+            if rr.ok {
+                a.typ = params[j];
+            }
+        }
+        a.typ = fill_placeholder(a.typ, params[j]);
+        if !accepts(c, a.typ, params[j]) && !sized_literal_ok(c, kid, params[j]) && !literal_fits_fixed(kid, params[j]) {
+            let fit_msg: str = literal_fit_msg(kid, params[j]);
+            if fit_msg != "" {
+                fail_at(n.line, n.col, fit_msg);
+            }
+            fail_at(n.line, n.col, "argument " + itoa(j) + " of " + what + " must be " + params[j] + ", got " + a.typ + cast_hint(a.typ, params[j]));
+        }
+        j = j + 1;
+    }
+    return COut { c: c, typ: ret };
+}
+
+// handlers[i](x): the callee must be a fn value (FN-C2).
+fn check_indirect_call(c0: HChecker, n: Node) -> COut {
+    let mut c: HChecker = c0;
+    let callee: COut = check_expr(c, n.kids[0]);
+    c = callee.c;
+    if !is_fn_type(callee.typ) {
+        fail_at(n.line, n.col, "calling a value of type " + callee.typ + " — only a function value can be called");
+    }
+    return check_indirect_args(c, n, callee.typ, "indirect call", 1);
 }
 
 fn check_call(c0: HChecker, n: Node) -> COut {
@@ -2806,14 +3062,30 @@ fn check_call(c0: HChecker, n: Node) -> COut {
     }
     let sig: str = func_sig(c, n.name);
     if sig == "" {
+        // Indirect call through a fn-typed variable (FN-C2):
+        // f(x) where f is a local/param of fn type. A same-named
+        // function still wins when no fn-typed local shadows it
+        // (the func_sig above); a non-fn local with a function's
+        // name also falls through to the function, so existing
+        // programs are unaffected. Expression builtins still win
+        // over a same-named variable (Python checks len/refcount
+        // etc. before the variable probe), so the probe skips
+        // them; statement builtins already failed above.
+        let vt: str = var_type_or_empty(c, n.name);
+        if vt != "" && !is_expr_builtin(n.name) {
+            if !is_fn_type(vt) {
+                fail_at(n.line, n.col, "calling '" + n.name + "' (type " + vt + ") — '" + n.name + "' is not a function");
+            }
+            return check_indirect_args(c, n, vt, "'" + n.name + "'", 0);
+        }
         // Builtins the checker knows without a definition.
         return check_builtin_call(c, n);
     }
-    // sig is "type~type->rettype".
+    // sig is "type~type=>rettype".
     let mut ai: int = -1;
     let mut i: int = 0;
     while i + 1 < len(sig) {
-        if substr(sig, i, 1) == "-" && substr(sig, i + 1, 1) == ">" {
+        if substr(sig, i, 1) == "=" && substr(sig, i + 1, 1) == ">" {
             ai = i;
         }
         i = i + 1;
@@ -3430,6 +3702,11 @@ fn binop_combine(c0: HChecker, op: str, lt: str, rt: str, ln: Node, rn: Node, li
         if lt == rt && (lt == "int" || lt == "float" || lt == "bool" || lt == "str" || is_fixed_int(lt) || str_in_arr(lt, c.enum_names)) {
             return COut { c: c, typ: "bool" };
         }
+        if lt == rt && is_fn_type(lt) {
+            // Fn values compare as C pointers (Top-500 #103, FN-C3):
+            // same fn type only, no subtyping.
+            return COut { c: c, typ: "bool" };
+        }
         if lt == rt && str_in_arr(lt, c.nt_names) {
             let under: str = underlying_newtype(c, lt);
             if under == "int" || under == "float" || under == "bool" || under == "str" || str_in_arr(under, c.enum_names) {
@@ -3662,6 +3939,10 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
         while i < len(n.kids) {
             let a: COut = check_expr(c, n.kids[i]);
             c = a.c;
+            if is_fn_type(a.typ) {
+                // A function value has no printed form (FN-C6).
+                fail_at(n.line, n.col, "cannot print a function value (type " + a.typ + ")");
+            }
             i = i + 1;
         }
         return c;
@@ -4435,7 +4716,7 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         let mut ai: int = -1;
         let mut i: int = 0;
         while i + 1 < len(sig) {
-            if substr(sig, i, 1) == "-" && substr(sig, i + 1, 1) == ">" {
+            if substr(sig, i, 1) == "=" && substr(sig, i + 1, 1) == ">" {
                 ai = i;
             }
             i = i + 1;
@@ -4513,7 +4794,7 @@ fn func_ret(c: HChecker, name: str) -> str {
     if sig == "" {
         return "";
     }
-    let parts: [str] = split(sig, "->");
+    let parts: [str] = split(sig, "=>");
     if len(parts) != 2 {
         return "";
     }
@@ -5079,6 +5360,32 @@ fn hc_valid_type(c: HChecker, t: str, tparams: [str]) -> bool {
     }
     if str_in_arr(t, c.struct_names) || str_in_arr(t, c.enum_names) || str_in_arr(t, c.nt_names) {
         return true;
+    }
+    if is_fn_type(t) {
+        // Fn type (Top-500 #103): every param a valid value type
+        // (not void, no union anywhere inside — a union nested in
+        // a fn type would never get its C typedef emitted), the ret
+        // void or a valid value type (same union rule). Type params
+        // inside a fn type are valid when in scope (generic map
+        // needs fn(T) -> T); they pass through the recursive calls.
+        let params: [str] = fn_type_params(t);
+        let ret: str = fn_type_ret(t);
+        let mut i: int = 0;
+        while i < len(params) {
+            // Any "|" anywhere inside (even nested in an array or
+            // generic arg) rejects, matching the Python checker.
+            if len(split(params[i], "|")) > 1 || params[i] == "void" {
+                return false;
+            }
+            if !hc_valid_type(c, params[i], tparams) {
+                return false;
+            }
+            i = i + 1;
+        }
+        if len(split(ret, "|")) > 1 {
+            return false;
+        }
+        return ret == "void" || hc_valid_type(c, ret, tparams);
     }
     if is_union_type(t) {
         let members: [str] = union_members(t);

@@ -245,6 +245,29 @@ class Parser:
             # `opaque Trait`: the trait name is part of the type.
             self.next()
             base = f"opaque {self.expect_ident().value}"
+        elif self.at_kw("fn"):
+            # Fn type (Top-500 #103): fn(P1, P2, ...) -> R, with
+            # the `-> R` optional (defaults to void, as in fn
+            # declarations). The return type parses with the same
+            # allow_union threading as the caller, so
+            # `fn(int) -> int | str` is one string — the checker
+            # rejects unions inside fn types (FN-C6).
+            self.next()
+            self.expect_op("(")
+            params = []
+            if not self.at_op(")"):
+                while True:
+                    params.append(self.parse_type())
+                    if self.at_op(","):
+                        self.next()
+                        continue
+                    break
+            self.expect_op(")")
+            ret = "void"
+            if self.at_op("->"):
+                self.next()
+                ret = self.parse_type()
+            base = f"fn({', '.join(params)}) -> {ret}"
         elif self.at_kw("readonly"):
             # `readonly [T]`: a read-only view of an array. The
             # inner type must be a plain array (nesting and
@@ -592,8 +615,9 @@ class Parser:
             if self.at_op("(") and isinstance(expr, A.FieldAccess):
                 # value.method(args): a method call, not a field read.
                 # Field access followed by '(' is unambiguous here:
-                # the language has no function values, so a field
-                # can never itself be called.
+                # a field can never itself be called (a fn-typed
+                # field is read into a local first — Top-500 #103,
+                # FN-C1c), so this stays a method call.
                 tok = self.next()
                 args = []
                 if not self.at_op(")"):
@@ -606,6 +630,24 @@ class Parser:
                 self.expect_op(")")
                 expr = A.MethodCall(expr.base, expr.field, args,
                                     tok.line, tok.col)
+                continue
+            if self.at_op("("):
+                # Calling through a computed fn value: handlers[i](x),
+                # make()(x), (f)(x) (Top-500 #103). A bare Var followed
+                # by '(' never reaches here — parse_primary makes it a
+                # Call — so every '(' here is an indirect call through
+                # a computed value, checked against the callee's fn type.
+                tok = self.next()
+                args = []
+                if not self.at_op(")"):
+                    while True:
+                        args.append(self.parse_expr())
+                        if self.at_op(","):
+                            self.next()
+                            continue
+                        break
+                self.expect_op(")")
+                expr = A.IndirectCall(expr, args, tok.line, tok.col)
                 continue
             if self.at_op("?"):
                 tok = self.next()

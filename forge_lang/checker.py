@@ -16,6 +16,7 @@ from .errors import ForgeError
 from . import ast_nodes as A
 from .generics import (parse_generic, mangle_type, substitute_type,
                        unify, contains_type_param)
+from .fntypes import is_fn_type, fn_parts, fn_type_string
 from .unions import (is_union_type, union_members, UNION_MEMBERS_V1)
 from .opaques import is_opaque_type, opaque_trait
 from .fixedints import (is_fixed_int, is_int_type, fixed_range,
@@ -206,6 +207,23 @@ class Checker:
             return True
         if t in getattr(self, "newtypes", set()):
             return True
+        if is_fn_type(t):
+            # Fn type (Top-500 #103): every param a valid value type
+            # (not void, no union anywhere inside — a union nested in
+            # a fn type would never get its C typedef emitted), the
+            # ret void or a valid value type (same union rule).
+            # Type params inside a fn type are valid when in scope
+            # (generic map needs fn(T) -> T); they pass through the
+            # recursive valid_type calls below.
+            parts = fn_parts(t)
+            if parts is None:
+                return False
+            params, ret = parts
+            if any(" | " in p for p in params) or " | " in ret:
+                return False
+            if not all(self.valid_type(p) for p in params):
+                return False
+            return ret == "void" or self.valid_type(ret)
         if is_union_type(t):
             # v1 unions: at least two distinct scalar members.
             members = union_members(t)
@@ -1123,6 +1141,26 @@ class Checker:
         raise ForgeError(f"undefined variable '{name}'{suggest(name, candidates)}",
                          line, col)
 
+    def _fn_value_type(self, name, line, col):
+        """Fn type of a named function used as a value (FN-C1).
+
+        A bare function name in value position has the type of its
+        signature. Generic functions cannot be values (no
+        instantiation from a bare name in v1); extern functions
+        cannot be values (their C ABI type differs from the Qasida
+        fn type, so the typedef would be the wrong signature).
+        """
+        fn = self.funcs[name]
+        if getattr(fn, "type_params", None):
+            raise ForgeError(f"generic function '{name}' cannot be used as a value; "
+                             f"call it (the call instantiates it)",
+                             line, col)
+        if getattr(fn, "is_extern", False):
+            raise ForgeError(f"extern function '{name}' cannot be used as a value "
+                             f"(its C ABI type differs from the Qasida type)",
+                             line, col)
+        return fn_type_string(fn.params, fn.ret)
+
     def check_block(self, block):
         self.scopes.append({})
         for stmt in block.stmts:
@@ -1766,10 +1804,16 @@ class Checker:
                                          stmt.line, stmt.col)
             return
         if isinstance(stmt, A.ExprStmt):
-            if not isinstance(stmt.expr, A.Call):
+            if not isinstance(stmt.expr, (A.Call, A.IndirectCall)):
                 raise ForgeError("an expression statement must be a function call",
                                  stmt.line, stmt.col)
             call = stmt.expr
+            if isinstance(call, A.IndirectCall):
+                # handlers[i](x); — an indirect call is not a named
+                # builtin, so it goes straight to expression
+                # checking (Top-500 #103).
+                self.check_expr(call)
+                return
             if call.name in STMT_BUILTINS:
                 self.check_stmt_builtin(call)
                 return
@@ -1796,7 +1840,11 @@ class Checker:
                                  "(not in freestanding v1); use poke32 for MMIO output",
                                  call.line, call.col)
             for a in call.args:
-                self.check_expr(a)
+                t = self.check_expr(a)
+                if is_fn_type(t):
+                    # A function value has no printed form (FN-C6).
+                    raise ForgeError("cannot print a function value "
+                                     f"(type {t})", call.line, call.col)
             return
         if call.name == "fail":
             if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
@@ -2084,6 +2132,12 @@ class Checker:
                 if moved_field:
                     raise ForgeError(f"use of value '{expr.name}' with moved field "
                                      f"'{moved_field[0]}'", expr.line, expr.col)
+            if (expr.name not in self.enum_variants
+                    and not any(expr.name in scope for scope in self.scopes)
+                    and expr.name in self.funcs):
+                # A bare function name in value position is a fn
+                # value (Top-500 #103, FN-C1).
+                return self._fn_value_type(expr.name, expr.line, expr.col)
             return self.lookup(expr.name, expr.line, expr.col)[0]
         if isinstance(expr, A.ArrayLit):
             if not expr.elems:
@@ -2369,9 +2423,55 @@ class Checker:
             return self.check_binop(expr)
         if isinstance(expr, A.MethodCall):
             return self.check_method_call(expr)
+        if isinstance(expr, A.IndirectCall):
+            return self.check_indirect_call(expr)
         if isinstance(expr, A.Call):
             return self.check_call(expr)
         raise ForgeError(f"unsupported expression {type(expr).__name__}", expr.line, expr.col)
+
+    def _check_indirect_args(self, call, fn_type, what):
+        """Check a call's args against a fn type (FN-C2).
+
+        Mirrors the direct-call argument loop exactly (empty-array
+        resolution, placeholder filling, accepts, sized-literal
+        rule). Stamps the fn type on the node for codegen's
+        ownership loop and returns the fn type's return type.
+        """
+        params, ret = fn_parts(fn_type)
+        if len(call.args) != len(params):
+            raise ForgeError(f"{what} takes {len(params)} argument(s), "
+                             f"got {len(call.args)}", call.line, call.col)
+        for i, (arg, pt) in enumerate(zip(call.args, params)):
+            t = self.check_expr(arg)
+            if (isinstance(arg, A.Var)
+                    and self._resolve_empty(arg.name, pt)):
+                # A concretely typed parameter constrains an
+                # unresolved array argument to the parameter type.
+                t = pt
+            filled = self.fill_placeholder(t, pt)
+            if filled != t:
+                if isinstance(arg, A.Call):
+                    arg.concrete_type = filled
+                t = filled
+            if t != pt:
+                if not (isinstance(arg, A.ArrayLit) and not arg.elems and pt.startswith("[") and not (is_sized_array(pt) and sized_len(pt) > 0)) \
+                        and not self.accepts(t, pt, arg) \
+                        and not self._sized_literal_ok(arg, pt):
+                    raise ForgeError(self._literal_fit_msg(arg, pt)
+                                     or f"argument {i} of {what} must be {pt}, got {t}"
+                                     f"{cast_hint(t, pt)}",
+                                     call.line, call.col)
+        call.fn_type = fn_type
+        return ret
+
+    def check_indirect_call(self, call):
+        """handlers[i](x): the callee must be a fn value (FN-C2)."""
+        callee_type = self.check_expr(call.callee)
+        if not is_fn_type(callee_type):
+            raise ForgeError(f"calling a value of type {callee_type} — "
+                             f"only a function value can be called",
+                             call.line, call.col)
+        return self._check_indirect_args(call, callee_type, "indirect call")
 
     def check_call(self, call):
         if call.name in STMT_BUILTINS:
@@ -2768,6 +2868,23 @@ class Checker:
             return "int"
         fn = self.funcs.get(call.name)
         if fn is None:
+            # Indirect call through a fn-typed variable (FN-C2):
+            # f(x) where f is a local/param of fn type. A same-named
+            # function still wins when no fn-typed local shadows it
+            # (the funcs.get above); a non-fn local with a function's
+            # name also falls through to the function, so existing
+            # programs are unaffected.
+            var_type = None
+            for scope in reversed(self.scopes):
+                if call.name in scope:
+                    var_type = scope[call.name][0]
+                    break
+            if var_type is not None:
+                if not is_fn_type(var_type):
+                    raise ForgeError(f"calling '{call.name}' (type {var_type}) — "
+                                     f"'{call.name}' is not a function",
+                                     call.line, call.col)
+                return self._check_indirect_args(call, var_type, f"'{call.name}'")
             raise ForgeError(f"undefined function '{call.name}'"
                              f"{suggest(call.name, list(self.funcs) + list(BUILTINS))}",
                              call.line, call.col)
@@ -2887,6 +3004,10 @@ class Checker:
         if op in ("==", "!="):
             if lt == rt and (lt in ("int", "float", "bool", "str")
                              or is_fixed_int(lt) or lt in self.enums):
+                return "bool"
+            if lt == rt and is_fn_type(lt):
+                # Fn values compare as C pointers (Top-500 #103,
+                # FN-C3): same fn type only, no subtyping.
                 return "bool"
             # Same-newtype equality, when the underlying type is
             # itself comparable. Ordering and arithmetic still need

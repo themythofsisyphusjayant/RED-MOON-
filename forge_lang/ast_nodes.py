@@ -287,6 +287,22 @@ class Call:
     line: int
     col: int
     concrete_type: str = None  # set by checker for enum constructions
+    fn_type: str = None  # set by checker for indirect calls through
+    # a fn-typed variable (Top-500 #103): the callee's fn type,
+    # which codegen uses for the argument-ownership loop.
+
+
+@dataclass
+class IndirectCall:
+    # Calling through a computed fn value: handlers[i](x),
+    # make()(x), (f)(x). The callee is any expression whose type
+    # is a fn type (Top-500 #103). fn_type is stamped by the
+    # checker: the callee's fn type, for codegen's ownership loop.
+    callee: object
+    args: list
+    line: int
+    col: int
+    fn_type: str = None
 
 
 @dataclass

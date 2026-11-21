@@ -14,7 +14,13 @@ def parse_generic(t):
         return None
     depth = 0
     base_end = None
-    for i, ch in enumerate(t):
+    i = 0
+    while i < len(t):
+        ch = t[i]
+        if ch == "-" and i + 1 < len(t) and t[i + 1] == ">":
+            # Fn-type arrow, not a generic close (Top-500 #103).
+            i += 2
+            continue
         if ch == "<":
             if depth == 0:
                 base_end = i
@@ -25,15 +31,27 @@ def parse_generic(t):
                 base = t[:base_end]
                 inner = t[base_end + 1:-1]
                 return base, split_top_level(inner)
+        i += 1
     return None
 
 
 def split_top_level(s):
-    """Split s on top-level commas (ignoring nested <>, [])."""
+    """Split s on top-level commas (ignoring nested <>, []).
+
+    The fn-type arrow `->` is a single token: its `>` must not
+    count as an angle-bracket close, or a generic holding a fn
+    type mis-splits (Top-500 #103).
+    """
     out = []
     depth_a = depth_b = 0
     cur = []
-    for ch in s:
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "-" and i + 1 < len(s) and s[i + 1] == ">":
+            cur.append("->")
+            i += 2
+            continue
         if ch == "<":
             depth_a += 1
         elif ch == ">":
@@ -47,12 +65,18 @@ def split_top_level(s):
             cur = []
         else:
             cur.append(ch)
+        i += 1
     out.append("".join(cur).strip())
     return [o for o in out if o]
 
 
 def mangle_type(t):
     """Map a Forge type string to a valid C identifier fragment."""
+    from .fntypes import is_fn_type, fn_mangle
+    if is_fn_type(t):
+        # A fn type inside a generic instantiation (Box<fn(int) ->
+        # int>) mangles to its typedef name (Top-500 #103).
+        return fn_mangle(t)
     g = parse_generic(t)
     if g is not None:
         base, args = g
@@ -66,6 +90,13 @@ def substitute_type(t, bindings):
     """Replace type parameters in t using bindings {param: concrete}."""
     if t in bindings:
         return bindings[t]
+    from .fntypes import is_fn_type, fn_parts
+    if is_fn_type(t):
+        # A fn type may mention type params (generic map needs
+        # fn(T) -> T); substitute inside each param and the ret.
+        params, ret = fn_parts(t)
+        return ("fn(" + ", ".join(substitute_type(p, bindings) for p in params)
+                + ") -> " + substitute_type(ret, bindings))
     g = parse_generic(t)
     if g is not None:
         base, args = g
@@ -87,6 +118,20 @@ def unify(pattern, actual, bindings, type_params):
             return bindings[pattern] == actual
         bindings[pattern] = actual
         return True
+    from .fntypes import is_fn_type, fn_parts
+    if is_fn_type(pattern) or is_fn_type(actual):
+        # Fn types unify structurally: same arity, each param and
+        # the ret unify in turn. A fn type never unifies with a
+        # non-fn type.
+        if not (is_fn_type(pattern) and is_fn_type(actual)):
+            return False
+        p_params, p_ret = fn_parts(pattern)
+        a_params, a_ret = fn_parts(actual)
+        if len(p_params) != len(a_params):
+            return False
+        return (all(unify(pp, ap, bindings, type_params)
+                    for pp, ap in zip(p_params, a_params))
+                and unify(p_ret, a_ret, bindings, type_params))
     g1 = parse_generic(pattern)
     g2 = parse_generic(actual)
     if g1 is not None or g2 is not None:
@@ -101,6 +146,11 @@ def unify(pattern, actual, bindings, type_params):
 def contains_type_param(t, type_params):
     if t in type_params:
         return True
+    from .fntypes import is_fn_type, fn_parts
+    if is_fn_type(t):
+        params, ret = fn_parts(t)
+        return (any(contains_type_param(p, type_params) for p in params)
+                or contains_type_param(ret, type_params))
     g = parse_generic(t)
     if g is not None:
         return any(contains_type_param(a, type_params) for a in g[1])

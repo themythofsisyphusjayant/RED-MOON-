@@ -51,7 +51,7 @@ EXPECTED = {
     'doctest_demo': '2\na+b\na*b\ntrue\ntrue\nfalse\n2\n',
     'workspace_demo': 'crates/cli\nfalse\ntrue\nfalse\n2\ncli\nweb\n',
     'buildprof_demo': '-O0 -g --checks\n-O3\ntrue\n0\n3\n',
-    'triple_demo': 'aarch64\nunknown\nlinux-gnu\ntrue\nfalse\nwasm32\nunknown\ntrue\nfalse\n',
+    'triple_demo': 'aarch64\nunknown\nlinux-gnu\ntrue\nfalse\nwasm32\nunknown\ntrue\nfalse\n/opt/sysroot/aarch64\n\ntrue\nfalse\n/opt/sysroot/x86_64\n3\n',
     'incr_demo': 'false\ntrue\ntrue\n1\nb.fg\n',
     'buildcache_demo': 'true\nfalse\n3\n2\n2\n75\n',
     'vendor_demo': 'vendor/foo-1.0\nfalse\n1\nbaz-0.9\n2\n',

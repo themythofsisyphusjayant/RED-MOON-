@@ -211,6 +211,16 @@ class Infer:
         if isinstance(expr, A.BoolLit):
             return self.set(expr, "bool")
         if isinstance(expr, A.Var):
+            if (not any(expr.name in scope for scope in self.scopes)
+                    and expr.name not in self.enum_variants
+                    and expr.name in self.funcs):
+                # A bare function name in value position is a fn
+                # value (Top-500 #103, FN-C1). The checker already
+                # rejected generic/extern names as values; only a
+                # plain function name reaches here.
+                from .fntypes import fn_type_string
+                fn = self.funcs[expr.name]
+                return self.set(expr, fn_type_string(fn.params, fn.ret))
             return self.set(expr, self.lookup(expr.name))
         if isinstance(expr, A.ArrayLit):
             if expr.elems:
@@ -320,6 +330,24 @@ class Infer:
             for a in expr.args:
                 self.walk_expr(a)
             return self.set(expr, "int")
+        if isinstance(expr, A.IndirectCall):
+            # handlers[i](x): the callee's fn type gives the arg
+            # types and the return type (Top-500 #103).
+            from .fntypes import fn_parts
+            from .tuples import is_tuple_type as _is_tup
+            ct = self.walk_expr(expr.callee)
+            parts = fn_parts(ct)
+            if parts is not None:
+                params, ret = parts
+                for arg, pt in zip(expr.args, params):
+                    if isinstance(arg, (A.ArrayLit, A.TupleLit)) and (pt.startswith("[") or _is_tup(pt)):
+                        self.fill_lit(arg, pt)
+                    else:
+                        self.walk_expr(arg)
+                return self.set(expr, ret)
+            for a in expr.args:
+                self.walk_expr(a)
+            return self.set(expr, "int")
         if isinstance(expr, A.Call):
             if getattr(expr, "concrete_type", None):
                 for a in expr.args:
@@ -340,6 +368,21 @@ class Infer:
                         else:
                             self.walk_expr(arg)
                     return self.set(expr, fn.ret)
+                stamped = getattr(expr, "fn_type", None)
+                if stamped:
+                    # Indirect call through a fn-typed variable:
+                    # the checker stamped the callee's fn type
+                    # (FN-C2); its params type the args, its ret
+                    # is the call's type.
+                    from .fntypes import fn_parts
+                    from .tuples import is_tuple_type as _is_tup
+                    params, ret = fn_parts(stamped)
+                    for arg, pt in zip(expr.args, params):
+                        if isinstance(arg, (A.ArrayLit, A.TupleLit)) and (pt.startswith("[") or _is_tup(pt)):
+                            self.fill_lit(arg, pt)
+                        else:
+                            self.walk_expr(arg)
+                    return self.set(expr, ret)
             for a in expr.args:
                 self.walk_expr(a)
             if expr.name in ("len", "clock_micros", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):

@@ -1062,6 +1062,12 @@ def c_type(t):
     # apart. The map is set by Codegen.__init__ (the compiler is
     # single-threaded and every compilation builds a Codegen).
     t = _resolve_newtype(t)
+    from .fntypes import is_fn_type, fn_c_name
+    if is_fn_type(t):
+        # A fn value is a plain C function pointer, named by its
+        # typedef (Top-500 #103); generate() emits the typedef
+        # before any use.
+        return fn_c_name(t)
     if is_union_type(t):
         return union_c_name(t)
     if is_opaque_type(t):
@@ -1091,6 +1097,10 @@ def c_type(t):
             # Arrays of fixed-width integers are a later slice:
             # their element helpers do not exist yet.
             raise ForgeError(f"arrays of {inner} are not supported in v1")
+        if is_fn_type(inner):
+            # Array of function values: the element is the fn
+            # typedef name (Top-500 #103).
+            return f"ForgeArray_{fn_c_name(inner)}"
         if inner.startswith("["):
             # Nested array: ForgeArray_<inner C array type>.
             return f"ForgeArray_{c_type(inner)}"
@@ -1689,6 +1699,13 @@ class Codegen:
             return f"{fn}({var_code});"
         if self.is_struct_type(inner):
             return f"forge_{self.struct_type_name(inner)}_array_free({var_code});"
+        from .fntypes import is_fn_type
+        if is_fn_type(inner):
+            # Array of function values: plain pointers, no
+            # per-element free — drop the refcount and the buffer
+            # only (Top-500 #103).
+            return (f"if ({var_code}.ref && --(*{var_code}.ref) == 0) {{ "
+                    f"if ({var_code}.data) memset({var_code}.data, 0, (size_t){var_code}.cap * sizeof(*{var_code}.data)); free({var_code}.data); if ({var_code}.ref) memset({var_code}.ref, 0, sizeof(long long)); free({var_code}.ref); forge_arr_frees++; }}")
         # Nested array: refcount the outer, free each element array,
         # then the outer buffer.
         i = f"__forge_fi{self.assign_counter}"
@@ -1986,10 +2003,15 @@ class Codegen:
             # Sized sizes are stripped first: the C layout is the
             # dynamic form, so only dynamic types get typedefs.
             from .sizedarrays import normalize_sized
+            from .fntypes import is_fn_type
             t = normalize_sized(t)
             while t.startswith("[") and t.endswith("]"):
                 inner = t[1:-1]
                 if inner.startswith("["):
+                    out.add(t)
+                if is_fn_type(inner):
+                    # Array of function values: its ForgeArray_
+                    # typedef is not in the preamble (Top-500 #103).
                     out.add(t)
                 t = inner
 
@@ -2065,6 +2087,16 @@ class Codegen:
             self.lines.append("/* qasida: no-bounds-checks */")
         if self.no_overflow_checks:
             self.lines.append("/* qasida: no-overflow-checks */")
+        # Function-value typedefs (Top-500 #103): one typedef per
+        # distinct fn type, inner types first, emitted here — after
+        # the header, before enums, structs, unions, tuples and
+        # array structs — because every one of those can reference
+        # a fn type through c_type.
+        from .fntypes import find_fn_types, fn_parts, fn_c_name
+        for ft in find_fn_types(self.program, list(self._types.values())):
+            params, ret = fn_parts(ft)
+            sig_params = ", ".join(c_type(p) for p in params) or "void"
+            self.emit(f"typedef {c_type(ret)} (*{fn_c_name(ft)})({sig_params});")
         # Skip generic templates: only concrete structs are emitted.
         # self.structs is built from program.structs, which includes
         # templates; rebuild it from concrete structs only.
@@ -2150,7 +2182,7 @@ class Codegen:
         # containing itself through tuples) is infinitely
         # sized and fails here with a clear error.
         from .tuples import find_tuples, tuple_elems, tuple_c_name
-        tuple_types = find_tuples(self.program)
+        tuple_types = find_tuples(self.program, list(self._types.values()))
         # weak_upgrade returns (bool, [int]); a builtin call's
         # return type is spelled nowhere, so the tuple walk
         # never sees it — union it in explicitly when any
@@ -3104,6 +3136,7 @@ class Codegen:
             val = self.gen_expr(stmt.expr)
             if et == "str":
                 val = f"forge_copy_str({val})"
+            from .fntypes import is_fn_type
             if self.is_struct_type(et):
                 if not self.is_fresh_struct(stmt.expr):
                     tmp = f"__forge_setv{self.assign_counter}"
@@ -3143,6 +3176,18 @@ class Codegen:
                               f"forge_fail(\"array index out of bounds\");")
                 self.emit(self.array_free_code(f"{base_code}.data[{itmp}]", et))
                 self.emit(f"{base_code}.data[{itmp}] = {val};")
+            elif is_fn_type(et):
+                # Assign a fn value through an index: plain pointer,
+                # direct store with a bounds check (Top-500 #103).
+                # SET_FN has no entry for fn types; no per-element
+                # free (the old value is a plain pointer).
+                itmp = f"__forge_si{self.assign_counter}"
+                self.assign_counter += 1
+                self.emit(f"long long {itmp} = {idx};")
+                if self._bounds_on and id(stmt.base) not in self._fix1_covered:
+                    self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
+                              f"forge_fail(\"array index out of bounds\");")
+                self.emit(f"({base_code}).data[{itmp}] = {val};")
             elif self._bounds_on and id(stmt.base) not in self._fix1_covered:
                 self.emit(f"{SET_FN[et]}(&{base_code}, {idx}, {val});")
             else:
@@ -3594,6 +3639,7 @@ class Codegen:
                 self.gen_print(call)
                 return
             if isinstance(call, A.Call) and call.name == "push":
+                from .fntypes import is_fn_type
                 var_code = self.gen_expr(call.args[0])
                 et = self.expr_type(call.args[1])
                 val = self.gen_expr(call.args[1])
@@ -3657,6 +3703,38 @@ class Codegen:
                     self.emit(f"    {ptr}->data = nd; {ptr}->cap = {ncap};")
                     self.emit("}")
                     self.emit(f"{ptr}->data[{ptr}->len++] = {val};")
+                elif is_fn_type(et):
+                    # Push a function value: plain pointers, no
+                    # per-element copy/free. Detach on shared (CoW)
+                    # like the scalar helpers, then grow and append
+                    # (Top-500 #103).
+                    ptr = f"__forge_pf{self.assign_counter}"
+                    self.assign_counter += 1
+                    ocap = f"__forge_pfo{self.assign_counter}"
+                    self.assign_counter += 1
+                    nbuf = f"__forge_pfn{self.assign_counter}"
+                    self.assign_counter += 1
+                    li = f"__forge_pfi{self.assign_counter}"
+                    self.assign_counter += 1
+                    ncap = f"__forge_pfc{self.assign_counter}"
+                    self.assign_counter += 1
+                    elem_c = c_type(et)
+                    self.emit(f"{c_type(self.expr_type(call.args[0]))} *{ptr} = &{var_code};")
+                    self.emit(f"if ({ptr}->ref && *{ptr}->ref > 1) {{")
+                    self.emit(f"    long long {ocap} = {ptr}->cap ? {ptr}->cap : 4;")
+                    self.emit(f"    {elem_c} *{nbuf} = ({elem_c} *)malloc(sizeof({elem_c}) * (size_t){ocap});")
+                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\");")
+                    self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; }}")
+                    self.emit(f"    (*{ptr}->ref)--;")
+                    self.emit(f"    {ptr}->data = {nbuf}; {ptr}->cap = {ocap}; {ptr}->ref = forge_arr_ref_new();")
+                    self.emit("}")
+                    self.emit(f"if ({ptr}->len >= {ptr}->cap) {{")
+                    self.emit(f"    long long {ncap} = {ptr}->cap ? {ptr}->cap * 2 : 4;")
+                    self.emit(f"    {elem_c} *nd = ({elem_c} *)realloc({ptr}->data, sizeof({elem_c}) * (size_t){ncap});")
+                    self.emit('    if (!nd) forge_fail("out of memory");')
+                    self.emit(f"    {ptr}->data = nd; {ptr}->cap = {ncap};")
+                    self.emit("}")
+                    self.emit(f"{ptr}->data[{ptr}->len++] = {val};")
                 else:
                     self.emit(f"{PUSH_FN[et]}(&{var_code}, {val});")
                 return
@@ -3707,6 +3785,66 @@ class Codegen:
                 self.emit('printf(" ");')
         if newline:
             self.emit('printf("\\n");')
+
+    def _call_arg_codes(self, expr, params):
+        """Argument C code for a call with the given param types.
+
+        Shared by direct calls (params from func_params) and
+        indirect calls through a fn value (params from the fn type
+        stamped by the checker, Top-500 #103): string arguments are
+        copied so the callee owns its parameter, shared arrays
+        gain a reference, shared structs/tuples gain independent
+        fields. Arguments beyond the known signature (should not
+        happen for checked code) pass through unchanged.
+        """
+        arg_codes = []
+        for a, (_pn, pt) in zip(expr.args, params):
+            code = self.gen_expr(a)
+            if self.expr_type(a) == "never":
+                code = self.never_wrap(code, pt)
+            if is_opaque_type(pt):
+                code = self.opaque_convert(code, self.expr_type(a),
+                                           pt, a)
+            elif is_union_type(pt):
+                at = self.expr_type(a)
+                if at in union_members(pt):
+                    copy_str = at == "str" and not self.is_fresh_str(a)
+                    code = self.union_wrap(code, at, pt, copy_str=copy_str)
+                elif at == pt and not self.is_fresh_union(a):
+                    # Shared union argument: callee gains an
+                    # independent str payload, if any.
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    copy = self.union_copy_stmt(f"__forge_arg{n}", pt)
+                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                            f"{copy} __forge_arg{n};}})")
+            elif pt == "str" and not self.is_fresh_str(a):
+                code = f"forge_copy_str({code})"
+            elif self.is_array_type(pt) and not self.is_fresh_array(a):
+                # Shared array argument: callee gains a reference.
+                self.assign_counter += 1
+                n = self.assign_counter
+                code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
+            elif self.is_struct_type(pt) and not self.is_fresh_struct(a):
+                # Shared struct argument: callee gains independent fields.
+                self.assign_counter += 1
+                n = self.assign_counter
+                own = self.struct_own_code(f"__forge_arg{n}", pt)
+                code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"{own} __forge_arg{n};}})")
+            elif is_tuple_type(pt) and not self.is_fresh_tuple(a):
+                # Shared tuple argument: callee gains independent elements.
+                self.assign_counter += 1
+                n = self.assign_counter
+                own = self.tuple_own_code(f"__forge_arg{n}", pt)
+                code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"{own} __forge_arg{n};}})")
+            arg_codes.append(code)
+        if len(expr.args) > len(params):
+            for a in expr.args[len(params):]:
+                arg_codes.append(self.gen_expr(a))
+        return arg_codes
 
     def gen_expr(self, expr):
         if self.freestanding:
@@ -3949,6 +4087,26 @@ class Codegen:
                 # Array element: a shared refcounted value. Safe mode
                 # bounds-checks via temps (single evaluation); the
                 # caller gains a reference when storing it.
+                if self._bounds_on:
+                    key = ("arr", base, idx)
+                    if idx_pure and key in self._check_cache:
+                        return f"({base}).data[{idx}]"
+                    arr_t = c_type(self.expr_type(expr.base))
+                    tmp_a = f"__forge_ia{self.arr_counter}"
+                    tmp_i = f"__forge_ii{self.arr_counter}"
+                    self.arr_counter += 1
+                    if idx_pure:
+                        self._check_cache[key] = True
+                    return (f"({{ {arr_t} {tmp_a} = {base}; long long {tmp_i} = {idx}; "
+                            f"if ({tmp_i} < 0 || {tmp_i} >= {tmp_a}.len) "
+                            f"forge_fail(\"array index out of bounds\"); "
+                            f"{tmp_a}.data[{tmp_i}]; }})")
+                return f"({base}).data[{idx}]"
+            from .fntypes import is_fn_type
+            if is_fn_type(et):
+                # A fn value is a plain pointer: direct data access
+                # with the same bounds check as the array branch
+                # (Top-500 #103). GET_FN has no entry for fn types.
                 if self._bounds_on:
                     key = ("arr", base, idx)
                     if idx_pure and key in self._check_cache:
@@ -4243,6 +4401,20 @@ class Codegen:
             return self.gen_expr(A.Call(mangled, [expr.base] +
                                         list(expr.args),
                                         expr.line, expr.col))
+        if isinstance(expr, A.IndirectCall):
+            # handlers[i](x): the callee expression is a fn value;
+            # emit it as a C call through the pointer, with the same
+            # argument-ownership loop as a direct call (Top-500 #103).
+            # Like a direct call it may mutate shared state, so it
+            # ends any duplicate-check run inside this expression.
+            self._check_cache = {}
+            from .fntypes import fn_parts
+            callee_code = self.gen_expr(expr.callee)
+            stamped = getattr(expr, "fn_type", None)
+            params = ([("", pt) for pt in fn_parts(stamped)[0]]
+                      if stamped is not None else [])
+            arg_codes = self._call_arg_codes(expr, params)
+            return f"{callee_code}({', '.join(arg_codes)})"
         if isinstance(expr, A.Call):
             # A call may mutate shared state (an array passed to it
             # can be written through its parameter), so it ends any
@@ -4502,56 +4674,15 @@ class Codegen:
             # User-function call: string arguments are copied, so the
             # callee owns its parameter and can free it on return.
             # Fresh string arguments are passed as-is (already owned).
-            params = self.func_params.get(expr.name, [])
-            arg_codes = []
-            for a, (_pn, pt) in zip(expr.args, params):
-                code = self.gen_expr(a)
-                if self.expr_type(a) == "never":
-                    code = self.never_wrap(code, pt)
-                if is_opaque_type(pt):
-                    code = self.opaque_convert(code, self.expr_type(a),
-                                               pt, a)
-                elif is_union_type(pt):
-                    at = self.expr_type(a)
-                    if at in union_members(pt):
-                        copy_str = at == "str" and not self.is_fresh_str(a)
-                        code = self.union_wrap(code, at, pt, copy_str=copy_str)
-                    elif at == pt and not self.is_fresh_union(a):
-                        # Shared union argument: callee gains an
-                        # independent str payload, if any.
-                        self.assign_counter += 1
-                        n = self.assign_counter
-                        copy = self.union_copy_stmt(f"__forge_arg{n}", pt)
-                        code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
-                                f"{copy} __forge_arg{n};}})")
-                elif pt == "str" and not self.is_fresh_str(a):
-                    code = f"forge_copy_str({code})"
-                elif self.is_array_type(pt) and not self.is_fresh_array(a):
-                    # Shared array argument: callee gains a reference.
-                    self.assign_counter += 1
-                    n = self.assign_counter
-                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
-                            f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
-                elif self.is_struct_type(pt) and not self.is_fresh_struct(a):
-                    # Shared struct argument: callee gains independent fields.
-                    self.assign_counter += 1
-                    n = self.assign_counter
-                    own = self.struct_own_code(f"__forge_arg{n}", pt)
-                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
-                            f"{own} __forge_arg{n};}})")
-                elif is_tuple_type(pt) and not self.is_fresh_tuple(a):
-                    # Shared tuple argument: callee gains independent elements.
-                    self.assign_counter += 1
-                    n = self.assign_counter
-                    own = self.tuple_own_code(f"__forge_arg{n}", pt)
-                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
-                            f"{own} __forge_arg{n};}})")
-                arg_codes.append(code)
-            # Arguments beyond the known signature (should not happen
-            # for checked code) are passed through unchanged.
-            if len(expr.args) > len(params):
-                for a in expr.args[len(params):]:
-                    arg_codes.append(self.gen_expr(a))
+            # An indirect call through a fn-typed variable takes its
+            # params from the fn type stamped by the checker (FN-C2).
+            params = self.func_params.get(expr.name)
+            if params is None:
+                from .fntypes import fn_parts
+                stamped = getattr(expr, "fn_type", None)
+                params = ([("", pt) for pt in fn_parts(stamped)[0]]
+                          if stamped is not None else [])
+            arg_codes = self._call_arg_codes(expr, params)
             return f"{expr.name}({', '.join(arg_codes)})"
         raise ForgeError(f"unsupported expression {type(expr).__name__}")
 

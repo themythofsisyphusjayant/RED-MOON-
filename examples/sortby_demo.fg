@@ -1,0 +1,40 @@
+import "sortby.fg";
+
+fn asc(a: int, b: int) -> int {
+    if a < b { return -1; }
+    if a > b { return 1; }
+    return 0;
+}
+fn desc(a: int, b: int) -> int {
+    if a > b { return -1; }
+    if a < b { return 1; }
+    return 0;
+}
+fn by_abs(a: int, b: int) -> int {
+    let mut aa: int = a;
+    if aa < 0 { aa = 0 - aa; }
+    let mut bb: int = b;
+    if bb < 0 { bb = 0 - bb; }
+    if aa < bb { return -1; }
+    if aa > bb { return 1; }
+    return 0;
+}
+
+fn main() {
+    let xs: [int] = [3, 1, 2];
+    let up = sort_by(xs, asc);
+    println(up[0]);
+    println(up[1]);
+    println(up[2]);
+    let down = sort_by(xs, desc);
+    println(down[0]);
+    println(down[1]);
+    println(down[2]);
+    let vals: [int] = [-3, 1, -2, 0];
+    let byabs = sort_by(vals, by_abs);
+    println(byabs[0]);
+    println(byabs[1]);
+    println(byabs[2]);
+    println(byabs[3]);
+    println(xs[0]);
+}

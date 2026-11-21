@@ -1,0 +1,33 @@
+import "hof.fg";
+
+fn dbl(x: int) -> int { return x * 2; }
+fn bang(s: str) -> str { return s + "!"; }
+fn is_even(x: int) -> bool { return x % 2 == 0; }
+fn is_pos(x: int) -> bool { return x > 0; }
+fn add(a: int, b: int) -> int { return a + b; }
+fn mul(a: int, b: int) -> int { return a * b; }
+
+fn main() {
+    let xs: [int] = [1, 2, 3];
+    let doubled = map(xs, dbl);
+    println(doubled[0]);
+    println(doubled[1]);
+    println(doubled[2]);
+    let ss: [str] = ["a", "b"];
+    let loud = map(ss, bang);
+    println(loud[0]);
+    println(loud[1]);
+    let mixed: [int] = [1, 2, 3, 4];
+    let evens = filter(mixed, is_even);
+    println(len(evens));
+    println(evens[0]);
+    println(evens[1]);
+    let signs: [int] = [-1, 2, -3, 4];
+    let poss = filter(signs, is_pos);
+    println(len(poss));
+    println(poss[0]);
+    println(poss[1]);
+    println(reduce(mixed, add, 0));
+    println(reduce(mixed, mul, 1));
+    println(reduce(xs, add, 10));
+}

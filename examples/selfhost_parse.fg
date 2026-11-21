@@ -295,6 +295,45 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
         let nm: TOut = expect_ident(p);
         p = nm.p;
         base = "opaque " + nm.text;
+    } else if at_kw(p, "fn") {
+        // Fn type (Top-500 #103): fn(P1, P2, ...) -> R, with the
+        // `-> R` optional (defaults to void, as in fn declarations).
+        // The return type parses with the same allow_union threading
+        // as the caller, so `fn(int) -> int | str` is one string —
+        // the checker rejects unions inside fn types (FN-C6).
+        let o: TOut = expect_kw(p, "fn");
+        p = o.p;
+        let op: TOut = expect_op(p, "(");
+        p = op.p;
+        let mut params: str = "";
+        if !at_op(p, ")") {
+            while true {
+                let e: TOut = parse_type(p, true);
+                p = e.p;
+                if params == "" {
+                    params = e.text;
+                } else {
+                    params = params + ", " + e.text;
+                }
+                if at_op(p, ",") {
+                    let c: TOut = expect_op(p, ",");
+                    p = c.p;
+                    continue;
+                }
+                break;
+            }
+        }
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        let mut ret: str = "void";
+        if at_op(p, "->") {
+            let a: TOut = expect_op(p, "->");
+            p = a.p;
+            let r: TOut = parse_type(p, true);
+            p = r.p;
+            ret = r.text;
+        }
+        base = "fn(" + params + ") -> " + ret;
     } else if at_kw(p, "readonly") {
         let o: TOut = expect_kw(p, "readonly");
         p = o.p;
@@ -588,6 +627,40 @@ fn parse_postfix(p0: HParser) -> POut {
                 i = i + 1;
             }
             n = m;
+            continue;
+        }
+        if at_op(p, "(") {
+            // Calling through a computed fn value: handlers[i](x),
+            // make()(x), (f)(x) (Top-500 #103). A bare Var followed
+            // by '(' never reaches here — parse_primary makes it a
+            // Call — so every '(' here is an indirect call through
+            // a computed value, checked against the callee's fn type.
+            let tok: TOut = expect_op(p, "(");
+            p = tok.p;
+            let mut args: [Node] = [];
+            if !at_op(p, ")") {
+                while true {
+                    let a: POut = parse_expr(p);
+                    p = a.p;
+                    push(args, a.n);
+                    if at_op(p, ",") {
+                        let c: TOut = expect_op(p, ",");
+                        p = c.p;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            let c: TOut = expect_op(p, ")");
+            p = c.p;
+            let mut ic: Node = new_node(46, tok.line, tok.col);
+            ic.kids = [n];
+            let mut i: int = 0;
+            while i < len(args) {
+                push(ic.kids, args[i]);
+                i = i + 1;
+            }
+            n = ic;
             continue;
         }
         if at_op(p, "?") {

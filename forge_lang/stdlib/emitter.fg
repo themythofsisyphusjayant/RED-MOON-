@@ -1,0 +1,65 @@
+// Qasida — event emitters (Top-500 #273).
+// Import with: import "emitter.fg";
+// on / emit / off publish-subscribe. An Emitter holds
+// (event name, handler) pairs; emit(name, payload) calls
+// every handler registered under that name, in registration
+// order, and returns how many ran. off(name, handler)
+// removes the matching pair (function values compare with
+// ==, item 103). Pure functions: each returns a new Emitter;
+// the old one is untouched.
+//   Handler type: fn(int) -> void — one int payload.
+// v1 limits: no closures (item 101 still GAP) — a handler
+// is a named function and can only see the int payload, not
+// captured locals; event names are plain strings.
+// Verified 21 Nov 2026 (function-values slice): emitter_demo.fg
+// under both compilers + independent Python replica.
+
+struct Emitter {
+    names: [str];
+    handlers: [fn(int) -> void];
+}
+
+fn emitter_new() -> Emitter {
+    return Emitter { names: [], handlers: [] };
+}
+
+fn on(e: Emitter, name: str, handler: fn(int) -> void) -> Emitter {
+    let mut names: [str] = [];
+    let mut handlers: [fn(int) -> void] = [];
+    let mut i: int = 0;
+    while i < len(e.names) {
+        push(names, e.names[i]);
+        push(handlers, e.handlers[i]);
+        i = i + 1;
+    }
+    push(names, name);
+    push(handlers, handler);
+    return Emitter { names: names, handlers: handlers };
+}
+
+fn emit(e: Emitter, name: str, payload: int) -> int {
+    let mut count: int = 0;
+    let mut i: int = 0;
+    while i < len(e.names) {
+        if e.names[i] == name {
+            e.handlers[i](payload);
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+fn off(e: Emitter, name: str, handler: fn(int) -> void) -> Emitter {
+    let mut names: [str] = [];
+    let mut handlers: [fn(int) -> void] = [];
+    let mut i: int = 0;
+    while i < len(e.names) {
+        if !(e.names[i] == name && e.handlers[i] == handler) {
+            push(names, e.names[i]);
+            push(handlers, e.handlers[i]);
+        }
+        i = i + 1;
+    }
+    return Emitter { names: names, handlers: handlers };
+}
