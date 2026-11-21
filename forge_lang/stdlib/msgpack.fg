@@ -1,0 +1,372 @@
+// Qasida — MessagePack subset (Top-500 #227).
+// Import with: import "msgpack.fg";
+// Encode/decode ints, bools, strs, arrays of ints and
+// str->int / str->bool maps as [int] byte arrays (in-memory).
+// Formats implemented: positive/negative fixint, uint8,
+// uint16, int8, fixstr, str8, fixarray, array16, fixmap.
+// V1 LIMITS: ints only in -128..65535; strs are printable
+// ASCII (no ord() builtin — characters map via an alphabet
+// search, as in base64.fg); arrays hold ints only; maps hold
+// str keys with int or bool values; no floats (no bit
+// reinterpretation builtin), no nil, no binary/ext types.
+// CBOR is not covered by this module.
+
+fn mp_ascii() -> str {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+fn mp_char_byte(c: str) -> int {
+    let alpha: str = mp_ascii();
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if alpha[j] == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    fail("mp_char_byte: character outside printable ASCII");
+    return -1;
+}
+
+fn mp_byte_char(b: int) -> str {
+    let alpha: str = mp_ascii();
+    if b < 32 {
+        fail("mp_byte_char: byte below printable ASCII");
+    }
+    if b > 126 {
+        fail("mp_byte_char: byte above printable ASCII");
+    }
+    return alpha[b - 32];
+}
+
+fn mp_append_bytes(out: [int], more: [int]) -> [int] {
+    let mut o: [int] = out;
+    let mut i: int = 0;
+    while i < len(more) {
+        push(o, more[i]);
+        i = i + 1;
+    }
+    return o;
+}
+
+fn mp_slice(b: [int], off: int, n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, b[off + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_encode_int(v: int) -> [int] {
+    if v >= 0 {
+        if v < 128 {
+            return [v];
+        }
+    }
+    if v >= -32 {
+        if v < 0 {
+            return [256 + v];
+        }
+    }
+    if v >= 128 {
+        if v <= 255 {
+            return [204, v];
+        }
+    }
+    if v >= 256 {
+        if v <= 65535 {
+            return [205, (v >> 8) & 255, v & 255];
+        }
+    }
+    if v >= -128 {
+        return [208, 256 + v];
+    }
+    fail("mp_encode_int: value outside v1 range -128..65535");
+    return [];
+}
+
+fn mp_encode_bool(v: bool) -> [int] {
+    if v {
+        return [195];
+    }
+    return [194];
+}
+
+fn mp_encode_str(s: str) -> [int] {
+    let n: int = len(s);
+    let mut out: [int] = [];
+    if n < 32 {
+        push(out, 160 + n);
+    } else {
+        if n < 256 {
+            push(out, 217);
+            push(out, n);
+        } else {
+            fail("mp_encode_str: string longer than 255 bytes");
+        }
+    }
+    let mut i: int = 0;
+    while i < n {
+        push(out, mp_char_byte(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_encode_int_array(a: [int]) -> [int] {
+    let n: int = len(a);
+    let mut out: [int] = [];
+    if n < 16 {
+        push(out, 144 + n);
+    } else {
+        if n < 65536 {
+            push(out, 220);
+            push(out, (n >> 8) & 255);
+            push(out, n & 255);
+        } else {
+            fail("mp_encode_int_array: array longer than 65535");
+        }
+    }
+    let mut i: int = 0;
+    while i < n {
+        out = mp_append_bytes(out, mp_encode_int(a[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_encode_map_si(keys: [str], vals: [int]) -> [int] {
+    if len(keys) != len(vals) {
+        fail("mp_encode_map_si: keys/vals length mismatch");
+    }
+    if len(keys) >= 16 {
+        fail("mp_encode_map_si: more than 15 entries");
+    }
+    let mut out: [int] = [128 + len(keys)];
+    let mut i: int = 0;
+    while i < len(keys) {
+        out = mp_append_bytes(out, mp_encode_str(keys[i]));
+        out = mp_append_bytes(out, mp_encode_int(vals[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_encode_map_sb(keys: [str], vals: [bool]) -> [int] {
+    if len(keys) != len(vals) {
+        fail("mp_encode_map_sb: keys/vals length mismatch");
+    }
+    if len(keys) >= 16 {
+        fail("mp_encode_map_sb: more than 15 entries");
+    }
+    let mut out: [int] = [128 + len(keys)];
+    let mut i: int = 0;
+    while i < len(keys) {
+        out = mp_append_bytes(out, mp_encode_str(keys[i]));
+        out = mp_append_bytes(out, mp_encode_bool(vals[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_int_len(b: [int], off: int) -> int {
+    let t: int = b[off];
+    if t < 128 {
+        return 1;
+    }
+    if t >= 224 {
+        return 1;
+    }
+    if t == 204 {
+        return 2;
+    }
+    if t == 205 {
+        return 3;
+    }
+    if t == 208 {
+        return 2;
+    }
+    fail("mp_int_len: not an int at this offset");
+    return 0;
+}
+
+fn mp_decode_int(b: [int], off: int) -> int {
+    let t: int = b[off];
+    if t < 128 {
+        return t;
+    }
+    if t >= 224 {
+        return t - 256;
+    }
+    if t == 204 {
+        return b[off + 1];
+    }
+    if t == 205 {
+        return (b[off + 1] << 8) | b[off + 2];
+    }
+    if t == 208 {
+        let x: int = b[off + 1];
+        if x >= 128 {
+            return x - 256;
+        }
+        return x;
+    }
+    fail("mp_decode_int: not an int at this offset");
+    return 0;
+}
+
+fn mp_decode_bool(b: [int], off: int) -> bool {
+    if b[off] == 195 {
+        return true;
+    }
+    if b[off] == 194 {
+        return false;
+    }
+    fail("mp_decode_bool: not a bool at this offset");
+    return false;
+}
+
+fn mp_str_len(b: [int], off: int) -> int {
+    let t: int = b[off];
+    if t >= 160 {
+        if t < 192 {
+            return 1 + (t - 160);
+        }
+    }
+    if t == 217 {
+        return 2 + b[off + 1];
+    }
+    fail("mp_str_len: not a str at this offset");
+    return 0;
+}
+
+fn mp_decode_str(b: [int], off: int) -> str {
+    let t: int = b[off];
+    let mut n: int = 0;
+    let mut start: int = 0;
+    if t == 217 {
+        n = b[off + 1];
+        start = off + 2;
+    } else {
+        if t >= 160 {
+            if t < 192 {
+                n = t - 160;
+                start = off + 1;
+            } else {
+                fail("mp_decode_str: not a str at this offset");
+            }
+        } else {
+            fail("mp_decode_str: not a str at this offset");
+        }
+    }
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + mp_byte_char(b[start + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mp_decode_int_array(b: [int], off: int) -> [int] {
+    let t: int = b[off];
+    let mut n: int = 0;
+    let mut pos: int = 0;
+    if t == 220 {
+        n = (b[off + 1] << 8) | b[off + 2];
+        pos = off + 3;
+    } else {
+        if t >= 144 {
+            if t < 160 {
+                n = t - 144;
+                pos = off + 1;
+            } else {
+                fail("mp_decode_int_array: not an array at this offset");
+            }
+        } else {
+            fail("mp_decode_int_array: not an array at this offset");
+        }
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, mp_decode_int(b, pos));
+        pos = pos + mp_int_len(b, pos);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Encoded length of an int/bool/str value at off (v1 types).
+fn mp_scalar_len(b: [int], off: int) -> int {
+    let t: int = b[off];
+    if t < 128 {
+        return 1;
+    }
+    if t >= 224 {
+        return 1;
+    }
+    if t == 204 {
+        return 2;
+    }
+    if t == 205 {
+        return 3;
+    }
+    if t == 208 {
+        return 2;
+    }
+    if t == 194 {
+        return 1;
+    }
+    if t == 195 {
+        return 1;
+    }
+    if t >= 160 {
+        if t < 192 {
+            return 1 + (t - 160);
+        }
+    }
+    if t == 217 {
+        return 2 + b[off + 1];
+    }
+    fail("mp_scalar_len: unsupported value type at this offset");
+    return 0;
+}
+
+// Encoded bytes of the value stored under key in a fixmap.
+fn mp_map_get(b: [int], off: int, key: str) -> [int] {
+    let t: int = b[off];
+    if t < 128 {
+        fail("mp_map_get: not a map at this offset");
+    }
+    if t >= 144 {
+        fail("mp_map_get: not a map at this offset");
+    }
+    let n: int = t - 128;
+    let mut pos: int = off + 1;
+    let mut i: int = 0;
+    while i < n {
+        let k: str = mp_decode_str(b, pos);
+        pos = pos + mp_str_len(b, pos);
+        let vlen: int = mp_scalar_len(b, pos);
+        if k == key {
+            return mp_slice(b, pos, vlen);
+        }
+        pos = pos + vlen;
+        i = i + 1;
+    }
+    fail("mp_map_get: key not found");
+    return [];
+}
+
+fn mp_map_get_int(b: [int], off: int, key: str) -> int {
+    let v: [int] = mp_map_get(b, off, key);
+    return mp_decode_int(v, 0);
+}
+
+fn mp_map_get_bool(b: [int], off: int, key: str) -> bool {
+    let v: [int] = mp_map_get(b, off, key);
+    return mp_decode_bool(v, 0);
+}

@@ -1,0 +1,19 @@
+import "rounding.fg";
+
+fn main() -> int {
+    println(round_mode(3.7, 0));
+    println(round_mode(3.7, 1));
+    println(round_mode(3.7, 2));
+    println(round_mode(-3.7, 0));
+    println(round_mode(-3.7, 1));
+    println(round_mode(-3.7, 2));
+    println(round_half_even(2.5));
+    println(round_half_even(3.5));
+    println(round_half_even(4.5));
+    println(round_half_even(-2.5));
+    println(round_to(3.14159, 2));
+    println(round_to(2.71828, 3));
+    println(round_to(0.125, 2));
+    println(round_to(0.375, 2));
+    return 0;
+}

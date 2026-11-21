@@ -1,0 +1,251 @@
+// Qasida — linear algebra solvers (Top-500 item 170).
+// Import with: import "linalg.fg";
+// General dense solvers over flat row-major [float] plus n,
+// on top of scipy.fg (which only has det2/det3/solve2 for
+// 2x2 systems): Gaussian elimination with partial pivoting,
+// determinant, Gauss-Jordan inverse, and matrix multiply.
+// v1 limits: small dense systems only; singular systems
+// fail in la_solve/la_inverse, la_det returns 0.0.
+
+fn la_abs(f: float) -> float {
+    if f < 0.0 {
+        return 0.0 - f;
+    }
+    return f;
+}
+
+fn la_copy(a: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn la_solve(a: [float], b: [float], n: int) -> [float] {
+    let mut m: [float] = la_copy(a);
+    let mut x: [float] = la_copy(b);
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = la_abs(m[col * n + col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = la_abs(m[r * n + col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            fail("la_solve: singular matrix");
+        }
+        if piv != col {
+            let mut j: int = 0;
+            while j < n {
+                let t: float = m[col * n + j];
+                m[col * n + j] = m[piv * n + j];
+                m[piv * n + j] = t;
+                j = j + 1;
+            }
+            let tb: float = x[col];
+            x[col] = x[piv];
+            x[piv] = tb;
+        }
+        let mut r2: int = col + 1;
+        while r2 < n {
+            let f: float = m[r2 * n + col] / m[col * n + col];
+            let mut j2: int = col;
+            while j2 < n {
+                m[r2 * n + j2] = m[r2 * n + j2] - f * m[col * n + j2];
+                j2 = j2 + 1;
+            }
+            x[r2] = x[r2] - f * x[col];
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(out, 0.0);
+        i = i + 1;
+    }
+    let mut row: int = n - 1;
+    while row >= 0 {
+        let mut s: float = x[row];
+        let mut j: int = row + 1;
+        while j < n {
+            s = s - m[row * n + j] * out[j];
+            j = j + 1;
+        }
+        out[row] = s / m[row * n + row];
+        row = row - 1;
+    }
+    return out;
+}
+
+fn la_det(a: [float], n: int) -> float {
+    let mut m: [float] = la_copy(a);
+    let mut det: float = 1.0;
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = la_abs(m[col * n + col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = la_abs(m[r * n + col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            return 0.0;
+        }
+        if piv != col {
+            let mut j: int = 0;
+            while j < n {
+                let t: float = m[col * n + j];
+                m[col * n + j] = m[piv * n + j];
+                m[piv * n + j] = t;
+                j = j + 1;
+            }
+            det = 0.0 - det;
+        }
+        det = det * m[col * n + col];
+        let mut r2: int = col + 1;
+        while r2 < n {
+            let f: float = m[r2 * n + col] / m[col * n + col];
+            let mut j2: int = col;
+            while j2 < n {
+                m[r2 * n + j2] = m[r2 * n + j2] - f * m[col * n + j2];
+                j2 = j2 + 1;
+            }
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    return det;
+}
+
+fn la_inverse(a: [float], n: int) -> [float] {
+    let w: int = 2 * n;
+    let mut aug: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        let mut j: int = 0;
+        while j < n {
+            push(aug, a[i * n + j]);
+            j = j + 1;
+        }
+        let mut k: int = 0;
+        while k < n {
+            if k == i {
+                push(aug, 1.0);
+            } else {
+                push(aug, 0.0);
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = la_abs(aug[col * w + col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = la_abs(aug[r * w + col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            fail("la_inverse: singular matrix");
+        }
+        if piv != col {
+            let mut j: int = 0;
+            while j < w {
+                let t: float = aug[col * w + j];
+                aug[col * w + j] = aug[piv * w + j];
+                aug[piv * w + j] = t;
+                j = j + 1;
+            }
+        }
+        let pv: float = aug[col * w + col];
+        let mut j2: int = 0;
+        while j2 < w {
+            aug[col * w + j2] = aug[col * w + j2] / pv;
+            j2 = j2 + 1;
+        }
+        let mut r2: int = 0;
+        while r2 < n {
+            if r2 != col {
+                let f: float = aug[r2 * w + col];
+                let mut j3: int = 0;
+                while j3 < w {
+                    aug[r2 * w + j3] = aug[r2 * w + j3] - f * aug[col * w + j3];
+                    j3 = j3 + 1;
+                }
+            }
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut out: [float] = [];
+    let mut i2: int = 0;
+    while i2 < n {
+        let mut j4: int = 0;
+        while j4 < n {
+            push(out, aug[i2 * w + n + j4]);
+            j4 = j4 + 1;
+        }
+        i2 = i2 + 1;
+    }
+    return out;
+}
+
+fn la_mul(a: [float], b: [float], n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        let mut j: int = 0;
+        while j < n {
+            let mut s: float = 0.0;
+            let mut k: int = 0;
+            while k < n {
+                s = s + a[i * n + k] * b[k * n + j];
+                k = k + 1;
+            }
+            push(out, s);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn la_identity(n: int) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        let mut j: int = 0;
+        while j < n {
+            if i == j {
+                push(out, 1.0);
+            } else {
+                push(out, 0.0);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

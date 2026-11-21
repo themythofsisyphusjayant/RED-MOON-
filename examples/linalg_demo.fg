@@ -1,0 +1,26 @@
+import "linalg.fg";
+
+fn main() -> int {
+    let a: [float] = [2.0, 1.0, -1.0, -3.0, -1.0, 2.0, -2.0, 1.0, 2.0];
+    let b: [float] = [8.0, -11.0, -3.0];
+    println(la_det(a, 3));
+    let x: [float] = la_solve(a, b, 3);
+    println(x[0]);
+    println(x[1]);
+    println(x[2]);
+    let inv: [float] = la_inverse(a, 3);
+    println(inv[0]);
+    println(inv[1]);
+    println(inv[2]);
+    println(inv[3]);
+    println(inv[4]);
+    println(inv[5]);
+    println(inv[6]);
+    println(inv[7]);
+    println(inv[8]);
+    let prod: [float] = la_mul(a, inv, 3);
+    println(prod[0]);
+    println(prod[4]);
+    println(prod[8]);
+    return 0;
+}

@@ -1,0 +1,12 @@
+import "groupby.fg";
+
+fn main() -> int {
+    let sp: IntSplit = gb_partition([5, 1, 4, 2, 3], [true, false, true, false, true]);
+    println(sp.yes[0], sp.yes[1], sp.yes[2]);
+    println(sp.no[0], sp.no[1]);
+    let g: Groups = gb_group_by_keys([10, 20, 30, 40, 50], [1, 2, 1, 2, 1]);
+    println(g.keys[0], g.keys[1]);
+    println(g.values[0], g.values[1], g.values[2], g.values[3], g.values[4]);
+    println(g.offsets[0], g.offsets[1], g.offsets[2]);
+    return 0;
+}

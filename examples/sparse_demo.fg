@@ -1,0 +1,20 @@
+import "sparse.fg";
+
+fn main() -> int {
+    let mut v: SparseVec = sp_new(5);
+    v = sp_set(v, 0, 1.5);
+    v = sp_set(v, 2, 3.0);
+    v = sp_set(v, 4, -2.0);
+    let mut w: SparseVec = sp_new(5);
+    w = sp_set(w, 2, 2.0);
+    w = sp_set(w, 3, 4.0);
+    println(sp_get(v, 2));
+    println(sp_get(v, 1));
+    let dv: [float] = sp_to_dense(v);
+    println(dv[0], dv[1], dv[2], dv[3], dv[4]);
+    let s: SparseVec = sp_add(v, w);
+    let ds: [float] = sp_to_dense(s);
+    println(ds[0], ds[1], ds[2], ds[3], ds[4]);
+    println(sp_dot(v, w));
+    return 0;
+}

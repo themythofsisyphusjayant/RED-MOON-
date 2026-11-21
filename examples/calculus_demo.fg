@@ -1,0 +1,15 @@
+import "calculus.fg";
+
+fn main() -> int {
+    let xs: [float] = [0.0, 0.5, 1.0, 1.5, 2.0];
+    let ys: [float] = [0.0, 0.25, 1.0, 2.25, 4.0];
+    println(ca_trapezoid(xs, ys));
+    println(ca_simpson(xs, ys));
+    let d: [float] = ca_deriv(xs, ys);
+    println(d[0]);
+    println(d[1]);
+    println(d[2]);
+    println(d[3]);
+    println(d[4]);
+    return 0;
+}

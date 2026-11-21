@@ -1,0 +1,17 @@
+import "zipenum.fg";
+
+fn main() -> int {
+    let pairs: [IntPair] = ze_zip([10, 20, 30], [1, 2, 3, 4]);
+    let mut i: int = 0;
+    while i < len(pairs) {
+        println(pairs[i].a, pairs[i].b);
+        i = i + 1;
+    }
+    let nums: [Indexed] = ze_enumerate([7, 8, 9]);
+    let mut j: int = 0;
+    while j < len(nums) {
+        println(nums[j].idx, nums[j].val);
+        j = j + 1;
+    }
+    return 0;
+}

@@ -1,0 +1,421 @@
+// Qasida — full JSON parse and generate (Top-500 item 221).
+// Import with: import "json2.fg";
+// A real recursive-descent parser over strings, on top of
+// json.fg (which only has json_get/json_make string search).
+// Values live in a JDoc: parallel flat arrays, one node per
+// value (the autograd.fg pattern — Qasida has no arrays of
+// structs). Kinds: 0 null, 1 bool, 2 number, 3 string,
+// 4 array, 5 object. Children of an array/object form a
+// first/next sibling chain; object members carry their key.
+// The generator emits compact JSON with correct escaping;
+// numbers print as integers when integral, else up to 6
+// decimal places with trailing zeros trimmed. v1 limits:
+// no \u escapes in strings (fail on unknown escape), no
+// duplicate-key check (first match wins in j2_get).
+
+struct JDoc {
+    kind: [int];
+    num: [float];
+    b: [bool];
+    s: [str];
+    first: [int];
+    next: [int];
+    key: [str];
+}
+
+struct JAdd {
+    doc: JDoc;
+    id: int;
+}
+
+struct JRes {
+    doc: JDoc;
+    pos: int;
+    id: int;
+}
+
+struct JStr {
+    s: str;
+    pos: int;
+}
+
+struct JParse {
+    doc: JDoc;
+    root: int;
+}
+
+fn j2_new() -> JDoc {
+    return JDoc { kind: [], num: [], b: [], s: [], first: [], next: [], key: [] };
+}
+
+fn j2_add(doc: JDoc, kind: int, num: float, b: bool, s: str) -> JAdd {
+    let mut d: JDoc = doc;
+    push(d.kind, kind);
+    push(d.num, num);
+    push(d.b, b);
+    push(d.s, s);
+    push(d.first, -1);
+    push(d.next, -1);
+    push(d.key, "");
+    return JAdd { doc: d, id: len(d.kind) - 1 };
+}
+
+fn j2_skip(text: str, pos: int) -> int {
+    let mut p: int = pos;
+    while p < len(text) {
+        let c: str = text[p];
+        if c == " " || c == "\n" || c == "\t" || c == "\r" {
+            p = p + 1;
+        } else {
+            break;
+        }
+    }
+    return p;
+}
+
+fn j2_is_digit(c: str) -> bool {
+    return c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+}
+
+fn j2_parse_str(text: str, pos: int) -> JStr {
+    let mut out: str = "";
+    let mut i: int = pos + 1;
+    while i < len(text) {
+        let c: str = text[i];
+        if c == "\"" {
+            return JStr { s: out, pos: i + 1 };
+        }
+        if c == "\\" {
+            if i + 1 >= len(text) {
+                fail("j2: bad escape");
+            }
+            let e: str = text[i + 1];
+            if e == "\"" {
+                out = out + "\"";
+            } else if e == "\\" {
+                out = out + "\\";
+            } else if e == "/" {
+                out = out + "/";
+            } else if e == "n" {
+                out = out + "\n";
+            } else if e == "t" {
+                out = out + "\t";
+            } else if e == "r" {
+                out = out + "\r";
+            } else {
+                fail("j2: bad escape");
+            }
+            i = i + 2;
+        } else {
+            out = out + c;
+            i = i + 1;
+        }
+    }
+    fail("j2: unterminated string");
+    return JStr { s: "", pos: 0 };
+}
+
+fn j2_parse_num(doc: JDoc, text: str, pos: int) -> JRes {
+    let mut end: int = pos;
+    while end < len(text) {
+        let c: str = text[end];
+        if j2_is_digit(c) || c == "-" || c == "+" || c == "." || c == "e" || c == "E" {
+            end = end + 1;
+        } else {
+            break;
+        }
+    }
+    let v: float = parse_float(substr(text, pos, end - pos));
+    let a: JAdd = j2_add(doc, 2, v, false, "");
+    return JRes { doc: a.doc, pos: end, id: a.id };
+}
+
+fn j2_parse_value(doc: JDoc, text: str, pos: int) -> JRes {
+    let mut p: int = j2_skip(text, pos);
+    if p >= len(text) {
+        fail("j2: unexpected end");
+    }
+    let c: str = text[p];
+    if c == "{" {
+        return j2_parse_object(doc, text, p);
+    }
+    if c == "[" {
+        return j2_parse_array(doc, text, p);
+    }
+    if c == "\"" {
+        let ks: JStr = j2_parse_str(text, p);
+        let a: JAdd = j2_add(doc, 3, 0.0, false, ks.s);
+        return JRes { doc: a.doc, pos: ks.pos, id: a.id };
+    }
+    if c == "t" {
+        if substr(text, p, 4) == "true" {
+            let a: JAdd = j2_add(doc, 1, 0.0, true, "");
+            return JRes { doc: a.doc, pos: p + 4, id: a.id };
+        }
+        fail("j2: bad literal");
+    }
+    if c == "f" {
+        if substr(text, p, 5) == "false" {
+            let a: JAdd = j2_add(doc, 1, 0.0, false, "");
+            return JRes { doc: a.doc, pos: p + 5, id: a.id };
+        }
+        fail("j2: bad literal");
+    }
+    if c == "n" {
+        if substr(text, p, 4) == "null" {
+            let a: JAdd = j2_add(doc, 0, 0.0, false, "");
+            return JRes { doc: a.doc, pos: p + 4, id: a.id };
+        }
+        fail("j2: bad literal");
+    }
+    return j2_parse_num(doc, text, p);
+}
+
+fn j2_parse_array(doc: JDoc, text: str, pos: int) -> JRes {
+    let a: JAdd = j2_add(doc, 4, 0.0, false, "");
+    let mut d: JDoc = a.doc;
+    let arr: int = a.id;
+    let mut p: int = j2_skip(text, pos + 1);
+    if p < len(text) && text[p] == "]" {
+        return JRes { doc: d, pos: p + 1, id: arr };
+    }
+    let mut last: int = -1;
+    while true {
+        let v: JRes = j2_parse_value(d, text, p);
+        d = v.doc;
+        if last == -1 {
+            d.first[arr] = v.id;
+        } else {
+            d.next[last] = v.id;
+        }
+        last = v.id;
+        p = j2_skip(text, v.pos);
+        if p < len(text) && text[p] == "," {
+            p = p + 1;
+        } else if p < len(text) && text[p] == "]" {
+            return JRes { doc: d, pos: p + 1, id: arr };
+        } else {
+            fail("j2: expected , or ]");
+        }
+    }
+    return JRes { doc: d, pos: p, id: arr };
+}
+
+fn j2_parse_object(doc: JDoc, text: str, pos: int) -> JRes {
+    let a: JAdd = j2_add(doc, 5, 0.0, false, "");
+    let mut d: JDoc = a.doc;
+    let obj: int = a.id;
+    let mut p: int = j2_skip(text, pos + 1);
+    if p < len(text) && text[p] == "}" {
+        return JRes { doc: d, pos: p + 1, id: obj };
+    }
+    let mut last: int = -1;
+    while true {
+        p = j2_skip(text, p);
+        let ks: JStr = j2_parse_str(text, p);
+        p = j2_skip(text, ks.pos);
+        if p >= len(text) || text[p] != ":" {
+            fail("j2: expected :");
+        }
+        let v: JRes = j2_parse_value(d, text, p + 1);
+        d = v.doc;
+        d.key[v.id] = ks.s;
+        if last == -1 {
+            d.first[obj] = v.id;
+        } else {
+            d.next[last] = v.id;
+        }
+        last = v.id;
+        p = j2_skip(text, v.pos);
+        if p < len(text) && text[p] == "," {
+            p = p + 1;
+        } else if p < len(text) && text[p] == "}" {
+            return JRes { doc: d, pos: p + 1, id: obj };
+        } else {
+            fail("j2: expected , or }");
+        }
+    }
+    return JRes { doc: d, pos: p, id: obj };
+}
+
+fn j2_parse(text: str) -> JParse {
+    let r: JRes = j2_parse_value(j2_new(), text, 0);
+    return JParse { doc: r.doc, root: r.id };
+}
+
+fn j2_kind(doc: JDoc, id: int) -> int {
+    return doc.kind[id];
+}
+
+fn j2_num(doc: JDoc, id: int) -> float {
+    return doc.num[id];
+}
+
+fn j2_bool(doc: JDoc, id: int) -> bool {
+    return doc.b[id];
+}
+
+fn j2_str(doc: JDoc, id: int) -> str {
+    return doc.s[id];
+}
+
+fn j2_key(doc: JDoc, id: int) -> str {
+    return doc.key[id];
+}
+
+fn j2_first(doc: JDoc, id: int) -> int {
+    return doc.first[id];
+}
+
+fn j2_next(doc: JDoc, id: int) -> int {
+    return doc.next[id];
+}
+
+fn j2_get(doc: JDoc, obj: int, key: str) -> int {
+    let mut id: int = doc.first[obj];
+    while id != -1 {
+        if doc.key[id] == key {
+            return id;
+        }
+        id = doc.next[id];
+    }
+    return -1;
+}
+
+fn j2_len(doc: JDoc, arr: int) -> int {
+    let mut n: int = 0;
+    let mut id: int = doc.first[arr];
+    while id != -1 {
+        n = n + 1;
+        id = doc.next[id];
+    }
+    return n;
+}
+
+fn j2_at(doc: JDoc, arr: int, idx: int) -> int {
+    let mut id: int = doc.first[arr];
+    let mut i: int = 0;
+    while id != -1 {
+        if i == idx {
+            return id;
+        }
+        i = i + 1;
+        id = doc.next[id];
+    }
+    return -1;
+}
+
+fn j2_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = 0 - x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn j2_num_str(f: float) -> str {
+    if f < 0.0 {
+        return "-" + j2_num_str(0.0 - f);
+    }
+    let whole: int = f as int;
+    if f == whole as float {
+        return j2_int_str(whole);
+    }
+    let scaled: int = (f * 1000000.0) as int;
+    let w: int = scaled / 1000000;
+    let frac: int = scaled % 1000000;
+    let mut fs: str = j2_int_str(frac);
+    while len(fs) < 6 {
+        fs = "0" + fs;
+    }
+    while len(fs) > 0 && substr(fs, len(fs) - 1, 1) == "0" {
+        fs = substr(fs, 0, len(fs) - 1);
+    }
+    return j2_int_str(w) + "." + fs;
+}
+
+fn j2_escape(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = s[i];
+        if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn j2_gen(doc: JDoc, id: int) -> str {
+    let k: int = doc.kind[id];
+    if k == 0 {
+        return "null";
+    }
+    if k == 1 {
+        if doc.b[id] {
+            return "true";
+        }
+        return "false";
+    }
+    if k == 2 {
+        return j2_num_str(doc.num[id]);
+    }
+    if k == 3 {
+        return "\"" + j2_escape(doc.s[id]) + "\"";
+    }
+    if k == 4 {
+        let mut out: str = "[";
+        let mut c: int = doc.first[id];
+        let mut first: bool = true;
+        while c != -1 {
+            if !first {
+                out = out + ",";
+            }
+            first = false;
+            out = out + j2_gen(doc, c);
+            c = doc.next[c];
+        }
+        return out + "]";
+    }
+    let mut out: str = "{";
+    let mut c: int = doc.first[id];
+    let mut first: bool = true;
+    while c != -1 {
+        if !first {
+            out = out + ",";
+        }
+        first = false;
+        out = out + "\"" + j2_escape(doc.key[c]) + "\":" + j2_gen(doc, c);
+        c = doc.next[c];
+    }
+    return out + "}";
+}
+
+fn j2_generate(doc: JDoc, root: int) -> str {
+    return j2_gen(doc, root);
+}

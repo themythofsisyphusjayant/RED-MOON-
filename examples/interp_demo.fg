@@ -1,0 +1,18 @@
+import "interp.fg";
+
+fn main() -> int {
+    let xs: [float] = [0.0, 1.0, 2.0, 3.0];
+    let ys: [float] = [0.0, 1.0, 8.0, 27.0];
+    println(ip_linear(xs, ys, 0.5));
+    println(ip_linear(xs, ys, 1.5));
+    println(ip_linear(xs, ys, 2.5));
+    println(ip_linear(xs, ys, -1.0));
+    println(ip_linear(xs, ys, 4.0));
+    let m2: [float] = ip_spline_second(xs, ys);
+    println(m2[1]);
+    println(m2[2]);
+    println(ip_spline(xs, ys, 0.5));
+    println(ip_spline(xs, ys, 1.5));
+    println(ip_spline(xs, ys, 2.5));
+    return 0;
+}

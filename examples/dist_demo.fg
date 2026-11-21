@@ -1,0 +1,18 @@
+// Probability-distributions demo — Top-500 #167.
+// Standard-normal pdf/cdf and Poisson pmf/cdf (lam = 2 and 0.5).
+// Values from a float32 replica of mathex_erf in Python.
+import "dist.fg";
+
+fn main() -> int {
+    println(dist_normal_pdf(0.0, 0.0, 1.0));
+    println(dist_normal_pdf(1.0, 0.0, 1.0));
+    println(dist_normal_cdf(0.0, 0.0, 1.0));
+    println(dist_normal_cdf(1.0, 0.0, 1.0));
+    println(dist_normal_cdf(0.0 - 1.0, 0.0, 1.0));
+    println(dist_poisson_pmf(0, 2.0));
+    println(dist_poisson_pmf(3, 2.0));
+    println(dist_poisson_cdf(3, 2.0));
+    println(dist_poisson_pmf(2, 0.5));
+    println(dist_poisson_cdf(2, 0.5));
+    return 0;
+}

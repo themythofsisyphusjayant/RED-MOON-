@@ -1,0 +1,68 @@
+// Qasida — numeric integration and differentiation (Top-500 item 174).
+// Import with: import "calculus.fg";
+// Calculus over sampled [float] xs/ys arrays (functions are
+// passed as samples, not closures). On top of scipy.fg,
+// whose scipy_simpson_sq integrates x^2 only: here the
+// trapezoid and Simpson rules integrate any sampled
+// function, and ca_deriv gives central finite differences.
+// v1 limits: Simpson needs an even number of intervals
+// (odd point count); xs must be increasing; non-uniform
+// spacing is handled per-interval for trapezoid/deriv,
+// Simpson assumes uniform spacing.
+
+fn ca_trapezoid(xs: [float], ys: [float]) -> float {
+    if len(xs) != len(ys) || len(xs) < 2 {
+        fail("ca_trapezoid: need 2+ matching samples");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) - 1 {
+        let h: float = xs[i + 1] - xs[i];
+        s = s + h * (ys[i] + ys[i + 1]) / 2.0;
+        i = i + 1;
+    }
+    return s;
+}
+
+fn ca_simpson(xs: [float], ys: [float]) -> float {
+    let n: int = len(xs);
+    if len(xs) != len(ys) || n < 3 || (n - 1) % 2 != 0 {
+        fail("ca_simpson: need odd point count (even intervals)");
+    }
+    let h: float = (xs[n - 1] - xs[0]) / (n - 1) as float;
+    let mut s: float = ys[0] + ys[n - 1];
+    let mut i: int = 1;
+    while i < n - 1 {
+        if i % 2 == 1 {
+            s = s + 4.0 * ys[i];
+        } else {
+            s = s + 2.0 * ys[i];
+        }
+        i = i + 1;
+    }
+    return s * h / 3.0;
+}
+
+fn ca_deriv_at(xs: [float], ys: [float], i: int) -> float {
+    let n: int = len(xs);
+    if len(xs) != len(ys) || n < 2 || i < 0 || i >= n {
+        fail("ca_deriv_at: bad index");
+    }
+    if i == 0 {
+        return (ys[1] - ys[0]) / (xs[1] - xs[0]);
+    }
+    if i == n - 1 {
+        return (ys[n - 1] - ys[n - 2]) / (xs[n - 1] - xs[n - 2]);
+    }
+    return (ys[i + 1] - ys[i - 1]) / (xs[i + 1] - xs[i - 1]);
+}
+
+fn ca_deriv(xs: [float], ys: [float]) -> [float] {
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, ca_deriv_at(xs, ys, i));
+        i = i + 1;
+    }
+    return out;
+}

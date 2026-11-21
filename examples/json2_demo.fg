@@ -1,0 +1,26 @@
+import "json2.fg";
+
+fn main() -> int {
+    let parsed: JParse = j2_parse("{\"name\": \"Ada\", \"age\": 36, \"pi\": 3.14, \"ok\": true, \"tags\": [\"a\", \"b\"], \"nested\": {\"x\": 2.5}, \"none\": null}");
+    let d: JDoc = parsed.doc;
+    let root: int = parsed.root;
+    println(j2_kind(d, root));
+    println(j2_str(d, j2_get(d, root, "name")));
+    println(j2_num(d, j2_get(d, root, "age")));
+    println(j2_num(d, j2_get(d, root, "pi")));
+    println(j2_bool(d, j2_get(d, root, "ok")));
+    let tags: int = j2_get(d, root, "tags");
+    println(j2_len(d, tags));
+    println(j2_str(d, j2_at(d, tags, 1)));
+    let nested: int = j2_get(d, root, "nested");
+    println(j2_num(d, j2_get(d, nested, "x")));
+    println(j2_kind(d, j2_get(d, root, "none")));
+    println(j2_generate(d, root));
+    let parsed2: JParse = j2_parse("[1, 2.5, \"x\", false]");
+    let d2: JDoc = parsed2.doc;
+    println(j2_len(d2, parsed2.root));
+    println(j2_str(d2, j2_at(d2, parsed2.root, 2)));
+    println(j2_bool(d2, j2_at(d2, parsed2.root, 3)));
+    println(j2_generate(d2, parsed2.root));
+    return 0;
+}

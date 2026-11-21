@@ -33,13 +33,19 @@ things is how the language gets updated. This replaces the earlier
 1.  numpy (py) — BUILD: ndarray struct + flat array, element-wise
     ops, matmul, reductions, reshape, slicing, random.
 2.  scipy-lite (py) — BUILD: linalg solve/inverse/det, stats
-    distributions, integration-lite.
+    distributions, integration-lite. (linalg solve/inverse/det + stats
+    distributions + integration-lite landed 21 Nov 2026, sprint day 1:
+    linalg.fg, dist.fg, calculus.fg — verified both compilers;
+    decompositions/eigenvalues still open.)
 3.  math-extra (py/mo) — DONE 30 Oct 2026: forge_lang/stdlib/mathex.fg (erf via Abramowitz-Stegun, gamma via Lanczos g=7 for x >= 0.5; verified vs Python).
 4.  statistics (py) — BUILD: mean/median/mode/variance/quantiles.
 5.  random (py/rs) — BUILD: extend rand.fg (uniform, normal,
-    choice, shuffle, seedable).
+    choice, shuffle, seedable). (uniform/normal/exponential landed
+    21 Nov 2026, sprint day 1: randdist.fg; choice/shuffle still open.)
 6.  complex (py) — BUILD: complex struct + arithmetic.
 7.  fractions-decimal (py) — BUILD: exact rational + fixed-point.
+    (fixed-point landed 21 Nov 2026, sprint day 1: fixedpoint.fg Q16.16;
+    exact rational still open.)
 8.  matrix (mo/rs) — BUILD: dense linalg on top of tensor.fg.
 9.  fft (py) — DONE 30 Oct 2026: forge_lang/stdlib/fft.fg (iterative radix-2, Taylor-series twiddles in pure .fg; impulse -> all 1, constant -> 4,0,0,0, round-trip exact).
 10. optimization (py) — BUILD: gradient descent, least squares,
@@ -54,6 +60,8 @@ things is how the language gets updated. This replaces the earlier
     (only after pandas v1 lands).
 15. csv (py/go) — BUILD: reader/writer on read_file + split.
 16. json (py/go/rs) — BUILD: parser + writer (serde-style).
+    (parser + writer landed 21 Nov 2026, sprint day 1: json2.fg;
+    verified both compilers.)
 17. toml (rs) — DONE 30 Oct 2026: forge_lang/stdlib/toml.fg (sections, string/int/float/bool, '#' comments; no arrays/inline tables/dates in v1).
 18. ini (py) — DONE 30 Oct 2026: forge_lang/stdlib/ini.fg (sections, key=value, ';'/'#' comments, first-occurrence wins).
 19. xml-lite (py) — DONE 30 Oct 2026: forge_lang/stdlib/xml.fg (first-element tag, attribute lookup, child text, inner markup; no namespaces/entities/validation).
@@ -112,7 +120,7 @@ things is how the language gets updated. This replaces the earlier
 56. archive (py/go) — BUILD: tar writer/reader (uncompressed
     first; compression is item 58).
 57. checksum (py/go) — BUILD: crc32, adler32, fnv.
-58. compress (go/rs) — RLE DONE 30 Oct 2026: forge_lang/stdlib/compress.fg (count+char pairs, runs split at 9, round-trip verified); Huffman-lite + gzip still BUILD.
+58. compress (go/rs) — RLE DONE 30 Oct 2026: forge_lang/stdlib/compress.fg (count+char pairs, runs split at 9, round-trip verified); Huffman-lite + gzip still BUILD. (gzip reader landed 21 Nov 2026, sprint day 1: gzip2.fg — header parse + CRC32/ISIZE over zl_inflate; single member only, dynamic-Huffman branch unexercised; Huffman-lite still open.)
 59. tempfiles (py) — DONE 2 Nov 2026: forge_lang/stdlib/tempfile.fg (deterministic names/paths from a caller counter; names only, no creation/cleanup in v1).
 60. dotenv (rs) — DONE 30 Oct 2026: forge_lang/stdlib/dotenv.fg (KEY=VALUE, comments, quotes, '=' kept in values; no $ expansion in v1).
 

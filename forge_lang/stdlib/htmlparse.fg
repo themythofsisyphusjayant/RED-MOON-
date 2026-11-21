@@ -1,0 +1,229 @@
+// Qasida — HTML parsing (Top-500 #231).
+// Import with: import "htmlparse.fg";
+// A hand-rolled DOM-lite parser in pure Qasida: parses an HTML
+// string into a flat array of HtmlNode structs (tag, attrs as
+// flattened [str] name/value pairs, text, parent index,
+// first-child index, -1 for none). html_find_all returns the
+// indices of every node with a given tag; html_attr reads one
+// attribute ("" when absent); html_children returns a node's
+// child indices in document order.
+// v1 limits: no entities (&amp; stays literal), no namespaces,
+// comments and doctype declarations are skipped, text is kept
+// raw (no trimming), malformed input is parsed best-effort.
+
+struct HtmlNode {
+    tag: str;
+    attrs: [str];
+    text: str;
+    parent: int;
+    first_child: int;
+}
+
+fn html_parse(src: str) -> [HtmlNode] {
+    let mut tags: [str] = [];
+    let mut texts: [str] = [];
+    let mut parents: [int] = [];
+    let mut firsts: [int] = [];
+    let mut astarts: [int] = [];
+    let mut acounts: [int] = [];
+    let mut aflat: [str] = [];
+    let mut stack: [int] = [];
+    let mut slen: int = 0;
+    let mut i: int = 0;
+    while i < len(src) {
+        let c: str = substr(src, i, 1);
+        if c == "<" {
+            let mut j: int = i + 1;
+            while j < len(src) {
+                if substr(src, j, 1) == ">" {
+                    break;
+                }
+                j = j + 1;
+            }
+            if j >= len(src) {
+                break;
+            }
+            let inner: str = substr(src, i + 1, j - i - 1);
+            if len(inner) > 0 {
+                let first: str = substr(inner, 0, 1);
+                if first == "/" {
+                    if slen > 0 {
+                        slen = slen - 1;
+                    }
+                } else if first == "!" {
+                    // Comment or doctype: skipped.
+                } else if first == "?" {
+                    // Processing instruction: skipped.
+                } else {
+                    let mut k: int = 0;
+                    while k < len(inner) {
+                        let ch: str = substr(inner, k, 1);
+                        if ch == " " {
+                            break;
+                        }
+                        if ch == "/" {
+                            break;
+                        }
+                        k = k + 1;
+                    }
+                    let tag: str = substr(inner, 0, k);
+                    let astart: int = len(aflat);
+                    let mut acount: int = 0;
+                    let mut m: int = k;
+                    while m < len(inner) {
+                        let ch: str = substr(inner, m, 1);
+                        if ch == " " {
+                            m = m + 1;
+                        } else if ch == "/" {
+                            m = m + 1;
+                        } else {
+                            let ns: int = m;
+                            while m < len(inner) {
+                                let c2: str = substr(inner, m, 1);
+                                if c2 == " " {
+                                    break;
+                                }
+                                if c2 == "=" {
+                                    break;
+                                }
+                                if c2 == "/" {
+                                    break;
+                                }
+                                m = m + 1;
+                            }
+                            let name: str = substr(inner, ns, m - ns);
+                            let mut val: str = "";
+                            if m < len(inner) {
+                                if substr(inner, m, 1) == "=" {
+                                    m = m + 1;
+                                    if m < len(inner) {
+                                        let q: str = substr(inner, m, 1);
+                                        if q == "\"" {
+                                            m = m + 1;
+                                            let vs: int = m;
+                                            while m < len(inner) {
+                                                if substr(inner, m, 1) == "\"" {
+                                                    break;
+                                                }
+                                                m = m + 1;
+                                            }
+                                            val = substr(inner, vs, m - vs);
+                                            if m < len(inner) {
+                                                m = m + 1;
+                                            }
+                                        } else {
+                                            let vs: int = m;
+                                            while m < len(inner) {
+                                                let c3: str = substr(inner, m, 1);
+                                                if c3 == " " {
+                                                    break;
+                                                }
+                                                if c3 == "/" {
+                                                    break;
+                                                }
+                                                m = m + 1;
+                                            }
+                                            val = substr(inner, vs, m - vs);
+                                        }
+                                    }
+                                }
+                            }
+                            if len(name) > 0 {
+                                push(aflat, name);
+                                push(aflat, val);
+                                acount = acount + 1;
+                            }
+                        }
+                    }
+                    let mut parent: int = -1;
+                    if slen > 0 {
+                        parent = stack[slen - 1];
+                    }
+                    let idx: int = len(tags);
+                    push(tags, tag);
+                    push(texts, "");
+                    push(parents, parent);
+                    push(firsts, -1);
+                    push(astarts, astart);
+                    push(acounts, acount);
+                    if parent >= 0 {
+                        if firsts[parent] == -1 {
+                            firsts[parent] = idx;
+                        }
+                    }
+                    let last: str = substr(inner, len(inner) - 1, 1);
+                    if last != "/" {
+                        if slen < len(stack) {
+                            stack[slen] = idx;
+                        } else {
+                            push(stack, idx);
+                        }
+                        slen = slen + 1;
+                    }
+                }
+            }
+            i = j + 1;
+        } else {
+            let mut k: int = i;
+            while k < len(src) {
+                if substr(src, k, 1) == "<" {
+                    break;
+                }
+                k = k + 1;
+            }
+            if slen > 0 {
+                let top: int = stack[slen - 1];
+                texts[top] = texts[top] + substr(src, i, k - i);
+            }
+            i = k;
+        }
+    }
+    let mut nodes: [HtmlNode] = [];
+    let mut n: int = 0;
+    while n < len(tags) {
+        let mut at: [str] = [];
+        let mut a: int = 0;
+        while a < acounts[n] * 2 {
+            push(at, aflat[astarts[n] + a]);
+            a = a + 1;
+        }
+        push(nodes, HtmlNode { tag: tags[n], attrs: at, text: texts[n], parent: parents[n], first_child: firsts[n] });
+        n = n + 1;
+    }
+    return nodes;
+}
+
+fn html_find_all(nodes: [HtmlNode], tag: str) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(nodes) {
+        if nodes[i].tag == tag {
+            push(out, i);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn html_attr(node: HtmlNode, name: str) -> str {
+    let mut i: int = 0;
+    while i + 1 < len(node.attrs) {
+        if node.attrs[i] == name {
+            return node.attrs[i + 1];
+        }
+        i = i + 2;
+    }
+    return "";
+}
+
+fn html_children(nodes: [HtmlNode], idx: int) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(nodes) {
+        if nodes[i].parent == idx {
+            push(out, i);
+        }
+        i = i + 1;
+    }
+    return out;
+}

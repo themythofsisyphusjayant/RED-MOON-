@@ -1,0 +1,76 @@
+// Qasida — grouping / partitioning (library program item 132).
+// Import with: import "groupby.fg";
+// Split collections by a key, with keys passed as data
+// (no function values in Qasida). gb_partition splits
+// values by a [bool] mask of the same length. gb_group_by_keys
+// groups values by their integer key, keeping each group's
+// values in input order; groups appear in order of first
+// key appearance. The Groups struct holds the group keys,
+// all values flattened group by group, and offsets: group
+// i occupies values[offsets[i] .. offsets[i+1]].
+struct IntSplit {
+    yes: [int];
+    no: [int];
+}
+
+struct Groups {
+    keys: [int];
+    values: [int];
+    offsets: [int];
+}
+
+fn gb_partition(values: [int], mask: [bool]) -> IntSplit {
+    if len(values) != len(mask) {
+        fail("gb_partition: length mismatch");
+    }
+    let mut yes: [int] = [];
+    let mut no: [int] = [];
+    let mut i: int = 0;
+    while i < len(values) {
+        if mask[i] {
+            push(yes, values[i]);
+        } else {
+            push(no, values[i]);
+        }
+        i = i + 1;
+    }
+    return IntSplit { yes: yes, no: no };
+}
+
+fn gb_group_by_keys(values: [int], keys: [int]) -> Groups {
+    if len(values) != len(keys) {
+        fail("gb_group_by_keys: length mismatch");
+    }
+    let mut ukeys: [int] = [];
+    let mut i: int = 0;
+    while i < len(keys) {
+        let mut seen: bool = false;
+        let mut j: int = 0;
+        while j < len(ukeys) {
+            if ukeys[j] == keys[i] {
+                seen = true;
+            }
+            j = j + 1;
+        }
+        if !seen {
+            push(ukeys, keys[i]);
+        }
+        i = i + 1;
+    }
+    let mut flat: [int] = [];
+    let mut offsets: [int] = [];
+    push(offsets, 0);
+    let mut g: int = 0;
+    while g < len(ukeys) {
+        let mut k: int = 0;
+        while k < len(values) {
+            if keys[k] == ukeys[g] {
+                push(flat, values[k]);
+            }
+            k = k + 1;
+        }
+        push(offsets, len(flat));
+        g = g + 1;
+    }
+    return Groups { keys: ukeys, values: flat, offsets: offsets };
+}

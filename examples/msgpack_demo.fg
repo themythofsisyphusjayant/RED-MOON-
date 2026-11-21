@@ -1,0 +1,36 @@
+import "msgpack.fg";
+
+fn main() -> int {
+    let e1: [int] = mp_encode_int(42);
+    println(mp_decode_int(e1, 0));
+    let e2: [int] = mp_encode_int(200);
+    println(mp_decode_int(e2, 0));
+    let e3: [int] = mp_encode_int(-5);
+    println(mp_decode_int(e3, 0));
+    let e4: [int] = mp_encode_bool(true);
+    println(mp_decode_bool(e4, 0));
+    let e5: [int] = mp_encode_bool(false);
+    println(mp_decode_bool(e5, 0));
+    let e6: [int] = mp_encode_str("hi");
+    println(mp_decode_str(e6, 0));
+    let e7: [int] = mp_encode_str("0123456789012345678901234567890123456789");
+    println(mp_decode_str(e7, 0));
+    let e8: [int] = mp_encode_int_array([1, 2, 3]);
+    let a: [int] = mp_decode_int_array(e8, 0);
+    println(a[1]);
+    println(len(a));
+    let mut big: [int] = [];
+    let mut i: int = 0;
+    while i < 20 {
+        push(big, i);
+        i = i + 1;
+    }
+    let e9: [int] = mp_encode_int_array(big);
+    let b: [int] = mp_decode_int_array(e9, 0);
+    println(b[19]);
+    let m: [int] = mp_encode_map_si(["a", "b"], [1, 2]);
+    println(mp_map_get_int(m, 0, "b"));
+    let m2: [int] = mp_encode_map_sb(["ok"], [true]);
+    println(mp_map_get_bool(m2, 0, "ok"));
+    return 0;
+}

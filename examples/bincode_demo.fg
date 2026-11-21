@@ -1,0 +1,36 @@
+import "bincode.fg";
+
+fn main() -> int {
+    let mut buf: [int] = bc_pack_int(42);
+    let mut i: int = 0;
+    let f: [int] = bc_pack_float(3.141);
+    while i < len(f) {
+        push(buf, f[i]);
+        i = i + 1;
+    }
+    let s: [int] = bc_pack_str("hi");
+    i = 0;
+    while i < len(s) {
+        push(buf, s[i]);
+        i = i + 1;
+    }
+    let b: [int] = bc_pack_bool(true);
+    i = 0;
+    while i < len(b) {
+        push(buf, b[i]);
+        i = i + 1;
+    }
+    let n: [int] = bc_pack_int(-7);
+    i = 0;
+    while i < len(n) {
+        push(buf, n[i]);
+        i = i + 1;
+    }
+    println(len(buf));
+    println(bc_unpack_int(buf, 0));
+    println(bc_unpack_float(buf, 9));
+    println(bc_unpack_str(buf, 18));
+    println(bc_unpack_bool(buf, 25));
+    println(bc_unpack_int(buf, 27));
+    return 0;
+}

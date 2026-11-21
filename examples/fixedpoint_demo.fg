@@ -1,0 +1,15 @@
+import "fixedpoint.fg";
+
+fn main() -> int {
+    let a: Fx = fx_from_float(1.5);
+    let b: Fx = fx_from_float(2.25);
+    println(fx_to_string(fx_add(a, b)));
+    println(fx_to_string(fx_sub(b, a)));
+    println(fx_to_string(fx_mul(a, fx_from_float(2.0))));
+    println(fx_to_string(fx_div(b, a)));
+    println(fx_to_float(fx_from_int(3)));
+    println(fx_to_int(fx_from_float(3.75)));
+    println(fx_to_string(fx_from_float(-2.25)));
+    println(fx_to_string(fx_from_int(-4)));
+    return 0;
+}

@@ -1,0 +1,114 @@
+// Qasida — interpolation (Top-500 item 173).
+// Import with: import "interp.fg";
+// Linear interpolation plus natural cubic splines over
+// sampled [float] xs/ys arrays. The spline's second
+// derivatives come from a tridiagonal (Thomas) solve with
+// natural boundary conditions (M = 0 at both ends).
+// v1 limits: xs must be strictly increasing; out-of-range
+// linear lookups clamp to the end values; the spline
+// extrapolates from the end intervals.
+
+fn ip_linear(xs: [float], ys: [float], x: float) -> float {
+    if len(xs) != len(ys) || len(xs) < 2 {
+        fail("ip_linear: need 2+ matching samples");
+    }
+    if x <= xs[0] {
+        return ys[0];
+    }
+    let n: int = len(xs);
+    if x >= xs[n - 1] {
+        return ys[n - 1];
+    }
+    let mut i: int = 0;
+    while i < n - 1 && x > xs[i + 1] {
+        i = i + 1;
+    }
+    let h: float = xs[i + 1] - xs[i];
+    let t: float = (x - xs[i]) / h;
+    return ys[i] + t * (ys[i + 1] - ys[i]);
+}
+
+fn ip_tridiag(a: [float], b: [float], c: [float], d: [float]) -> [float] {
+    let n: int = len(d);
+    let mut cp: [float] = [];
+    let mut dp: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(cp, 0.0);
+        push(dp, 0.0);
+        i = i + 1;
+    }
+    cp[0] = c[0] / b[0];
+    dp[0] = d[0] / b[0];
+    let mut k: int = 1;
+    while k < n {
+        let den: float = b[k] - a[k] * cp[k - 1];
+        if k < n - 1 {
+            cp[k] = c[k] / den;
+        }
+        dp[k] = (d[k] - a[k] * dp[k - 1]) / den;
+        k = k + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < n {
+        push(out, 0.0);
+        j = j + 1;
+    }
+    out[n - 1] = dp[n - 1];
+    let mut r: int = n - 2;
+    while r >= 0 {
+        out[r] = dp[r] - cp[r] * out[r + 1];
+        r = r - 1;
+    }
+    return out;
+}
+
+fn ip_spline_second(xs: [float], ys: [float]) -> [float] {
+    let n: int = len(xs);
+    if len(xs) != len(ys) || n < 3 {
+        fail("ip_spline_second: need 3+ matching samples");
+    }
+    let m: int = n - 2;
+    let mut a: [float] = [];
+    let mut b: [float] = [];
+    let mut c: [float] = [];
+    let mut d: [float] = [];
+    let mut i: int = 0;
+    while i < m {
+        let h0: float = xs[i + 1] - xs[i];
+        let h1: float = xs[i + 2] - xs[i + 1];
+        push(a, h0);
+        push(b, 2.0 * (h0 + h1));
+        push(c, h1);
+        push(d, 6.0 * ((ys[i + 2] - ys[i + 1]) / h1 - (ys[i + 1] - ys[i]) / h0));
+        i = i + 1;
+    }
+    let inner: [float] = ip_tridiag(a, b, c, d);
+    let mut out: [float] = [];
+    push(out, 0.0);
+    let mut k: int = 0;
+    while k < m {
+        push(out, inner[k]);
+        k = k + 1;
+    }
+    push(out, 0.0);
+    return out;
+}
+
+fn ip_spline_eval(xs: [float], ys: [float], m2: [float], x: float) -> float {
+    let n: int = len(xs);
+    let mut i: int = 0;
+    while i < n - 2 && x > xs[i + 1] {
+        i = i + 1;
+    }
+    let h: float = xs[i + 1] - xs[i];
+    let av: float = (xs[i + 1] - x) / h;
+    let bv: float = (x - xs[i]) / h;
+    return av * ys[i] + bv * ys[i + 1] + ((av * av * av - av) * m2[i] + (bv * bv * bv - bv) * m2[i + 1]) * h * h / 6.0;
+}
+
+fn ip_spline(xs: [float], ys: [float], x: float) -> float {
+    let m2: [float] = ip_spline_second(xs, ys);
+    return ip_spline_eval(xs, ys, m2, x);
+}

@@ -1,0 +1,100 @@
+// Qasida — binary search (library program item 130).
+// Import with: import "binsearch.fg";
+// Binary search, lower bound and upper bound over
+// sorted arrays, for ints and floats. All bounds
+// assume the input is sorted ascending; they do not
+// sort it for you (see sort.fg). binary_search
+// returns the index of target, or -1 when absent.
+// lower_bound returns the first index whose value
+// is >= target; upper_bound the first index whose
+// value is > target. Both return len(xs) when no
+// such index exists.
+fn bs_binary_search(xs: [int], target: int) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs) - 1;
+    while lo <= hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] == target {
+            return mid;
+        }
+        if xs[mid] < target {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return -1;
+}
+
+fn bs_lower_bound(xs: [int], target: int) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs);
+    while lo < hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn bs_upper_bound(xs: [int], target: int) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs);
+    while lo < hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] <= target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn bs_binary_search_f(xs: [float], target: float) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs) - 1;
+    while lo <= hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] == target {
+            return mid;
+        }
+        if xs[mid] < target {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return -1;
+}
+
+fn bs_lower_bound_f(xs: [float], target: float) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs);
+    while lo < hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn bs_upper_bound_f(xs: [float], target: float) -> int {
+    let mut lo: int = 0;
+    let mut hi: int = len(xs);
+    while lo < hi {
+        let mid: int = (lo + hi) / 2;
+        if xs[mid] <= target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}

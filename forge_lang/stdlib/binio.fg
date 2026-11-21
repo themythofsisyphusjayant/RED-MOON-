@@ -1,0 +1,62 @@
+// Qasida — binary I/O with endianness (Top-500 #193).
+// Import with: import "binio.fg";
+// Encode/decode 16- and 32-bit ints in little- and big-endian
+// byte order, as [int] byte arrays (values 0-255), plus
+// file round-trips via the read_bytes/write_bytes builtins.
+// 32-bit values are read back as unsigned (0..4294967295);
+// ints here are 64-bit, so no sign extension applies.
+
+fn bio_concat(a: [int], b: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(b) {
+        push(out, b[j]);
+        j = j + 1;
+    }
+    return out;
+}
+
+fn bio_u16_le(v: int) -> [int] {
+    return [v & 255, (v >> 8) & 255];
+}
+
+fn bio_u16_be(v: int) -> [int] {
+    return [(v >> 8) & 255, v & 255];
+}
+
+fn bio_u32_le(v: int) -> [int] {
+    return [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >> 24) & 255];
+}
+
+fn bio_u32_be(v: int) -> [int] {
+    return [(v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+fn bio_read_u16_le(b: [int], off: int) -> int {
+    return b[off] | (b[off + 1] << 8);
+}
+
+fn bio_read_u16_be(b: [int], off: int) -> int {
+    return (b[off] << 8) | b[off + 1];
+}
+
+fn bio_read_u32_le(b: [int], off: int) -> int {
+    return b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24);
+}
+
+fn bio_read_u32_be(b: [int], off: int) -> int {
+    return (b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3];
+}
+
+fn bio_write_file(path: str, data: [int]) -> bool {
+    return write_bytes(path, data);
+}
+
+fn bio_read_file(path: str) -> [int] {
+    return read_bytes(path);
+}

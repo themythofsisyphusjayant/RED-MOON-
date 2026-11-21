@@ -1,0 +1,138 @@
+// Qasida — compact binary serialization (Top-500 #194).
+// Import with: import "bincode.fg";
+// A bincode-style format over [int] byte arrays (in-memory,
+// no files). Every value starts with a 1-byte type tag:
+//   0 = int, 1 = float, 2 = str, 3 = bool
+// Ints and floats are 8-byte little-endian signed integers
+// following the tag. Strs are a 4-byte little-endian length
+// followed by one byte per character.
+// V1 LIMIT: floats are stored as integers scaled by 1000
+// (rounded to 3 decimals), because the language has no bit
+// reinterpretation builtin. bc_pack_float(3.141) round-trips
+// exactly; bc_pack_float(1.2345) stores 1235 (1.235).
+// Strings are ASCII (printable range 32-126); there is no
+// ord() builtin, so characters are mapped by searching an
+// alphabet string, as in base64.fg.
+
+fn bc_ascii() -> str {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+fn bc_char_byte(c: str) -> int {
+    let alpha: str = bc_ascii();
+    let mut j: int = 0;
+    while j < len(alpha) {
+        if alpha[j] == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    fail("bc_char_byte: character outside printable ASCII");
+    return -1;
+}
+
+fn bc_byte_char(b: int) -> str {
+    let alpha: str = bc_ascii();
+    if b < 32 {
+        fail("bc_byte_char: byte below printable ASCII");
+    }
+    if b > 126 {
+        fail("bc_byte_char: byte above printable ASCII");
+    }
+    return alpha[b - 32];
+}
+
+fn bc_append_i64(out: [int], v: int) -> [int] {
+    let mut o: [int] = out;
+    let mut i: int = 0;
+    while i < 8 {
+        push(o, (v >> (8 * i)) & 255);
+        i = i + 1;
+    }
+    return o;
+}
+
+fn bc_read_i64(b: [int], off: int) -> int {
+    // Top byte first, as a signed byte, then multiply-add down:
+    // every intermediate stays inside int64 on both backends,
+    // so negative values decode identically in C and Python.
+    let mut v: int = b[off + 7];
+    if v >= 128 {
+        v = v - 256;
+    }
+    let mut i: int = 6;
+    while i >= 0 {
+        v = v * 256 + b[off + i];
+        i = i - 1;
+    }
+    return v;
+}
+
+fn bc_read_u32_le(b: [int], off: int) -> int {
+    return b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24);
+}
+
+fn bc_pack_int(v: int) -> [int] {
+    let mut out: [int] = [0];
+    return bc_append_i64(out, v);
+}
+
+fn bc_pack_float(f: float) -> [int] {
+    let mut scaled: int = 0;
+    if f >= 0.0 {
+        scaled = (f * 1000.0 + 0.5) as int;
+    } else {
+        scaled = (f * 1000.0 - 0.5) as int;
+    }
+    let mut out: [int] = [1];
+    return bc_append_i64(out, scaled);
+}
+
+fn bc_pack_str(s: str) -> [int] {
+    let mut out: [int] = [2];
+    let n: int = len(s);
+    push(out, n & 255);
+    push(out, (n >> 8) & 255);
+    push(out, (n >> 16) & 255);
+    push(out, (n >> 24) & 255);
+    let mut i: int = 0;
+    while i < n {
+        push(out, bc_char_byte(substr(s, i, 1)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bc_pack_bool(v: bool) -> [int] {
+    if v {
+        return [3, 1];
+    }
+    return [3, 0];
+}
+
+fn bc_tag(b: [int], off: int) -> int {
+    return b[off];
+}
+
+fn bc_unpack_int(b: [int], off: int) -> int {
+    return bc_read_i64(b, off + 1);
+}
+
+fn bc_unpack_float(b: [int], off: int) -> float {
+    return bc_read_i64(b, off + 1) as float / 1000.0;
+}
+
+fn bc_unpack_str(b: [int], off: int) -> str {
+    let n: int = bc_read_u32_le(b, off + 1);
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + bc_byte_char(b[off + 5 + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bc_unpack_bool(b: [int], off: int) -> bool {
+    return b[off + 1] == 1;
+}

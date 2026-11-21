@@ -1,0 +1,74 @@
+// Qasida — random distributions (Top-500 #168).
+// Import with: import "randdist.fg";
+// Uniform, normal (Box-Muller) and exponential sampling on top
+// of the deterministic LCG in rand.fg (rand_next / rand_float
+// are the only randomness source — the same seed always gives
+// the same draws). Every sampler returns (value, new seed) so
+// callers thread the seed; the _n variants return (values, seed).
+// Normal draws consume two uniforms per draw (the second
+// Box-Muller variate is discarded, keeping the API stateless).
+
+import "rand.fg";
+
+fn rd_uniform(seed: int, lo: float, hi: float) -> (float, int) {
+    let s: int = rand_next(seed);
+    let u: float = s as float / 2147483647.0;
+    return (lo + u * (hi - lo), s);
+}
+
+fn rd_normal(seed: int, mu: float, sigma: float) -> (float, int) {
+    let s1: int = rand_next(seed);
+    let mut u1: float = s1 as float / 2147483647.0;
+    if u1 == 0.0 {
+        u1 = 0.5;
+    }
+    let s2: int = rand_next(s1);
+    let u2: float = s2 as float / 2147483647.0;
+    let z: float = sqrt((0.0 - 2.0) * log(u1)) * cos(6.283185307179586 * u2);
+    return (mu + sigma * z, s2);
+}
+
+fn rd_exp(seed: int, lam: float) -> (float, int) {
+    let s: int = rand_next(seed);
+    let u: float = s as float / 2147483647.0;
+    return ((0.0 - log(1.0 - u)) / lam, s);
+}
+
+fn rd_uniforms(seed: int, n: int, lo: float, hi: float) -> ([float], int) {
+    let mut out: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        let r = rd_uniform(s, lo, hi);
+        push(out, r.0);
+        s = r.1;
+        i = i + 1;
+    }
+    return (out, s);
+}
+
+fn rd_normals(seed: int, n: int, mu: float, sigma: float) -> ([float], int) {
+    let mut out: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        let r = rd_normal(s, mu, sigma);
+        push(out, r.0);
+        s = r.1;
+        i = i + 1;
+    }
+    return (out, s);
+}
+
+fn rd_exps(seed: int, n: int, lam: float) -> ([float], int) {
+    let mut out: [float] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        let r = rd_exp(s, lam);
+        push(out, r.0);
+        s = r.1;
+        i = i + 1;
+    }
+    return (out, s);
+}

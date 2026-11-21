@@ -1,0 +1,35 @@
+// HTML-parsing demo — Top-500 #231.
+// Parses <div id="main"><h1>Title</h1><p class="lead">Hello<b>World</b></p><p>Second</p></div>
+// into 5 nodes: div (id=main, first child h1), h1 "Title",
+// p.lead "Hello" (first child b), b "World", p "Second".
+import "htmlparse.fg";
+
+fn main() -> int {
+    let nodes: [HtmlNode] = html_parse("<div id=\"main\"><h1>Title</h1><p class=\"lead\">Hello<b>World</b></p><p>Second</p></div>");
+    println(len(nodes));
+    println(nodes[0].tag);
+    println(html_attr(nodes[0], "id"));
+    println(nodes[1].tag);
+    println(nodes[1].text);
+    println(nodes[2].tag);
+    println(nodes[2].text);
+    println(nodes[3].tag);
+    println(nodes[3].text);
+    println(nodes[4].text);
+    println(nodes[0].first_child);
+    println(nodes[2].first_child);
+    println(nodes[2].parent);
+    println(nodes[3].parent);
+    let ps: [int] = html_find_all(nodes, "p");
+    println(len(ps));
+    println(ps[0]);
+    println(ps[1]);
+    let ch: [int] = html_children(nodes, 0);
+    println(len(ch));
+    println(ch[0]);
+    println(ch[1]);
+    println(ch[2]);
+    println(html_attr(nodes[1], "id"));
+    println(html_attr(nodes[2], "class"));
+    return 0;
+}

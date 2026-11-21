@@ -1,0 +1,84 @@
+// Qasida — window / chunk iterators (library program item 140).
+// Import with: import "windows.fg";
+// Sliding windows and fixed chunks over [int] / [float]
+// arrays, as per-window sums. win_sliding_sums returns
+// one sum per window of width w (len - w + 1 windows;
+// empty when w > len). win_chunk_sums splits the array
+// into consecutive chunks of `size` (the last chunk may
+// be shorter) and returns one sum per chunk. A window
+// size of 0 fails; chunk sizes below 1 fail.
+fn win_sliding_sums(a: [int], w: int) -> [int] {
+    if w <= 0 {
+        fail("win_sliding_sums: window must be positive");
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i + w <= len(a) {
+        let mut s: int = 0;
+        let mut j: int = 0;
+        while j < w {
+            s = s + a[i + j];
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn win_sliding_sums_f(a: [float], w: int) -> [float] {
+    if w <= 0 {
+        fail("win_sliding_sums_f: window must be positive");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i + w <= len(a) {
+        let mut s: float = 0.0;
+        let mut j: int = 0;
+        while j < w {
+            s = s + a[i + j];
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn win_chunk_sums(a: [int], size: int) -> [int] {
+    if size <= 0 {
+        fail("win_chunk_sums: chunk size must be positive");
+    }
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut s: int = 0;
+        let mut j: int = 0;
+        while j < size && i + j < len(a) {
+            s = s + a[i + j];
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + size;
+    }
+    return out;
+}
+
+fn win_chunk_sums_f(a: [float], size: int) -> [float] {
+    if size <= 0 {
+        fail("win_chunk_sums_f: chunk size must be positive");
+    }
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut s: float = 0.0;
+        let mut j: int = 0;
+        while j < size && i + j < len(a) {
+            s = s + a[i + j];
+            j = j + 1;
+        }
+        push(out, s);
+        i = i + size;
+    }
+    return out;
+}

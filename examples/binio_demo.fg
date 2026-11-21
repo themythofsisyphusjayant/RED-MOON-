@@ -1,0 +1,18 @@
+import "binio.fg";
+
+fn main() -> int {
+    let mut data: [int] = bio_u16_le(4660);
+    data = bio_concat(data, bio_u32_be(2309737967));
+    data = bio_concat(data, bio_u16_be(255));
+    data = bio_concat(data, bio_u32_le(16909060));
+    println(len(data));
+    let ok: bool = bio_write_file("/tmp/binio_demo.bin", data);
+    println(ok);
+    let back: [int] = bio_read_file("/tmp/binio_demo.bin");
+    println(len(back));
+    println(bio_read_u16_le(back, 0));
+    println(bio_read_u32_be(back, 2));
+    println(bio_read_u16_be(back, 6));
+    println(bio_read_u32_le(back, 8));
+    return 0;
+}

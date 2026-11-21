@@ -1,0 +1,40 @@
+// gzip-reading demo — Top-500 #236.
+// Round-trips "hello" through gz_stored (gzip.fg) and back with
+// gz2_parse, then parses a fixed-Huffman gzip member built by
+// Python gzip.compress(b"hello world, hello gzip!", 9, mtime=0),
+// then shows a bad-magic member parsing with ok = 0.
+import "gzip2.fg";
+import "gzip.fg";
+
+fn main() -> int {
+    let data: [int] = [104, 101, 108, 108, 111];
+    let g: [int] = gz_stored(data);
+    let info: GzInfo = gz2_parse(g);
+    println(info.ok);
+    println(info.crc_ok);
+    println(info.isize_ok);
+    println(info.crc);
+    println(info.isize);
+    println(len(info.data));
+    let mut i: int = 0;
+    while i < len(info.data) {
+        println(info.data[i]);
+        i = i + 1;
+    }
+    println(gz2_verify(g, data));
+    let data9: [int] = [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 44, 32, 104, 101, 108, 108, 111, 32, 103, 122, 105, 112, 33];
+    let g9: [int] = [31, 139, 8, 0, 0, 0, 0, 0, 2, 3, 203, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 209, 81, 200, 0, 115, 210, 171, 50, 11, 20, 1, 173, 166, 56, 68, 24, 0, 0, 0];
+    let info9: GzInfo = gz2_parse(g9);
+    println(info9.ok);
+    println(info9.crc_ok);
+    println(info9.isize_ok);
+    println(info9.crc);
+    println(info9.isize);
+    println(len(info9.data));
+    println(gz2_verify(g9, data9));
+    let mut bad: [int] = g;
+    bad[0] = 0;
+    let badinfo: GzInfo = gz2_parse(bad);
+    println(badinfo.ok);
+    return 0;
+}

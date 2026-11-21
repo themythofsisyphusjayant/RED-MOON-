@@ -1,0 +1,40 @@
+// Qasida — zip / enumerate adapters (library program item 131).
+// Import with: import "zipenum.fg";
+// Pairing and numbering helpers over [int] arrays.
+// No closures in Qasida, so arrays are passed in and
+// paired structs are returned instead of lazy adapters.
+// ze_zip stops at the shorter input; ze_enumerate
+// pairs each value with its index.
+struct IntPair {
+    a: int;
+    b: int;
+}
+
+struct Indexed {
+    idx: int;
+    val: int;
+}
+
+fn ze_zip(a: [int], b: [int]) -> [IntPair] {
+    let mut out: [IntPair] = [];
+    let mut n: int = len(a);
+    if len(b) < n {
+        n = len(b);
+    }
+    let mut i: int = 0;
+    while i < n {
+        push(out, IntPair { a: a[i], b: b[i] });
+        i = i + 1;
+    }
+    return out;
+}
+
+fn ze_enumerate(a: [int]) -> [Indexed] {
+    let mut out: [Indexed] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        push(out, Indexed { idx: i, val: a[i] });
+        i = i + 1;
+    }
+    return out;
+}

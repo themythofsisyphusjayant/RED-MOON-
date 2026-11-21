@@ -1,0 +1,18 @@
+import "binsearch.fg";
+
+fn main() -> int {
+    let xs: [int] = [2, 5, 8, 11, 14, 19, 23];
+    println(bs_binary_search(xs, 11));
+    println(bs_binary_search(xs, 7));
+    println(bs_lower_bound(xs, 7));
+    println(bs_upper_bound(xs, 11));
+    println(bs_lower_bound(xs, 23));
+    println(bs_upper_bound(xs, 23));
+    println(bs_lower_bound(xs, 1));
+    println(bs_upper_bound(xs, 30));
+    let fs: [float] = [1.5, 2.5, 3.5, 4.5];
+    println(bs_binary_search_f(fs, 3.5));
+    println(bs_lower_bound_f(fs, 3.0));
+    println(bs_upper_bound_f(fs, 3.5));
+    return 0;
+}

@@ -1,0 +1,18 @@
+import "yaml.fg";
+
+fn main() -> int {
+    let text: str = "name: qasida\nversion: 3\ndebug: true\nserver:\n  host: localhost\n  port: 8080\ntags:\n  - fast\n  - small\n  - typed";
+    let doc: YamlDoc = yml_parse(text);
+    println(yml_get(doc, "name"));
+    println(yml_get_int(doc, "version"));
+    println(yml_get_bool(doc, "debug"));
+    println(yml_get(doc, "server.host"));
+    println(yml_get_int(doc, "server.port"));
+    println(yml_get(doc, "tags[1]"));
+    let out: str = yml_write(doc);
+    println(out);
+    let doc2: YamlDoc = yml_parse(out);
+    println(yml_get_int(doc2, "server.port"));
+    println(yml_get(doc2, "tags[2]"));
+    return 0;
+}

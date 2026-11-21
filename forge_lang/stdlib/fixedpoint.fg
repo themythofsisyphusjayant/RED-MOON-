@@ -1,0 +1,93 @@
+// Qasida — fixed-point arithmetic, Q16.16 (Top-500 item 176).
+// Import with: import "fixedpoint.fg";
+// Deterministic fractional math for kernels: a struct over
+// int, no new compiler type. Raw value = real * 65536.
+// v1 limits: from_float truncates toward zero (no rounding);
+// mul/div can overflow on very large magnitudes; to_string
+// prints 4 decimal places, truncated.
+
+struct Fx {
+    raw: int;
+}
+
+fn fx_from_int(n: int) -> Fx {
+    return Fx { raw: n * 65536 };
+}
+
+fn fx_from_float(f: float) -> Fx {
+    return Fx { raw: (f * 65536.0) as int };
+}
+
+fn fx_to_float(a: Fx) -> float {
+    return a.raw as float / 65536.0;
+}
+
+fn fx_to_int(a: Fx) -> int {
+    return a.raw / 65536;
+}
+
+fn fx_add(a: Fx, b: Fx) -> Fx {
+    return Fx { raw: a.raw + b.raw };
+}
+
+fn fx_sub(a: Fx, b: Fx) -> Fx {
+    return Fx { raw: a.raw - b.raw };
+}
+
+fn fx_neg(a: Fx) -> Fx {
+    return Fx { raw: 0 - a.raw };
+}
+
+fn fx_mul(a: Fx, b: Fx) -> Fx {
+    return Fx { raw: (a.raw * b.raw) / 65536 };
+}
+
+fn fx_div(a: Fx, b: Fx) -> Fx {
+    if b.raw == 0 {
+        fail("fx_div: division by zero");
+    }
+    return Fx { raw: (a.raw * 65536) / b.raw };
+}
+
+fn fx_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = 0 - x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn fx_to_string(a: Fx) -> str {
+    let mut neg: bool = false;
+    let mut v: int = a.raw;
+    if v < 0 {
+        neg = true;
+        v = 0 - v;
+    }
+    let whole: int = v / 65536;
+    let rem: int = v % 65536;
+    let frac: int = rem * 10000 / 65536;
+    let mut fs: str = fx_int_str(frac);
+    while len(fs) < 4 {
+        fs = "0" + fs;
+    }
+    let out: str = fx_int_str(whole) + "." + fs;
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}

@@ -1,0 +1,281 @@
+// Qasida — YAML subset reader + writer (Top-500 #222).
+// Import with: import "yaml.fg";
+// A YamlDoc is a flat ordered list of (dotted-path, raw-value)
+// pairs: "server.port" = "8080", "tags[0]" = "fast".
+// SUBSET (documented): indentation-based nested maps (2-space
+// steps), lists of scalars under a key ("- item"), and
+// string/int/bool scalars (plain or double-quoted). NOT
+// supported: anchors/aliases, flow style ([a, b] / {k: v}),
+// multi-line scalars, maps inside lists, top-level lists,
+// quoted keys, or values containing ": ". Writer output
+// round-trips through yml_parse. Missing keys read as "" / 0
+// / false (yml_get / yml_get_int / yml_get_bool).
+
+struct YamlDoc {
+    paths: [str];
+    vals: [str];
+}
+
+fn yml_new() -> YamlDoc {
+    return YamlDoc { paths: [], vals: [] };
+}
+
+fn yml_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    let mut v: int = n;
+    while v > 0 {
+        out = digits[v % 10] + out;
+        v = v / 10;
+    }
+    return out;
+}
+
+fn yml_pop_str(a: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(a) - 1 {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn yml_pop_int(a: [int]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(a) - 1 {
+        push(out, a[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn yml_indent(line: str) -> int {
+    let mut n: int = 0;
+    while n < len(line) {
+        if substr(line, n, 1) == " " {
+            n = n + 1;
+        } else {
+            break;
+        }
+    }
+    return n;
+}
+
+fn yml_spaces(n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + "  ";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn yml_scalar(raw: str) -> str {
+    let t: str = trim(raw);
+    if len(t) >= 2 {
+        if substr(t, 0, 1) == "\"" {
+            if substr(t, len(t) - 1, 1) == "\"" {
+                return substr(t, 1, len(t) - 2);
+            }
+        }
+    }
+    return t;
+}
+
+fn yml_find_char(s: str, c: str) -> int {
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == c {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// "tags[0]" -> "tags"; plain keys unchanged.
+fn yml_seg_key(seg: str) -> str {
+    let bi: int = yml_find_char(seg, "[");
+    if bi < 0 {
+        return seg;
+    }
+    return substr(seg, 0, bi);
+}
+
+fn yml_seg_is_item(seg: str) -> bool {
+    return yml_find_char(seg, "[") >= 0;
+}
+
+// Expand a dotted path into segments, splitting a trailing
+// "[n]" off its list name: "a.b[2]" -> ["a", "b", "[2]"].
+fn yml_path_segs(path: str) -> [str] {
+    let raw: [str] = split(path, ".");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(raw) {
+        let seg: str = raw[i];
+        let bi: int = yml_find_char(seg, "[");
+        if bi < 0 {
+            push(out, seg);
+        } else {
+            push(out, substr(seg, 0, bi));
+            push(out, substr(seg, bi, len(seg) - bi));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn yml_parse(text: str) -> YamlDoc {
+    let mut paths: [str] = [];
+    let mut vals: [str] = [];
+    let lines: [str] = split(text, "\n");
+    let mut f_indent: [int] = [];
+    let mut f_seg: [str] = [];
+    let mut list_path: str = "";
+    let mut list_n: int = 0;
+    let mut li: int = 0;
+    while li < len(lines) {
+        let raw: str = lines[li];
+        let ind: int = yml_indent(raw);
+        let t: str = trim(raw);
+        if len(t) > 0 {
+            if starts_with(t, "- ") {
+                while len(f_indent) > 0 {
+                    if f_indent[len(f_indent) - 1] >= ind {
+                        f_indent = yml_pop_int(f_indent);
+                        f_seg = yml_pop_str(f_seg);
+                    } else {
+                        break;
+                    }
+                }
+                let parent: str = join(f_seg, ".");
+                if parent != list_path {
+                    list_path = parent;
+                    list_n = 0;
+                }
+                let p: str = parent + "[" + yml_int_str(list_n) + "]";
+                list_n = list_n + 1;
+                push(paths, p);
+                push(vals, yml_scalar(substr(t, 2, len(t) - 2)));
+            } else {
+                let ci: int = yml_find_char(t, ":");
+                if ci >= 0 {
+                    while len(f_indent) > 0 {
+                        if f_indent[len(f_indent) - 1] >= ind {
+                            f_indent = yml_pop_int(f_indent);
+                            f_seg = yml_pop_str(f_seg);
+                        } else {
+                            break;
+                        }
+                    }
+                    let key: str = trim(substr(t, 0, ci));
+                    let rest: str = trim(substr(t, ci + 1, len(t) - ci - 1));
+                    if len(rest) == 0 {
+                        push(f_indent, ind);
+                        push(f_seg, key);
+                    } else {
+                        let parent: str = join(f_seg, ".");
+                        let mut p: str = key;
+                        if len(parent) > 0 {
+                            p = parent + "." + key;
+                        }
+                        push(paths, p);
+                        push(vals, yml_scalar(rest));
+                    }
+                }
+            }
+        }
+        li = li + 1;
+    }
+    return YamlDoc { paths: paths, vals: vals };
+}
+
+fn yml_get(doc: YamlDoc, path: str) -> str {
+    let mut i: int = 0;
+    while i < len(doc.paths) {
+        if doc.paths[i] == path {
+            return doc.vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn yml_get_int(doc: YamlDoc, path: str) -> int {
+    let v: str = yml_get(doc, path);
+    if len(v) == 0 {
+        return 0;
+    }
+    return parse_int(v);
+}
+
+fn yml_get_bool(doc: YamlDoc, path: str) -> bool {
+    return yml_get(doc, path) == "true";
+}
+
+fn yml_set(doc: YamlDoc, path: str, value: str) -> YamlDoc {
+    let mut paths: [str] = doc.paths;
+    let mut vals: [str] = doc.vals;
+    let mut i: int = 0;
+    while i < len(paths) {
+        if paths[i] == path {
+            vals[i] = value;
+            return YamlDoc { paths: paths, vals: vals };
+        }
+        i = i + 1;
+    }
+    push(paths, path);
+    push(vals, value);
+    return YamlDoc { paths: paths, vals: vals };
+}
+
+fn yml_write(doc: YamlDoc) -> str {
+    let mut lines: [str] = [];
+    let mut prev_segs: [str] = [];
+    let mut frames: [str] = [];
+    let mut pi: int = 0;
+    while pi < len(doc.paths) {
+        let segs: [str] = yml_path_segs(doc.paths[pi]);
+        let mut common: int = 0;
+        while common < len(prev_segs) {
+            if common < len(segs) {
+                if prev_segs[common] == segs[common] {
+                    common = common + 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        while len(frames) > common {
+            frames = yml_pop_str(frames);
+        }
+        let mut i: int = common;
+        while i < len(segs) {
+            let key: str = yml_seg_key(segs[i]);
+            let ind: str = yml_spaces(i);
+            if i == len(segs) - 1 {
+                if yml_seg_is_item(segs[i]) {
+                    push(lines, ind + "- " + doc.vals[pi]);
+                } else {
+                    push(lines, ind + key + ": " + doc.vals[pi]);
+                }
+            } else {
+                push(lines, ind + key + ":");
+                push(frames, key);
+            }
+            i = i + 1;
+        }
+        prev_segs = segs;
+        pi = pi + 1;
+    }
+    return join(lines, "\n");
+}

@@ -1,0 +1,89 @@
+// Qasida — rounding modes (Top-500 #178).
+// Import with: import "rounding.fg";
+// Floor, ceil, trunc and banker's (half-even) rounding as an
+// explicit choice, plus rounding to N decimals (half-even).
+// Mode parameter for round_mode: 0 floor, 1 ceil, 2 trunc,
+// 3 half-even. round_to returns a float rounded to the given
+// number of decimal places; round_scaled returns the same
+// result as a scaled integer (value * 10^decimals).
+// Note: floats are binary, so e.g. round_to(2.675, 2) gives
+// 2.67, not 2.68 — 2.675 is stored as slightly less than
+// 2.675. That is honest float behaviour, not a bug.
+
+fn round_trunc(x: float) -> int {
+    return x as int;
+}
+
+fn round_floor(x: float) -> int {
+    let t: int = x as int;
+    if x >= 0.0 {
+        return t;
+    }
+    if x == t as float {
+        return t;
+    }
+    return t - 1;
+}
+
+fn round_ceil(x: float) -> int {
+    let t: int = x as int;
+    if x <= 0.0 {
+        return t;
+    }
+    if x == t as float {
+        return t;
+    }
+    return t + 1;
+}
+
+fn round_half_even(x: float) -> int {
+    let f: int = round_floor(x);
+    let r: float = x - f as float;
+    if r > 0.5 {
+        return f + 1;
+    }
+    if r < 0.5 {
+        return f;
+    }
+    if f % 2 == 0 {
+        return f;
+    }
+    return f + 1;
+}
+
+fn round_mode(x: float, mode: int) -> int {
+    if mode == 0 {
+        return round_floor(x);
+    }
+    if mode == 1 {
+        return round_ceil(x);
+    }
+    if mode == 2 {
+        return round_trunc(x);
+    }
+    if mode == 3 {
+        return round_half_even(x);
+    }
+    fail("round_mode: unknown mode (0 floor, 1 ceil, 2 trunc, 3 half-even)");
+    return 0;
+}
+
+fn round_scaled(x: float, decimals: int) -> int {
+    let mut s: float = 1.0;
+    let mut i: int = 0;
+    while i < decimals {
+        s = s * 10.0;
+        i = i + 1;
+    }
+    return round_half_even(x * s);
+}
+
+fn round_to(x: float, decimals: int) -> float {
+    let mut s: float = 1.0;
+    let mut i: int = 0;
+    while i < decimals {
+        s = s * 10.0;
+        i = i + 1;
+    }
+    return round_scaled(x, decimals) as float / s;
+}

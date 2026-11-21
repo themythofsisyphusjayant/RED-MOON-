@@ -1,0 +1,44 @@
+// Qasida — probability distributions (Top-500 #167).
+// Import with: import "dist.fg";
+// Normal pdf/cdf (cdf via mathex_erf) and Poisson pmf/cdf
+// (exp + integer factorial). statistics.fg has only sorted /
+// mode / quantile / IQR — no distribution functions — so this
+// module is the distributions slice.
+
+import "mathex.fg";
+
+fn dist_normal_pdf(x: float, mu: float, sigma: float) -> float {
+    let z: float = (x - mu) / sigma;
+    return exp((0.0 - 0.5) * z * z) / (sigma * 2.5066282746310007);
+}
+
+fn dist_normal_cdf(x: float, mu: float, sigma: float) -> float {
+    return 0.5 * (1.0 + mathex_erf((x - mu) / (sigma * 1.4142135623730951)));
+}
+
+fn dist_fact(n: int) -> int {
+    let mut f: int = 1;
+    let mut i: int = 2;
+    while i <= n {
+        f = f * i;
+        i = i + 1;
+    }
+    return f;
+}
+
+fn dist_poisson_pmf(k: int, lam: float) -> float {
+    if k < 0 {
+        return 0.0;
+    }
+    return exp(0.0 - lam) * pow(lam, k as float) / dist_fact(k) as float;
+}
+
+fn dist_poisson_cdf(k: int, lam: float) -> float {
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i <= k {
+        s = s + dist_poisson_pmf(i, lam);
+        i = i + 1;
+    }
+    return s;
+}

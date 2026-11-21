@@ -703,3 +703,24 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   PARTIAL 62, GAP 367. Next in priority: #42 error wrapping with
   context — BLOCKED on Jayant's pick (new syntax vs helper function
   vs Result method).
+
+- Sprint day 1 (21 Nov 2026, LIBS ONLY — OS track paused): 20 library
+  items landed, all verified: #130 binsearch, #131 zipenum, #132
+  groupby, #138 sparse, #140 windows, #167 dist, #168 randdist,
+  #170 linalg, #171 neldermead, #173 interp, #174 calculus,
+  #176 fixedpoint, #178 rounding, #193 binio, #194 bincode, #221 json2,
+  #222 yaml, #227 msgpack, #231 htmlparse, #236 gzip2 (20 stdlib
+  modules + 20 demos, pure .fg, no compiler change). Verification:
+  tests/test_daily_20261121.py 80/80 checks (20 demos x 2 compilers x
+  rc=0 + exact stdout); expected values from an independent Python
+  replica (~/workspace/blackmoon-iso/daily-20261121/replica_20261121.py,
+  20/20 match — one replica-side ternary bug found and fixed during
+  the check, program values unchanged; Nelder-Mead expected value
+  re-derived in float64 after a float32 replica predicted f = 0).
+  Counts after sprint day 1: HAVE 91, PARTIAL 58, GAP 351, to build
+  409. Arithmetic from the reconciled baseline (HAVE 71, PARTIAL 62,
+  GAP 367, to build 429): 16 GAP-to-HAVE + 4 PARTIAL-to-HAVE = 20
+  flips; 71 + 20 = 91; 62 - 4 = 58; 367 - 16 = 351; 429 - 20 = 409
+  (91 + 58 + 351 = 500). NOT pushed: batch stays local; the push
+  decision is separate. Next: sprint day 2 (22 Nov), same libs-only
+  rule, target 20/day toward HAVE ~211 by 27 Nov.

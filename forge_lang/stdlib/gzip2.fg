@@ -1,0 +1,371 @@
+// Qasida — gzip reading (Top-500 #236, gzip/deflate completion).
+// Import with: import "gzip2.fg";
+// Completes gzip.fg (stored-block writer only): gz2_parse reads
+// a gzip member — 10-byte header (plus FEXTRA / FNAME /
+// FCOMMENT / FHCRC when flagged), a raw DEFLATE payload decoded
+// with the zl_* bit/Huffman helpers from zlib.fg (stored,
+// fixed-Huffman and dynamic-Huffman blocks), and the 8-byte
+// CRC32 + ISIZE trailer, verified against the decoded bytes.
+// Returns a GzInfo struct: data, ok (1 only when the inflate,
+// the CRC32 and the ISIZE all check out), crc_ok, isize_ok,
+// the stored CRC32 and the stored ISIZE. gz2_verify checks a
+// member against expected bytes. Corrupt input yields ok = 0
+// instead of failing.
+// v1 limits: a single gzip member only (multi-member files are
+// not supported — the trailer is read from the end of the whole
+// input, so a second member makes the parse fail); the deflate
+// payload must end exactly at len(member) - 8.
+
+import "zlib.fg";
+import "checksum.fg";
+
+struct GzInfo {
+    data: [int];
+    ok: int;
+    crc_ok: int;
+    isize_ok: int;
+    crc: int;
+    isize: int;
+}
+
+// Decode a raw DEFLATE stream (RFC 1951, no zlib header or
+// Adler-32 trailer). Returns (bytes, err) with err 0 on success
+// and 1 on corrupt input. Block loop mirrors zl_inflate in
+// zlib.fg, reusing its zl_bit / zl_bits / zl_huff helpers and
+// fixed-Huffman tables.
+fn gz2_inflate_raw(payload: [int]) -> ([int], int) {
+    let empty: [int] = [];
+    let len_base: [int] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+    let len_extra: [int] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+    let dist_base: [int] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+    let dist_extra: [int] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+    let mut pos: int = 0;
+    let mut bit: int = 0;
+    let mut out: [int] = [];
+    let mut done: bool = false;
+    while done == false {
+        let rb: [int] = zl_bit(payload, [pos, bit]);
+        pos = rb[0];
+        bit = rb[1];
+        if rb[3] != 0 {
+            return (empty, 1);
+        }
+        let bfinal: int = rb[2];
+        let rt: [int] = zl_bits(payload, [pos, bit], 2);
+        pos = rt[0];
+        bit = rt[1];
+        if rt[3] != 0 {
+            return (empty, 1);
+        }
+        let btype: int = rt[2];
+        if btype == 0 {
+            if bit != 0 {
+                bit = 0;
+                pos = pos + 1;
+            }
+            if pos + 4 > len(payload) {
+                return (empty, 1);
+            }
+            let blen: int = payload[pos] + payload[pos + 1] * 256;
+            let bnlen: int = payload[pos + 2] + payload[pos + 3] * 256;
+            if blen + bnlen != 65535 {
+                return (empty, 1);
+            }
+            pos = pos + 4;
+            if pos + blen > len(payload) {
+                return (empty, 1);
+            }
+            let mut k: int = 0;
+            while k < blen {
+                push(out, payload[pos + k]);
+                k = k + 1;
+            }
+            pos = pos + blen;
+        } else if btype == 1 || btype == 2 {
+            let mut lit_tab: [int] = [];
+            let mut dist_tab: [int] = [];
+            if btype == 1 {
+                lit_tab = zl_fixed_lit();
+                dist_tab = zl_fixed_dist();
+            } else {
+                let r1: [int] = zl_bits(payload, [pos, bit], 5);
+                pos = r1[0];
+                bit = r1[1];
+                if r1[3] != 0 {
+                    return (empty, 1);
+                }
+                let hlit: int = r1[2] + 257;
+                let r2: [int] = zl_bits(payload, [pos, bit], 5);
+                pos = r2[0];
+                bit = r2[1];
+                if r2[3] != 0 {
+                    return (empty, 1);
+                }
+                let hdist: int = r2[2] + 1;
+                let r3: [int] = zl_bits(payload, [pos, bit], 4);
+                pos = r3[0];
+                bit = r3[1];
+                if r3[3] != 0 {
+                    return (empty, 1);
+                }
+                let hclen: int = r3[2] + 4;
+                let order: [int] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+                let mut cl_lens: [int] = [];
+                let mut z: int = 0;
+                while z < 19 {
+                    push(cl_lens, 0);
+                    z = z + 1;
+                }
+                let mut k: int = 0;
+                while k < hclen {
+                    let rk: [int] = zl_bits(payload, [pos, bit], 3);
+                    pos = rk[0];
+                    bit = rk[1];
+                    if rk[3] != 0 {
+                        return (empty, 1);
+                    }
+                    cl_lens[order[k]] = rk[2];
+                    k = k + 1;
+                }
+                let cl_tab: [int] = zl_huff_build(cl_lens);
+                if len(cl_tab) == 0 {
+                    return (empty, 1);
+                }
+                let total: int = hlit + hdist;
+                let mut lens: [int] = [];
+                while len(lens) < total {
+                    let rs: [int] = zl_huff(payload, [pos, bit], cl_tab);
+                    pos = rs[0];
+                    bit = rs[1];
+                    if rs[3] != 0 {
+                        return (empty, 1);
+                    }
+                    let sym: int = rs[2];
+                    if sym < 16 {
+                        push(lens, sym);
+                    } else if sym == 16 {
+                        if len(lens) == 0 {
+                            return (empty, 1);
+                        }
+                        let prev: int = lens[len(lens) - 1];
+                        let rr: [int] = zl_bits(payload, [pos, bit], 2);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return (empty, 1);
+                        }
+                        let rep: int = rr[2] + 3;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, prev);
+                            j = j + 1;
+                        }
+                    } else if sym == 17 {
+                        let rr: [int] = zl_bits(payload, [pos, bit], 3);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return (empty, 1);
+                        }
+                        let rep: int = rr[2] + 3;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, 0);
+                            j = j + 1;
+                        }
+                    } else if sym == 18 {
+                        let rr: [int] = zl_bits(payload, [pos, bit], 7);
+                        pos = rr[0];
+                        bit = rr[1];
+                        if rr[3] != 0 {
+                            return (empty, 1);
+                        }
+                        let rep: int = rr[2] + 11;
+                        let mut j: int = 0;
+                        while j < rep {
+                            push(lens, 0);
+                            j = j + 1;
+                        }
+                    } else {
+                        return (empty, 1);
+                    }
+                }
+                if len(lens) != total {
+                    return (empty, 1);
+                }
+                let mut lit_lens: [int] = [];
+                let mut dist_lens: [int] = [];
+                let mut m: int = 0;
+                while m < hlit {
+                    push(lit_lens, lens[m]);
+                    m = m + 1;
+                }
+                let mut n: int = 0;
+                while n < hdist {
+                    push(dist_lens, lens[hlit + n]);
+                    n = n + 1;
+                }
+                lit_tab = zl_huff_build(lit_lens);
+                dist_tab = zl_huff_build(dist_lens);
+                if len(lit_tab) == 0 || len(dist_tab) == 0 {
+                    return (empty, 1);
+                }
+            }
+            let mut block_done: bool = false;
+            while block_done == false {
+                let rs: [int] = zl_huff(payload, [pos, bit], lit_tab);
+                pos = rs[0];
+                bit = rs[1];
+                if rs[3] != 0 {
+                    return (empty, 1);
+                }
+                let sym: int = rs[2];
+                if sym < 256 {
+                    push(out, sym);
+                } else if sym == 256 {
+                    block_done = true;
+                } else {
+                    let idx: int = sym - 257;
+                    if idx < 0 || idx > 28 {
+                        return (empty, 1);
+                    }
+                    let rl: [int] = zl_bits(payload, [pos, bit], len_extra[idx]);
+                    pos = rl[0];
+                    bit = rl[1];
+                    if rl[3] != 0 {
+                        return (empty, 1);
+                    }
+                    let length: int = len_base[idx] + rl[2];
+                    let rd: [int] = zl_huff(payload, [pos, bit], dist_tab);
+                    pos = rd[0];
+                    bit = rd[1];
+                    if rd[3] != 0 {
+                        return (empty, 1);
+                    }
+                    let dsym: int = rd[2];
+                    if dsym < 0 || dsym > 29 {
+                        return (empty, 1);
+                    }
+                    let rb2: [int] = zl_bits(payload, [pos, bit], dist_extra[dsym]);
+                    pos = rb2[0];
+                    bit = rb2[1];
+                    if rb2[3] != 0 {
+                        return (empty, 1);
+                    }
+                    let dist: int = dist_base[dsym] + rb2[2];
+                    if dist < 1 || dist > len(out) {
+                        return (empty, 1);
+                    }
+                    let mut k: int = 0;
+                    while k < length {
+                        push(out, out[len(out) - dist]);
+                        k = k + 1;
+                    }
+                }
+            }
+        } else {
+            return (empty, 1);
+        }
+        if bfinal == 1 {
+            done = true;
+        }
+    }
+    return (out, 0);
+}
+
+fn gz2_parse(member: [int]) -> GzInfo {
+    let bad: GzInfo = GzInfo { data: [], ok: 0, crc_ok: 0, isize_ok: 0, crc: 0, isize: 0 };
+    if len(member) < 18 {
+        return bad;
+    }
+    if member[0] != 31 {
+        return bad;
+    }
+    if member[1] != 139 {
+        return bad;
+    }
+    if member[2] != 8 {
+        return bad;
+    }
+    let flags: int = member[3];
+    let mut pos: int = 10;
+    if (flags & 4) != 0 {
+        if pos + 2 > len(member) {
+            return bad;
+        }
+        let xlen: int = member[pos] + member[pos + 1] * 256;
+        pos = pos + 2 + xlen;
+    }
+    if (flags & 8) != 0 {
+        while pos < len(member) {
+            if member[pos] == 0 {
+                break;
+            }
+            pos = pos + 1;
+        }
+        pos = pos + 1;
+    }
+    if (flags & 16) != 0 {
+        while pos < len(member) {
+            if member[pos] == 0 {
+                break;
+            }
+            pos = pos + 1;
+        }
+        pos = pos + 1;
+    }
+    if (flags & 2) != 0 {
+        pos = pos + 2;
+    }
+    if pos + 8 > len(member) {
+        return bad;
+    }
+    let end: int = len(member) - 8;
+    let mut payload: [int] = [];
+    let mut k: int = pos;
+    while k < end {
+        push(payload, member[k]);
+        k = k + 1;
+    }
+    let r = gz2_inflate_raw(payload);
+    let data: [int] = r.0;
+    if r.1 != 0 {
+        return bad;
+    }
+    let crc_stored: int = member[end] + member[end + 1] * 256 + member[end + 2] * 65536 + member[end + 3] * 16777216;
+    let isize_stored: int = member[end + 4] + member[end + 5] * 256 + member[end + 6] * 65536 + member[end + 7] * 16777216;
+    let crc: int = crc32_bytes(data);
+    let mut crc_ok: int = 0;
+    if crc == crc_stored {
+        crc_ok = 1;
+    }
+    let mut isize_ok: int = 0;
+    if len(data) == isize_stored {
+        isize_ok = 1;
+    }
+    let mut ok: int = 0;
+    if crc_ok == 1 {
+        if isize_ok == 1 {
+            ok = 1;
+        }
+    }
+    return GzInfo { data: data, ok: ok, crc_ok: crc_ok, isize_ok: isize_ok, crc: crc, isize: isize_stored };
+}
+
+fn gz2_verify(member: [int], data: [int]) -> int {
+    let info: GzInfo = gz2_parse(member);
+    if info.ok != 1 {
+        return 0;
+    }
+    if len(info.data) != len(data) {
+        return 0;
+    }
+    let mut i: int = 0;
+    while i < len(data) {
+        if info.data[i] != data[i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}

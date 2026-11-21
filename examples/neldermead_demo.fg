@@ -1,0 +1,18 @@
+// Nelder-Mead demo — Top-500 #171.
+// Minimizes the quadratic (x-3)^2 + (y+1)^2 from (0, 0) and the
+// Rosenbrock function from (0, 0); prints the best point and
+// its objective value. Values from a float32 replica of the
+// same simplex algorithm in Python.
+import "neldermead.fg";
+
+fn main() -> int {
+    let q: [float] = nm_minimize(0, [0.0, 0.0], 1.0, 60);
+    println(q[0]);
+    println(q[1]);
+    println(nm_objective(0, q));
+    let r: [float] = nm_minimize(1, [0.0, 0.0], 0.5, 200);
+    println(r[0]);
+    println(r[1]);
+    println(nm_objective(1, r));
+    return 0;
+}

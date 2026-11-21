@@ -1,0 +1,25 @@
+// Random-distributions demo — Top-500 #168.
+// Three uniform draws on [0, 10), three standard normals and
+// three exponentials (rate 2), all from seed 42, plus the final
+// threaded seed after each batch. Values from a float32 replica
+// of the rand.fg LCG + Box-Muller in Python.
+import "randdist.fg";
+
+fn main() -> int {
+    let us = rd_uniforms(42, 3, 0.0, 10.0);
+    println(us.0[0]);
+    println(us.0[1]);
+    println(us.0[2]);
+    println(us.1);
+    let ns = rd_normals(42, 3, 0.0, 1.0);
+    println(ns.0[0]);
+    println(ns.0[1]);
+    println(ns.0[2]);
+    println(ns.1);
+    let es = rd_exps(42, 3, 2.0);
+    println(es.0[0]);
+    println(es.0[1]);
+    println(es.0[2]);
+    println(es.1);
+    return 0;
+}

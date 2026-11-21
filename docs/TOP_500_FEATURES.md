@@ -278,17 +278,17 @@ is not ownership-tracked (see #27).
 127. Dict literals (Python/JS) — [GAP] {"a": 1} syntax.
 128. Array comprehensions (Python/Haskell) — [GAP] [f(x) for x in xs].
 129. Sorting with comparators (all) — [GAP] sort_by with a function value.
-130. Binary search (all) — [GAP] Search over sorted arrays.
-131. zip / enumerate adapters (Python/Rust) — [GAP] Pair up and number iterations.
-132. Grouping / partitioning (Kotlin/Rust itertools) — [GAP] Split collections by a key.
+130. Binary search (all) — [HAVE] Search over sorted arrays. Landed 21 Nov 2026 (sprint day 1): binsearch.fg + binsearch_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: assumes sorted-ascending input; does not sort or validate sortedness.
+131. zip / enumerate adapters (Python/Rust) — [HAVE] Pair up and number iterations. Landed 21 Nov 2026 (sprint day 1): zipenum.fg + zipenum_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int pairs only; eager arrays, not lazy adapters (no closures exist).
+132. Grouping / partitioning (Kotlin/Rust itertools) — [HAVE] Split collections by a key. Landed 21 Nov 2026 (sprint day 1): groupby.fg + groupby_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: int values/keys only; keys passed as data.
 133. Persistent immutable collections (Clojure) — [GAP] Structural sharing for safe sharing.
 134. Bitsets (Java/Rust) — [GAP] Compact flag sets.
 135. Bloom filters (Guava) — [GAP] Probabilistic membership tests.
 136. LRU caches (all) — [GAP] Bounded caches with eviction.
 137. Ring buffers (embedded) — [PARTIAL] A ring IPC kernel exists; add a stdlib ring type.
-138. Sparse arrays (SciPy) — [GAP] For ML data with mostly zeros.
+138. Sparse arrays (SciPy) — [HAVE] For ML data with mostly zeros. Landed 21 Nov 2026 (sprint day 1): sparse.fg + sparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: float vectors only; no sparse matrix.
 139. True multi-dimensional arrays (NumPy) — [PARTIAL] The numpy library is flat row-major; add real ndim indexing.
-140. Window / chunk iterators (Rust) — [GAP] Sliding views over arrays.
+140. Window / chunk iterators (Rust) — [HAVE] Sliding views over arrays. Landed 21 Nov 2026 (sprint day 1): windows.fg + windows_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: per-window/per-chunk sums only, not the window arrays themselves.
 
 ## 8. Strings and text (141-160)
 141. String interpolation (Swift/Kotlin/Python f-strings) — [GAP] "hello {name}".
@@ -319,18 +319,18 @@ is not ownership-tracked (see #27).
 164. Decimal arithmetic (Python) — [PARTIAL] A money library uses integer cents; add a decimal type.
 165. Vector and matrix types (NumPy/Julia) — [PARTIAL] The numpy library is flat arrays; add native vector ops.
 166. SIMD operations (Mojo/Rust) — [PARTIAL] parallel_dot and parallel_matmul exist; add an explicit SIMD API.
-167. Probability distributions (SciPy) — [PARTIAL] A statistics library exists; add normal, Poisson and friends.
-168. Random distributions (NumPy) — [GAP] Normal, uniform and exponential sampling.
+167. Probability distributions (SciPy) — [HAVE] A statistics library exists; add normal, Poisson and friends. Landed 21 Nov 2026 (sprint day 1): dist.fg + dist_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: normal + Poisson only; erf is the Abramowitz-Stegun approximation in mathex.fg.
+168. Random distributions (NumPy) — [HAVE] Normal, uniform and exponential sampling. Landed 21 Nov 2026 (sprint day 1): randdist.fg + randdist_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: LCG-based (rand.fg); normal discards the second Box-Muller variate.
 169. FFT — [HAVE] The fft library already does radix-2 plus inverse.
-170. Linear algebra solvers (NumPy) — [GAP] Solve, decompositions and eigenvalues.
-171. Gradient-free optimization (SciPy) — [PARTIAL] An optimization library exists; add Nelder-Mead and friends.
+170. Linear algebra solvers (NumPy) — [HAVE] Solve, decompositions and eigenvalues. Landed 21 Nov 2026 (sprint day 1): linalg.fg + linalg_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: small dense systems only; solve/inverse fail on singular input; no decompositions or eigenvalues yet.
+171. Gradient-free optimization (SciPy) — [HAVE] An optimization library exists; add Nelder-Mead and friends. Landed 21 Nov 2026 (sprint day 1): neldermead.fg + neldermead_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: 2-D, built-in objectives only (quadratic, Rosenbrock).
 172. Polynomials — [HAVE] The polynomials library already exists.
-173. Interpolation (SciPy) — [GAP] Linear and cubic splines.
-174. Numeric integration and differentiation (SciPy) — [GAP] Calculus over sampled functions.
+173. Interpolation (SciPy) — [HAVE] Linear and cubic splines. Landed 21 Nov 2026 (sprint day 1): interp.fg + interp_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: xs strictly increasing; linear clamps out-of-range; spline extrapolates from end intervals.
+174. Numeric integration and differentiation (SciPy) — [HAVE] Calculus over sampled functions. Landed 21 Nov 2026 (sprint day 1): calculus.fg + calculus_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: Simpson needs an even interval count and uniform spacing.
 175. Special functions erf and gamma — [HAVE] The mathex library already has them.
-176. Fixed-point arithmetic (embedded) — [GAP] Deterministic fractional math for kernels.
+176. Fixed-point arithmetic (embedded) — [HAVE] Deterministic fractional math for kernels. Landed 21 Nov 2026 (sprint day 1): fixedpoint.fg + fixedpoint_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: from_float truncates toward zero; mul/div can overflow on very large magnitudes; to_string prints 4 decimals.
 177. Compile-time unit checking (F#) — [PARTIAL] A units library exists; check units at compile time.
-178. Rounding mode control (IEEE) — [GAP] Floor, ceil and banker's rounding as a choice.
+178. Rounding mode control (IEEE) — [HAVE] Floor, ceil and banker's rounding as a choice. Landed 21 Nov 2026 (sprint day 1): rounding.fg + rounding_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: binary-float caveats (e.g. round_to(2.675, 2) is 2.67).
 179. Documented NaN/Infinity semantics (IEEE) — [GAP] Write down the float rules.
 180. Identical floats across backends (Rust) — [GAP] Same results native, WASM and big32.
 
@@ -347,8 +347,8 @@ is not ownership-tracked (see #27).
 190. Recursive directory walking (Python os.walk) — [GAP] Walk a tree.
 191. Glob patterns (all) — [GAP] *.fg matching.
 192. Standard streams stdin/stderr (all) — [PARTIAL] print exists; add stdin reading and stderr writes.
-193. Binary I/O with endianness (all) — [GAP] Read and write little- and big-endian ints.
-194. Compact binary serialization (Rust) — [GAP] A bincode-style format.
+193. Binary I/O with endianness (all) — [HAVE] Read and write little- and big-endian ints. Landed 21 Nov 2026 (sprint day 1): binio.fg + binio_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: file-based via read_bytes/write_bytes; 16/32-bit ints only.
+194. Compact binary serialization (Rust) — [HAVE] A bincode-style format. Landed 21 Nov 2026 (sprint day 1): bincode.fg + bincode_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: floats stored scaled by 1000 (3 decimals); printable-ASCII strings only.
 195. Layered configuration loading (all) — [PARTIAL] Config, toml, ini and dotenv libraries exist; layer them.
 196. Log rotation (all) — [GAP] Size- and time-based rotation.
 197. Tar and zip archives (all) — [GAP] Read and write archives.
@@ -379,22 +379,22 @@ is not ownership-tracked (see #27).
 220. Service discovery (Consul) — [GAP] Register and find services.
 
 ## 12. Data formats (221-240)
-221. Full JSON parse and generate (all) — [PARTIAL] json_get and json_make exist only; add real parsing.
-222. YAML (all) — [GAP] A YAML reader and writer.
+221. Full JSON parse and generate (all) — [HAVE] json_get and json_make exist only; add real parsing. Landed 21 Nov 2026 (sprint day 1): json2.fg + json2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: no \u escapes; duplicate keys unchecked (first match).
+222. YAML (all) — [HAVE] A YAML reader and writer. Landed 21 Nov 2026 (sprint day 1): yaml.fg + yaml_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: documented subset only — no anchors/aliases, flow style, multi-line scalars, or maps inside lists.
 223. TOML — [HAVE] A toml subset library already exists.
 224. INI — [HAVE] An ini library already exists.
 225. XML — [PARTIAL] An xml-lite library exists.
 226. Protocol Buffers (Google) — [GAP] Schema-driven binary encoding.
-227. MessagePack and CBOR (all) — [GAP] Compact binary JSON-like formats.
+227. MessagePack and CBOR (all) — [HAVE] Compact binary JSON-like formats. Landed 21 Nov 2026 (sprint day 1): msgpack.fg + msgpack_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: MessagePack slice only — CBOR not covered; ints -128..65535; printable-ASCII strings; arrays of ints only; maps str to int/bool; no floats, nil, binary or ext.
 228. Base64 — [HAVE] The base64 library already exists.
 229. Hex encode and decode — [HAVE] Hex support already exists beside base64.
 230. URL encoding — [HAVE] The url library already covers it.
-231. HTML parsing (all) — [GAP] DOM-style parsing.
+231. HTML parsing (all) — [HAVE] DOM-style parsing. Landed 21 Nov 2026 (sprint day 1): htmlparse.fg + htmlparse_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: no entities or namespaces; comments/doctype skipped; malformed input parsed best-effort.
 232. SQL query building (all) — [PARTIAL] A mini SQL query library exists; add safe query construction.
 233. Data validation schemas (JSON Schema) — [GAP] Validate shapes of data.
 234. Versioned data migrations (Rails) — [GAP] Schema migration steps.
 235. Binary struct packing (Python struct) — [GAP] Pack and unpack C structs; ties to FFI layout.
-236. Real compression codecs (all) — [PARTIAL] The compress library is RLE only; add gzip and deflate.
+236. Real compression codecs (all) — [HAVE] The compress library is RLE only; add gzip and deflate. Landed 21 Nov 2026 (sprint day 1): gzip2.fg + gzip2_demo.fg, verified 4/4 checks (rc=0 + exact stdout, hosted + python compilers). v1 limits: single member only; dynamic-Huffman branch not exercised by the demo (stored + fixed-Huffman verified).
 237. Checksums inside file formats (all) — [PARTIAL] A checksum library exists; use it in formats.
 238. dotenv files — [HAVE] A dotenv library already exists.
 239. iCalendar — [HAVE] An ical-lite library already exists.

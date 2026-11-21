@@ -1,0 +1,135 @@
+// Qasida — Nelder-Mead simplex minimization (Top-500 #171).
+// Import with: import "neldermead.fg";
+// Gradient-free minimization over 2-D points. The objective is
+// selected by an int code (the simplex operates on [float]
+// points and calls the objective by code): 0 = quadratic
+// (x-3)^2 + (y+1)^2, minimum (3, -1); 1 = Rosenbrock
+// (1-x)^2 + 100*(y-x^2)^2, minimum (1, 1). Standard coefficients
+// (reflect 1, expand 2, contract 0.5, shrink 0.5); the simplex
+// is kept flat as [x0, y0, x1, y1, x2, y2] with a parallel
+// [float] of objective values, sorted best-first each round.
+// optimization.fg has only gd_quad + least_squares — no
+// simplex method — so this module is the Nelder-Mead slice.
+// v1 limits: 2-D objectives only, built-in objectives only
+// (no user-supplied closures — the language has none yet).
+
+fn nm_objective(code: int, p: [float]) -> float {
+    if code == 0 {
+        let dx: float = p[0] - 3.0;
+        let dy: float = p[1] + 1.0;
+        return dx * dx + dy * dy;
+    }
+    if code == 1 {
+        let dx: float = 1.0 - p[0];
+        let dy: float = p[1] - p[0] * p[0];
+        return dx * dx + 100.0 * dy * dy;
+    }
+    fail("nm_objective: unknown code");
+    return 0.0;
+}
+
+fn nm_minimize(code: int, start: [float], step: float, iters: int) -> [float] {
+    if len(start) != 2 {
+        fail("nm_minimize: 2-D objectives only");
+    }
+    let mut s: [float] = [];
+    push(s, start[0]);
+    push(s, start[1]);
+    push(s, start[0] + step);
+    push(s, start[1]);
+    push(s, start[0]);
+    push(s, start[1] + step);
+    let mut f: [float] = [];
+    push(f, nm_objective(code, [s[0], s[1]]));
+    push(f, nm_objective(code, [s[2], s[3]]));
+    push(f, nm_objective(code, [s[4], s[5]]));
+    let mut it: int = 0;
+    while it < iters {
+        let mut pass: int = 0;
+        while pass < 2 {
+            let mut j: int = 0;
+            while j < 2 {
+                if f[j + 1] < f[j] {
+                    let tf: float = f[j];
+                    f[j] = f[j + 1];
+                    f[j + 1] = tf;
+                    let tx: float = s[j * 2];
+                    s[j * 2] = s[(j + 1) * 2];
+                    s[(j + 1) * 2] = tx;
+                    let ty: float = s[j * 2 + 1];
+                    s[j * 2 + 1] = s[(j + 1) * 2 + 1];
+                    s[(j + 1) * 2 + 1] = ty;
+                }
+                j = j + 1;
+            }
+            pass = pass + 1;
+        }
+        let cx: float = (s[0] + s[2]) / 2.0;
+        let cy: float = (s[1] + s[3]) / 2.0;
+        let wx: float = s[4];
+        let wy: float = s[5];
+        let rx: float = cx + (cx - wx);
+        let ry: float = cy + (cy - wy);
+        let fr: float = nm_objective(code, [rx, ry]);
+        if fr < f[0] {
+            let ex: float = cx + 2.0 * (cx - wx);
+            let ey: float = cy + 2.0 * (cy - wy);
+            let fe: float = nm_objective(code, [ex, ey]);
+            if fe < fr {
+                s[4] = ex;
+                s[5] = ey;
+                f[2] = fe;
+            } else {
+                s[4] = rx;
+                s[5] = ry;
+                f[2] = fr;
+            }
+        } else if fr < f[1] {
+            s[4] = rx;
+            s[5] = ry;
+            f[2] = fr;
+        } else {
+            let mut ax: float = cx;
+            let mut ay: float = cy;
+            if fr < f[2] {
+                ax = cx + 0.5 * (rx - cx);
+                ay = cy + 0.5 * (ry - cy);
+            } else {
+                ax = cx + 0.5 * (wx - cx);
+                ay = cy + 0.5 * (wy - cy);
+            }
+            let af: float = nm_objective(code, [ax, ay]);
+            let mut ok: bool = false;
+            if fr < f[2] {
+                if af <= fr {
+                    ok = true;
+                }
+            } else {
+                if af < f[2] {
+                    ok = true;
+                }
+            }
+            if ok {
+                s[4] = ax;
+                s[5] = ay;
+                f[2] = af;
+            } else {
+                s[2] = s[0] + 0.5 * (s[2] - s[0]);
+                s[3] = s[1] + 0.5 * (s[3] - s[1]);
+                s[4] = s[0] + 0.5 * (s[4] - s[0]);
+                s[5] = s[1] + 0.5 * (s[5] - s[1]);
+                f[1] = nm_objective(code, [s[2], s[3]]);
+                f[2] = nm_objective(code, [s[4], s[5]]);
+            }
+        }
+        it = it + 1;
+    }
+    let mut bi: int = 0;
+    if f[1] < f[bi] {
+        bi = 1;
+    }
+    if f[2] < f[bi] {
+        bi = 2;
+    }
+    return [s[bi * 2], s[bi * 2 + 1]];
+}
