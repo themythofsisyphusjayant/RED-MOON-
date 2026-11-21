@@ -1,0 +1,37 @@
+// Qasida — deterministic replay for tests (Top-500 #400).
+// Import with: import "replay.fg";
+// Reproduce failures exactly: replay_run replays a seeded LCG
+// sequence, and replay_matches re-runs a recorded sequence and
+// compares it element by element. Same seed always gives the
+// same sequence, so a failing input can be replayed exactly.
+// v1 limits: integer sequences only; the recorded sequence is
+// caller-supplied (no log file yet).
+
+import "rand.fg";
+
+fn replay_run(seed: int, n: int) -> [int] {
+    let mut out: [int] = [];
+    let mut s: int = seed;
+    let mut i: int = 0;
+    while i < n {
+        s = rand_next(s);
+        push(out, s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn replay_matches(seed: int, n: int, expected: [int]) -> bool {
+    let got: [int] = replay_run(seed, n);
+    if len(got) != len(expected) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(got) {
+        if got[i] != expected[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}

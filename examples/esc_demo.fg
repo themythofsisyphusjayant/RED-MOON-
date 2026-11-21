@@ -1,0 +1,10 @@
+import "esc.fg";
+
+fn main() {
+    println(esc_render("Hello {{name}}!", ["name"], ["<b>Ada</b>"], []));
+    println(esc_render("{{#if show}}<p>{{msg}}</p>{{/if}}", ["show", "msg"], ["true", "a & b"], []));
+    println(esc_render("{{#each}}<li>{{.}}</li>{{/each}}", [], [], ["<x>", "a&b"]));
+    println(esc_render("{{#if show}}Visible{{/if}}", ["show"], ["false"], []));
+    println(esc_render("{{#if admin}}Hi {{name}}{{/if}}", ["admin", "name"], ["true", "<Bo>"], []));
+    println(esc_escape("a\"b"));
+}

@@ -322,3 +322,17 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   (iterated SHA-256), paramq.fg (parameterized queries), valid2.fg
   (email/URL/enum/range/sanitize), conv1d.fg (1-D convolution, the
   missing nn layer), all verified 4/4.
+
+- Sprint batch 6 (21 Nov 2026, same day, LIBS ONLY): 20 new libraries,
+  all verified 4/4: esc.fg (auto-escaping templates, the batch-5
+  near-miss fixed), stdio.fg (stdin + stderr), logfmt.fg (structured
+  logs), rope.fg (rotary embeddings), metrics2.fg (AUC, log-loss,
+  top-k, Brier), sklearn2.fg (scaling + k-fold splits), resolver.fg
+  (highest satisfying version), semver2.fg (caret/tilde/range
+  constraints), dbg.fg ("name = value" helpers), memprof.fg
+  (alloc-counter snapshots), flame.fg (flame-graph SVG), health.fg
+  (/health JSON), replay.fg (seeded LCG replay), dvc.fg (CRC32
+  dataset manifests), ct.fg (constant-time comparison), secrets.fg
+  (redaction + zeroing), perms.fg (sandbox flags + path roots),
+  lock.fg (lockfile hashes), vuln.fg (vulnerability feed),
+  safedeser.fg (length + depth limits before parse).

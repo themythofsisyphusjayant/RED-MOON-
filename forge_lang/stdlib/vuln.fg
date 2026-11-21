@@ -1,0 +1,44 @@
+// Qasida — vulnerability feeds (Top-500 #456).
+// Import with: import "vuln.fg";
+// Alerts for bad dependencies: the feed is a list of
+// (name, version) pairs known to be vulnerable, and the scan
+// reports 1 for each installed package that matches a feed
+// entry exactly. vuln_count totals the alerts. v1 limits:
+// exact-version matches only (no version ranges); the feed
+// is caller-supplied data, not a live feed.
+
+fn vuln_is_bad(name: str, ver: str, bad_names: [str], bad_vers: [str]) -> bool {
+    let mut i: int = 0;
+    while i < len(bad_names) {
+        if bad_names[i] == name && bad_vers[i] == ver {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn vuln_scan(names: [str], vers: [str], bad_names: [str], bad_vers: [str]) -> [int] {
+    let mut out: [int] = [];
+    let mut i: int = 0;
+    while i < len(names) {
+        if vuln_is_bad(names[i], vers[i], bad_names, bad_vers) {
+            push(out, 1);
+        } else {
+            push(out, 0);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn vuln_count(names: [str], vers: [str], bad_names: [str], bad_vers: [str]) -> int {
+    let hits: [int] = vuln_scan(names, vers, bad_names, bad_vers);
+    let mut n: int = 0;
+    let mut i: int = 0;
+    while i < len(hits) {
+        n = n + hits[i];
+        i = i + 1;
+    }
+    return n;
+}

@@ -848,3 +848,35 @@ docs/TOP_500_FEATURES.md be added to Qasida.
   batch-6 item instead; #153's stale note fixed (unidiff landed in
   batch 2). Next: sprint batch 6, same libs-only rule, target
   20/day toward HAVE ~211 by 27 Nov.
+
+- Sprint batch 6 (21 Nov 2026, same day, LIBS ONLY): 20 new libraries,
+  all verified 4/4 checks (rc=0 + exact stdout, hosted + python
+  compilers) under tests/test_daily_20261121f.py (80/80 PASS) with an
+  independent Python replica 20/20 match
+  (~/workspace/blackmoon-iso/daily-20261121-batch6/replica_20261121f.py):
+  esc.fg (#448 auto-escaping templates — the batch-5 near-miss, now a
+  wrapper that escapes values and {{#each}} items before rendering),
+  stdio.fg (#192 stdin via read_line + stderr via eprintln),
+  logfmt.fg (#383 structured key=value logs on top of log.fg's levels),
+  rope.fg (#427 rotary position embeddings), metrics2.fg (#428 AUC,
+  log-loss, top-k, Brier), sklearn2.fg (#431 z-score + min-max scaling
+  and k-fold splits), resolver.fg (#321 highest satisfying version),
+  semver2.fg (#322 caret/tilde/range constraints), dbg.fg (#382
+  "name = value" helpers), memprof.fg (#387 alloc-counter snapshots;
+  deltas probed identical under both compilers), flame.fg (#388
+  flame-graph SVG), health.fg (#394 /health JSON), replay.fg (#400
+  seeded LCG replay), dvc.fg (#440 CRC32 dataset manifests),
+  ct.fg (#443 constant-time comparison), secrets.fg (#444 char-code
+  secrets, redaction, zeroing), perms.fg (#445 read/write/net flags +
+  path roots), lock.fg (#453 "name==version #hash" lines),
+  vuln.fg (#456 exact-match vulnerability feed), safedeser.fg (#457
+  length + bracket-depth limits before j2_parse). No #42/#43/#53
+  work (#42 resolved: helper-function slice). Skipped per brief:
+  #273, #129, #302 (need function values); #122/#164 not flipped
+  (known stale notes).
+  Counts after sprint batch 6: HAVE 190, PARTIAL 28, GAP 282, to build
+  310. Arithmetic from sprint batch 5 (HAVE 170, PARTIAL 35, GAP 295,
+  to build 330): 13 GAP-to-HAVE + 7 PARTIAL-to-HAVE = 20 flips;
+  170 + 20 = 190; 35 - 7 = 28; 295 - 13 = 282; 330 - 20 = 310
+  (190 + 28 + 282 = 500). Next: sprint batch 7, same libs-only rule,
+  target 20/day toward HAVE ~211 by 27 Nov.

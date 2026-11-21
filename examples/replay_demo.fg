@@ -1,0 +1,12 @@
+import "replay.fg";
+
+fn main() {
+    let seq: [int] = replay_run(7, 5);
+    println(seq[0]);
+    println(seq[1]);
+    println(seq[2]);
+    println(seq[3]);
+    println(seq[4]);
+    println(replay_matches(7, 5, seq));
+    println(replay_matches(8, 5, seq));
+}

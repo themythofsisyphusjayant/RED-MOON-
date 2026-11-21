@@ -1,0 +1,38 @@
+// Qasida — structured logging (Top-500 #383).
+// Import with: import "logfmt.fg";
+// log.fg already has levels and a filtering Logger; this module
+// adds the missing slice: structured key=value log lines.
+// lf_format renders one line ("level=INFO msg=\"...\" k=v");
+// lf_format2 renders two pairs; lf_emit prints the line only
+// when level >= min_level and returns 1 if printed, 0 if
+// filtered. v1 limits: string values only (ints need the
+// caller to format them first); no timestamps in the line.
+
+fn lf_level_name(level: int) -> str {
+    if level == 0 {
+        return "DEBUG";
+    }
+    if level == 1 {
+        return "INFO";
+    }
+    if level == 2 {
+        return "WARN";
+    }
+    return "ERROR";
+}
+
+fn lf_format(level: int, msg: str, k1: str, v1: str) -> str {
+    return "level=" + lf_level_name(level) + " msg=\"" + msg + "\" " + k1 + "=" + v1;
+}
+
+fn lf_format2(level: int, msg: str, k1: str, v1: str, k2: str, v2: str) -> str {
+    return lf_format(level, msg, k1, v1) + " " + k2 + "=" + v2;
+}
+
+fn lf_emit(min_level: int, level: int, msg: str, k1: str, v1: str) -> int {
+    if level < min_level {
+        return 0;
+    }
+    println(lf_format(level, msg, k1, v1));
+    return 1;
+}

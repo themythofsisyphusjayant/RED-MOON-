@@ -1,0 +1,13 @@
+import "perms.fg";
+
+fn main() {
+    let p: Perms = perms_new(true, false, true, ["/data", "/tmp"]);
+    println(perms_can_read(p, "/data/x"));
+    println(perms_can_read(p, "/etc/x"));
+    println(perms_can_write(p, "/data/x"));
+    println(perms_can_net(p, "a.example"));
+    let q: Perms = perms_new(true, true, false, ["/data"]);
+    println(perms_can_net(q, "a.example"));
+    println(perms_can_write(q, "/data/x"));
+    println(perms_can_write(q, "/tmp/x"));
+}

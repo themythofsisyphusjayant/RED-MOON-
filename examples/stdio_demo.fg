@@ -1,0 +1,12 @@
+import "stdio.fg";
+
+fn main() {
+    let line: str = std_read_line();
+    println(line);
+    println(std_parse_int(line));
+    println(std_read_int());
+    let w: int = std_warn("low disk");
+    let e: int = std_error("bad input");
+    println(w + e);
+    println("done");
+}

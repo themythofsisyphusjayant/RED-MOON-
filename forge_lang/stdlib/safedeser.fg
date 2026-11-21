@@ -1,0 +1,53 @@
+// Qasida — safe deserialization (Top-500 #457).
+// Import with: import "safedeser.fg";
+// Never evaluate data as code: JSON input is parsed only
+// after it passes two cheap limits — a maximum byte length
+// and a maximum bracket-nesting depth, both computed by
+// scanning the text before j2_parse ever sees it. sd_parse
+// returns the JParse with root -1 when a limit fails, so the
+// caller checks sd_ok instead of crashing. v1 limits: limits
+// only — genuinely malformed JSON still fails loudly inside
+// j2_parse (by design); braces inside string literals count
+// toward depth.
+
+import "json2.fg";
+
+fn sd_depth(text: str) -> int {
+    let mut depth: int = 0;
+    let mut maxd: int = 0;
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c == "[" || c == "{" {
+            depth = depth + 1;
+            if depth > maxd {
+                maxd = depth;
+            }
+        } else if c == "]" || c == "}" {
+            depth = depth - 1;
+        }
+        i = i + 1;
+    }
+    return maxd;
+}
+
+fn sd_check(text: str, max_depth: int, max_len: int) -> bool {
+    if len(text) > max_len {
+        return false;
+    }
+    if sd_depth(text) > max_depth {
+        return false;
+    }
+    return true;
+}
+
+fn sd_parse(text: str, max_depth: int, max_len: int) -> JParse {
+    if sd_check(text, max_depth, max_len) == false {
+        return JParse { doc: j2_new(), root: 0 - 1 };
+    }
+    return j2_parse(text);
+}
+
+fn sd_ok(p: JParse) -> bool {
+    return p.root >= 0;
+}

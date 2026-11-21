@@ -1,0 +1,29 @@
+// Qasida — standard streams (Top-500 #192).
+// Import with: import "stdio.fg";
+// stdin reading plus stderr writes: read_line() reads one line
+// from stdin ("" at EOF, never blocks past EOF) and eprintln()
+// writes one line to stderr. std_read_int parses the next line
+// with the parse_int builtin (leading '-' handled). v1 limits:
+// no stdin buffering control, no stderr redirection helpers.
+
+fn std_read_line() -> str {
+    return read_line();
+}
+
+fn std_parse_int(s: str) -> int {
+    return parse_int(s);
+}
+
+fn std_read_int() -> int {
+    return parse_int(read_line());
+}
+
+fn std_warn(msg: str) -> int {
+    eprintln("[WARN] " + msg);
+    return 0;
+}
+
+fn std_error(msg: str) -> int {
+    eprintln("[ERROR] " + msg);
+    return 0;
+}

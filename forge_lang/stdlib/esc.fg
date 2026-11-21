@@ -1,0 +1,30 @@
+// Qasida — auto-escaping templates (Top-500 #448).
+// Import with: import "esc.fg";
+// The wrapper template2.fg was missing: t2_escape exists but the
+// render path never calls it, so escaping was opt-in. esc_render
+// escapes every value AND every {{#each}} item with t2_escape
+// before rendering, so output is XSS-safe by default. v1 limits:
+// same engine limits as template2 (no nesting, no {{else}});
+// escaping is HTML-entity only (& < > ").
+
+import "template2.fg";
+
+fn esc_escape(s: str) -> str {
+    return t2_escape(s);
+}
+
+fn esc_render(tmpl: str, keys: [str], vals: [str], items: [str]) -> str {
+    let mut evals: [str] = [];
+    let mut i: int = 0;
+    while i < len(vals) {
+        push(evals, t2_escape(vals[i]));
+        i = i + 1;
+    }
+    let mut eitems: [str] = [];
+    let mut j: int = 0;
+    while j < len(items) {
+        push(eitems, t2_escape(items[j]));
+        j = j + 1;
+    }
+    return t2_render(tmpl, keys, evals, eitems);
+}

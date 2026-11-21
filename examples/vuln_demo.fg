@@ -1,0 +1,15 @@
+import "vuln.fg";
+
+fn main() {
+    let bad_names: [str] = ["zlib", "openssl"];
+    let bad_vers: [str] = ["1.2.0", "1.0.0"];
+    let names: [str] = ["zlib", "zlib", "openssl"];
+    let vers: [str] = ["1.2.0", "1.3.0", "3.0.0"];
+    let hits: [int] = vuln_scan(names, vers, bad_names, bad_vers);
+    println(hits[0]);
+    println(hits[1]);
+    println(hits[2]);
+    println(vuln_count(names, vers, bad_names, bad_vers));
+    println(vuln_is_bad("zlib", "1.2.0", bad_names, bad_vers));
+    println(vuln_is_bad("zlib", "1.3.0", bad_names, bad_vers));
+}

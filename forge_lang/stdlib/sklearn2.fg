@@ -1,0 +1,74 @@
+// Qasida — sklearn-lite v2, scaling and splits (Top-500 #431).
+// Import with: import "sklearn2.fg";
+// v1 of the library already exists (decisiontree.fg); this slice
+// adds the two workhorses every pipeline needs first: feature
+// scaling (z-score standardization and min-max) and k-fold
+// cross-validation splits (contiguous folds). v1 limits: no
+// trees, forests, Bayes or PCA here — those are later slices.
+
+fn sk_mean(xs: [float]) -> float {
+    let mut total: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        total = total + xs[i];
+        i = i + 1;
+    }
+    return total / (len(xs) as float);
+}
+
+fn sk_std(xs: [float]) -> float {
+    let m: float = sk_mean(xs);
+    let mut total: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        let d: float = xs[i] - m;
+        total = total + d * d;
+        i = i + 1;
+    }
+    return sqrt(total / (len(xs) as float));
+}
+
+fn sk_standardize(xs: [float]) -> [float] {
+    let m: float = sk_mean(xs);
+    let s: float = sk_std(xs);
+    let mut out: [float] = [];
+    let mut i: int = 0;
+    while i < len(xs) {
+        push(out, (xs[i] - m) / s);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn sk_minmax(xs: [float]) -> [float] {
+    let mut mn: float = xs[0];
+    let mut mx: float = xs[0];
+    let mut i: int = 1;
+    while i < len(xs) {
+        if xs[i] < mn {
+            mn = xs[i];
+        }
+        if xs[i] > mx {
+            mx = xs[i];
+        }
+        i = i + 1;
+    }
+    let mut out: [float] = [];
+    let mut j: int = 0;
+    while j < len(xs) {
+        push(out, (xs[j] - mn) / (mx - mn));
+        j = j + 1;
+    }
+    return out;
+}
+
+fn sk_kfold(n: int, k: int, fold: int) -> [int] {
+    let size: int = n / k;
+    let mut out: [int] = [];
+    let mut i: int = fold * size;
+    while i < (fold + 1) * size {
+        push(out, i);
+        i = i + 1;
+    }
+    return out;
+}

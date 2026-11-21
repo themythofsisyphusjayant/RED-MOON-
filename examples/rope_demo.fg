@@ -1,0 +1,15 @@
+import "rope.fg";
+
+fn main() {
+    println(rope_angle(1, 0, 4));
+    println(rope_angle(1, 1, 4));
+    println(rope_angle(2, 1, 4));
+    let r: [float] = rope_apply([1.0, 0.0, 0.0, 1.0], 1);
+    println(r[0]);
+    println(r[1]);
+    println(r[2]);
+    println(r[3]);
+    let z: [float] = rope_apply([3.0, 4.0], 0);
+    println(z[0]);
+    println(z[1]);
+}

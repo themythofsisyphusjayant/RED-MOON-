@@ -1,0 +1,37 @@
+// Qasida — constant-time crypto operations (Top-500 #443).
+// Import with: import "ct.fg";
+// No timing leaks: ct_equal compares two [int] buffers by
+// XOR-accumulating every byte with no early exit, and
+// ct_equal_str does the same over characters — the loop always
+// runs to the end, so the time taken does not depend on where
+// (or whether) the inputs first differ. Length mismatch is
+// still decided up front (lengths are not secret here). v1
+// limits: no constant-time arithmetic beyond comparison.
+
+fn ct_equal(a: [int], b: [int]) -> bool {
+    if len(a) != len(b) {
+        return false;
+    }
+    let mut diff: int = 0;
+    let mut i: int = 0;
+    while i < len(a) {
+        diff = diff | (a[i] ^ b[i]);
+        i = i + 1;
+    }
+    return diff == 0;
+}
+
+fn ct_equal_str(a: str, b: str) -> bool {
+    if len(a) != len(b) {
+        return false;
+    }
+    let mut diff: int = 0;
+    let mut i: int = 0;
+    while i < len(a) {
+        if substr(a, i, 1) != substr(b, i, 1) {
+            diff = 1;
+        }
+        i = i + 1;
+    }
+    return diff == 0;
+}

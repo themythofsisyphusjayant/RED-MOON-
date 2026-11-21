@@ -1,0 +1,45 @@
+// Qasida — flame graphs (Top-500 #388).
+// Import with: import "flame.fg";
+// Visualize hot paths: given profiler section names and their
+// total microseconds, render one row of horizontal bars as an
+// SVG (each bar width proportional to its share of the total).
+// Bar colours alternate steelblue / orange. v1 limits: one
+// flat row only (no nested stacks); integer microseconds.
+
+import "svg.fg";
+
+fn flame_total(totals: [int]) -> int {
+    let mut s: int = 0;
+    let mut i: int = 0;
+    while i < len(totals) {
+        s = s + totals[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn flame_width(total_us: int, part_us: int, w: int) -> int {
+    return part_us * w / total_us;
+}
+
+fn flame_fill(i: int) -> str {
+    if i % 2 == 0 {
+        return "steelblue";
+    }
+    return "orange";
+}
+
+fn flame_svg(names: [str], totals: [int], w: int, row_h: int) -> str {
+    let total: int = flame_total(totals);
+    let mut inner: str = "";
+    let mut x: int = 0;
+    let mut i: int = 0;
+    while i < len(names) {
+        let bw: int = flame_width(total, totals[i], w);
+        inner = inner + svg_rect(x, 0, bw, row_h, flame_fill(i));
+        inner = inner + svg_text(x + 5, row_h - 5, names[i]);
+        x = x + bw;
+        i = i + 1;
+    }
+    return svg_wrap(w, row_h, inner);
+}

@@ -1,0 +1,13 @@
+import "health.fg";
+
+fn main() {
+    let names: [str] = ["db", "cache"];
+    let oks: [bool] = [true, true];
+    let mss: [int] = [12, 3];
+    println(health_status(oks));
+    println(health_json(names, oks, mss, 3600));
+    println(health_route("/health"));
+    println(health_route("/api"));
+    let bad: [bool] = [true, false];
+    println(health_status(bad));
+}

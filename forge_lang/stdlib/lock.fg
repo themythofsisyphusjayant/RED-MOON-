@@ -1,0 +1,34 @@
+// Qasida — dependency pinning with hashes (Top-500 #453).
+// Import with: import "lock.fg";
+// Lockfile hashes: one line per pinned dependency,
+// "name==version #hash". lock_entry formats a line,
+// lock_parse splits it back into [name, version, hash], and
+// lock_check verifies a line against a fresh hash. v1 limits:
+// no lockfile reading (callers read lines themselves); the
+// hash is caller-supplied (sha256_hex over the artifact
+// bytes is the intended source).
+
+import "hashlib.fg";
+
+fn lock_entry(name: str, ver: str, hash: str) -> str {
+    return name + "==" + ver + " #" + hash;
+}
+
+fn lock_parse(line: str) -> [str] {
+    let parts: [str] = split(line, "==");
+    let mut out: [str] = [];
+    push(out, parts[0]);
+    let rest: [str] = split(parts[1], " #");
+    push(out, rest[0]);
+    push(out, rest[1]);
+    return out;
+}
+
+fn lock_check(line: str, fresh_hash: str) -> bool {
+    let parts: [str] = lock_parse(line);
+    return parts[2] == fresh_hash;
+}
+
+fn lock_sha256_hello() -> str {
+    return sha256_hex([104, 101, 108, 108, 111]);
+}

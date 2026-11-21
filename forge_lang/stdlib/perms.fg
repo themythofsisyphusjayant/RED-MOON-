@@ -1,0 +1,42 @@
+// Qasida — sandboxing flags (Top-500 #445).
+// Import with: import "perms.fg";
+// Permission flags for file and network access: a Perms value
+// carries read/write/network booleans plus the allowed path
+// roots, and every check consults both the flag and the path.
+// This is the policy object — enforcement lives in callers
+// (there is no runtime sandbox yet). v1 limits: prefix roots
+// only (no glob roots); network is one flag, not per-host.
+
+struct Perms {
+    read: bool;
+    write: bool;
+    net: bool;
+    roots: [str];
+}
+
+fn perms_new(read: bool, write: bool, net: bool, roots: [str]) -> Perms {
+    return Perms { read: read, write: write, net: net, roots: roots };
+}
+
+fn perms_under_roots(p: Perms, path: str) -> bool {
+    let mut i: int = 0;
+    while i < len(p.roots) {
+        if starts_with(path, p.roots[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn perms_can_read(p: Perms, path: str) -> bool {
+    return p.read && perms_under_roots(p, path);
+}
+
+fn perms_can_write(p: Perms, path: str) -> bool {
+    return p.write && perms_under_roots(p, path);
+}
+
+fn perms_can_net(p: Perms, host: str) -> bool {
+    return p.net;
+}

@@ -1,0 +1,28 @@
+import "sklearn2.fg";
+
+fn main() {
+    let xs: [float] = [1.0, 2.0, 3.0, 4.0, 5.0];
+    println(sk_mean(xs));
+    println(sk_std(xs));
+    let z: [float] = sk_standardize(xs);
+    println(z[0]);
+    println(z[1]);
+    println(z[2]);
+    println(z[3]);
+    println(z[4]);
+    let mm: [float] = sk_minmax(xs);
+    println(mm[0]);
+    println(mm[1]);
+    println(mm[2]);
+    println(mm[3]);
+    println(mm[4]);
+    let f0: [int] = sk_kfold(10, 5, 0);
+    println(f0[0]);
+    println(f0[1]);
+    let f1: [int] = sk_kfold(10, 5, 1);
+    println(f1[0]);
+    println(f1[1]);
+    let f4: [int] = sk_kfold(10, 5, 4);
+    println(f4[0]);
+    println(f4[1]);
+}

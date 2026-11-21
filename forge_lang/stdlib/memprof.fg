@@ -1,0 +1,31 @@
+// Qasida — memory profiling (Top-500 #387).
+// Import with: import "memprof.fg";
+// Allocation tracking beyond the alloc_count builtins: snapshot
+// the string/array allocation counters before and after a piece
+// of work and report the deltas. Counters are cumulative
+// process-wide, so only differences between two snapshots are
+// meaningful. v1 limits: counts, not bytes; no per-site
+// attribution; no heap dumps.
+
+import "checkread.fg";
+
+struct MemSnap {
+    strs: int;
+    arrs: int;
+}
+
+fn mem_snap() -> MemSnap {
+    return MemSnap { strs: alloc_count(), arrs: arr_alloc_count() };
+}
+
+fn mem_diff_strs(a: MemSnap, b: MemSnap) -> int {
+    return b.strs - a.strs;
+}
+
+fn mem_diff_arrs(a: MemSnap, b: MemSnap) -> int {
+    return b.arrs - a.arrs;
+}
+
+fn mem_report(a: MemSnap, b: MemSnap) -> str {
+    return "strs +" + cr_int_str(b.strs - a.strs) + " arrs +" + cr_int_str(b.arrs - a.arrs);
+}

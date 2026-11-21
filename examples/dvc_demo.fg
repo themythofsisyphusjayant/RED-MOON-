@@ -1,0 +1,20 @@
+import "dvc.fg";
+
+fn main() {
+    let ok1: bool = bio_write_file("/tmp/dvc_a.bin", cr_str_bytes("hello"));
+    let ok2: bool = bio_write_file("/tmp/dvc_b.bin", cr_str_bytes("world"));
+    println(ok1);
+    println(ok2);
+    let h1: int = dvc_hash_file("/tmp/dvc_a.bin");
+    let h2: int = dvc_hash_file("/tmp/dvc_b.bin");
+    println(h1);
+    println(h2);
+    println(dvc_manifest(["a.txt", "b.txt"], [h1, h2]));
+    let ok3: bool = bio_write_file("/tmp/dvc_a.bin", cr_str_bytes("hello!"));
+    println(ok3);
+    let h1b: int = dvc_hash_file("/tmp/dvc_a.bin");
+    println(h1b);
+    println(dvc_changed_count([h1, h2], [h1b, h2]));
+    println(dvc_file_ok(h1, h1b));
+    println(dvc_file_ok(h2, h2));
+}

@@ -1,0 +1,46 @@
+// Qasida — health endpoints (Top-500 #394).
+// Import with: import "health.fg";
+// /health for services: a check list (parallel name / ok /
+// millisecond arrays) renders as one JSON document, and
+// health_route answers whether a request path is the health
+// route. The server itself is http_server.fg — this module
+// only builds the response body. v1 limits: no live serving
+// here; uptime is caller-supplied seconds; checks are flat.
+
+import "checkread.fg";
+
+fn health_status(oks: [bool]) -> str {
+    let mut i: int = 0;
+    while i < len(oks) {
+        if oks[i] == false {
+            return "degraded";
+        }
+        i = i + 1;
+    }
+    return "ok";
+}
+
+fn health_bool(b: bool) -> str {
+    if b {
+        return "true";
+    }
+    return "false";
+}
+
+fn health_json(names: [str], oks: [bool], mss: [int], uptime_s: int) -> str {
+    let mut out: str = "{\"status\":\"" + health_status(oks) + "\",\"uptime_s\":" + cr_int_str(uptime_s) + ",\"checks\":[";
+    let mut i: int = 0;
+    while i < len(names) {
+        if i > 0 {
+            out = out + ",";
+        }
+        out = out + "{\"name\":\"" + names[i] + "\",\"ok\":" + health_bool(oks[i]) + ",\"ms\":" + cr_int_str(mss[i]) + "}";
+        i = i + 1;
+    }
+    out = out + "]}";
+    return out;
+}
+
+fn health_route(path: str) -> bool {
+    return path == "/health";
+}

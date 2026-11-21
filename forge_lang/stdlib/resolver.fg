@@ -1,0 +1,39 @@
+// Qasida — dependency version resolution (Top-500 #321).
+// Import with: import "resolver.fg";
+// The package manager has a public host (GitHub Pages) and a
+// 30-package registry; this module adds the missing half:
+// version resolution. res_pick scans parallel name/version
+// arrays and returns the HIGHEST version of a package that
+// satisfies a semver2 constraint, or "" when none does.
+// res_found reports whether any version satisfies it. v1
+// limits: no transitive dependency solving, no lockfile
+// writing — one package, one constraint at a time.
+
+import "semver2.fg";
+
+fn res_found(names: [str], vers: [str], name: str, constraint: str) -> bool {
+    let mut i: int = 0;
+    while i < len(names) {
+        if names[i] == name && sv2_satisfies(vers[i], constraint) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn res_pick(names: [str], vers: [str], name: str, constraint: str) -> str {
+    let mut best: str = "";
+    let mut i: int = 0;
+    while i < len(names) {
+        if names[i] == name && sv2_satisfies(vers[i], constraint) {
+            if best == "" {
+                best = vers[i];
+            } else if semver_cmp(semver_parse(vers[i]), semver_parse(best)) > 0 {
+                best = vers[i];
+            }
+        }
+        i = i + 1;
+    }
+    return best;
+}

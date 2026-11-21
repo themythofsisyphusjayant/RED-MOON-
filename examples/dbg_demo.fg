@@ -1,12 +1,12 @@
-// Debugger demo (0.7.0): build with
-//   forge.py build examples/dbg_demo.fg --debug --keep-c /tmp/dbg_demo.c -o /tmp/dbg_demo
-// and the generated C carries #line directives for
-// BOTH this file and dbg_helper.fg, so gdb steps
-// through Qasida source. Without --debug the C
-// has no #line directives at all.
-import "dbg_helper.fg";
-fn main() -> int {
-    let x: int = helper_add(20, 22);
-    println("dbg =", x);
-    return 0;
+import "dbg.fg";
+
+fn main() {
+    let a: int = dbg_int("count", 5);
+    let b: float = dbg_float("pi", 3.5);
+    let c: bool = dbg_bool("flag", true);
+    let d: str = dbg_str("name", "ada");
+    println(a + 1);
+    println(b);
+    println(c);
+    println(d);
 }

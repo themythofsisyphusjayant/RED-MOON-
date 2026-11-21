@@ -1,0 +1,10 @@
+import "logfmt.fg";
+
+fn main() {
+    println(lf_format(1, "started", "port", "8080"));
+    println(lf_format(2, "slow query", "ms", "250"));
+    println(lf_format2(0, "cache", "hit", "true", "key", "user:7"));
+    println(lf_emit(1, 0, "hidden", "x", "1"));
+    println(lf_emit(1, 3, "boom", "code", "500"));
+    println(lf_level_name(3));
+}

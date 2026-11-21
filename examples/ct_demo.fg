@@ -1,0 +1,10 @@
+import "ct.fg";
+
+fn main() {
+    println(ct_equal([1, 2, 3], [1, 2, 3]));
+    println(ct_equal([1, 2, 3], [1, 2, 4]));
+    println(ct_equal([1, 2], [1, 2, 3]));
+    println(ct_equal_str("secret", "secret"));
+    println(ct_equal_str("secret", "secreT"));
+    println(ct_equal_str("abc", "abcd"));
+}

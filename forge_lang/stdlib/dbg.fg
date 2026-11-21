@@ -1,0 +1,26 @@
+// Qasida — dbg! print debugging (Top-500 #382).
+// Import with: import "dbg.fg";
+// Value-printing helpers: each dbg_* prints "name = value" and
+// returns the value unchanged, so it can wrap any expression
+// inline. v1 limits: int, float, str and bool only; no
+// pretty-printing of arrays or structs (print elements).
+
+fn dbg_int(name: str, v: int) -> int {
+    println(name, "=", v);
+    return v;
+}
+
+fn dbg_float(name: str, v: float) -> float {
+    println(name, "=", v);
+    return v;
+}
+
+fn dbg_str(name: str, v: str) -> str {
+    println(name, "=", v);
+    return v;
+}
+
+fn dbg_bool(name: str, v: bool) -> bool {
+    println(name, "=", v);
+    return v;
+}

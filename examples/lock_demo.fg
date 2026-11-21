@@ -1,0 +1,13 @@
+import "lock.fg";
+
+fn main() {
+    let line: str = lock_entry("zlib", "1.3.0", "abc123");
+    println(line);
+    let parts: [str] = lock_parse(line);
+    println(parts[0]);
+    println(parts[1]);
+    println(parts[2]);
+    println(lock_check(line, "abc123"));
+    println(lock_check(line, "zzz"));
+    println(lock_sha256_hello());
+}

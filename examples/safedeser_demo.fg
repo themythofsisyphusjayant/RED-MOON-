@@ -1,0 +1,14 @@
+import "safedeser.fg";
+
+fn main() {
+    println(sd_check("{\"a\": 1}", 5, 100));
+    println(sd_depth("{\"a\": 1}"));
+    println(sd_check("[[[[[[1]]]]]]", 3, 100));
+    println(sd_depth("[[[[[[1]]]]]]"));
+    println(sd_check("{\"a\": 1}", 5, 5));
+    let d: JParse = sd_parse("{\"a\": 1}", 5, 100);
+    println(sd_ok(d));
+    println(j2_num(d.doc, j2_get(d.doc, d.root, "a")));
+    let e: JParse = sd_parse("[[[[[[1]]]]]]", 3, 100);
+    println(sd_ok(e));
+}

@@ -1,0 +1,44 @@
+// Qasida — semantic-version constraints (Top-500 #322).
+// Import with: import "semver2.fg";
+// semver.fg already parses and compares versions; this module
+// enforces resolver rules on top of it: exact ("1.2.3"),
+// caret ("^1.2.3" — same major, >= base), tilde ("~1.2.3" —
+// same major and minor, >= base), single comparisons (">=",
+// "<=", ">", "<") and ranges (">=1.0.0 <2.0.0", space-joined).
+// v1 limits: no prerelease or build metadata; no "||" unions;
+// no wildcard "1.x" forms.
+
+import "semver.fg";
+
+fn sv2_satisfies(ver: str, constraint: str) -> bool {
+    let v: SemVer = semver_parse(ver);
+    if starts_with(constraint, "^") {
+        let base: SemVer = semver_parse(substr(constraint, 1, len(constraint) - 1));
+        return semver_cmp(v, base) >= 0 && v.major == base.major;
+    }
+    if starts_with(constraint, "~") {
+        let base: SemVer = semver_parse(substr(constraint, 1, len(constraint) - 1));
+        return semver_cmp(v, base) >= 0 && v.major == base.major && v.minor == base.minor;
+    }
+    let parts: [str] = split(constraint, " ");
+    if len(parts) > 1 {
+        return sv2_satisfies(ver, parts[0]) && sv2_satisfies(ver, parts[1]);
+    }
+    if starts_with(constraint, ">=") {
+        let base: SemVer = semver_parse(substr(constraint, 2, len(constraint) - 2));
+        return semver_cmp(v, base) >= 0;
+    }
+    if starts_with(constraint, "<=") {
+        let base: SemVer = semver_parse(substr(constraint, 2, len(constraint) - 2));
+        return semver_cmp(v, base) <= 0;
+    }
+    if starts_with(constraint, ">") {
+        let base: SemVer = semver_parse(substr(constraint, 1, len(constraint) - 1));
+        return semver_cmp(v, base) > 0;
+    }
+    if starts_with(constraint, "<") {
+        let base: SemVer = semver_parse(substr(constraint, 1, len(constraint) - 1));
+        return semver_cmp(v, base) < 0;
+    }
+    return semver_cmp(v, semver_parse(constraint)) == 0;
+}

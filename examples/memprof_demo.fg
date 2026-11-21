@@ -1,0 +1,30 @@
+import "memprof.fg";
+
+fn main() {
+    let a: MemSnap = mem_snap();
+    let p: [str] = split("a,b,c", ",");
+    let b: MemSnap = mem_snap();
+    println(mem_diff_strs(a, b));
+    println(mem_diff_arrs(a, b));
+    let c: MemSnap = mem_snap();
+    let xs: [int] = [];
+    push(xs, 1);
+    push(xs, 2);
+    push(xs, 3);
+    let d: MemSnap = mem_snap();
+    println(mem_diff_strs(c, d));
+    println(mem_diff_arrs(c, d));
+    let e: MemSnap = mem_snap();
+    let mut u: str = "x";
+    let mut i: int = 0;
+    while i < 5 {
+        u = u + "y";
+        i = i + 1;
+    }
+    let f: MemSnap = mem_snap();
+    println(mem_diff_strs(e, f));
+    println(mem_diff_arrs(e, f));
+    println(u);
+    println(len(p));
+    println(len(xs));
+}
