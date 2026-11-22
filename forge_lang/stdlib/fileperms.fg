@@ -1,0 +1,56 @@
+// fileperms.fg — Top-500 #189: permissions API (chmod, chown
+// and stat modes).
+//
+// Thin wrappers over the filesystem-slice builtins chmod,
+// chown, stat_mode, stat_uid, stat_gid, is_dir. The mutating
+// calls return a typed ErrCode (errcode.fg) instead of a bare
+// bool, so the caller gets NotFound / PermissionDenied instead
+// of just "false" — Success means the call worked.
+//
+// (Named fileperms.fg because perms.fg is already Top-500
+// #445, the sandboxing permission-flags module.)
+//
+// Mode values are the full st_mode (file-type bits included):
+// a regular file at 0600 reads 33152, at 0644 reads 33188; a
+// directory at 0755 reads 16877. Always chmod first, then
+// assert a mode — a fresh file's mode depends on the umask
+// (DESIGN.md FS-X3: this agent runs umask 0007, so
+// write_file creates 0660, not 0666).
+//
+// v1 limits (named in the catalog): no getuid/getgid builtin
+// (the chown proof reads the current owner via stat_uid /
+// stat_gid instead); no FileStat struct return — the three
+// stat_* builtins each return one field; perm_chown to another
+// user's uid fails EPERM unless running as root.
+
+import "errcode.fg";
+
+fn perm_mode(path: str) -> int {
+    return stat_mode(path);
+}
+
+fn perm_set(path: str, mode: int) -> ErrCode {
+    if chmod(path, mode) {
+        return Success;
+    }
+    return err_from_code(last_errno());
+}
+
+fn perm_chown(path: str, uid: int, gid: int) -> ErrCode {
+    if chown(path, uid, gid) {
+        return Success;
+    }
+    return err_from_code(last_errno());
+}
+
+fn perm_uid(path: str) -> int {
+    return stat_uid(path);
+}
+
+fn perm_gid(path: str) -> int {
+    return stat_gid(path);
+}
+
+fn perm_is_dir(path: str) -> bool {
+    return is_dir(path);
+}

@@ -1,0 +1,61 @@
+// walk.fg — Top-500 #190: recursive directory walking
+// (Python os.walk equivalent).
+//
+// walk(root) returns every path under root — dirs and files —
+// in deterministic sorted-visit order: at each level the
+// entries are sorted by str_compare; a directory is yielded,
+// then recursed into immediately, before the next sibling.
+// walk_files(root) is the same walk with directories filtered
+// out. Paths are root + "/" + name at every level, so every
+// returned path is usable as-is with read_file / stat_mode.
+//
+// A missing root yields [] (os.walk behaviour) — walk uses
+// try_readdir internally and never forge_fails on a missing
+// directory. A directory that disappears mid-walk is likewise
+// skipped, not fatal.
+//
+// v1 limits (named in the catalog): no symlink following
+// (is_dir stats, so a symlink to a dir IS descended into —
+// the same rule is_dir itself documents); no depth limit and
+// no cycle detection, so a symlink cycle would recurse until
+// the stack gives out — do not walk untrusted trees.
+
+import "dirs.fg";
+import "result.fg";
+
+fn walk(root: str) -> [str] {
+    let mut out: [str] = [];
+    let r = try_readdir(root);
+    if !r.ok {
+        return out;
+    }
+    let names: [str] = dir_sort_names(r.value);
+    let mut i: int = 0;
+    while i < len(names) {
+        let p: str = root + "/" + names[i];
+        push(out, p);
+        if is_dir(p) {
+            let sub: [str] = walk(p);
+            let mut j: int = 0;
+            while j < len(sub) {
+                push(out, sub[j]);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn walk_files(root: str) -> [str] {
+    let all: [str] = walk(root);
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(all) {
+        if !is_dir(all[i]) {
+            push(out, all[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}

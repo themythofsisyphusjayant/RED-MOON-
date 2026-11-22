@@ -1,0 +1,36 @@
+// atomicfile.fg — Top-500 #187: atomic file replace
+// (write-temp-then-rename).
+//
+// atomic_write writes <path>.tmp, then renames it over the
+// target, so a reader never sees a half-written file and a
+// crash mid-write leaves the old target intact. Returns false
+// if either step fails (a rename across filesystems fails
+// EXDEV — keep the temp on the same filesystem as the target,
+// which "<path>.tmp" guarantees).
+//
+// (Named atomicfile.fg because atomic.fg is already Top-500
+// #244, the lock-free atomics module.)
+//
+// v1 limits (named in the catalog): on rename failure the temp
+// file is left behind (the caller can retry or clean up); on
+// write failure a partial temp may be left behind; there is no
+// fsync/durability guarantee — atomic here means
+// rename-atomic, not crash-durable.
+
+fn atomic_write(path: str, content: str) -> bool {
+    let tmp: str = path + ".tmp";
+    let ok: bool = write_file(tmp, content);
+    if !ok {
+        return false;
+    }
+    return rename(tmp, path);
+}
+
+fn atomic_write_bytes(path: str, data: [int]) -> bool {
+    let tmp: str = path + ".tmp";
+    let ok: bool = write_bytes(tmp, data);
+    if !ok {
+        return false;
+    }
+    return rename(tmp, path);
+}

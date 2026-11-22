@@ -401,7 +401,7 @@ class Infer:
                     return self.set(expr, ret)
             for a in expr.args:
                 self.walk_expr(a)
-            if expr.name in ("len", "clock_micros", "panicked_tasks", "last_errno", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
+            if expr.name in ("len", "clock_micros", "panicked_tasks", "last_errno", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "stat_mode", "stat_uid", "stat_gid", "str_compare"):
                 return self.set(expr, "int")
             if expr.name == "weak_upgrade":
                 for a in expr.args:
@@ -422,11 +422,11 @@ class Infer:
                 return self.set(expr, "[float]")
             if expr.name == "range":
                 return self.set(expr, "[int]")
-            if expr.name in ("args", "split"):
+            if expr.name in ("args", "split", "readdir"):
                 return self.set(expr, "[str]")
             if expr.name in ("sqrt", "exp", "log", "sin", "cos", "tan", "pow", "parse_float"):
                 return self.set(expr, "float")
-            if expr.name in ("read_file", "read_line", "join", "substr", "trim"):
+            if expr.name in ("read_file", "read_line", "join", "substr", "trim", "readlink"):
                 return self.set(expr, "str")
             if expr.name == "write_file":
                 return self.set(expr, "bool")
@@ -434,7 +434,7 @@ class Infer:
                 return self.set(expr, "[int]")
             if expr.name == "write_bytes":
                 return self.set(expr, "bool")
-            if expr.name in ("starts_with", "ends_with", "file_exists"):
+            if expr.name in ("starts_with", "ends_with", "file_exists", "mkdir", "rename", "symlink", "chmod", "chown", "is_dir"):
                 return self.set(expr, "bool")
             if expr.name == "http_get":
                 return self.set(expr, "str")

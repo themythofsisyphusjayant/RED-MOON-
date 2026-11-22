@@ -60,6 +60,8 @@ HEADER = r"""#include <stdio.h>
 #include <errno.h>
 #ifndef _WIN32
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #endif
 
 static void forge_free_str(char *p);
@@ -423,6 +425,82 @@ static bool forge_write_bytes(const char *path, ForgeIntArray data) {
     return ok;
 }
 
+/* Filesystem builtins (filesystem slice): thin libc
+   wrappers. Error shapes follow the existing file builtins
+   exactly (#46): bool ops record errno into forge_last_errno
+   on failure; fatal ops forge_fail; stat_* return -1 on
+   failure (errno via last_errno()); is_dir is false on any
+   failure (file_exists shape). mkdir uses a fixed mode 0755
+   (v1 limit, DESIGN.md FS-X3: umask still applies).
+   POSIX-only, like the mmap block below. */
+#ifndef _WIN32
+static bool forge_mkdir(const char *path) {
+    if (mkdir(path, 0755) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return true;
+}
+static ForgeStrArray forge_readdir(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) forge_fail("cannot read directory");
+    ForgeStrArray out;
+    out.len = 0; out.cap = 8; out.ref = forge_arr_ref_new();
+    out.data = (char **)malloc(sizeof(char *) * 8);
+    if (!out.data) { closedir(d); forge_fail("out of memory"); }
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
+        forge_str_push(&out, forge_copy_str(de->d_name));
+    }
+    closedir(d);
+    return out;
+}
+static bool forge_rename(const char *oldp, const char *newp) {
+    if (rename(oldp, newp) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return true;
+}
+static bool forge_symlink(const char *target, const char *linkpath) {
+    if (symlink(target, linkpath) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return true;
+}
+static char *forge_readlink(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0) forge_fail("cannot read link");
+    long long cap = st.st_size > 0 ? (long long)st.st_size + 1 : 4096;
+    char *buf = (char *)malloc((size_t)cap);
+    if (!buf) forge_fail("out of memory");
+    long long n = (long long)readlink(path, buf, (size_t)cap - 1);
+    if (n < 0) { free(buf); forge_fail("cannot read link"); }
+    buf[n] = 0;
+    return buf;
+}
+static bool forge_chmod(const char *path, long long mode) {
+    if (chmod(path, (mode_t)mode) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return true;
+}
+static bool forge_chown(const char *path, long long uid, long long gid) {
+    if (chown(path, (uid_t)uid, (gid_t)gid) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return true;
+}
+static long long forge_stat_mode(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return -1; }
+    return (long long)st.st_mode;
+}
+static long long forge_stat_uid(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return -1; }
+    return (long long)st.st_uid;
+}
+static long long forge_stat_gid(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return -1; }
+    return (long long)st.st_gid;
+}
+static bool forge_is_dir(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
+    return S_ISDIR(st.st_mode);
+}
+#endif
 /* Memory-mapped files (Top-500 #31): a runtime table
    of mappings, keyed by an int id (Qasida has no
    pointer type, so the mapping cannot be an array
@@ -435,7 +513,6 @@ static bool forge_write_bytes(const char *path, ForgeIntArray data) {
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 typedef struct { void *ptr; long long len; int fd; int alive; } ForgeMmapEntry;
 static ForgeMmapEntry *forge_mmap_table = NULL;
 static long long forge_mmap_len = 0;
@@ -2003,13 +2080,14 @@ class Codegen:
                 # site must not inc it (see the move branch in
                 # gen_expr, which also forgets the source).
                 return True
-            if expr.name in ("try_alloc", "try_read_file", "try_read_bytes"):
-                # A try_alloc / try_read_file / try_read_bytes
-                # Result is a new owned value (the statement
-                # expression builds it fresh); the receiving site
-                # must not copy it. (Without this, the assignment
-                # deep-copies the fresh str field and orphans the
-                # original buffer — a leak ASan catches.)
+            if expr.name in ("try_alloc", "try_read_file", "try_read_bytes", "try_readdir", "try_readlink"):
+                # A try_alloc / try_read_file / try_read_bytes /
+                # try_readdir / try_readlink Result is a new owned
+                # value (the statement expression builds it fresh);
+                # the receiving site must not copy it. (Without
+                # this, the assignment deep-copies the fresh str
+                # field and orphans the original buffer — a leak
+                # ASan catches.)
                 return True
             rt = self.func_ret.get(expr.name)
             if rt and self.is_struct_type(rt):
@@ -2025,7 +2103,7 @@ class Codegen:
         if isinstance(expr, A.ArrayLit):
             return True
         if isinstance(expr, A.Call):
-            if expr.name in ("range", "split", "parallel_matmul", "args", "move", "read_bytes"):
+            if expr.name in ("range", "split", "parallel_matmul", "args", "move", "read_bytes", "readdir"):
                 return True
             if self.func_ret.get(expr.name) and self.is_array_type(self.func_ret[expr.name]):
                 return True
@@ -2038,7 +2116,7 @@ class Codegen:
         so taking it as-is does not leak or double-own."""
         from .fntypes import fn_parts
         if isinstance(expr, A.Call):
-            if expr.name in ("read_file", "read_line", "join", "substr", "trim", "http_get", "http_read_request", "move"):
+            if expr.name in ("read_file", "read_line", "join", "substr", "trim", "http_get", "http_read_request", "move", "readlink"):
                 return True
             if self.func_ret.get(expr.name) == "str" and not self.func_is_extern.get(expr.name):
                 return True
@@ -3579,7 +3657,10 @@ class Codegen:
             et = self.expr_type(stmt.base)
             idx = self.gen_expr(stmt.base.index)
             val = self.gen_expr(stmt.expr)
-            if et == "str":
+            if et == "str" and not self.is_fresh_str(stmt.expr):
+                # §13.8: a fresh str value is passed to the set
+                # as-is (the slot owns it); copying it would
+                # orphan the fresh temp, as push/literals did.
                 val = f"forge_copy_str({val})"
             from .fntypes import is_fn_type
             if self.is_struct_type(et):
@@ -3640,10 +3721,38 @@ class Codegen:
                               f"forge_fail(\"array index out of bounds\");")
                 self.emit(f"forge_closure_release(({base_code}).data[{itmp}].env);")
                 self.emit(f"({base_code}).data[{itmp}] = {val};")
-            elif self._bounds_on and id(stmt.base) not in self._fix1_covered:
-                self.emit(f"{SET_FN[et]}(&{base_code}, {idx}, {val});")
             else:
-                self.emit(f"({base_code}).data[{idx}] = {val};")
+                # Scalar element assignment (str/int/bool/float):
+                # the macro _set (forge_str_set) and the direct
+                # store never free the old element, unlike the
+                # array/struct/fn branches above. For str, free
+                # it first. ORDER MATTERS: the new value is bound
+                # to a temp FIRST — it may read the slot being
+                # overwritten (self-assign a[i] = a[i]), so it
+                # must be evaluated before the old element is
+                # freed (else the set reads freed memory — found
+                # by fuzz seed 1, which printed garbage on its
+                # second println). Then bind the index to a temp
+                # (it is used twice) and bounds-check it exactly
+                # as the array branch does. Non-str types emit
+                # byte-identical code (no temps, no free). (§13.8)
+                if et == "str":
+                    vtmp = f"__forge_setv{self.assign_counter}"
+                    self.assign_counter += 1
+                    self.emit(f"char *{vtmp} = {val};")
+                    val = vtmp
+                    itmp = f"__forge_si{self.assign_counter}"
+                    self.assign_counter += 1
+                    self.emit(f"long long {itmp} = {idx};")
+                    if self._bounds_on and id(stmt.base) not in self._fix1_covered:
+                        self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
+                                  f"forge_fail(\"array index out of bounds\");")
+                    self.emit(f"forge_free_str(({base_code}).data[{itmp}]);")
+                    idx = itmp
+                if self._bounds_on and id(stmt.base) not in self._fix1_covered:
+                    self.emit(f"{SET_FN[et]}(&{base_code}, {idx}, {val});")
+                else:
+                    self.emit(f"({base_code}).data[{idx}] = {val};")
             return
         if isinstance(stmt, A.Match):
             et = self.expr_type(stmt.expr)
@@ -3982,6 +4091,12 @@ class Codegen:
             self.owned_stack.pop()
             self.indent -= 1
             self.emit("}")
+            if self.is_fresh_array(stmt.expr):
+                # Builtin-arg temp leak fix (§13): the iterable
+                # temp is the sole hold when fresh — free it after
+                # the loop. A shared iterable's temp is a borrowed
+                # view and is never freed.
+                self.emit(self.array_free_code(arr_tmp, arr_type))
             self.indent -= 1
             self.emit("}")
             self._facts = {}
@@ -4091,7 +4206,16 @@ class Codegen:
             if isinstance(call, A.Call) and call.name == "assert":
                 cond = self.gen_expr(call.args[0])
                 msg = self.gen_expr(call.args[1])
-                self.emit(f"if (!({cond})) {{ fprintf(stderr, \"qasida: assertion failed: %s\\n\", {msg}); exit(1); }}")
+                if self.is_fresh_str(call.args[1]):
+                    # Builtin-arg temp leak fix (§13): bind the
+                    # fresh message INSIDE the failure branch — it
+                    # must not be evaluated when the assertion
+                    # passes (it may have side effects).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    self.emit(f"if (!({cond})) {{ char *__forge_msg{n} = {msg}; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg{n}); forge_free_str(__forge_msg{n}); exit(1); }}")
+                else:
+                    self.emit(f"if (!({cond})) {{ fprintf(stderr, \"qasida: assertion failed: %s\\n\", {msg}); exit(1); }}")
                 return
             if isinstance(call, A.Call) and call.name in ("print", "println"):
                 self.gen_print(call)
@@ -4101,7 +4225,7 @@ class Codegen:
                 var_code = self.gen_expr(call.args[0])
                 et = self.expr_type(call.args[1])
                 val = self.gen_expr(call.args[1])
-                if et == "str":
+                if et == "str" and not self.is_fresh_str(call.args[1]):
                     val = f"forge_copy_str({val})"
                 if self.is_struct_type(et):
                     if not self.is_fresh_struct(call.args[1]):
@@ -4211,15 +4335,31 @@ class Codegen:
                 # exits, and the spawning scope joins normally. The
                 # program observes the count with panicked_tasks().
                 msg = self.gen_expr(call.args[0])
+                if self.is_fresh_str(call.args[0]):
+                    # Builtin-arg temp leak fix (§13): bind the
+                    # fresh message before the branch (fail never
+                    # returns, so eager evaluation changes nothing)
+                    # and free it in each branch before exiting.
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    self.emit(f"char *__forge_msg{n} = {msg};")
+                    msg = f"__forge_msg{n}"
+                    mfree = f"forge_free_str(__forge_msg{n});"
+                else:
+                    mfree = None
                 self.emit("if (forge_in_task) {")
                 self.indent += 1
                 self.emit(f'fprintf(stderr, "qasida: task panicked: %s\\n", {msg});')
+                if mfree:
+                    self.emit(mfree)
                 self.emit("__atomic_add_fetch(&forge_panicked_total, 1, __ATOMIC_SEQ_CST);")
                 self.emit("pthread_exit(NULL);")
                 self.indent -= 1
                 self.emit("} else {")
                 self.indent += 1
                 self.emit(f'fprintf(stderr, "qasida: %s\\n", {msg});')
+                if mfree:
+                    self.emit(mfree)
                 self.emit("exit(1);")
                 self.indent -= 1
                 self.emit("}")
@@ -4227,12 +4367,30 @@ class Codegen:
             if isinstance(call, A.Call) and call.name == "fail_compile":
                 # Slice 5 driver builtin: compile-time error, with
                 # the CLI's "qasida: error: " prefix.
-                self.emit(f'fprintf(stderr, "qasida: error: %s\\n", {self.gen_expr(call.args[0])});')
+                code = self.gen_expr(call.args[0])
+                if self.is_fresh_str(call.args[0]):
+                    # Builtin-arg temp leak fix (§13).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    self.emit(f"char *__forge_msg{n} = {code};")
+                    self.emit(f'fprintf(stderr, "qasida: error: %s\\n", __forge_msg{n});')
+                    self.emit(f"forge_free_str(__forge_msg{n});")
+                else:
+                    self.emit(f'fprintf(stderr, "qasida: error: %s\\n", {code});')
                 self.emit("exit(1);")
                 return
             if isinstance(call, A.Call) and call.name == "eprintln":
                 # Slice 5 driver builtin: stderr line, no exit.
-                self.emit(f'fprintf(stderr, "%s\\n", {self.gen_expr(call.args[0])});')
+                # Builtin-arg temp leak fix (§13): the print-temp
+                # pattern (see gen_print) — a fresh str arg is
+                # bound, printed, freed.
+                code = self.gen_expr(call.args[0])
+                if self.expr_type(call.args[0]) == "str" and self.is_fresh_str(call.args[0]):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    self.emit(f'{{ char *__forge_print{n} = {code}; fprintf(stderr, "%s\\n", __forge_print{n}); forge_free_str(__forge_print{n}); }}')
+                else:
+                    self.emit(f'fprintf(stderr, "%s\\n", {code});')
                 return
             if isinstance(call, A.Call) and call.name == "pin":
                 # Pinning is compile-time only (Top-500 #34): the
@@ -4291,6 +4449,68 @@ class Codegen:
             return (self._is_simple_lvalue(expr.base)
                     and isinstance(expr.index, (A.Var, A.IntLit)))
         return False
+
+    def _builtin_call(self, expr, parts, arg_codes, arg_nodes=None, skip=()):
+        """Emit a builtin helper call, freeing fresh str/array args.
+
+        Builtin-argument temp leak fix (filesystem slice §13):
+        a fresh str/array argument is owned once by this call —
+        bind it to a temp, call the helper with the temp, free it
+        after the call, yield the call's result in a GNU statement
+        expression (the try_* spacing idiom: `({ ` ... `; })`).
+        A call with no fresh str/array arg emits the plain call,
+        byte-identical to before. `parts` are the literal C
+        segments between the args (len == len(args)+1); the result
+        type comes from the checker-stamped type of the call.
+        `skip` lists arg indices the C helper CONSUMES (it frees
+        them itself) — those are never bound or freed here
+        (write_bytes' array data is the only such arg).
+        Counter order: the caller generates arg codes first, then
+        arg temps are taken in arg order, then the result temp.
+        Every arg's generated code is used exactly once in the
+        emitted C (verified per branch), so binding it to a temp
+        cannot change evaluation count.
+        `arg_nodes` defaults to the call's own args; the BinOp
+        caller (§13.8) passes its operand nodes instead, since a
+        BinOp node has no `.args`.
+        """
+        if arg_nodes is None:
+            arg_nodes = expr.args
+        fresh = []
+        for i, a in enumerate(arg_nodes):
+            if i in skip:
+                continue
+            t = self.expr_type(a)
+            if t == "str" and self.is_fresh_str(a):
+                fresh.append((i, "str", t))
+            elif self.is_array_type(t) and self.is_fresh_array(a):
+                fresh.append((i, "array", t))
+        if not fresh:
+            out = parts[0]
+            for i, code in enumerate(arg_codes):
+                out += code + parts[i + 1]
+            return out
+        binds = []
+        use = list(arg_codes)
+        frees = []
+        for (i, kind, t) in fresh:
+            self.assign_counter += 1
+            n = self.assign_counter
+            temp = f"__forge_arg{n}"
+            if kind == "str":
+                binds.append(f"char *{temp} = {arg_codes[i]};")
+                frees.append(f"forge_free_str({temp});")
+            else:
+                binds.append(f"{c_type(t)} {temp} = {arg_codes[i]};")
+                frees.append(self.array_free_code(temp, t))
+            use[i] = temp
+        self.assign_counter += 1
+        rn = self.assign_counter
+        call = parts[0]
+        for i, code in enumerate(use):
+            call += code + parts[i + 1]
+        return ("({ " + " ".join(binds) + f" {c_type(self.expr_type(expr))} __forge_res{rn} = {call}; "
+                + " ".join(frees) + f" __forge_res{rn}; }})")
 
     def _call_arg_codes(self, expr, params):
         """Argument C code for a call with the given param types.
@@ -4454,7 +4674,7 @@ class Codegen:
                 et = elems[i]
                 if self.expr_type(eexpr) == "never":
                     code = self.never_wrap(code, et)
-                if et == "str":
+                if et == "str" and not self.is_fresh_str(eexpr):
                     code = f"forge_copy_str({code})"
                 elif is_union_type(et):
                     evt = self.expr_type(eexpr)
@@ -4507,7 +4727,7 @@ class Codegen:
                 ft = fields.get(fname)
                 if self.expr_type(fexpr) == "never" and ft:
                     code = self.never_wrap(code, ft)
-                if ft == "str":
+                if ft == "str" and not self.is_fresh_str(fexpr):
                     code = f"forge_copy_str({code})"
                 elif ft and is_union_type(ft):
                     fvt = self.expr_type(fexpr)
@@ -4599,7 +4819,7 @@ class Codegen:
             body += f"{tmp}.data = " + (f"( {elem_c} *)malloc(sizeof({elem_c}) * {n})" if n else "NULL") + "; "
             for i, e in enumerate(expr.elems):
                 code = self.gen_expr(e)
-                if et == "str":
+                if et == "str" and not self.is_fresh_str(e):
                     code = f"forge_copy_str({code})"
                 body += f"{tmp}.data[{i}] = {code}; "
                 if self.is_struct_type(et) and not self.is_fresh_struct(e):
@@ -4819,11 +5039,19 @@ class Codegen:
             left = self.gen_expr(expr.left)
             right = self.gen_expr(expr.right)
             if expr.op == "+" and self.expr_type(expr.left) == "str":
-                return f"forge_concat({left}, {right})"
+                # §13.8 nested BinOp temp: a fresh str operand (an
+                # inner BinOp, a call result) is owned once by the
+                # concat — bind/free it via _builtin_call, exactly
+                # as for builtin args. No fresh operand → plain
+                # forge_concat, byte-identical.
+                return self._builtin_call(expr, ["forge_concat(", ", ", ")"],
+                                          [left, right], [expr.left, expr.right])
             if expr.op == "==" and self.expr_type(expr.left) == "str":
-                return f"(strcmp({left}, {right}) == 0)"
+                return self._builtin_call(expr, ["(strcmp(", ", ", ") == 0)"],
+                                          [left, right], [expr.left, expr.right])
             if expr.op == "!=" and self.expr_type(expr.left) == "str":
-                return f"(strcmp({left}, {right}) != 0)"
+                return self._builtin_call(expr, ["(strcmp(", ", ", ") != 0)"],
+                                          [left, right], [expr.left, expr.right])
             if self.expr_type(expr.left) == "int" and self.expr_type(expr.right) == "int":
                 if self.mode == "safe":
                     # Fix 1 B2: a loop-proof plain BinOp (R2 '%',
@@ -5037,7 +5265,12 @@ class Codegen:
                 arg = expr.args[0]
                 code = self.gen_expr(arg)
                 if self.expr_type(arg) == "str":
+                    if self.is_fresh_str(arg):
+                        return self._builtin_call(expr, ["(long long)strlen(", ")"],
+                                                  [code])
                     return f"strlen({code})"
+                if self.is_fresh_array(arg):
+                    return self._builtin_call(expr, ["", ".len"], [code])
                 return f"({code}).len"
             if expr.name == "range":
                 return f"forge_range({self.gen_expr(expr.args[0])})"
@@ -5072,9 +5305,11 @@ class Codegen:
                 a = self.gen_expr(expr.args[0])
                 return f"((long long)(0ULL - (unsigned long long)({a})))"
             if expr.name == "file_exists":
-                return f"forge_file_exists({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_file_exists(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "read_file":
-                return f"forge_read_file({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_read_file(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "read_line":
                 return "forge_read_line()"
             if expr.name == "peek32":
@@ -5087,10 +5322,13 @@ class Codegen:
                                  f"(big32 target only)",
                                  expr.line, expr.col)
             if expr.name == "write_file":
-                return (f"forge_write_file({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_write_file(", ", ", ")"],
+                                          [a, b])
             if expr.name == "read_bytes":
-                return f"forge_read_bytes({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_read_bytes(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "try_alloc":
                 # Top-500 #36: fallible allocation. A GNU statement
                 # expression (the codebase's established pattern for
@@ -5148,6 +5386,12 @@ class Codegen:
                 n = self.assign_counter
                 p_code = self.gen_expr(expr.args[0])
                 rt = c_type("Result<str, int>")
+                # Builtin-arg temp leak fix (§13): free a fresh path
+                # buffer before yielding — the Result .value is an
+                # independent buffer in every arm. A borrowed path
+                # (variable / literal) is never freed here.
+                pfree = (f"forge_free_str(__forge_p{n}); "
+                         if self.is_fresh_str(expr.args[0]) else "")
                 return (
                     f"({{ {rt} __forge_tryread{n}; "
                     f"const char *__forge_p{n} = {p_code}; "
@@ -5169,7 +5413,7 @@ class Codegen:
                     f"__forge_buf{n}[__forge_got{n}] = 0; "
                     f"fclose(__forge_f{n}); "
                     f"__forge_tryread{n} = ({rt}){{ .ok = true, .value = __forge_buf{n}, .error = 0 }}; }} }} "
-                    f"__forge_tryread{n}; }})"
+                    f"{pfree}__forge_tryread{n}; }})"
                 )
             if expr.name == "try_read_bytes":
                 # Top-500 #46: fallible byte read, same shape as
@@ -5182,6 +5426,10 @@ class Codegen:
                 n = self.assign_counter
                 p_code = self.gen_expr(expr.args[0])
                 rt = c_type("Result<[int], int>")
+                # Builtin-arg temp leak fix (§13): free a fresh path
+                # buffer before yielding — see try_read_file.
+                pfree = (f"forge_free_str(__forge_p{n}); "
+                         if self.is_fresh_str(expr.args[0]) else "")
                 empty = "(ForgeIntArray){NULL, 0, 0, forge_arr_ref_new()}"
                 return (
                     f"({{ {rt} __forge_tryreadb{n}; "
@@ -5210,8 +5458,145 @@ class Codegen:
                     f"for (long __forge_i{n} = 0; __forge_i{n} < (long)__forge_got{n}; __forge_i{n}++) __forge_arr{n}.data[__forge_i{n}] = __forge_raw{n}[__forge_i{n}]; "
                     f"if (__forge_raw{n}) free(__forge_raw{n}); "
                     f"__forge_tryreadb{n} = ({rt}){{ .ok = true, .value = __forge_arr{n}, .error = 0 }}; }} }} "
-                    f"__forge_tryreadb{n}; }})"
+                    f"{pfree}__forge_tryreadb{n}; }})"
                 )
+            if expr.name == "mkdir":
+                # Top-500 #181 (filesystem slice): mkdir(path, 0755).
+                return self._builtin_call(expr, ["forge_mkdir(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "readdir":
+                # Top-500 #181 (filesystem slice): entry names,
+                # excluding "." and "..", raw readdir order.
+                return self._builtin_call(expr, ["forge_readdir(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "try_readdir":
+                # Top-500 #181 (filesystem slice): fallible
+                # readdir. Same GNU statement expression shape as
+                # try_read_file (#46): opendir failure yields
+                # Err(errno); success yields Ok with the names as
+                # a fresh ForgeStrArray. v1 limit: the bookkeeping
+                # mallocs can still forge_fail under true OOM.
+                self.assign_counter += 1
+                n = self.assign_counter
+                p_code = self.gen_expr(expr.args[0])
+                rt = c_type("Result<[str], int>")
+                # Builtin-arg temp leak fix (§13): free a fresh path
+                # buffer before yielding — see try_read_file.
+                pfree = (f"forge_free_str(__forge_p{n}); "
+                         if self.is_fresh_str(expr.args[0]) else "")
+                empty = "(ForgeStrArray){NULL, 0, 0, forge_arr_ref_new()}"
+                return (
+                    f"({{ {rt} __forge_tryrd{n}; "
+                    f"const char *__forge_p{n} = {p_code}; "
+                    f"DIR *__forge_d{n} = opendir(__forge_p{n}); "
+                    f"if (!__forge_d{n}) {{ "
+                    f"int __forge_e{n} = errno; "
+                    f"__forge_tryrd{n} = ({rt}){{ .ok = false, .value = {empty}, .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"ForgeStrArray __forge_arr{n}; "
+                    f"__forge_arr{n}.len = 0; __forge_arr{n}.cap = 8; "
+                    f"__forge_arr{n}.ref = forge_arr_ref_new(); "
+                    f"__forge_arr{n}.data = (char **)malloc(sizeof(char *) * 8); "
+                    f"if (!__forge_arr{n}.data) {{ closedir(__forge_d{n}); forge_fail(\"out of memory\"); }} "
+                    f"struct dirent *__forge_de{n}; "
+                    f"while ((__forge_de{n} = readdir(__forge_d{n})) != NULL) {{ "
+                    f"if (strcmp(__forge_de{n}->d_name, \".\") == 0 || strcmp(__forge_de{n}->d_name, \"..\") == 0) continue; "
+                    f"forge_str_push(&__forge_arr{n}, forge_copy_str(__forge_de{n}->d_name)); }} "
+                    f"closedir(__forge_d{n}); "
+                    f"__forge_tryrd{n} = ({rt}){{ .ok = true, .value = __forge_arr{n}, .error = 0 }}; }} "
+                    f"{pfree}__forge_tryrd{n}; }})"
+                )
+            if expr.name == "rename":
+                # Top-500 #187 (filesystem slice): rename(2).
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_rename(", ", ", ")"],
+                                          [a, b])
+            if expr.name == "symlink":
+                # Top-500 #188 (filesystem slice): symlink(2).
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_symlink(", ", ", ")"],
+                                          [a, b])
+            if expr.name == "readlink":
+                # Top-500 #188 (filesystem slice): target of a
+                # symlink (fatal on failure, like read_file).
+                return self._builtin_call(expr, ["forge_readlink(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "try_readlink":
+                # Top-500 #188 (filesystem slice): fallible
+                # readlink. Same GNU statement expression shape
+                # as try_read_file (#46): lstat/readlink failure
+                # yields Err(errno) captured immediately; success
+                # yields Ok with the target as a fresh heap str.
+                # v1 limit: the bookkeeping mallocs can still
+                # forge_fail under true OOM.
+                self.assign_counter += 1
+                n = self.assign_counter
+                p_code = self.gen_expr(expr.args[0])
+                rt = c_type("Result<str, int>")
+                # Builtin-arg temp leak fix (§13): free a fresh path
+                # buffer before yielding — see try_read_file.
+                pfree = (f"forge_free_str(__forge_p{n}); "
+                         if self.is_fresh_str(expr.args[0]) else "")
+                return (
+                    f"({{ {rt} __forge_tryrl{n}; "
+                    f"const char *__forge_p{n} = {p_code}; "
+                    f"struct stat __forge_st{n}; "
+                    f"if (lstat(__forge_p{n}, &__forge_st{n}) != 0) {{ "
+                    f"int __forge_e{n} = errno; "
+                    f"__forge_tryrl{n} = ({rt}){{ .ok = false, .value = forge_copy_str(\"\"), .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"long long __forge_cap{n} = __forge_st{n}.st_size > 0 ? (long long)__forge_st{n}.st_size + 1 : 4096; "
+                    f"char *__forge_buf{n} = (char *)malloc((size_t)__forge_cap{n}); "
+                    f"if (!__forge_buf{n}) {{ forge_fail(\"out of memory\"); }} "
+                    f"long long __forge_n{n} = (long long)readlink(__forge_p{n}, __forge_buf{n}, (size_t)__forge_cap{n} - 1); "
+                    f"if (__forge_n{n} < 0) {{ int __forge_e{n} = errno; free(__forge_buf{n}); "
+                    f"__forge_tryrl{n} = ({rt}){{ .ok = false, .value = forge_copy_str(\"\"), .error = __forge_e{n} }}; }} "
+                    f"else {{ __forge_buf{n}[__forge_n{n}] = 0; "
+                    f"__forge_tryrl{n} = ({rt}){{ .ok = true, .value = __forge_buf{n}, .error = 0 }}; }} }} "
+                    f"{pfree}__forge_tryrl{n}; }})"
+                )
+            if expr.name == "chmod":
+                # Top-500 #189 (filesystem slice): chmod(2).
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_chmod(", ", ", ")"],
+                                          [a, b])
+            if expr.name == "chown":
+                # Top-500 #189 (filesystem slice): chown(2).
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                c = self.gen_expr(expr.args[2])
+                return self._builtin_call(expr, ["forge_chown(", ", ", ", ", ")"],
+                                          [a, b, c])
+            if expr.name == "stat_mode":
+                # Top-500 #189 (filesystem slice): st_mode, -1 on
+                # failure (errno via last_errno()).
+                return self._builtin_call(expr, ["forge_stat_mode(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "stat_uid":
+                # Top-500 #189 (filesystem slice): st_uid, -1 on
+                # failure (errno via last_errno()).
+                return self._builtin_call(expr, ["forge_stat_uid(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "stat_gid":
+                # Top-500 #189 (filesystem slice): st_gid, -1 on
+                # failure (errno via last_errno()).
+                return self._builtin_call(expr, ["forge_stat_gid(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "is_dir":
+                # Top-500 #190 (filesystem slice): stat + S_ISDIR.
+                return self._builtin_call(expr, ["forge_is_dir(", ")"],
+                                          [self.gen_expr(expr.args[0])])
+            if expr.name == "str_compare":
+                # Filesystem slice FS-X1: strcmp — the
+                # string-ordering primitive. Cast to long long:
+                # Qasida int is long long, strcmp returns int.
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["(long long)strcmp(", ", ", ")"],
+                                          [a, b])
             if expr.name == "write_bytes":
                 # Ownership (audit fix): forge_write_bytes FREES
                 # its array parameter (batch 25), but builtin
@@ -5221,7 +5606,10 @@ class Codegen:
                 # non-fresh array arguments arrive with an extra
                 # hold the helper frees; fresh arguments arrive
                 # as-is and are freed. The path stays borrowed,
-                # like every other str parameter.
+                # like every other str parameter — except a FRESH
+                # path is bound and freed by _builtin_call (§13);
+                # the array data is consumed by the helper and
+                # must NOT go through it.
                 path_code = self.gen_expr(expr.args[0])
                 data = expr.args[1]
                 data_code = self.gen_expr(data)
@@ -5230,34 +5618,51 @@ class Codegen:
                     n = self.assign_counter
                     data_code = (f"({{{c_type(self.expr_type(data))} __forge_arg{n} = {data_code}; "
                                  f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
-                return f"forge_write_bytes({path_code}, {data_code})"
+                return self._builtin_call(expr, ["forge_write_bytes(", ", ", ")"],
+                                          [path_code, data_code], skip=(1,))
             if expr.name == "args":
                 return "forge_args_global"
             if expr.name == "parse_float":
-                return f"forge_parse_float({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_parse_float(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "parse_int":
-                return f"forge_parse_int({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_parse_int(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "run_command":
-                return f"forge_run_command({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_run_command(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "split":
-                return (f"forge_split({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_split(", ", ", ")"],
+                                          [a, b])
             if expr.name == "join":
-                return (f"forge_join({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_join(", ", ", ")"],
+                                          [a, b])
             if expr.name == "substr":
-                return (f"forge_substr({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                c = self.gen_expr(expr.args[2])
+                return self._builtin_call(expr, ["forge_substr(", ", ", ", ", ")"],
+                                          [a, b, c])
             if expr.name == "trim":
-                return f"forge_trim({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_trim(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "starts_with":
-                return (f"forge_starts_with({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_starts_with(", ", ", ")"],
+                                          [a, b])
             if expr.name == "ends_with":
-                return (f"forge_ends_with({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_ends_with(", ", ", ")"],
+                                          [a, b])
             if expr.name == "http_get":
-                return f"forge_http_get({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_http_get(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "http_listen":
                 return f"forge_http_listen({self.gen_expr(expr.args[0])})"
             if expr.name == "http_accept":
@@ -5265,9 +5670,16 @@ class Codegen:
             if expr.name == "http_read_request":
                 return f"forge_http_read_request({self.gen_expr(expr.args[0])})"
             if expr.name == "http_respond":
-                return f"forge_http_respond({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_http_respond(", ", ", ")"],
+                                          [a, b])
             if expr.name == "http_respond_status":
-                return f"forge_http_respond_status({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})"
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                c = self.gen_expr(expr.args[2])
+                return self._builtin_call(expr, ["forge_http_respond_status(", ", ", ", ", ")"],
+                                          [a, b, c])
             if expr.name == "http_close":
                 return f"forge_http_close({self.gen_expr(expr.args[0])})"
             if expr.name in ("alloc_count", "free_count"):
@@ -5277,12 +5689,21 @@ class Codegen:
             if expr.name == "refcount":
                 # Read the array's holder count WITHOUT gaining a
                 # holder: the temp is a plain copy of the array
-                # struct, never inc'd and never freed, so the
-                # observed count is exactly the program's own.
+                # struct, never inc'd, so the observed count is
+                # exactly the program's own. A FRESH array temp is
+                # the sole hold, so it is freed after the read
+                # (§13); a shared temp is a borrowed view and is
+                # never freed.
                 self.assign_counter += 1
                 n = self.assign_counter
                 at = self.expr_type(expr.args[0])
                 code = self.gen_expr(expr.args[0])
+                if self.is_fresh_array(expr.args[0]):
+                    self.assign_counter += 1
+                    m = self.assign_counter
+                    return (f"({{ {c_type(at)} __forge_arg{n} = {code}; "
+                            f"long long __forge_res{m} = __forge_arg{n}.ref ? *__forge_arg{n}.ref : 0; "
+                            f"{self.array_free_code(f'__forge_arg{n}', at)} __forge_res{m}; }})")
                 return (f"({{{c_type(at)} __forge_arg{n} = {code}; "
                         f"__forge_arg{n}.ref ? *__forge_arg{n}.ref : 0;}})")
             if expr.name == "move":
@@ -5312,7 +5733,8 @@ class Codegen:
                 self.owned_forget(arg.name)
                 return self.gen_expr(arg)
             if expr.name == "mmap_open":
-                return f"forge_mmap_open({self.gen_expr(expr.args[0])})"
+                return self._builtin_call(expr, ["forge_mmap_open(", ")"],
+                                          [self.gen_expr(expr.args[0])])
             if expr.name == "mmap_get":
                 return f"forge_mmap_get({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
             if expr.name == "mmap_set":
@@ -5327,10 +5749,21 @@ class Codegen:
                 return f"forge_mmap_set32({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})"
             if expr.name == "weak_new":
                 # Register without gaining a holder: the weak
-                # must not keep the array alive.
+                # must not keep the array alive. A FRESH array
+                # temp is the sole hold, so it is freed after
+                # registering (§13) — forge_int_array_free marks
+                # the weak dead first, so the weak is correctly
+                # dead rather than spuriously alive. A shared
+                # temp is a borrowed view and is never freed.
                 self.assign_counter += 1
                 n = self.assign_counter
                 code = self.gen_expr(expr.args[0])
+                if self.is_fresh_array(expr.args[0]):
+                    self.assign_counter += 1
+                    m = self.assign_counter
+                    return (f"({{ ForgeIntArray __forge_arg{n} = {code}; "
+                            f"long long __forge_res{m} = forge_weak_register(__forge_arg{n}); "
+                            f"forge_int_array_free(__forge_arg{n}); __forge_res{m}; }})")
                 return (f"({{ForgeIntArray __forge_arg{n} = {code}; "
                         f"forge_weak_register(__forge_arg{n});}})")
             if expr.name == "weak_upgrade":
@@ -5348,10 +5781,16 @@ class Codegen:
                         f"if (!__forge_arg{m}._0) {{ __forge_arg{m}._1 = (ForgeIntArray){{NULL, 0, 0, forge_arr_ref_new()}}; }} "
                         f"__forge_arg{m};}})")
             if expr.name == "parallel_dot":
-                return f"forge_parallel_dot({self.gen_expr(expr.args[0])}, {self.gen_expr(expr.args[1])})"
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                return self._builtin_call(expr, ["forge_parallel_dot(", ", ", ")"],
+                                          [a, b])
             if expr.name == "parallel_matmul":
-                return (f"forge_parallel_matmul({self.gen_expr(expr.args[0])}, "
-                        f"{self.gen_expr(expr.args[1])}, {self.gen_expr(expr.args[2])})")
+                a = self.gen_expr(expr.args[0])
+                b = self.gen_expr(expr.args[1])
+                c = self.gen_expr(expr.args[2])
+                return self._builtin_call(expr, ["forge_parallel_matmul(", ", ", ", ", ")"],
+                                          [a, b, c])
             # Enum variant construction: Some(42), None(), Circle(3.0).
             if expr.name in self._enum_variant_map():
                 enum_name, tag, payload_type = self._enum_variant_map()[expr.name]
@@ -5367,7 +5806,7 @@ class Codegen:
                 if not expr.args:
                     return f"({cname}){{ .tag = {tag} }}"
                 arg_code = self.gen_expr(expr.args[0])
-                if payload_type == "str":
+                if payload_type == "str" and not self.is_fresh_str(expr.args[0]):
                     arg_code = f"forge_copy_str({arg_code})"
                 return f"({cname}){{ .tag = {tag}, .payload.payload_{expr.name} = {arg_code} }}"
             # User-function call: string arguments are copied, so the

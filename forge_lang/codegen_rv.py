@@ -2046,7 +2046,11 @@ class RVGen:
                     "read_line",
                     "write_file", "args", "parse_int", "split", "join",
                     "substr", "trim", "starts_with", "ends_with", "http_get",
-                    "run_command"):
+                    "run_command",
+                    "mkdir", "readdir", "try_readdir", "rename", "symlink",
+                    "readlink", "try_readlink", "chmod", "chown",
+                    "stat_mode", "stat_uid", "stat_gid", "is_dir",
+                    "str_compare"):
             raise ForgeError(f"builtin {name}() is not supported on big32 (v1)")
         if name == "peek32":
             r = self.gen_expr(expr.args[0])

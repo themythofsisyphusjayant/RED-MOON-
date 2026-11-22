@@ -1,0 +1,24 @@
+// links.fg — Top-500 #188: symlink handling (read and create
+// symlinks).
+//
+// Thin wrappers over the filesystem-slice builtins symlink and
+// try_readlink. link_read returns Result<str, int> with the raw
+// POSIX errno as the Err payload (same shape as try_read_file
+// from #46) — use errcode.fg's err_from_code / err_name to
+// interpret it.
+//
+// v1 limits (named in the catalog): no hard-link support (the
+// slice did not add a link(2) builtin — nothing in the five
+// items needs it); link_create does not resolve or validate
+// the target (a dangling symlink is legal); readlink on a
+// non-symlink fails (EINVAL on Linux).
+
+import "result.fg";
+
+fn link_create(target: str, linkpath: str) -> bool {
+    return symlink(target, linkpath);
+}
+
+fn link_read(linkpath: str) -> Result<str, int> {
+    return try_readlink(linkpath);
+}

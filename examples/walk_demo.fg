@@ -1,0 +1,17 @@
+import "walk.fg";
+
+fn main() {
+    let base = "/tmp/fs_demo_walk";
+    println(mkdir(base));
+    println(mkdir(base + "/sub"));
+    println(mkdir(base + "/sub/deep"));
+    let w1 = write_file(base + "/root.txt", "r");
+    println(w1);
+    let w2 = write_file(base + "/sub/mid.txt", "m");
+    println(w2);
+    let w3 = write_file(base + "/sub/deep/leaf.txt", "l");
+    println(w3);
+    println(join(walk(base), ", "));
+    println(join(walk_files(base), ", "));
+    println(len(walk(base + "/nope")));
+}

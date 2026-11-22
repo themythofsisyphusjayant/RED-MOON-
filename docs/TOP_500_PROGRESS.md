@@ -1442,12 +1442,13 @@ records errno but a later success does NOT clear it; concurrent
 failing tasks race on last_errno; bookkeeping mallocs can still
 forge_fail under true OOM; no http_get/mmap errno path; no
 retryable/fatal classification (#59), no inferred error sets (#50).
-NOT pushed (parent verifies and pushes). Counts after the flip:
+Counts after the flip:
 HAVE 354, PARTIAL 12, GAP 134, to build 146. Arithmetic from the
 #44 entry (HAVE 353, PARTIAL 12, GAP 135, to build 147): 1
 GAP-to-HAVE (#46); 353 + 1 = 354; 135 - 1 = 134; 147 - 1 = 146
 (354 + 12 + 134 = 500). HAVE 354 of 500 = 70.8%.
 Next: #47 Backtraces on fail in debug builds.
+
 
 ## #393 Live reload — HAVE (22 Nov 2026, Sprint Day 2)
 forge_lang/stdlib/livereload.fg — versioned handler table for hot code
@@ -1470,3 +1471,64 @@ Arithmetic from the #46 entry (HAVE 354, PARTIAL 12, GAP 134, to
 build 146): 1 GAP-to-HAVE (#393); 354 + 1 = 355; 134 - 1 = 133;
 146 - 1 = 145 (355 + 12 + 133 = 500). HAVE 355 of 500 = 71.0%.
 Next: #47 Backtraces on fail in debug builds.
+
+## Filesystem builtins slice — #181, #187, #188, #189, #190 HAVE (22 Nov 2026, libs-only sprint week)
+
+14 thin libc builtins in both compilers (mkdir, readdir, try_readdir,
+rename, symlink, readlink, try_readlink, chmod, chown, stat_mode,
+stat_uid, stat_gid, is_dir, str_compare) + 5 library modules with
+demos: dirs.fg (#181, sorted dir_list), atomicfile.fg (#187,
+write-temp-then-rename), links.fg (#188, Result<str, int> link_read),
+fileperms.fg (#189, typed ErrCode results), walk.fg (#190, sorted
+recursive walk + walk_files). Own test tests/test_filesystem_v1.py
+96/96 ALL PASS both compilers; fs fuzz 56/56 (18 pos + 10 neg x 2
+modes). The slice was BLOCKED on a pre-existing general compiler leak
+(builtin call lowerings never freed fresh str/array argument temps:
+write_file(p + "/f.txt") + len(p + "/xyz") leaked 42 bytes in 2
+allocations under ASan) — Jayant picked fixing it in-slice (22 Nov
+~14:42 IST, option A). Fix (DESIGN.md §13 + §13.8, filesystem-slice):
+one shared helper per compiler (_builtin_call / cg_builtin_call) binds
+fresh str/array args to named temps and frees them after the call
+(closures print-temp pattern), covering file + fs + len/join/substr/
+trim/parse_*/run_command/http_*/mmap_open/parallel_* lowerings, try_*
+conditional frees, push/literal/enum skip-copy, eprintln, fail/
+fail_compile/assert msg binding, for-over-fresh-array free, str BinOp
++/==/!=, and str IndexAssign (value-temp-first — a free-before-eval
+UAF found by fuzz seed 1, which printed non-deterministic garbage
+under the r4 binary; fixed in both compilers, seed 1 deterministic
+"go" 3/3 runs under r5). Gates 22 Nov (hosted rebuild 5, md5
+ee7d269849e05f365b2d34f288c0c0d5, synced to all 3 binary locations):
+bootstrap 7/7 byte-identical (lex 84343, parse 716000, check 4075362,
+infer 5103335, codegen 20902741, header 95513, cli 21127952);
+parity 124/124 agree + 124/124 byte-identical; corpus 99/99;
+regression 62/62; fuzz existing 102/102 both modes + fv 56/56 +
+closure 66/66 + fs 56/56; full suite 82/89 hosted + 82/89 Python
+(7 known big32 pre-existing failures in both; no flake this run —
+the expected Python spawn_demo flake did not fire); ASan
+compiler-side fuzz 102/102 + 56/56 + 66/66 + 56/56 under the r5 ASan
+binary (md5 801661d4e862ea0fc49110e09dbed10a, ASAN_OPTIONS=
+detect_leaks=0), zero sanitizer reports; ASan program-side 18/18;
+parent zero-fs-code probe rc=0, zero leaks (was 42 bytes / rc=1);
+fmt 14/14 (hosted qasida fmt — note: `forge.py --python fmt` routes
+to the Python formatter, which strips file-leading // comments, a
+pre-existing documented quirk, not the gate; fmt_fix.sh corrected
+to use the hosted binary); benchmarks tick q_safe 2412 µs, matmul
+q_safe 13299 µs (no regression vs slice r2: 2341 / 13222, within
+noise). Emit comparison: probe_leakA/probe_leakB/torture_leak
+byte-identical + runtime identical; fs_probe1 runtime identical,
+emit differs only by the pre-existing Result type-naming/ordering
+divergence (python-vs-r5 diff identical to python-vs-r4's — zero new
+divergences). Open follow-ups (NOT this slice): Index into a fresh
+array/struct and FieldAccess on a fresh struct still leak
+(owned-copy-out needed); enum scope-end freeing + match-arm binding
+freeing still leak (torture program's only remaining leaks: 24 bytes
+in 2 allocations, down from 1121 bytes in 70 pre-fix); return inside
+a for-over-fresh loop leaks the iterable; hosted mirror Result
+type-naming unification.
+Counts after the flip: HAVE 360, PARTIAL 12, GAP 128, to build 140.
+Arithmetic from the #393 entry (HAVE 355, PARTIAL 12, GAP 133, to
+build 145): 5 GAP-to-HAVE (#181, #187, #188, #189, #190); 355 + 5 =
+360; 133 - 5 = 128; 145 - 5 = 140 (360 + 12 + 128 = 500). HAVE 360
+of 500 = 72.0%.
+Next: #47 Backtraces on fail in debug builds (GAP) — the queue head
+after the filesystem slice.

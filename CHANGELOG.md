@@ -56,8 +56,43 @@ without a major version bump (see docs/STABILITY.md).
   failing tasks race on last_errno; bookkeeping mallocs can still
   forge_fail under true OOM; no http_get/mmap errno path; no
   retryable/fatal classification (#59), no inferred error sets
-  (#50). Catalog marks #46 [HAVE]. NOT pushed (parent verifies
-  and pushes).
+  (#50). Catalog marks #46 [HAVE].
+
+- Filesystem builtins + builtin-argument temp leak fix, Top-500
+  #181/#187/#188/#189/#190 (22 Nov 2026, libs-only sprint week,
+  both compilers): 14 thin libc builtins (mkdir, readdir,
+  try_readdir, rename, symlink, readlink, try_readlink, chmod,
+  chown, stat_mode, stat_uid, stat_gid, is_dir, str_compare) +
+  libraries dirs.fg (#181, sorted dir_list), atomicfile.fg (#187,
+  write-temp-then-rename), links.fg (#188, Result<str, int>
+  link_read), fileperms.fg (#189, typed ErrCode results), walk.fg
+  (#190, sorted recursive walk + walk_files). The slice was blocked
+  on a pre-existing general compiler leak — builtin call lowerings
+  never freed fresh str/array argument temps — fixed in-slice with
+  a shared helper (_builtin_call / cg_builtin_call) that binds fresh
+  args to named temps and frees them after the call, covering all
+  builtin lowerings + try_* conditional frees + push/literal/enum
+  skip-copy + eprintln/fail/assert msg binding + for-over-fresh-
+  array free + str BinOp +/==/!= + str IndexAssign (value-temp-
+  first; a free-before-eval UAF found by fuzz seed 1). Own test
+  tests/test_filesystem_v1.py 96/96 ALL PASS under both compilers;
+  fs fuzz 56/56. Gates 22 Nov (hosted rebuild 5, md5
+  ee7d269849e05f365b2d34f288c0c0d5): bootstrap 7/7 byte-identical;
+  parity 124/124; corpus 99/99; regression 62/62; fuzz 102/102
+  both modes + fv 56/56 + closure 66/66 + fs 56/56; full suite
+  82/89 hosted + 82/89 Python (7 known big32 pre-existing failures
+  in both, no flake); ASan compiler-side fuzz 102/102 + 56/56 +
+  66/66 + 56/56, zero sanitizer reports; ASan program-side 18/18;
+  parent zero-fs-code probe rc=0, zero leaks (was 42 bytes / rc=1);
+  fmt 14/14; benchmarks tick q_safe 2412 µs, matmul q_safe 13299 µs
+  (no regression). v1 limits, stated: no inotify (#183 still GAP);
+  rename across filesystems fails EXDEV; chown needs privilege;
+  Index into a fresh array/struct and FieldAccess on a fresh struct
+  still leak; enum scope-end freeing and match-arm binding freeing
+  still leak (torture program's only remaining leaks: 24 bytes in
+  2 allocations, down from 1121 bytes in 70 pre-fix); a return
+  inside a for-over-fresh loop leaks the iterable. Catalog marks
+  #181/#187/#188/#189/#190 [HAVE].
 
 - PNG decoder v2 (21 Nov 2026): a REAL general PNG decoder in pure
   Qasida, closing the "PNG/JPEG NOT supported" honest gap for PNG

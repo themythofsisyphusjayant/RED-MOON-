@@ -1,0 +1,19 @@
+import "links.fg";
+import "result.fg";
+import "errcode.fg";
+
+fn main() {
+    let base = "/tmp/fs_demo_links";
+    println(mkdir(base));
+    let w = write_file(base + "/real.txt", "hello link");
+    println(w);
+    println(link_create(base + "/real.txt", base + "/link.txt"));
+    let lr = link_read(base + "/link.txt");
+    println(lr.ok);
+    println(lr.value);
+    println(read_file(base + "/link.txt"));
+    let r = try_readlink(base + "/missing.txt");
+    println(r.ok);
+    println(r.error);
+    println(err_name(err_from_code(r.error)));
+}

@@ -986,6 +986,16 @@ class WasmGen:
                 # has no filesystem in v1.
                 raise ForgeError(f"wasm: {expr.name}() needs the hosted "
                                  "filesystem, which WASM does not expose")
+            if expr.name in ("mkdir", "readdir", "try_readdir", "rename", "symlink", "readlink", "try_readlink", "chmod", "chown", "stat_mode", "stat_uid", "stat_gid", "is_dir"):
+                # Filesystem slice: needs the hosted filesystem;
+                # WASM has no filesystem in v1.
+                raise ForgeError(f"wasm: {expr.name}() needs the hosted "
+                                 "filesystem, which WASM does not expose")
+            if expr.name == "str_compare":
+                # Filesystem slice FS-X1: needs strcmp; WASM has
+                # no string runtime in v1.
+                raise ForgeError("wasm: str_compare() needs strcmp, "
+                                 "which WASM does not expose")
             if expr.name in ("peek32", "poke32"):
                 raise ForgeError(f"wasm: {expr.name}() needs raw memory addresses, "
                                  f"which WASM does not expose")

@@ -1,0 +1,21 @@
+import "dirs.fg";
+import "errcode.fg";
+
+fn main() {
+    let base = "/tmp/fs_demo_dirs";
+    println(dir_create(base));
+    println(dir_create(base));
+    println(last_errno());
+    println(err_name(err_from_code(last_errno())));
+    let w1 = write_file(base + "/b.txt", "bee");
+    println(w1);
+    let w2 = write_file(base + "/a.txt", "ay");
+    println(w2);
+    let w3 = write_file(base + "/c.txt", "see");
+    println(w3);
+    println(join(dir_list(base), ", "));
+    println(dir_create_all(base + "/x/y/z"));
+    println(is_dir(base + "/x"));
+    println(is_dir(base + "/x/y"));
+    println(is_dir(base + "/x/y/z"));
+}

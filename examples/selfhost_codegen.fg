@@ -1670,7 +1670,7 @@ fn cg_c_sig_extern(g: HCodegen, fn_node: Node) -> str {
 
 fn cg_is_fresh_str(g: HCodegen, e: Node) -> bool {
     if e.kind == 35 {
-        if e.name == "read_file" || e.name == "read_line" || e.name == "join" || e.name == "substr" || e.name == "trim" || e.name == "http_get" || e.name == "http_read_request" || e.name == "move" {
+        if e.name == "read_file" || e.name == "read_line" || e.name == "join" || e.name == "substr" || e.name == "trim" || e.name == "http_get" || e.name == "http_read_request" || e.name == "move" || e.name == "readlink" {
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
@@ -1724,7 +1724,7 @@ fn cg_is_fresh_array(g: HCodegen, e: Node) -> bool {
         return true;
     }
     if e.kind == 35 {
-        if e.name == "range" || e.name == "split" || e.name == "parallel_matmul" || e.name == "args" || e.name == "move" || e.name == "read_bytes" {
+        if e.name == "range" || e.name == "split" || e.name == "parallel_matmul" || e.name == "args" || e.name == "move" || e.name == "read_bytes" || e.name == "readdir" {
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
@@ -1750,7 +1750,7 @@ fn cg_is_fresh_struct(g: HCodegen, e: Node) -> bool {
         return false;
     }
     if e.kind == 35 {
-        if e.name == "move" || e.name == "try_alloc" || e.name == "try_read_file" || e.name == "try_read_bytes" {
+        if e.name == "move" || e.name == "try_alloc" || e.name == "try_read_file" || e.name == "try_read_bytes" || e.name == "try_readdir" || e.name == "try_readlink" {
             // Top-500 #46: same fresh-Result rule as try_alloc
             // (Python codegen.py is_fresh_struct) — the
             // statement expression builds the Result fresh, so
@@ -3395,9 +3395,11 @@ fn cg_float_to_int_cast(g0: HCodegen, code: str, to_t: str) -> CGExpr {
 // shared-union copy, opaque convert, array inc, struct own,
 // tuple own. Temp form uses __forge_arg{n} (increment-then-read).
 // Convert a value to an owned value of the expected type at a
-// receiving site. str_copy_always: Python copies str elements
-// of TupleLit/StructLit UNCONDITIONALLY (codegen.py:3642, 3687),
-// but a user-call str argument only when it is NOT fresh
+// receiving site. str_copy_always: Python USED to copy str
+// elements of TupleLit/StructLit UNCONDITIONALLY, but the
+// builtin-arg temp leak fix (filesystem slice §13) made the
+// copy conditional on freshness there too, so every site now
+// passes false and copies a str only when it is NOT fresh
 // (codegen.py:4378); the hosted version used to copy always at
 // every site, which made fresh substr/concat results gain a
 // spurious forge_copy_str (lex bootstrap diffs).
@@ -5059,7 +5061,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let cout: CGExpr = cg_gen_expr(g, child);
             g = cout.g;
             let mut code: str = cout.code;
-            if et == "str" {
+            if et == "str" && !cg_is_fresh_str(g, child) {
                 code = "forge_copy_str(" + code + ")";
             }
             body = body + ta + ".data[" + itoa(i) + "] = " + code + "; ";
@@ -5091,7 +5093,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let child: Node = e.kids[i];
             let cout: CGExpr = cg_gen_expr(g, child);
             g = cout.g;
-            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, child), elems[i], child, true);
+            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, child), elems[i], child, false);
             g = conv.g;
             push(parts, conv.code);
             i = i + 1;
@@ -5112,7 +5114,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let cout: CGExpr = cg_gen_expr(g, fexpr);
             g = cout.g;
             let ft: str = infer_field_type(enc, field.name);
-            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, fexpr), ft, fexpr, true);
+            let conv: CGExpr = cg_convert_owned(g, cout.code, cg_expr_type(g, fexpr), ft, fexpr, false);
             g = conv.g;
             push(parts, "." + field.name + " = " + conv.code);
             i = i + 1;
@@ -5573,13 +5575,17 @@ fn cg_binop_combine(g0: HCodegen, e: Node, left: str, right: str) -> CGExpr {
     let lt: str = cg_expr_type(g, e.kids[0]);
     let rt: str = cg_expr_type(g, e.kids[1]);
     if e.name == "+" && lt == "str" {
-        return CGExpr { g: g, code: "forge_concat(" + left + ", " + right + ")" };
+        // §13.8 nested BinOp temp: a fresh str operand is owned
+        // once by the concat — bind/free it via cg_builtin_call,
+        // exactly as for builtin args. No fresh operand → plain
+        // forge_concat, byte-identical.
+        return cg_builtin_call(g, e, ["forge_concat(", ", ", ")"], [left, right], -1);
     }
     if e.name == "==" && lt == "str" {
-        return CGExpr { g: g, code: "(strcmp(" + left + ", " + right + ") == 0)" };
+        return cg_builtin_call(g, e, ["(strcmp(", ", ", ") == 0)"], [left, right], -1);
     }
     if e.name == "!=" && lt == "str" {
-        return CGExpr { g: g, code: "(strcmp(" + left + ", " + right + ") != 0)" };
+        return cg_builtin_call(g, e, ["(strcmp(", ", ", ") != 0)"], [left, right], -1);
     }
     if lt == "int" && rt == "int" {
         if e.name == "+" || e.name == "-" || e.name == "*" || e.name == "/" || e.name == "%" {
@@ -5772,6 +5778,80 @@ fn cg_gen_binop(g0: HCodegen, e: Node) -> CGExpr {
 // variant construction, then user-function calls with per-arg
 // conversion by DECLARED param type. print/println reaching
 // gen_expr fall through to the plain name(args) form, exactly
+// _builtin_call (codegen.py): emit a builtin helper call,
+// freeing fresh str/array args (filesystem slice §13). A fresh
+// str/array argument is owned once by this call — bind it to a
+// temp, call the helper with the temp, free it after the call,
+// yield the call's result in a GNU statement expression (the
+// try_* spacing idiom: `({ ` ... `; })`). A call with no fresh
+// str/array arg emits the plain call, byte-identical to before.
+// `parts` are the literal C segments between the args (len ==
+// len(args)+1); the result type comes from the checker-stamped
+// type of the call. `skip` is an arg index the C helper
+// CONSUMES (it frees it itself), or -1 for none — those are
+// never bound or freed here (write_bytes' array data is the
+// only such arg). Counter order: the caller generates arg codes
+// first, then arg temps are taken in arg order, then the result
+// temp. Every arg's generated code is used exactly once in the
+// emitted C (verified per branch), so binding it to a temp
+// cannot change evaluation count.
+fn cg_builtin_call(g0: HCodegen, e: Node, parts: [str], codes: [str], skip: int) -> CGExpr {
+    let mut g: HCodegen = g0;
+    let mut temps: [str] = [];
+    let mut binds: [str] = [];
+    let mut frees: [str] = [];
+    let mut any_fresh: bool = false;
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        let mut temp: str = "";
+        if i != skip {
+            let t: str = cg_expr_type(g, e.kids[i]);
+            if t == "str" && cg_is_fresh_str(g, e.kids[i]) {
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                temp = "__forge_arg" + itoa(n);
+                push(binds, "char *" + temp + " = " + codes[i] + ";");
+                push(frees, "forge_free_str(" + temp + ");");
+                any_fresh = true;
+            } else if cg_is_array_type(g, t) && cg_is_fresh_array(g, e.kids[i]) {
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                temp = "__forge_arg" + itoa(n);
+                push(binds, cg_c_type(g, t) + " " + temp + " = " + codes[i] + ";");
+                let fout: CGExpr = cg_array_free_code(g, temp, t);
+                g = fout.g;
+                push(frees, fout.code);
+                any_fresh = true;
+            }
+        }
+        push(temps, temp);
+        i = i + 1;
+    }
+    if !any_fresh {
+        let mut out: str = parts[0];
+        let mut j: int = 0;
+        while j < len(codes) {
+            out = out + codes[j] + parts[j + 1];
+            j = j + 1;
+        }
+        return CGExpr { g: g, code: out };
+    }
+    g.assign_counter = g.assign_counter + 1;
+    let rn: int = g.assign_counter;
+    let mut call: str = parts[0];
+    let mut j: int = 0;
+    while j < len(codes) {
+        let mut use_code: str = codes[j];
+        if temps[j] != "" {
+            use_code = temps[j];
+        }
+        call = call + use_code + parts[j + 1];
+        j = j + 1;
+    }
+    let wrapped: str = "({ " + join(binds, " ") + " " + cg_c_type(g, cg_expr_type(g, e)) + " __forge_res" + itoa(rn) + " = " + call + "; " + join(frees, " ") + " __forge_res" + itoa(rn) + "; })";
+    return CGExpr { g: g, code: wrapped };
+}
+
 // as in Python (gen_print is only called from gen_stmt).
 fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     let mut g: HCodegen = g0;
@@ -5782,7 +5862,13 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         if cg_expr_type(g, e.kids[0]) == "str" {
+            if cg_is_fresh_str(g, e.kids[0]) {
+                return cg_builtin_call(g, e, ["(long long)strlen(", ")"], [aout.code], -1);
+            }
             return CGExpr { g: g, code: "strlen(" + aout.code + ")" };
+        }
+        if cg_is_fresh_array(g, e.kids[0]) {
+            return cg_builtin_call(g, e, ["", ".len"], [aout.code], -1);
         }
         return CGExpr { g: g, code: "(" + aout.code + ").len" };
     }
@@ -5841,12 +5927,12 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     if e.name == "file_exists" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_file_exists(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_file_exists(", ")"], [aout.code], -1);
     }
     if e.name == "read_file" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_read_file(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_read_file(", ")"], [aout.code], -1);
     }
     if e.name == "read_line" {
         return CGExpr { g: g, code: "forge_read_line()" };
@@ -5872,12 +5958,12 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_write_file(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_write_file(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "read_bytes" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_read_bytes(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_read_bytes(", ")"], [aout.code], -1);
     }
     if e.name == "try_alloc" {
         g.assign_counter = g.assign_counter + 1;
@@ -5904,7 +5990,15 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = pout.g;
         let rt: str = cg_c_type(g, "Result<str, int>");
-        let code: str = "({ " + rt + " __forge_tryread" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_sz" + itoa(n) + " + 1); if (!__forge_buf" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = fread(__forge_buf" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + "); __forge_buf" + itoa(n) + "[__forge_got" + itoa(n) + "] = 0; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } __forge_tryread" + itoa(n) + "; })";
+        // Builtin-arg temp leak fix (§13): free a fresh path
+        // buffer before yielding — the Result .value is an
+        // independent buffer in every arm. A borrowed path
+        // (variable / literal) is never freed here.
+        let mut pfree: str = "";
+        if cg_is_fresh_str(g, e.kids[0]) {
+            pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
+        }
+        let code: str = "({ " + rt + " __forge_tryread" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_sz" + itoa(n) + " + 1); if (!__forge_buf" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = fread(__forge_buf" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + "); __forge_buf" + itoa(n) + "[__forge_got" + itoa(n) + "] = 0; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryread" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "try_read_bytes" {
@@ -5918,8 +6012,148 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = pout.g;
         let rt: str = cg_c_type(g, "Result<[int], int>");
         let empty: str = "(ForgeIntArray){NULL, 0, 0, forge_arr_ref_new()}";
-        let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } __forge_tryreadb" + itoa(n) + "; })";
+        // Builtin-arg temp leak fix (§13): free a fresh path
+        // buffer before yielding — see try_read_file.
+        let mut pfree: str = "";
+        if cg_is_fresh_str(g, e.kids[0]) {
+            pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
+        }
+        let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryreadb" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
+    }
+    if e.name == "mkdir" {
+        // Top-500 #181 (filesystem slice): mkdir(path, 0755).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_mkdir(", ")"], [aout.code], -1);
+    }
+    if e.name == "readdir" {
+        // Top-500 #181 (filesystem slice): entry names,
+        // excluding "." and "..", raw readdir order.
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_readdir(", ")"], [aout.code], -1);
+    }
+    if e.name == "try_readdir" {
+        // Top-500 #181 (filesystem slice): fallible readdir,
+        // same GNU statement expression shape as try_read_file
+        // (#46): opendir failure yields Err(errno); success
+        // yields Ok with the names as a fresh ForgeStrArray.
+        // v1 limit: the bookkeeping mallocs can still
+        // forge_fail under true OOM.
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = pout.g;
+        let rt: str = cg_c_type(g, "Result<[str], int>");
+        let empty: str = "(ForgeStrArray){NULL, 0, 0, forge_arr_ref_new()}";
+        // Builtin-arg temp leak fix (§13): free a fresh path
+        // buffer before yielding — see try_read_file.
+        let mut pfree: str = "";
+        if cg_is_fresh_str(g, e.kids[0]) {
+            pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
+        }
+        let code: str = "({ " + rt + " __forge_tryrd" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; DIR *__forge_d" + itoa(n) + " = opendir(__forge_p" + itoa(n) + "); if (!__forge_d" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { ForgeStrArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = 0; __forge_arr" + itoa(n) + ".cap = 8; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = (char **)malloc(sizeof(char *) * 8); if (!__forge_arr" + itoa(n) + ".data) { closedir(__forge_d" + itoa(n) + "); forge_fail(\"out of memory\"); } struct dirent *__forge_de" + itoa(n) + "; while ((__forge_de" + itoa(n) + " = readdir(__forge_d" + itoa(n) + ")) != NULL) { if (strcmp(__forge_de" + itoa(n) + "->d_name, \".\") == 0 || strcmp(__forge_de" + itoa(n) + "->d_name, \"..\") == 0) continue; forge_str_push(&__forge_arr" + itoa(n) + ", forge_copy_str(__forge_de" + itoa(n) + "->d_name)); } closedir(__forge_d" + itoa(n) + "); __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } " + pfree + "__forge_tryrd" + itoa(n) + "; })";
+        return CGExpr { g: g, code: code };
+    }
+    if e.name == "rename" {
+        // Top-500 #187 (filesystem slice): rename(2).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = bout.g;
+        return cg_builtin_call(g, e, ["forge_rename(", ", ", ")"], [aout.code, bout.code], -1);
+    }
+    if e.name == "symlink" {
+        // Top-500 #188 (filesystem slice): symlink(2).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = bout.g;
+        return cg_builtin_call(g, e, ["forge_symlink(", ", ", ")"], [aout.code, bout.code], -1);
+    }
+    if e.name == "readlink" {
+        // Top-500 #188 (filesystem slice): target of a
+        // symlink (fatal on failure, like read_file).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_readlink(", ")"], [aout.code], -1);
+    }
+    if e.name == "try_readlink" {
+        // Top-500 #188 (filesystem slice): fallible readlink,
+        // same GNU statement expression shape as try_read_file
+        // (#46): lstat/readlink failure yields Err(errno)
+        // captured immediately; success yields Ok with the
+        // target as a fresh heap str. v1 limit: the
+        // bookkeeping mallocs can still forge_fail under OOM.
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = pout.g;
+        let rt: str = cg_c_type(g, "Result<str, int>");
+        // Builtin-arg temp leak fix (§13): free a fresh path
+        // buffer before yielding — see try_read_file.
+        let mut pfree: str = "";
+        if cg_is_fresh_str(g, e.kids[0]) {
+            pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
+        }
+        let code: str = "({ " + rt + " __forge_tryrl" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; struct stat __forge_st" + itoa(n) + "; if (lstat(__forge_p" + itoa(n) + ", &__forge_st" + itoa(n) + ") != 0) { int __forge_e" + itoa(n) + " = errno; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { long long __forge_cap" + itoa(n) + " = __forge_st" + itoa(n) + ".st_size > 0 ? (long long)__forge_st" + itoa(n) + ".st_size + 1 : 4096; char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_cap" + itoa(n) + "); if (!__forge_buf" + itoa(n) + ") { forge_fail(\"out of memory\"); } long long __forge_n" + itoa(n) + " = (long long)readlink(__forge_p" + itoa(n) + ", __forge_buf" + itoa(n) + ", (size_t)__forge_cap" + itoa(n) + " - 1); if (__forge_n" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; free(__forge_buf" + itoa(n) + "); __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { __forge_buf" + itoa(n) + "[__forge_n" + itoa(n) + "] = 0; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryrl" + itoa(n) + "; })";
+        return CGExpr { g: g, code: code };
+    }
+    if e.name == "chmod" {
+        // Top-500 #189 (filesystem slice): chmod(2).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = bout.g;
+        return cg_builtin_call(g, e, ["forge_chmod(", ", ", ")"], [aout.code, bout.code], -1);
+    }
+    if e.name == "chown" {
+        // Top-500 #189 (filesystem slice): chown(2).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = bout.g;
+        let cout: CGExpr = cg_gen_expr(g, e.kids[2]);
+        g = cout.g;
+        return cg_builtin_call(g, e, ["forge_chown(", ", ", ", ", ")"], [aout.code, bout.code, cout.code], -1);
+    }
+    if e.name == "stat_mode" {
+        // Top-500 #189 (filesystem slice): st_mode, -1 on
+        // failure (errno via last_errno()).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_stat_mode(", ")"], [aout.code], -1);
+    }
+    if e.name == "stat_uid" {
+        // Top-500 #189 (filesystem slice): st_uid, -1 on
+        // failure (errno via last_errno()).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_stat_uid(", ")"], [aout.code], -1);
+    }
+    if e.name == "stat_gid" {
+        // Top-500 #189 (filesystem slice): st_gid, -1 on
+        // failure (errno via last_errno()).
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_stat_gid(", ")"], [aout.code], -1);
+    }
+    if e.name == "is_dir" {
+        // Top-500 #190 (filesystem slice): stat + S_ISDIR.
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        return cg_builtin_call(g, e, ["forge_is_dir(", ")"], [aout.code], -1);
+    }
+    if e.name == "str_compare" {
+        // Filesystem slice FS-X1: strcmp — the
+        // string-ordering primitive. Cast to long long:
+        // Qasida int is long long, strcmp returns int.
+        let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = aout.g;
+        let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
+        g = bout.g;
+        return cg_builtin_call(g, e, ["(long long)strcmp(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "write_bytes" {
         let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -5933,7 +6167,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
             let n: int = g.assign_counter;
             data_code = "({" + cg_c_type(g, cg_expr_type(g, data)) + " __forge_arg" + itoa(n) + " = " + data_code + "; forge_arr_inc(__forge_arg" + itoa(n) + ".ref); __forge_arg" + itoa(n) + ";})";
         }
-        return CGExpr { g: g, code: "forge_write_bytes(" + pout.code + ", " + data_code + ")" };
+        return cg_builtin_call(g, e, ["forge_write_bytes(", ", ", ")"], [pout.code, data_code], 1);
     }
     if e.name == "args" {
         return CGExpr { g: g, code: "forge_args_global" };
@@ -5941,31 +6175,31 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     if e.name == "parse_float" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_parse_float(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_parse_float(", ")"], [aout.code], -1);
     }
     if e.name == "parse_int" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_parse_int(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_parse_int(", ")"], [aout.code], -1);
     }
     if e.name == "run_command" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_run_command(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_run_command(", ")"], [aout.code], -1);
     }
     if e.name == "split" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_split(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_split(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "join" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_join(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_join(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "substr" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -5974,31 +6208,31 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = bout.g;
         let cout: CGExpr = cg_gen_expr(g, e.kids[2]);
         g = cout.g;
-        return CGExpr { g: g, code: "forge_substr(" + aout.code + ", " + bout.code + ", " + cout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_substr(", ", ", ", ", ")"], [aout.code, bout.code, cout.code], -1);
     }
     if e.name == "trim" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_trim(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_trim(", ")"], [aout.code], -1);
     }
     if e.name == "starts_with" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_starts_with(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_starts_with(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "ends_with" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_ends_with(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_ends_with(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "http_get" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_http_get(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_http_get(", ")"], [aout.code], -1);
     }
     if e.name == "http_listen" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6020,7 +6254,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_http_respond(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_http_respond(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "http_respond_status" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6029,7 +6263,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = bout.g;
         let cout: CGExpr = cg_gen_expr(g, e.kids[2]);
         g = cout.g;
-        return CGExpr { g: g, code: "forge_http_respond_status(" + aout.code + ", " + bout.code + ", " + cout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_http_respond_status(", ", ", ", ", ")"], [aout.code, bout.code, cout.code], -1);
     }
     if e.name == "http_close" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6049,11 +6283,24 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         return CGExpr { g: g, code: "forge_arr_frees" };
     }
     if e.name == "refcount" {
+        // Read the array's holder count WITHOUT gaining a
+        // holder: the temp is a plain copy of the array struct,
+        // never inc'd, so the observed count is exactly the
+        // program's own. A FRESH array temp is the sole hold, so
+        // it is freed after the read (§13); a shared temp is a
+        // borrowed view and is never freed.
         g.assign_counter = g.assign_counter + 1;
         let n: int = g.assign_counter;
         let at: str = cg_expr_type(g, e.kids[0]);
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
+        if cg_is_fresh_array(g, e.kids[0]) {
+            g.assign_counter = g.assign_counter + 1;
+            let m: int = g.assign_counter;
+            let fout: CGExpr = cg_array_free_code(g, "__forge_arg" + itoa(n), at);
+            g = fout.g;
+            return CGExpr { g: g, code: "({ " + cg_c_type(g, at) + " __forge_arg" + itoa(n) + " = " + aout.code + "; long long __forge_res" + itoa(m) + " = __forge_arg" + itoa(n) + ".ref ? *__forge_arg" + itoa(n) + ".ref : 0; " + fout.code + " __forge_res" + itoa(m) + "; })" };
+        }
         return CGExpr { g: g, code: "({" + cg_c_type(g, at) + " __forge_arg" + itoa(n) + " = " + aout.code + "; __forge_arg" + itoa(n) + ".ref ? *__forge_arg" + itoa(n) + ".ref : 0;})" };
     }
     if e.name == "move" {
@@ -6083,7 +6330,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
     if e.name == "mmap_open" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
-        return CGExpr { g: g, code: "forge_mmap_open(" + aout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_mmap_open(", ")"], [aout.code], -1);
     }
     if e.name == "mmap_get" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6130,10 +6377,21 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         return CGExpr { g: g, code: "forge_mmap_set32(" + aout.code + ", " + bout.code + ", " + cout.code + ")" };
     }
     if e.name == "weak_new" {
+        // Register without gaining a holder: the weak must not
+        // keep the array alive. A FRESH array temp is the sole
+        // hold, so it is freed after registering (§13) —
+        // forge_int_array_free marks the weak dead first, so the
+        // weak is correctly dead rather than spuriously alive. A
+        // shared temp is a borrowed view and is never freed.
         g.assign_counter = g.assign_counter + 1;
         let n: int = g.assign_counter;
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
+        if cg_is_fresh_array(g, e.kids[0]) {
+            g.assign_counter = g.assign_counter + 1;
+            let m: int = g.assign_counter;
+            return CGExpr { g: g, code: "({ ForgeIntArray __forge_arg" + itoa(n) + " = " + aout.code + "; long long __forge_res" + itoa(m) + " = forge_weak_register(__forge_arg" + itoa(n) + "); forge_int_array_free(__forge_arg" + itoa(n) + "); __forge_res" + itoa(m) + "; })" };
+        }
         return CGExpr { g: g, code: "({ForgeIntArray __forge_arg" + itoa(n) + " = " + aout.code + "; forge_weak_register(__forge_arg" + itoa(n) + ");})" };
     }
     if e.name == "weak_upgrade" {
@@ -6150,7 +6408,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = aout.g;
         let bout: CGExpr = cg_gen_expr(g, e.kids[1]);
         g = bout.g;
-        return CGExpr { g: g, code: "forge_parallel_dot(" + aout.code + ", " + bout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_parallel_dot(", ", ", ")"], [aout.code, bout.code], -1);
     }
     if e.name == "parallel_matmul" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6159,7 +6417,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         g = bout.g;
         let cout: CGExpr = cg_gen_expr(g, e.kids[2]);
         g = cout.g;
-        return CGExpr { g: g, code: "forge_parallel_matmul(" + aout.code + ", " + bout.code + ", " + cout.code + ")" };
+        return cg_builtin_call(g, e, ["forge_parallel_matmul(", ", ", ", ", ")"], [aout.code, bout.code, cout.code], -1);
     }
     // Enum variant construction: Some(42), None(), Circle(3.0).
     let v: [str] = cg_variant_lookup(g, e.name);
@@ -6178,7 +6436,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let mut arg_code: str = aout.code;
-        if payload == "str" {
+        if payload == "str" && !cg_is_fresh_str(g, e.kids[0]) {
             arg_code = "forge_copy_str(" + arg_code + ")";
         }
         return CGExpr { g: g, code: "(" + cname + "){ .tag = " + tag + ", .payload.payload_" + e.name + " = " + arg_code + " }" };
@@ -6907,7 +7165,10 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         let vout: CGExpr = cg_gen_expr(g, value);
         g = vout.g;
         let mut val: str = vout.code;
-        if et == "str" {
+        if et == "str" && !cg_is_fresh_str(g, value) {
+            // §13.8: a fresh str value is passed to the set as-is
+            // (the slot owns it); copying it would orphan the
+            // fresh temp, as push/literals did.
             val = "forge_copy_str(" + val + ")";
         }
         if cg_is_struct_type(g, et) {
@@ -6975,6 +7236,34 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit(g, "forge_closure_release((" + base_code + ").data[" + itmp + "].env);");
             g = cg_emit(g, "(" + base_code + ").data[" + itmp + "] = " + val + ";");
         } else {
+            // Scalar element assignment (str/int/bool/float): the
+            // macro _set (forge_str_set) and the direct store
+            // never free the old element, unlike the array/struct/
+            // fn branches above. For str, free it first. ORDER
+            // MATTERS: the new value is bound to a temp FIRST —
+            // it may read the slot being overwritten (self-assign
+            // a[i] = a[i]), so it must be evaluated before the
+            // old element is freed (else the set reads freed
+            // memory — found by fuzz seed 1, which printed
+            // garbage on its second println). Then bind the index
+            // to a temp (it is used twice) and bounds-check it
+            // exactly as the array branch does. Non-str types
+            // emit byte-identical code. (§13.8)
+            let mut idxs: str = idx.code;
+            if et == "str" {
+                let vtmp: str = "__forge_setv" + itoa(g.assign_counter);
+                g.assign_counter = g.assign_counter + 1;
+                g = cg_emit(g, "char *" + vtmp + " = " + val + ";");
+                val = vtmp;
+                let itmp: str = "__forge_si" + itoa(g.assign_counter);
+                g.assign_counter = g.assign_counter + 1;
+                g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
+                if !g.no_bounds_checks && !target.has_nul {
+                    g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+                }
+                g = cg_emit(g, "forge_free_str((" + base_code + ").data[" + itmp + "]);");
+                idxs = itmp;
+            }
             let mut set_fn: str = "";
             if et == "int" {
                 set_fn = "forge_int_set";
@@ -6990,9 +7279,9 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             // Fix 1 B0: --no-bounds-checks stores direct (fast path).
             // Fix 1 B1: a loop-proof-covered write stores direct too.
             if g.no_bounds_checks || target.has_nul {  // Fix 1 B1: target is a loop-proof-covered Index (tagger-set has_nul), inlined — no helper call, no frame cost.
-                g = cg_emit(g, "(" + base_code + ").data[" + idx.code + "] = " + val + ";");
+                g = cg_emit(g, "(" + base_code + ").data[" + idxs + "] = " + val + ";");
             } else {
-                g = cg_emit(g, set_fn + "(&" + base_code + ", " + idx.code + ", " + val + ");");
+                g = cg_emit(g, set_fn + "(&" + base_code + ", " + idxs + ", " + val + ");");
             }
         }
         return g;
@@ -7329,6 +7618,15 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g.loop_depth = g.loop_depth - 1;
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
+        if cg_is_fresh_array(g, iter) {
+            // Builtin-arg temp leak fix (§13): the iterable temp
+            // is the sole hold when fresh — free it after the
+            // loop. A shared iterable's temp is a borrowed view
+            // and is never freed.
+            let fout: CGExpr = cg_array_free_code(g, arr_tmp, at);
+            g = fout.g;
+            g = cg_emit(g, fout.code);
+        }
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
         g = cg_facts_clear(g);
@@ -7548,7 +7846,16 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cout.g;
             let mout: CGExpr = cg_gen_expr(g, call.kids[1]);
             g = mout.g;
-            g = cg_emit(g, "if (!(" + cout.code + ")) { fprintf(stderr, \"qasida: assertion failed: %s\\n\", " + mout.code + "); exit(1); }");
+            if cg_is_fresh_str(g, call.kids[1]) {
+                // Builtin-arg temp leak fix (§13): bind the fresh
+                // message INSIDE the failure branch — it must not
+                // be evaluated when the assertion passes.
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                g = cg_emit(g, "if (!(" + cout.code + ")) { char *__forge_msg" + itoa(n) + " = " + mout.code + "; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg" + itoa(n) + "); forge_free_str(__forge_msg" + itoa(n) + "); exit(1); }");
+            } else {
+                g = cg_emit(g, "if (!(" + cout.code + ")) { fprintf(stderr, \"qasida: assertion failed: %s\\n\", " + mout.code + "); exit(1); }");
+            }
             return g;
         }
         if call.kind == 35 && (call.name == "print" || call.name == "println") {
@@ -7565,7 +7872,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             let aout: CGExpr = cg_gen_expr(g, call.kids[1]);
             g = aout.g;
             let mut val: str = aout.code;
-            if et == "str" {
+            if et == "str" && !cg_is_fresh_str(g, call.kids[1]) {
                 val = "forge_copy_str(" + val + ")";
             }
             if cg_is_struct_type(g, et) {
@@ -7682,15 +7989,34 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             // program observes the count with panicked_tasks().
             let mout: CGExpr = cg_gen_expr(g, call.kids[0]);
             g = mout.g;
+            let mut msg: str = mout.code;
+            let mut mfree: str = "";
+            if cg_is_fresh_str(g, call.kids[0]) {
+                // Builtin-arg temp leak fix (§13): bind the fresh
+                // message before the branch (fail never returns,
+                // so eager evaluation changes nothing) and free it
+                // in each branch before exiting.
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                g = cg_emit(g, "char *__forge_msg" + itoa(n) + " = " + mout.code + ";");
+                msg = "__forge_msg" + itoa(n);
+                mfree = "forge_free_str(__forge_msg" + itoa(n) + ");";
+            }
             g = cg_emit(g, "if (forge_in_task) {");
             g.indent = g.indent + 1;
-            g = cg_emit(g, "fprintf(stderr, \"qasida: task panicked: %s\\n\", " + mout.code + ");");
+            g = cg_emit(g, "fprintf(stderr, \"qasida: task panicked: %s\\n\", " + msg + ");");
+            if mfree != "" {
+                g = cg_emit(g, mfree);
+            }
             g = cg_emit(g, "__atomic_add_fetch(&forge_panicked_total, 1, __ATOMIC_SEQ_CST);");
             g = cg_emit(g, "pthread_exit(NULL);");
             g.indent = g.indent - 1;
             g = cg_emit(g, "} else {");
             g.indent = g.indent + 1;
-            g = cg_emit(g, "fprintf(stderr, \"qasida: %s\\n\", " + mout.code + ");");
+            g = cg_emit(g, "fprintf(stderr, \"qasida: %s\\n\", " + msg + ");");
+            if mfree != "" {
+                g = cg_emit(g, mfree);
+            }
             g = cg_emit(g, "exit(1);");
             g.indent = g.indent - 1;
             g = cg_emit(g, "}");
@@ -7701,15 +8027,33 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             // the CLI's "qasida: error: " prefix.
             let mout: CGExpr = cg_gen_expr(g, call.kids[0]);
             g = mout.g;
-            g = cg_emit(g, "fprintf(stderr, \"qasida: error: %s\\n\", " + mout.code + ");");
+            if cg_is_fresh_str(g, call.kids[0]) {
+                // Builtin-arg temp leak fix (§13).
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                g = cg_emit(g, "char *__forge_msg" + itoa(n) + " = " + mout.code + ";");
+                g = cg_emit(g, "fprintf(stderr, \"qasida: error: %s\\n\", __forge_msg" + itoa(n) + ");");
+                g = cg_emit(g, "forge_free_str(__forge_msg" + itoa(n) + ");");
+            } else {
+                g = cg_emit(g, "fprintf(stderr, \"qasida: error: %s\\n\", " + mout.code + ");");
+            }
             g = cg_emit(g, "exit(1);");
             return g;
         }
         if call.kind == 35 && call.name == "eprintln" {
             // Slice 5 driver builtin: stderr line, no exit.
+            // Builtin-arg temp leak fix (§13): the print-temp
+            // pattern (see cg_gen_print) — a fresh str arg is
+            // bound, printed, freed.
             let mout: CGExpr = cg_gen_expr(g, call.kids[0]);
             g = mout.g;
-            g = cg_emit(g, "fprintf(stderr, \"%s\\n\", " + mout.code + ");");
+            if cg_expr_type(g, call.kids[0]) == "str" && cg_is_fresh_str(g, call.kids[0]) {
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                g = cg_emit(g, "{ char *__forge_print" + itoa(n) + " = " + mout.code + "; fprintf(stderr, \"%s\\n\", __forge_print" + itoa(n) + "); forge_free_str(__forge_print" + itoa(n) + "); }");
+            } else {
+                g = cg_emit(g, "fprintf(stderr, \"%s\\n\", " + mout.code + ");");
+            }
             return g;
         }
         if call.kind == 35 && call.name == "pin" {

@@ -1,0 +1,12 @@
+import "atomicfile.fg";
+
+fn main() {
+    let base = "/tmp/fs_demo_atomic";
+    println(mkdir(base));
+    println(atomic_write(base + "/f.txt", "v1"));
+    println(read_file(base + "/f.txt"));
+    println(atomic_write(base + "/f.txt", "v2"));
+    println(read_file(base + "/f.txt"));
+    println(file_exists(base + "/f.txt.tmp"));
+    println(atomic_write(base + "/missing/f.txt", "x"));
+}

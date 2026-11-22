@@ -1,0 +1,81 @@
+// dirs.fg — Top-500 #181: mkdir and readdir ("The known missing pair").
+//
+// Directory creation and listing on top of the filesystem-slice
+// builtins (mkdir, readdir, try_readdir, is_dir, str_compare).
+// dir_list returns entry names SORTED (str_compare order) — the
+// readdir builtin itself returns raw readdir(2) order, which is
+// unspecified, so the deterministic contract lives here, not in
+// the builtin (DESIGN.md FS-X1).
+//
+// v1 limits (named in the catalog): mkdir takes no mode argument
+// (fixed 0755, umask still applies — FS-X3); dir_create_all
+// treats an already-existing intermediate directory as success
+// and fails only on a non-EEXIST error; symlinks are not followed
+// by is_dir (it stats, it does not lstat — a symlink to a dir
+// reports true).
+
+fn dir_sort_names(names: [str]) -> [str] {
+    // Insertion sort by str_compare (same shape as sort_by's
+    // in-place pass, but over a fresh copy so the caller's
+    // array is never reordered under it).
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(names) {
+        push(out, names[i]);
+        i = i + 1;
+    }
+    let mut j: int = 1;
+    while j < len(out) {
+        let mut k: int = j;
+        while k > 0 && str_compare(out[k], out[k - 1]) < 0 {
+            let tmp: str = out[k];
+            out[k] = out[k - 1];
+            out[k - 1] = tmp;
+            k = k - 1;
+        }
+        j = j + 1;
+    }
+    return out;
+}
+
+fn dir_create(path: str) -> bool {
+    return mkdir(path);
+}
+
+fn dir_list(path: str) -> [str] {
+    return dir_sort_names(readdir(path));
+}
+
+fn dir_create_all(path: str) -> bool {
+    // Recursive mkdir from mkdir + split. Absolute paths start
+    // from "/"; an empty segment (leading/trailing slash) is
+    // skipped; an already-existing level is fine (EEXIST == 17).
+    let parts: [str] = split(path, "/");
+    let mut cur: str = "";
+    let mut ok: bool = true;
+    let mut i: int = 0;
+    while i < len(parts) {
+        let part: str = parts[i];
+        if part == "" {
+            if i == 0 {
+                cur = "/";
+            }
+            i = i + 1;
+            continue;
+        }
+        if cur == "" {
+            cur = part;
+        } else if cur == "/" {
+            cur = cur + part;
+        } else {
+            cur = cur + "/" + part;
+        }
+        if !mkdir(cur) {
+            if last_errno() != 17 {
+                ok = false;
+            }
+        }
+        i = i + 1;
+    }
+    return ok;
+}

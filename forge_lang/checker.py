@@ -98,7 +98,11 @@ EXPR_BUILTINS = {"len", "range", "clock_micros", "panicked_tasks", "last_errno",
                  "arr_alloc_count", "arr_free_count", "refcount",
                  "weak_new", "weak_upgrade", "move",
                  "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
-                 "peek32", "csr_read", "ecall", "ecall3"}
+                 "peek32", "csr_read", "ecall", "ecall3",
+                 "mkdir", "readdir", "try_readdir", "rename", "symlink",
+                 "readlink", "try_readlink", "chmod", "chown",
+                 "stat_mode", "stat_uid", "stat_gid", "is_dir",
+                 "str_compare"}
 BUILTINS = STMT_BUILTINS | EXPR_BUILTINS
 
 
@@ -2661,6 +2665,7 @@ class Checker:
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
                 "clock_micros", "panicked_tasks", "last_errno", "try_read_file", "try_read_bytes", "args", "parallel_dot", "parallel_matmul",
+                "mkdir", "readdir", "try_readdir", "rename", "symlink", "readlink", "try_readlink", "chmod", "chown", "stat_mode", "stat_uid", "stat_gid", "is_dir", "str_compare",
                 "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "run_command"):
             raise ForgeError(f"'{call.name}' needs the hosted runtime "
                              f"(not in freestanding v1)",
@@ -2996,6 +3001,139 @@ class Checker:
             self.struct_instantiations["Result<[int], int>"] = fields
             call.concrete_type = "Result<[int], int>"
             return "Result<[int], int>"
+        if call.name == "mkdir":
+            # Top-500 #181 (filesystem slice): mkdir(path, 0755).
+            # False on failure; the errno is readable with
+            # last_errno() (write_file shape).
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("mkdir() takes exactly one str argument",
+                                 call.line, call.col)
+            return "bool"
+        if call.name == "readdir":
+            # Top-500 #181 (filesystem slice): entry names of a
+            # directory, excluding "." and "..", in raw readdir(2)
+            # order (unspecified — sort in the library). Fatal
+            # forge_fail on opendir failure, like read_file.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("readdir() takes exactly one str argument",
+                                 call.line, call.col)
+            return "[str]"
+        if call.name == "try_readdir":
+            # Top-500 #181 (filesystem slice): fallible readdir,
+            # returns Result<[str], int> with Err(errno) instead
+            # of the fatal forge_fail in readdir. Same Result
+            # registration as try_read_file.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("try_readdir() takes exactly one str argument",
+                                 call.line, call.col)
+            if "Result" not in self.structs:
+                raise ForgeError("try_readdir() needs import \"result.fg\" "
+                                 "(it returns Result<[str], int>)",
+                                 call.line, call.col)
+            fields = self.struct_fields_for("Result<[str], int>")
+            if fields is None:
+                raise ForgeError("try_readdir() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations["Result<[str], int>"] = fields
+            call.concrete_type = "Result<[str], int>"
+            return "Result<[str], int>"
+        if call.name == "rename":
+            # Top-500 #187 (filesystem slice): rename(2). False
+            # on failure; the errno is readable with last_errno().
+            if len(call.args) != 2:
+                raise ForgeError("rename() takes exactly two arguments",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "str":
+                    raise ForgeError("rename() takes str arguments", call.line, call.col)
+            return "bool"
+        if call.name == "symlink":
+            # Top-500 #188 (filesystem slice): symlink(2). False
+            # on failure; the errno is readable with last_errno().
+            if len(call.args) != 2:
+                raise ForgeError("symlink() takes exactly two arguments",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "str":
+                    raise ForgeError("symlink() takes str arguments", call.line, call.col)
+            return "bool"
+        if call.name == "readlink":
+            # Top-500 #188 (filesystem slice): the target of a
+            # symlink. Fatal forge_fail on failure, like read_file.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("readlink() takes exactly one str argument",
+                                 call.line, call.col)
+            return "str"
+        if call.name == "try_readlink":
+            # Top-500 #188 (filesystem slice): fallible readlink,
+            # returns Result<str, int> with Err(errno) instead of
+            # the fatal forge_fail in readlink. Same Result
+            # registration as try_read_file.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("try_readlink() takes exactly one str argument",
+                                 call.line, call.col)
+            if "Result" not in self.structs:
+                raise ForgeError("try_readlink() needs import \"result.fg\" "
+                                 "(it returns Result<str, int>)",
+                                 call.line, call.col)
+            fields = self.struct_fields_for("Result<str, int>")
+            if fields is None:
+                raise ForgeError("try_readlink() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations["Result<str, int>"] = fields
+            call.concrete_type = "Result<str, int>"
+            return "Result<str, int>"
+        if call.name == "chmod":
+            # Top-500 #189 (filesystem slice): chmod(2). False
+            # on failure; the errno is readable with last_errno().
+            if len(call.args) != 2:
+                raise ForgeError("chmod() takes exactly two arguments",
+                                 call.line, call.col)
+            if self.check_expr(call.args[0]) != "str":
+                raise ForgeError("chmod() takes a str path", call.line, call.col)
+            if self.check_expr(call.args[1]) != "int":
+                raise ForgeError("chmod() takes an int mode", call.line, call.col)
+            return "bool"
+        if call.name == "chown":
+            # Top-500 #189 (filesystem slice): chown(2). False
+            # on failure; the errno is readable with last_errno().
+            if len(call.args) != 3:
+                raise ForgeError("chown() takes exactly three arguments",
+                                 call.line, call.col)
+            if self.check_expr(call.args[0]) != "str":
+                raise ForgeError("chown() takes a str path", call.line, call.col)
+            for a in call.args[1:]:
+                if self.check_expr(a) != "int":
+                    raise ForgeError("chown() takes int uid and gid", call.line, call.col)
+            return "bool"
+        if call.name in ("stat_mode", "stat_uid", "stat_gid"):
+            # Top-500 #189 (filesystem slice): one field of
+            # stat(2) — st_mode / st_uid / st_gid. -1 on failure;
+            # the errno is readable with last_errno().
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError(f"{call.name}() takes exactly one str argument",
+                                 call.line, call.col)
+            return "int"
+        if call.name == "is_dir":
+            # Top-500 #190 (filesystem slice): stat(2) + S_ISDIR.
+            # False on any failure, like file_exists.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("is_dir() takes exactly one str argument",
+                                 call.line, call.col)
+            return "bool"
+        if call.name == "str_compare":
+            # Filesystem slice FS-X1: strcmp — the string-ordering
+            # primitive directory listings need (string < does not
+            # exist, ord/chr are absent). Negative / 0 / positive.
+            if len(call.args) != 2:
+                raise ForgeError("str_compare() takes exactly two arguments",
+                                 call.line, call.col)
+            for a in call.args:
+                if self.check_expr(a) != "str":
+                    raise ForgeError("str_compare() takes str arguments", call.line, call.col)
+            return "int"
         if call.name == "write_bytes":
             if len(call.args) != 2:
                 raise ForgeError("write_bytes() takes exactly two arguments",

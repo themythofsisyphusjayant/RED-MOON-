@@ -478,7 +478,7 @@ fn heap_error(n: Node, t: str) -> str {
 // Freestanding blocklist (Python checker.py:2251): builtins
 // that need the hosted runtime.
 fn is_fs_blocked_builtin(name: str) -> bool {
-    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
+    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
 }
 
 fn elem_type(t: str) -> str {
@@ -927,7 +927,7 @@ fn is_stmt_builtin(name: str) -> bool {
 }
 
 fn is_expr_builtin(name: str) -> bool {
-    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
+    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -3472,6 +3472,157 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
             fail_at(n.line, n.col, "try_read_bytes() needs import \"result.fg\" (it returns Result<[int], int>)");
         }
         return COut { c: c, typ: "Result<[int], int>" };
+    }
+    if n.name == "mkdir" {
+        // Top-500 #181 (filesystem slice): mkdir(path, 0755).
+        c = expect_builtin_msg(c, n, ["str"], "mkdir() takes exactly one str argument");
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "readdir" {
+        // Top-500 #181 (filesystem slice): entry names,
+        // excluding "." and "..", raw readdir order.
+        c = expect_builtin_msg(c, n, ["str"], "readdir() takes exactly one str argument");
+        return COut { c: c, typ: "[str]" };
+    }
+    if n.name == "try_readdir" {
+        // Top-500 #181 (filesystem slice): fallible readdir,
+        // returns Result<[str], int>. Same shape as
+        // try_read_file (#46).
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "try_readdir() takes exactly one str argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "str" {
+            fail_at(n.line, n.col, "try_readdir() takes exactly one str argument");
+        }
+        let mut found: bool = false;
+        let mut fi: int = 0;
+        while fi < len(c.struct_names) {
+            if c.struct_names[fi] == "Result" {
+                found = true;
+            }
+            fi = fi + 1;
+        }
+        if !found {
+            fail_at(n.line, n.col, "try_readdir() needs import \"result.fg\" (it returns Result<[str], int>)");
+        }
+        return COut { c: c, typ: "Result<[str], int>" };
+    }
+    if n.name == "rename" {
+        // Top-500 #187 (filesystem slice): rename(2).
+        c = expect_builtin_msgs(c, n, ["str", "str"], "rename() takes exactly two arguments", "rename() takes str arguments");
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "symlink" {
+        // Top-500 #188 (filesystem slice): symlink(2).
+        c = expect_builtin_msgs(c, n, ["str", "str"], "symlink() takes exactly two arguments", "symlink() takes str arguments");
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "readlink" {
+        // Top-500 #188 (filesystem slice): target of a
+        // symlink (fatal on failure, like read_file).
+        c = expect_builtin_msg(c, n, ["str"], "readlink() takes exactly one str argument");
+        return COut { c: c, typ: "str" };
+    }
+    if n.name == "try_readlink" {
+        // Top-500 #188 (filesystem slice): fallible readlink,
+        // returns Result<str, int>. Same shape as
+        // try_read_file (#46).
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "try_readlink() takes exactly one str argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "str" {
+            fail_at(n.line, n.col, "try_readlink() takes exactly one str argument");
+        }
+        let mut found: bool = false;
+        let mut fi: int = 0;
+        while fi < len(c.struct_names) {
+            if c.struct_names[fi] == "Result" {
+                found = true;
+            }
+            fi = fi + 1;
+        }
+        if !found {
+            fail_at(n.line, n.col, "try_readlink() needs import \"result.fg\" (it returns Result<str, int>)");
+        }
+        return COut { c: c, typ: "Result<str, int>" };
+    }
+    if n.name == "chmod" {
+        // Top-500 #189 (filesystem slice): chmod(2).
+        // Per-arg messages, matching the Python checker
+        // (write_bytes shape): the combined
+        // "takes a str path and an int mode" wording diverged
+        // from Python's "takes an int mode" and was fixed here.
+        if len(n.kids) != 2 {
+            fail_at(n.line, n.col, "chmod() takes exactly two arguments");
+        }
+        let a0c: COut = check_expr(c, n.kids[0]);
+        c = a0c.c;
+        if a0c.typ != "str" {
+            fail_at(n.line, n.col, "chmod() takes a str path");
+        }
+        let a1c: COut = check_expr(c, n.kids[1]);
+        c = a1c.c;
+        if a1c.typ != "int" {
+            fail_at(n.line, n.col, "chmod() takes an int mode");
+        }
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "chown" {
+        // Top-500 #189 (filesystem slice): chown(2).
+        // Per-arg messages, matching the Python checker
+        // (same divergence fix as chmod above).
+        if len(n.kids) != 3 {
+            fail_at(n.line, n.col, "chown() takes exactly three arguments");
+        }
+        let a0w: COut = check_expr(c, n.kids[0]);
+        c = a0w.c;
+        if a0w.typ != "str" {
+            fail_at(n.line, n.col, "chown() takes a str path");
+        }
+        let a1w: COut = check_expr(c, n.kids[1]);
+        c = a1w.c;
+        if a1w.typ != "int" {
+            fail_at(n.line, n.col, "chown() takes int uid and gid");
+        }
+        let a2w: COut = check_expr(c, n.kids[2]);
+        c = a2w.c;
+        if a2w.typ != "int" {
+            fail_at(n.line, n.col, "chown() takes int uid and gid");
+        }
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "stat_mode" {
+        // Top-500 #189 (filesystem slice): st_mode, -1 on
+        // failure (errno via last_errno()).
+        c = expect_builtin_msg(c, n, ["str"], "stat_mode() takes exactly one str argument");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "stat_uid" {
+        // Top-500 #189 (filesystem slice): st_uid, -1 on
+        // failure (errno via last_errno()).
+        c = expect_builtin_msg(c, n, ["str"], "stat_uid() takes exactly one str argument");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "stat_gid" {
+        // Top-500 #189 (filesystem slice): st_gid, -1 on
+        // failure (errno via last_errno()).
+        c = expect_builtin_msg(c, n, ["str"], "stat_gid() takes exactly one str argument");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "is_dir" {
+        // Top-500 #190 (filesystem slice): stat + S_ISDIR.
+        c = expect_builtin_msg(c, n, ["str"], "is_dir() takes exactly one str argument");
+        return COut { c: c, typ: "bool" };
+    }
+    if n.name == "str_compare" {
+        // Filesystem slice FS-X1: strcmp — the
+        // string-ordering primitive.
+        c = expect_builtin_msgs(c, n, ["str", "str"], "str_compare() takes exactly two arguments", "str_compare() takes str arguments");
+        return COut { c: c, typ: "int" };
     }
     if n.name == "println" || n.name == "print" {
         let mut i: int = 0;
