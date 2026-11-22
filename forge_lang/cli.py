@@ -210,6 +210,8 @@ def main(argv=None):
         if args.cmd == "build" and getattr(args, "wit", None) \
                 and args.target != "wasm":
             raise ForgeError("--wit requires --target wasm")
+        if args.cmd == "build" and args.debug and args.target != "native":
+            raise ForgeError("--debug is only supported for native builds")
         if args.cmd == "build" and args.target == "big32":
             from forge_lang.compiler import compile_file_rv
             stack_top = (int(args.stack_top, 0)
@@ -254,6 +256,8 @@ def main(argv=None):
             print(f"built wasm: {out} ({len(wasm)} bytes)")
             return 0
         if args.cmd == "build" and args.shared:
+            if args.debug:
+                raise ForgeError("--debug is not supported with --shared")
             from forge_lang.compiler import build_shared
             out = args.output or (os.path.splitext(args.file)[0] + ".so")
             build_shared(args.file, out, mode=args.mode, portable=args.portable)

@@ -1530,5 +1530,51 @@ Arithmetic from the #393 entry (HAVE 355, PARTIAL 12, GAP 133, to
 build 145): 5 GAP-to-HAVE (#181, #187, #188, #189, #190); 355 + 5 =
 360; 133 - 5 = 128; 145 - 5 = 140 (360 + 12 + 128 = 500). HAVE 360
 of 500 = 72.0%.
-Next: #47 Backtraces on fail in debug builds (GAP) — the queue head
-after the filesystem slice.
+
+## #47 Backtraces on fail in debug builds — HAVE (22 Nov 2026, libs-only sprint week)
+
+`build --debug` prints a native backtrace on fail() (main thread and
+spawned tasks — task's chain only, panicked_tasks() counts it), runtime
+faults via forge_fail (bounds, overflow, div-by-zero, OOM), and assert
+failure; release builds print the fail message only, byte-identical to
+today's output. Mechanism: a thread-local shadow stack in the preamble
+(ForgeBtFrame, cap 1024, balanced drops), not C backtrace()/execinfo.h —
+push at function entry, per-statement forge_bt_setline(N) stamp, explicit
+exit pops; frames print innermost-first as ` N: <fn> at <file>:<line>`.
+Hosted driver implements --debug (was deferred with an explicit
+rejection); debug bit added to the Step-6 cache key; named rejections for
+--debug + --target big32/wasm, --freestanding, --shared. Own test
+tests/test_backtrace_v1.py 45/45 ALL PASS both compilers; demo
+examples/backtrace_demo.fg. The slice was BLOCKED in the hosted suite by
+the hosted compiler naming the MAIN file for every frame/#line (hosted
+AST Node has no file field) — run_tests.py's dbg_demo check (debug C
+must contain `stdlib/dbg.fg`) failed 0 matches. Fixed in-slice, not
+deferred: load_merged records flat (fn name, file) pairs (plain fns by
+name, impl methods as Struct__method; generic instantiations resolve to
+their template via cg_fn_file's suffix-strip fallback); the pairs are
+the return value and the merged tree leaves by index assignment into a
+[Node] out-param (the fp_box pattern). After the fix the hosted dbg_demo
+debug C has 12 `stdlib/dbg.fg` matches and run_tests.py passes. Gates
+22 Nov (live binary rebuild 2, md5 d9b3269867ef7d1c9bb45417e06e3374,
+synced to all 3 locations; rebuild 2's first attempt died mid-cc when
+the launching session was interrupted — relaunched clean): bootstrap 7/7
+byte-identical (ulimit -s 65536); parity 124/124 agree + 124/124
+byte-identical; corpus 99/99; regression 62/62; fuzz existing 102/102
+hosted + 102/102 Python, fv 56/56, closure 66/66, fs 56/56; full suite
+83/90 hosted + 82/90 Python (7 known big32 pre-existing failures in
+both; Python run_tests.py scope_demo flake — known
+println-interleaving class, 4/4 direct reruns clean, flake stands);
+ASan compiler-side fuzz 102/102 + 56/56 + 66/66 + 56/56 under the bt
+ASan binary (md5 8e94b9b7cbed0e2b3917db482a220ed9,
+ASAN_OPTIONS=detect_leaks=0), zero sanitizer reports; ASan
+program-side debug==release, 0 report lines; fmt 5/5 idempotent;
+benchmarks tick q_safe 2365 µs, matmul q_safe 13231 µs (no regression
+vs fs r5: 2412 / 13299). v1 limits: hosted spells imported files
+relative where Python absolutizes; run stays release-only; no
+backtraces for fail_compile/check-time errors; no backtrace() builtin.
+Records: blackmoon-iso/backtraces-slice/ (DESIGN.md, SUMMARY.md).
+Counts after the flip: HAVE 361, PARTIAL 12, GAP 127, to build 139.
+Arithmetic from the filesystem entry (HAVE 360, PARTIAL 12, GAP 128, to
+build 140): 1 GAP-to-HAVE (#47); 360 + 1 = 361; 128 - 1 = 127; 140 - 1
+= 139 (361 + 12 + 127 = 500). HAVE 361 of 500 = 72.2%.
+Next: #48 in catalog order.

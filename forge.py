@@ -112,7 +112,9 @@ def _decide_core(argv):
             if val and val != "native":
                 return "python", "--target %s" % val
             continue
-        if cmd == "build" and tok in ("--debug", "--shared", "--wit"):
+        # #47 backtraces: --debug is implemented in the hosted
+        # driver now, so build --debug routes to hosted.
+        if cmd == "build" and tok in ("--shared", "--wit"):
             return "python", "%s (deferred in hosted)" % tok
         if cmd == "build" and tok.startswith("--wit="):
             return "python", "--wit (deferred in hosted)"

@@ -1,0 +1,12 @@
+fn helper() {
+    fail("deep boom");
+}
+
+fn middle() {
+    helper();
+}
+
+fn main() -> int {
+    middle();
+    return 0;
+}

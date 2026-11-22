@@ -77,6 +77,18 @@ struct HCodegen {
     // Freestanding mode (slice 4g): freestanding header,
     // qasida_main + _start, no argv copy, no joins/frees.
     freestanding: bool;
+    // #47 backtraces: debug mode (build --debug) + the main
+    // file path, for the per-statement #line + setline stamp
+    // in cg_gen_block. Two scalars — not the five parallel
+    // arrays that overflowed the stack in Fix 1 B1.
+    debug: bool;
+    current_file: str;
+    // Per-function source file, flat (name, file) pairs from
+    // the loader (see load_merged): the #line + frame file for
+    // each function, imports included. One [str] field — the
+    // Fix 1 B1 stack note above still stands, and the bootstrap
+    // gate (ulimit -s 65536) is the canary for it.
+    fn_files: [str];
     // Fix 1 B0 (measurement toggles, hidden): safe mode only.
     no_bounds_checks: bool;
     no_overflow_checks: bool;
@@ -600,7 +612,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -7783,6 +7795,10 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         }
         if len(st.kids) == 0 {
             g = cg_emit_free_owned(g);
+            // #47 backtraces: pop this frame on return.
+            if g.debug {
+                g = cg_emit(g, "forge_bt_pop();");
+            }
             if g.current_fn == "main" {
                 g = cg_emit(g, "return 0;");
             } else {
@@ -7835,6 +7851,13 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
         }
         g = cg_emit_free_owned(g);
+        // #47 backtraces: pop this frame on return. The value is
+        // already bound to __forge_ret (and owned) above, so a call
+        // inside the return expression that failed still saw this
+        // frame.
+        if g.debug {
+            g = cg_emit(g, "forge_bt_pop();");
+        }
         g = cg_emit(g, "return __forge_ret;");
         return g;
     }
@@ -7852,9 +7875,21 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 // be evaluated when the assertion passes.
                 g.assign_counter = g.assign_counter + 1;
                 let n: int = g.assign_counter;
-                g = cg_emit(g, "if (!(" + cout.code + ")) { char *__forge_msg" + itoa(n) + " = " + mout.code + "; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg" + itoa(n) + "); forge_free_str(__forge_msg" + itoa(n) + "); exit(1); }");
+                // #47 backtraces: print the call chain after the
+                // message (debug only).
+                let mut bt: str = "";
+                if g.debug {
+                    bt = " forge_bt_print();";
+                }
+                g = cg_emit(g, "if (!(" + cout.code + ")) { char *__forge_msg" + itoa(n) + " = " + mout.code + "; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg" + itoa(n) + ");" + bt + " forge_free_str(__forge_msg" + itoa(n) + "); exit(1); }");
             } else {
-                g = cg_emit(g, "if (!(" + cout.code + ")) { fprintf(stderr, \"qasida: assertion failed: %s\\n\", " + mout.code + "); exit(1); }");
+                // #47 backtraces: print the call chain after the
+                // message (debug only).
+                let mut bt: str = "";
+                if g.debug {
+                    bt = " forge_bt_print();";
+                }
+                g = cg_emit(g, "if (!(" + cout.code + ")) { fprintf(stderr, \"qasida: assertion failed: %s\\n\", " + mout.code + ");" + bt + " exit(1); }");
             }
             return g;
         }
@@ -8005,6 +8040,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit(g, "if (forge_in_task) {");
             g.indent = g.indent + 1;
             g = cg_emit(g, "fprintf(stderr, \"qasida: task panicked: %s\\n\", " + msg + ");");
+            // #47 backtraces: print this task's call chain after
+            // the panic message (debug only).
+            if g.debug {
+                g = cg_emit(g, "forge_bt_print();");
+            }
             if mfree != "" {
                 g = cg_emit(g, mfree);
             }
@@ -8014,6 +8054,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit(g, "} else {");
             g.indent = g.indent + 1;
             g = cg_emit(g, "fprintf(stderr, \"qasida: %s\\n\", " + msg + ");");
+            // #47 backtraces: print the call chain after the
+            // message (debug only).
+            if g.debug {
+                g = cg_emit(g, "forge_bt_print();");
+            }
             if mfree != "" {
                 g = cg_emit(g, mfree);
             }
@@ -8079,6 +8124,19 @@ fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
     g = cg_shadow_push(g, "");
     let mut i: int = 0;
     while i < len(blk.kids) {
+        // #47 backtraces: in debug builds, emit a #line for this
+        // statement (hosted had none before — the hosted AST has
+        // no per-function file, so every #line names the main
+        // file, g.current_file) and stamp the top frame's line
+        // with it, before the statement runs. #line goes out
+        // raw (column 0), the stamp indented like a statement.
+        if g.debug && g.current_file != "" {
+            let ln: int = blk.kids[i].line;
+            if ln > 0 {
+                g = cg_emit_raw(g, "#line " + itoa(ln) + " " + cg_c_str_literal(g.current_file, false));
+                g = cg_emit(g, "forge_bt_setline(" + itoa(ln) + ");");
+            }
+        }
         g = cg_gen_stmt(g, blk.kids[i], ret_type);
         i = i + 1;
     }
@@ -8186,6 +8244,14 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
     }
     g = cg_emit(g, "static " + cg_c_type(g, ret) + " " + tname + "(" + sig + ") {");
     g.indent = g.indent + 1;
+    // #47 backtraces: push the trampoline's frame on entry
+    // (debug only). The frame is named for the trampoline's C
+    // name (__forge_lambda_<id>); the file is the main file
+    // (the hosted AST has no per-function file), the line is
+    // the lambda's line.
+    if g.debug {
+        g = cg_emit(g, "forge_bt_push(\"" + tname + "\", " + cg_c_str_literal(g.current_file, false) + ", " + itoa(lam.line) + ");");
+    }
     pi = 0;
     while pi < nparams {
         let pn: str = lam.kids[pi].name;
@@ -8217,6 +8283,9 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
     if ret == "void" {
         g = cg_emit_defer_frame(g, 0, ret);
         g = cg_emit_free_owned(g);
+        if g.debug {
+            g = cg_emit(g, "forge_bt_pop();");
+        }
     }
     g.indent = g.indent - 1;
     g = cg_emit(g, "}");
@@ -8255,10 +8324,51 @@ fn cg_gen_func(g0: HCodegen, fn_node: Node) -> HCodegen {
 // name, but their node still carries the plain method name.
 // Counters are program-global (Python's __init__ only): they
 // are NOT reset per function.
+
+// Source file of a function, for #line + the frame push.
+// Exact lookup on the C name first (plain fns by name,
+// methods by Struct__method). On a miss, strip one trailing
+// _<segment> at a time and retry: a generic instantiation
+// (foo_int, Struct__method_int) resolves to its template
+// (foo, Struct__method). A miss after stripping returns ""
+// and the caller keeps the current file (today's behaviour
+// for unlisted names). Bounded: a mangled name cannot carry
+// more than a handful of segments.
+fn cg_fn_file(g0: HCodegen, fname: str) -> str {
+    let mut name: str = fname;
+    let mut guard: int = 0;
+    while guard < 64 {
+        let mut i: int = 0;
+        while i + 1 < len(g0.fn_files) {
+            if g0.fn_files[i] == name {
+                return g0.fn_files[i + 1];
+            }
+            i = i + 2;
+        }
+        let u: int = cg_find_last(name, "_");
+        if u < 0 {
+            return "";
+        }
+        name = substr(name, 0, u);
+        guard = guard + 1;
+    }
+    return "";
+}
+
 fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     let mut g: HCodegen = g0;
     g.current_fn = fname;
     g.current_fn_idx = cg_fn_index(g, fname);
+    // #47 backtraces: per-function source file — the #line
+    // directives and the frame push inside this function name
+    // the file the function was defined in (imports included),
+    // not the main file. Unlisted names keep the enclosing
+    // function's file (a lambda trampoline is generated under
+    // its enclosing fn, whose file is already current).
+    let ff: str = cg_fn_file(g, fname);
+    if ff != "" {
+        g.current_file = ff;
+    }
     g.lam_fn = fname;
     g.current_ret = cg_subst(g, fn_node.sval);
     // Closure state (Top-500 #101): a fresh function starts with
@@ -8323,6 +8433,13 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     }
     g = cg_emit(g, msig + " {");
     g.indent = g.indent + 1;
+    // #47 backtraces: push this frame on entry (debug only).
+    // The initial line is the definition line; the per-statement
+    // stamp in cg_gen_block overwrites it as the function runs.
+    // fname is the C name (mangled Struct__method for methods).
+    if g.debug {
+        g = cg_emit(g, "forge_bt_push(\"" + fname + "\", " + cg_c_str_literal(g.current_file, false) + ", " + itoa(fn_node.line) + ");");
+    }
     // Runtime moved flags for owned parameters (tuple included).
     i = 0;
     while i < len(params) {
@@ -8348,10 +8465,16 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
             g = cg_emit(g, "forge_join_threads();");
             g = cg_emit_free_owned(g);
         }
+        if g.debug {
+            g = cg_emit(g, "forge_bt_pop();");
+        }
         g = cg_emit(g, "return 0;");
     } else if fn_node.sval == "void" {
         g = cg_emit_defer_frame(g, 0, fn_node.sval);
         g = cg_emit_free_owned(g);
+        if g.debug {
+            g = cg_emit(g, "forge_bt_pop();");
+        }
     }
     g.indent = g.indent - 1;
     g = cg_emit(g, "}");
@@ -8486,6 +8609,14 @@ fn cg_emit_lambda_support(g0: HCodegen) -> HCodegen {
 
 fn cg_generate(g0: HCodegen, prog: Node) -> str {
     let mut g: HCodegen = g0;
+    // #47 backtraces: the debug flag is a single #define at the
+    // very top of the emitted C, before either header; the
+    // preamble machinery reads it with #if FORGE_DEBUG.
+    if g.debug {
+        g = cg_emit_raw(g, "#define FORGE_DEBUG 1");
+    } else {
+        g = cg_emit_raw(g, "#define FORGE_DEBUG 0");
+    }
     if g.freestanding {
         g = cg_emit_raw(g, cg_freestanding_header());
     } else {
@@ -9356,12 +9487,19 @@ fn cg_fix1_run(g0: HCodegen, prog: Node) -> HCodegen {
 }
 
 // Entry point: infer + generate, mode safe.
-fn codegen_program(prog: Node, inf: HInfer, freestanding: bool, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+fn codegen_program(prog: Node, inf: HInfer, freestanding: bool, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool, main_path: str, fn_files: [str]) -> str {
     let mut p: Node = expand_aliases_prog(prog);
     let mut g: HCodegen = cg_new(inf);
     g.freestanding = freestanding;
     g.no_bounds_checks = no_bounds_checks;
     g.no_overflow_checks = no_overflow_checks;
+    // #47 backtraces: debug mode + the per-function file map.
+    // g.current_file starts at the main path; cg_gen_func_named
+    // overrides it per function from g.fn_files, so #line and
+    // the frame push name the defining file (imports included).
+    g.debug = debug;
+    g.current_file = main_path;
+    g.fn_files = fn_files;
     g = cg_build_tables(g, p);
     g = cg_collect_instantiations(g, p);
     g = cg_collect(g, p);

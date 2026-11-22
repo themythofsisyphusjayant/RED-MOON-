@@ -392,7 +392,11 @@ fn cache_digits_only(s: str) -> bool {
 // filename. Bump the seed constants with the epoch (see the rule above).
 // (Epoch step6c, Fix 1 B1: hosted codegen gained the loop-proof
 // hoisting analysis + emission.)
-fn cache_seeds(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> [int] {
+// #47 backtraces: debug joins the mix (dbg*16) so a debug compile
+// gets a DIFFERENT cache filename from a release compile of the
+// same source — otherwise a debug store would clobber the release
+// entry (same K1/K2) and a later release lookup would read debug C.
+fn cache_seeds(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool) -> [int] {
     let mut fs: int = 0;
     if freestanding {
         fs = 1;
@@ -409,14 +413,21 @@ fn cache_seeds(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflo
     if no_overflow_checks {
         no = 1;
     }
-    let mut k1: int = cache_mix(18652631, fs + mode_n * 2 + nb * 4 + no * 8 + 1, 0, 1000003);
-    let mut k2: int = cache_mix(506952131, fs + mode_n * 2 + nb * 4 + no * 8 + 1, 0, 999983);
+    let mut dbg: int = 0;
+    if debug {
+        dbg = 1;
+    }
+    let mut k1: int = cache_mix(18652631, fs + mode_n * 2 + nb * 4 + no * 8 + dbg * 16 + 1, 0, 1000003);
+    let mut k2: int = cache_mix(506952131, fs + mode_n * 2 + nb * 4 + no * 8 + dbg * 16 + 1, 0, 999983);
     return [k1, k2];
 }
 
 // Fingerprint prefix: version + epoch + flags. Bump "step6c" on
 // ANY hosted-compiler change (see the rule above).
-fn cache_prefix(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+// #47 backtraces: the debug flag joins the prefix (|dbg=0/1) so
+// old entries (no dbg segment) miss and debug/release entries
+// never validate against each other.
+fn cache_prefix(freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool) -> str {
     let mut fs: int = 0;
     if freestanding {
         fs = 1;
@@ -429,7 +440,11 @@ fn cache_prefix(freestanding: bool, mode: str, no_bounds_checks: bool, no_overfl
     if no_overflow_checks {
         no = 1;
     }
-    return "QASIDA6|2.3.0|step6c|fs=" + itoa(fs) + "|mode=" + mode + "|nb=" + itoa(nb) + "|no=" + itoa(no) + "|";
+    let mut dbg: int = 0;
+    if debug {
+        dbg = 1;
+    }
+    return "QASIDA6|2.3.0|step6c|fs=" + itoa(fs) + "|mode=" + mode + "|nb=" + itoa(nb) + "|no=" + itoa(no) + "|dbg=" + itoa(dbg) + "|";
 }
 
 // Best-effort file write for cache files: try the write, and if
@@ -519,7 +534,7 @@ fn cache_verify_segments(fp: str, prefix: str) -> bool {
 // magic, the main path and the fingerprint prefix (version /
 // epoch / flags), re-hash every listed file, and only then read
 // the cache entry. Returns the cached C, or "" on any doubt.
-fn cache_manifest_lookup(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
+fn cache_manifest_lookup(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool) -> str {
     let mpath: str = cache_manifest_path(path);
     if !file_exists(mpath) {
         return "";
@@ -536,7 +551,7 @@ fn cache_manifest_lookup(path: str, freestanding: bool, mode: str, no_bounds_che
         return "";
     }
     let fp: str = lines[2];
-    let prefix: str = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks);
+    let prefix: str = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
     if !starts_with(fp, prefix) {
         return "";
     }
@@ -700,7 +715,12 @@ fn parse_src(src: str) -> Node {
 // st_prog/st_dir/st_idx only ever grow by push, popping is
 // sp = sp - 1, so no trunc/pop helper is needed and no state is
 // threaded by value through recursion.
-fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> Node {
+// The merged tree leaves by index assignment into merged_box
+// (the fp_box pattern — push on a shared array is CoW and
+// would not reach the caller); the (fn name, file) pairs
+// (flat [str]: name, file, name, file, ...) are the return
+// value, for codegen's per-function #line + frame file.
+fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool, merged_box: [Node]) -> [str] {
     let src: str = read_file(path);
     // Slice A program cache: the AUTHORITATIVE fingerprint — one
     // segment per file the loader actually reads (main first, then
@@ -708,10 +728,10 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
     // fp_box is a 1-element [str] out-param; it is updated ONLY by
     // index assignment (push on a shared array is CoW and would not
     // be visible to the caller — Step 3 pattern).
-    let seeds: [int] = cache_seeds(freestanding, mode, no_bounds_checks, no_overflow_checks);
+    let seeds: [int] = cache_seeds(freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
     let mut k1: int = seeds[0];
     let mut k2: int = seeds[1];
-    fp_box[0] = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks);
+    fp_box[0] = cache_prefix(freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
     let mh: [int] = cache_file_hash(path);
     fp_box[0] = fp_box[0] + path + "=" + itoa(mh[0]) + "," + itoa(mh[1]) + "," + itoa(mh[2]) + ";";
     k1 = cache_mix(k1, mh[0], mh[2], 1000003);
@@ -720,6 +740,8 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
     let mut kids: [Node] = main_prog.kids;
     let mut seen: [str] = [];
     let mut progs: [Node] = [];
+    let mut prog_paths: [str] = [];
+    let mut fn_files: [str] = [];
     let mut st_prog: [Node] = [main_prog];
     let mut st_dir: [str] = [dir_of(path)];
     let mut st_idx: [int] = [0];
@@ -761,6 +783,7 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
             let isrc: str = read_file(resolved);
             let iprog: Node = parse_src(isrc);
             push(progs, iprog);
+            push(prog_paths, resolved);
             let ih: [int] = cache_file_hash(resolved);
             fp_box[0] = fp_box[0] + resolved + "=" + itoa(ih[0]) + "," + itoa(ih[1]) + "," + itoa(ih[2]) + ";";
             k1 = cache_mix(k1, ih[0], ih[2], 1000003);
@@ -803,10 +826,53 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
         }
         i = i + 1;
     }
+    // #47 backtraces, per-function source file: the hosted AST
+    // has no file field, so the loader records (fn name, file)
+    // pairs here, while it still knows which program came from
+    // which path. codegen looks them up to stamp #line and the
+    // frame push with the defining file (imports included — a
+    // debug build of a program importing stdlib/dbg.fg must
+    // name that file, not the main file). Plain fns under their
+    // name; impl methods under the mangled Struct__method name
+    // (as in cg_build_tables). Generic instantiations are NOT
+    // listed — codegen strips their _<type> suffix to find the
+    // template (see cg_fn_file).
+    let mut all_progs: [Node] = [main_prog];
+    let mut all_paths: [str] = [path];
+    let mut ai: int = 0;
+    while ai < len(progs) {
+        push(all_progs, progs[ai]);
+        push(all_paths, prog_paths[ai]);
+        ai = ai + 1;
+    }
+    let mut bi: int = 0;
+    while bi < len(all_progs) {
+        let pp: Node = all_progs[bi];
+        let pf: str = all_paths[bi];
+        let mut ci: int = 0;
+        while ci < len(pp.kids) {
+            let cn: Node = pp.kids[ci];
+            if cn.kind == 2 {
+                push(fn_files, cn.name);
+                push(fn_files, pf);
+            }
+            if cn.kind == 6 {
+                let mut mi: int = 0;
+                while mi < len(cn.kids) {
+                    push(fn_files, cn.name + "__" + cn.kids[mi].name);
+                    push(fn_files, pf);
+                    mi = mi + 1;
+                }
+            }
+            ci = ci + 1;
+        }
+        bi = bi + 1;
+    }
     let mut merged: Node = main_prog;
     merged.kids = kids;
     fp_box[0] = fp_box[0] + "|K1=" + itoa(k1) + "|K2=" + itoa(k2);
-    return merged;
+    merged_box[0] = merged;
+    return fn_files;
 }
 
 // Full hosted pipeline for one file: lex -> parse (+ imports) ->
@@ -821,19 +887,24 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
 // anything the lookup computed (see the design doc,
 // speed/step6_design.md §9). The manifest is stored alongside
 // the entry so the next run can find it.
-fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool) -> str {
-    let hit: str = cache_manifest_lookup(path, freestanding, mode, no_bounds_checks, no_overflow_checks);
+fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool) -> str {
+    let hit: str = cache_manifest_lookup(path, freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
     if hit != "" {
         return hit;
     }
     let mut fp_box: [str] = [""];
-    let merged: Node = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks);
+    // merged_box is pre-sized with a dummy program Node; the
+    // loader overwrites slot 0 by index assignment (fp_box
+    // pattern) and returns the (fn name, file) pairs.
+    let mut merged_box: [Node] = [parse_src("")];
+    let fn_files: [str] = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks, debug, merged_box);
+    let merged: Node = merged_box[0];
     let ok: bool = check_program(merged, freestanding);
     if !ok {
         fail_compile("check failed");
     }
     let inf: HInfer = run_infer(merged);
-    let c: str = codegen_program(merged, inf, freestanding, no_bounds_checks, no_overflow_checks);
+    let c: str = codegen_program(merged, inf, freestanding, no_bounds_checks, no_overflow_checks, debug, path, fn_files);
     let lfp: str = fp_box[0];
     if lfp != "" {
         let cpath2: str = cache_path_for(lfp);
@@ -1082,7 +1153,7 @@ fn cmd_run(argv: [str]) -> int {
         }
         prog_args = rest;
     }
-    let c: str = compile_to_c(file, false, mode, no_bounds_checks, no_overflow_checks);
+    let c: str = compile_to_c(file, false, mode, no_bounds_checks, no_overflow_checks, false);
     let stamp: str = itoa(clock_micros());
     let c_path: str = "/tmp/qasida_run_" + stamp + ".c";
     let prog: str = "/tmp/qasida_run_" + stamp;
@@ -1328,11 +1399,15 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         if shared {
             fail_compile("--shared is not supported by the hosted driver yet");
         }
-        if debug {
-            fail_compile("--debug is not supported by the hosted driver yet");
+        // #47 backtraces: --debug is implemented in the hosted
+        // driver now (it used to be deferred here). Debug is
+        // native-only, like Python's: freestanding has no
+        // stderr/libc for the backtrace machinery.
+        if debug && freestanding {
+            fail_compile("--debug is not supported with --freestanding");
         }
     }
-    let c: str = compile_to_c(file, freestanding, mode, no_bounds_checks, no_overflow_checks);
+    let c: str = compile_to_c(file, freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
     if cmd == "check" {
         println("ok: no errors");
         return 0;
@@ -1376,6 +1451,11 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         flags = flags + " -nostdlib";
     } else {
         flags = flags + " -pthread";
+    }
+    // #47 backtraces: debug builds compile with -g (mirrors
+    // Python's compiler.py build()).
+    if debug {
+        flags = flags + " -g";
     }
     let mut libs: str = "";
     let mut libs_nossl: str = "";

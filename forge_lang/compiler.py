@@ -103,6 +103,10 @@ def compile_source(source, mode="safe", freestanding=False,
 
 def compile_file(path, mode="safe", require_main=True, debug=False, freestanding=False,
                  no_bounds_checks=False, no_overflow_checks=False):
+    # #47 backtraces: debug builds need the native preamble
+    # (stderr + the shadow stack), which freestanding has not got.
+    if debug and freestanding:
+        raise ForgeError("--debug is not supported with --freestanding")
     program = load_program(path)
     check(program, require_main=require_main, freestanding=freestanding)
     types = infer_types(program)

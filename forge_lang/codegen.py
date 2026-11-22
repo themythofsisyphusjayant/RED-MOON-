@@ -127,8 +127,57 @@ typedef struct { long long ref; void (*drop)(void *); } ForgeClosureEnv;
 static void forge_closure_inc(void *env) { if (env) ((ForgeClosureEnv *)env)->ref++; }
 static void forge_closure_release(void *env) { if (env) { ForgeClosureEnv *h = (ForgeClosureEnv *)env; if (--(h->ref) == 0 && h->drop) h->drop(env); } }
 
+/* Backtraces (Top-500 #47): a thread-local shadow stack of Qasida
+   call frames. Debug builds only (#if FORGE_DEBUG): each function
+   pushes {name, file, def-line} on entry and pops on return; every
+   statement stamps the top frame's line with its own source line,
+   so a caller frame shows the line of the call into the next
+   frame. forge_fail and the fail()/assert lowerings print the
+   stack (innermost first) after the failure message. Release
+   builds emit no push/pop/stamp/print calls and define
+   FORGE_DEBUG 0, so this whole block compiles out. */
+#if FORGE_DEBUG
+#define FORGE_BT_CAP 1024
+typedef struct { const char *fn; const char *file; int line; } ForgeBtFrame;
+static __thread ForgeBtFrame forge_bt_stack[FORGE_BT_CAP];
+static __thread int forge_bt_depth = 0;
+static __thread int forge_bt_dropped = 0;
+static void forge_bt_push(const char *fn, const char *file, int line) {
+    if (forge_bt_depth < FORGE_BT_CAP) {
+        forge_bt_stack[forge_bt_depth].fn = fn;
+        forge_bt_stack[forge_bt_depth].file = file;
+        forge_bt_stack[forge_bt_depth].line = line;
+        forge_bt_depth++;
+    } else {
+        forge_bt_dropped++;
+    }
+}
+static void forge_bt_pop(void) {
+    if (forge_bt_dropped > 0) { forge_bt_dropped--; }
+    else if (forge_bt_depth > 0) { forge_bt_depth--; }
+}
+static void forge_bt_setline(int line) {
+    if (forge_bt_depth > 0) { forge_bt_stack[forge_bt_depth - 1].line = line; }
+}
+static void forge_bt_print(void) {
+    fprintf(stderr, "stack backtrace:\n");
+    int i = forge_bt_depth - 1;
+    int n = 0;
+    while (i >= 0) {
+        const char *f = forge_bt_stack[i].file;
+        if (!f || !*f) f = "<unknown>";
+        fprintf(stderr, "  %d: %s at %s:%d\n", n, forge_bt_stack[i].fn, f, forge_bt_stack[i].line);
+        i--;
+        n++;
+    }
+}
+#endif
+
 static void forge_fail(const char *msg) {
     fprintf(stderr, "qasida: runtime error: %s\n", msg);
+#if FORGE_DEBUG
+    forge_bt_print();
+#endif
     exit(1);
 }
 
@@ -2338,6 +2387,10 @@ class Codegen:
             self._fix1_guards = {}
             self._fix1_plain = set()
             self._fix1_idx_guards = {}
+        # #47 backtraces: the debug flag is a single #define at the
+        # very top of the emitted C, before either header; the
+        # preamble machinery reads it with #if FORGE_DEBUG.
+        self.lines.append(f"#define FORGE_DEBUG {1 if self.debug else 0}")
         self.lines.append(FREESTANDING_HEADER if self.freestanding else HEADER)
         # Fix 2 ivdep: non-aliasing loop proofs (loopproof.py).
         # Total by construction; any unexpected failure means no
@@ -2826,6 +2879,14 @@ class Codegen:
                                + [f"{c_type(pt)} {pn}" for pn, pt in lam.params])
         self.emit(f"static {c_type(ret)} {fn_lambda_name(lid)}({sig_params}) {{")
         self.indent += 1
+        # #47 backtraces: push the trampoline's frame on entry
+        # (debug only). The frame is named for the trampoline's C
+        # name (__forge_lambda_<id>); the file is the enclosing
+        # function's file, the line is the lambda's line.
+        if self.debug:
+            lam_line = getattr(lam, "line", None) or 0
+            self.emit(f"forge_bt_push(\"{fn_lambda_name(lid)}\", "
+                      f"{self.c_str_literal(self.current_file)}, {lam_line});")
         for pn, pt in lam.params:
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                     or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt) \
@@ -2840,6 +2901,8 @@ class Codegen:
         if ret == "void":
             self._emit_defer_frame(self.defer_stack[0], ret)
             self.emit_free_owned()
+            if self.debug:
+                self.emit("forge_bt_pop();")
         self.indent -= 1
         self.emit("}")
         self.lines.append("")
@@ -2991,6 +3054,16 @@ class Codegen:
                if fn.name == "main" else self.c_sig(fn))
         self.emit(sig + " {")
         self.indent += 1
+        # #47 backtraces: push this frame on entry (debug only).
+        # The initial line is the definition line; the per-statement
+        # stamp in gen_block overwrites it as the function runs.
+        # fn.name is the C name here (mangled Struct__method for
+        # methods), which is what the trace should show.
+        if self.debug:
+            fn_file = getattr(fn, "file", "") or ""
+            fn_line = getattr(fn, "line", None) or 0
+            self.emit(f"forge_bt_push(\"{fn.name}\", "
+                      f"{self.c_str_literal(fn_file)}, {fn_line});")
         # Runtime moved flags for owned parameters (move v2):
         # a conditional move of a parameter must be visible
         # to the function-end free, which checks this flag.
@@ -3013,10 +3086,14 @@ class Codegen:
             if not self.freestanding:
                 self.emit("forge_join_threads();")
                 self.emit_free_owned()
+            if self.debug:
+                self.emit("forge_bt_pop();")
             self.emit("return 0;")
         elif fn.ret == "void":
             self._emit_defer_frame(self.defer_stack[0], fn.ret)
             self.emit_free_owned()
+            if self.debug:
+                self.emit("forge_bt_pop();")
         self.indent -= 1
         self.emit("}")
         self.lines.append("")
@@ -3281,6 +3358,13 @@ class Codegen:
                         # indented to be safe with cc.
                         esc = self.current_file.replace("\\", "\\\\").replace('"', '\\"')
                         self.lines.append(f'#line {line} "{esc}"')
+                        # #47 backtraces: stamp the top frame's
+                        # line with this statement's line, before
+                        # the statement runs, so a caller frame
+                        # shows the line of the call into the
+                        # next frame (and the failing frame shows
+                        # the failing statement's line).
+                        self.emit(f"forge_bt_setline({line});")
                 self.gen_stmt(stmt, ret_type)
         finally:
             self._shadow_stack.pop()
@@ -4150,6 +4234,9 @@ class Codegen:
                 self.emit("forge_join_threads();")
             if stmt.expr is None:
                 self.emit_free_owned()
+                # #47 backtraces: pop this frame on return.
+                if self.debug:
+                    self.emit("forge_bt_pop();")
                 self.emit("return 0;" if self.current_fn == "main" else "return;")
             else:
                 ret_code = self.gen_expr(stmt.expr)
@@ -4193,6 +4280,12 @@ class Codegen:
                     if copy:
                         self.emit(copy)
                 self.emit_free_owned()
+                # #47 backtraces: pop this frame on return. The
+                # value is already bound to __forge_ret (and
+                # owned) above, so a call inside the return
+                # expression that failed still saw this frame.
+                if self.debug:
+                    self.emit("forge_bt_pop();")
                 self.emit("return __forge_ret;")
             return
         if isinstance(stmt, A.Defer):
@@ -4213,9 +4306,13 @@ class Codegen:
                     # passes (it may have side effects).
                     self.assign_counter += 1
                     n = self.assign_counter
-                    self.emit(f"if (!({cond})) {{ char *__forge_msg{n} = {msg}; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg{n}); forge_free_str(__forge_msg{n}); exit(1); }}")
+                    # #47 backtraces: print the call chain after
+                    # the message (debug only).
+                    bt = " forge_bt_print();" if self.debug else ""
+                    self.emit(f"if (!({cond})) {{ char *__forge_msg{n} = {msg}; fprintf(stderr, \"qasida: assertion failed: %s\\n\", __forge_msg{n});{bt} forge_free_str(__forge_msg{n}); exit(1); }}")
                 else:
-                    self.emit(f"if (!({cond})) {{ fprintf(stderr, \"qasida: assertion failed: %s\\n\", {msg}); exit(1); }}")
+                    bt = " forge_bt_print();" if self.debug else ""
+                    self.emit(f"if (!({cond})) {{ fprintf(stderr, \"qasida: assertion failed: %s\\n\", {msg});{bt} exit(1); }}")
                 return
             if isinstance(call, A.Call) and call.name in ("print", "println"):
                 self.gen_print(call)
@@ -4350,6 +4447,10 @@ class Codegen:
                 self.emit("if (forge_in_task) {")
                 self.indent += 1
                 self.emit(f'fprintf(stderr, "qasida: task panicked: %s\\n", {msg});')
+                # #47 backtraces: print this task's call chain
+                # after the panic message (debug only).
+                if self.debug:
+                    self.emit("forge_bt_print();")
                 if mfree:
                     self.emit(mfree)
                 self.emit("__atomic_add_fetch(&forge_panicked_total, 1, __ATOMIC_SEQ_CST);")
@@ -4358,6 +4459,10 @@ class Codegen:
                 self.emit("} else {")
                 self.indent += 1
                 self.emit(f'fprintf(stderr, "qasida: %s\\n", {msg});')
+                # #47 backtraces: print the call chain after the
+                # message (debug only).
+                if self.debug:
+                    self.emit("forge_bt_print();")
                 if mfree:
                     self.emit(mfree)
                 self.emit("exit(1);")

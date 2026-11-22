@@ -94,6 +94,44 @@ without a major version bump (see docs/STABILITY.md).
   inside a for-over-fresh loop leaks the iterable. Catalog marks
   #181/#187/#188/#189/#190 [HAVE].
 
+- Backtraces on fail in debug builds, Top-500 #47 (22 Nov 2026,
+  libs-only sprint week, implemented in both compilers; gates
+  passed, live binary rebuild 2 md5 d9b3269867ef7d1c9bb45417e06e3374):
+  `build --debug` prints a native backtrace on fail() (main thread
+  and spawned tasks — the task's chain only, panicked_tasks() counts
+  it), runtime faults via forge_fail (bounds, overflow, div-by-zero,
+  OOM), and assert failure; release builds print the fail message
+  only, byte-identical to today's output. Mechanism: a thread-local
+  shadow stack in the preamble (ForgeBtFrame, cap 1024, balanced
+  drops), not C backtrace()/execinfo.h — push at function entry,
+  per-statement forge_bt_setline(N) stamp, explicit exit pops; frames
+  print innermost-first as ` N: <fn> at <file>:<line>`. The hosted
+  driver implements --debug (was deferred with an explicit
+  rejection); debug bit added to the Step-6 cache key; named
+  rejections for --debug + --target big32/wasm, --freestanding,
+  --shared. Hosted per-function file via the loader's (name, file)
+  pairs (impl methods as Struct__method; generic instantiations
+  resolve to their template) — imported files named correctly
+  (hosted dbg_demo debug C has 12 `stdlib/dbg.fg` matches). Own test
+  tests/test_backtrace_v1.py 45/45 ALL PASS under both compilers;
+  demo examples/backtrace_demo.fg. Gates 22 Nov: bootstrap 7/7
+  byte-identical (ulimit -s 65536); parity 124/124 agree + 124/124
+  byte-identical; corpus 99/99; regression 62/62; fuzz existing
+  102/102 hosted + 102/102 Python, fv 56/56, closure 66/66, fs
+  56/56; full suite 83/90 hosted + 82/90 Python (7 known big32
+  pre-existing failures in both; Python run_tests.py scope_demo
+  flake — known println-interleaving class, 4/4 direct reruns
+  clean, flake stands); ASan compiler-side fuzz 102/102 + 56/56 +
+  66/66 + 56/56 under the bt ASan binary (md5
+  8e94b9b7cbed0e2b3917db482a220ed9), zero sanitizer reports; ASan
+  program-side debug==release, 0 report lines; fmt 5/5 idempotent;
+  benchmarks tick q_safe 2365 µs, matmul q_safe 13231 µs (no
+  regression vs fs r5: 2412 / 13299). v1 limits, stated: hosted
+  spells imported files relative where Python absolutizes — same
+  file, different spelling; run stays release-only; no backtraces
+  for fail_compile/check-time errors; no backtrace() builtin
+  (printed, not retrievable). Catalog marks #47 [HAVE].
+
 - PNG decoder v2 (21 Nov 2026): a REAL general PNG decoder in pure
   Qasida, closing the "PNG/JPEG NOT supported" honest gap for PNG
   (JPEG still needs a DCT decoder — still out of scope, stated).

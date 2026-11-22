@@ -182,7 +182,10 @@ fn main() -> int {
         return 1;
     }
     let inf: HInfer = run_infer(merged);
-    let c: str = codegen_program(merged, inf, freestanding, false, false);
+    // #47 backtraces: debug=false, no main path, no fn files
+    // (the test emits release C from a literal program, no
+    // file on disk).
+    let c: str = codegen_program(merged, inf, freestanding, false, false, false, "", []);
     println(c);
     return 0;
 }
