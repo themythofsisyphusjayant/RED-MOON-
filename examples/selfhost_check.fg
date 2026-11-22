@@ -478,7 +478,7 @@ fn heap_error(n: Node, t: str) -> str {
 // Freestanding blocklist (Python checker.py:2251): builtins
 // that need the hosted runtime.
 fn is_fs_blocked_builtin(name: str) -> bool {
-    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
+    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command";
 }
 
 fn elem_type(t: str) -> str {
@@ -927,7 +927,7 @@ fn is_stmt_builtin(name: str) -> bool {
 }
 
 fn is_expr_builtin(name: str) -> bool {
-    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
+    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -3427,6 +3427,52 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         }
         return COut { c: c, typ: "Result<[int], str>" };
     }
+    if n.name == "try_read_file" {
+        // Top-500 #46: fallible read, returns Result<str, int>.
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "try_read_file() takes exactly one str argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "str" {
+            fail_at(n.line, n.col, "try_read_file() takes exactly one str argument");
+        }
+        let mut found: bool = false;
+        let mut fi: int = 0;
+        while fi < len(c.struct_names) {
+            if c.struct_names[fi] == "Result" {
+                found = true;
+            }
+            fi = fi + 1;
+        }
+        if !found {
+            fail_at(n.line, n.col, "try_read_file() needs import \"result.fg\" (it returns Result<str, int>)");
+        }
+        return COut { c: c, typ: "Result<str, int>" };
+    }
+    if n.name == "try_read_bytes" {
+        // Top-500 #46: fallible byte read, returns Result<[int], int>.
+        if len(n.kids) != 1 {
+            fail_at(n.line, n.col, "try_read_bytes() takes exactly one str argument");
+        }
+        let a: COut = check_expr(c, n.kids[0]);
+        c = a.c;
+        if a.typ != "str" {
+            fail_at(n.line, n.col, "try_read_bytes() takes exactly one str argument");
+        }
+        let mut found: bool = false;
+        let mut fi: int = 0;
+        while fi < len(c.struct_names) {
+            if c.struct_names[fi] == "Result" {
+                found = true;
+            }
+            fi = fi + 1;
+        }
+        if !found {
+            fail_at(n.line, n.col, "try_read_bytes() needs import \"result.fg\" (it returns Result<[int], int>)");
+        }
+        return COut { c: c, typ: "Result<[int], int>" };
+    }
     if n.name == "println" || n.name == "print" {
         let mut i: int = 0;
         while i < len(n.kids) {
@@ -3508,6 +3554,11 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
     if n.name == "panicked_tasks" {
         // Top-500 #44: total tasks that have panicked so far.
         c = expect_builtin_msg(c, n, [], "panicked_tasks() takes no arguments");
+        return COut { c: c, typ: "int" };
+    }
+    if n.name == "last_errno" {
+        // Top-500 #46: errno of the most recent failed write.
+        c = expect_builtin_msg(c, n, [], "last_errno() takes no arguments");
         return COut { c: c, typ: "int" };
     }
     if n.name == "sqrt" || n.name == "exp" || n.name == "log" || n.name == "sin" || n.name == "cos" || n.name == "tan" {

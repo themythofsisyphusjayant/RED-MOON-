@@ -1,0 +1,248 @@
+// Top-500 #46: typed errno-style error codes for syscalls.
+// Import with: import "errcode.fg";
+//   let r = read_file_err("missing.txt");
+//   if r.ok { println(r.value); } else { println(err_name(r.error)); }
+// The errno of a failed read/write is a bare int (see try_read_file /
+// last_errno); this module maps it onto a typed ErrCode enum so call
+// sites can match on meaning instead of memorising POSIX numbers.
+// v1 limits, stated: the mapping covers the common POSIX codes and
+// maps anything else to Unknown; http_get / mmap failures have no
+// fallible try_ variant yet, so their errno is not observable here.
+
+import "result.fg";
+
+enum ErrCode {
+    Success,
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    IsADirectory,
+    NotADirectory,
+    InvalidArgument,
+    Interrupted,
+    NoSpace,
+    ReadOnlyFs,
+    TooManyOpen,
+    BrokenPipe,
+    ConnectionRefused,
+    TimedOut,
+    Unknown
+}
+
+fn err_from_code(code: int) -> ErrCode {
+    if code == 0 {
+        return Success;
+    }
+    if code == 2 {
+        return NotFound;
+    }
+    if code == 13 {
+        return PermissionDenied;
+    }
+    if code == 17 {
+        return AlreadyExists;
+    }
+    if code == 21 {
+        return IsADirectory;
+    }
+    if code == 20 {
+        return NotADirectory;
+    }
+    if code == 22 {
+        return InvalidArgument;
+    }
+    if code == 4 {
+        return Interrupted;
+    }
+    if code == 28 {
+        return NoSpace;
+    }
+    if code == 30 {
+        return ReadOnlyFs;
+    }
+    if code == 24 {
+        return TooManyOpen;
+    }
+    if code == 32 {
+        return BrokenPipe;
+    }
+    if code == 111 {
+        return ConnectionRefused;
+    }
+    if code == 110 {
+        return TimedOut;
+    }
+    return Unknown;
+}
+
+fn err_code(e: ErrCode) -> int {
+    if e == Success {
+        return 0;
+    }
+    if e == NotFound {
+        return 2;
+    }
+    if e == PermissionDenied {
+        return 13;
+    }
+    if e == AlreadyExists {
+        return 17;
+    }
+    if e == IsADirectory {
+        return 21;
+    }
+    if e == NotADirectory {
+        return 20;
+    }
+    if e == InvalidArgument {
+        return 22;
+    }
+    if e == Interrupted {
+        return 4;
+    }
+    if e == NoSpace {
+        return 28;
+    }
+    if e == ReadOnlyFs {
+        return 30;
+    }
+    if e == TooManyOpen {
+        return 24;
+    }
+    if e == BrokenPipe {
+        return 32;
+    }
+    if e == ConnectionRefused {
+        return 111;
+    }
+    if e == TimedOut {
+        return 110;
+    }
+    return -1;
+}
+
+fn err_name(e: ErrCode) -> str {
+    if e == Success {
+        return "Success";
+    }
+    if e == NotFound {
+        return "NotFound";
+    }
+    if e == PermissionDenied {
+        return "PermissionDenied";
+    }
+    if e == AlreadyExists {
+        return "AlreadyExists";
+    }
+    if e == IsADirectory {
+        return "IsADirectory";
+    }
+    if e == NotADirectory {
+        return "NotADirectory";
+    }
+    if e == InvalidArgument {
+        return "InvalidArgument";
+    }
+    if e == Interrupted {
+        return "Interrupted";
+    }
+    if e == NoSpace {
+        return "NoSpace";
+    }
+    if e == ReadOnlyFs {
+        return "ReadOnlyFs";
+    }
+    if e == TooManyOpen {
+        return "TooManyOpen";
+    }
+    if e == BrokenPipe {
+        return "BrokenPipe";
+    }
+    if e == ConnectionRefused {
+        return "ConnectionRefused";
+    }
+    if e == TimedOut {
+        return "TimedOut";
+    }
+    return "Unknown";
+}
+
+fn err_message(e: ErrCode) -> str {
+    if e == Success {
+        return "success";
+    }
+    if e == NotFound {
+        return "no such file or directory";
+    }
+    if e == PermissionDenied {
+        return "permission denied";
+    }
+    if e == AlreadyExists {
+        return "file already exists";
+    }
+    if e == IsADirectory {
+        return "is a directory";
+    }
+    if e == NotADirectory {
+        return "not a directory";
+    }
+    if e == InvalidArgument {
+        return "invalid argument";
+    }
+    if e == Interrupted {
+        return "interrupted system call";
+    }
+    if e == NoSpace {
+        return "no space left on device";
+    }
+    if e == ReadOnlyFs {
+        return "read-only file system";
+    }
+    if e == TooManyOpen {
+        return "too many open files";
+    }
+    if e == BrokenPipe {
+        return "broken pipe";
+    }
+    if e == ConnectionRefused {
+        return "connection refused";
+    }
+    if e == TimedOut {
+        return "connection timed out";
+    }
+    return "unknown error";
+}
+
+fn read_file_err(path: str) -> Result<str, ErrCode> {
+    let r = try_read_file(path);
+    if r.ok {
+        return Result { ok: true, value: r.value, error: Success };
+    }
+    return Result { ok: false, value: "", error: err_from_code(r.error) };
+}
+
+fn read_bytes_err(path: str) -> Result<[int], ErrCode> {
+    let r = try_read_bytes(path);
+    if r.ok {
+        return Result { ok: true, value: r.value, error: Success };
+    }
+    // r.value is already the empty [int] the Err branch carries
+    // (a bare [] cannot be assigned to a typed field).
+    return Result { ok: false, value: r.value, error: err_from_code(r.error) };
+}
+
+fn write_file_err(path: str, content: str) -> Result<bool, ErrCode> {
+    let ok = write_file(path, content);
+    if ok {
+        return Result { ok: true, value: true, error: Success };
+    }
+    return Result { ok: false, value: false, error: err_from_code(last_errno()) };
+}
+
+fn write_bytes_err(path: str, data: [int]) -> Result<bool, ErrCode> {
+    let ok = write_bytes(path, data);
+    if ok {
+        return Result { ok: true, value: true, error: Success };
+    }
+    return Result { ok: false, value: false, error: err_from_code(last_errno()) };
+}

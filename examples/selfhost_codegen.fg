@@ -1750,7 +1750,11 @@ fn cg_is_fresh_struct(g: HCodegen, e: Node) -> bool {
         return false;
     }
     if e.kind == 35 {
-        if e.name == "move" || e.name == "try_alloc" {
+        if e.name == "move" || e.name == "try_alloc" || e.name == "try_read_file" || e.name == "try_read_bytes" {
+            // Top-500 #46: same fresh-Result rule as try_alloc
+            // (Python codegen.py is_fresh_struct) — the
+            // statement expression builds the Result fresh, so
+            // the receiving site must not copy it.
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
@@ -5794,6 +5798,10 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         // Top-500 #44: total tasks that have panicked so far.
         return CGExpr { g: g, code: "__atomic_load_n(&forge_panicked_total, __ATOMIC_SEQ_CST)" };
     }
+    if e.name == "last_errno" {
+        // Top-500 #46: errno of the most recent failed write.
+        return CGExpr { g: g, code: "__atomic_load_n(&forge_last_errno, __ATOMIC_SEQ_CST)" };
+    }
     if e.name == "sqrt" || e.name == "exp" || e.name == "log" || e.name == "sin" || e.name == "cos" || e.name == "tan" {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
@@ -5882,6 +5890,35 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         let err_oom: str = "(" + rt + "){ .ok = false, .value = " + empty + ", .error = forge_copy_str(\"out of memory\") }";
         let ok_empty: str = "(" + rt + "){ .ok = true, .value = " + empty + ", .error = forge_copy_str(\"\") }";
         let code: str = "({ " + rt + " __forge_tryalloc" + itoa(n) + "; long long __forge_n" + itoa(n) + " = " + nout.code + "; if (__forge_n" + itoa(n) + " < 0) { __forge_tryalloc" + itoa(n) + " = " + err_bad + "; } else if (__forge_n" + itoa(n) + " == 0) { __forge_tryalloc" + itoa(n) + " = " + ok_empty + "; } else { long long *__forge_data" + itoa(n) + " = (long long *)calloc((size_t)__forge_n" + itoa(n) + ", sizeof(long long)); if (!__forge_data" + itoa(n) + ") { __forge_tryalloc" + itoa(n) + " = " + err_oom + "; } else { ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_n" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_n" + itoa(n) + "; __forge_arr" + itoa(n) + ".data = __forge_data" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_tryalloc" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = forge_copy_str(\"\") }; } } __forge_tryalloc" + itoa(n) + "; })";
+        return CGExpr { g: g, code: code };
+    }
+    if e.name == "try_read_file" {
+        // Top-500 #46: fallible read, same shape as try_alloc (#36):
+        // fopen/size failure yields Err(errno); success yields Ok
+        // with the file content as a fresh heap str. errno is
+        // captured immediately, before any other call can clobber
+        // it. The Err .value is forge_copy_str("") — never NULL:
+        // struct assignment deep-copies str fields.
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = pout.g;
+        let rt: str = cg_c_type(g, "Result<str, int>");
+        let code: str = "({ " + rt + " __forge_tryread" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_sz" + itoa(n) + " + 1); if (!__forge_buf" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = fread(__forge_buf" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + "); __forge_buf" + itoa(n) + "[__forge_got" + itoa(n) + "] = 0; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } __forge_tryread" + itoa(n) + "; })";
+        return CGExpr { g: g, code: code };
+    }
+    if e.name == "try_read_bytes" {
+        // Top-500 #46: fallible byte read, same shape as
+        // try_read_file but building a ForgeIntArray like
+        // forge_read_bytes. fopen/size failure yields Err(errno);
+        // success yields Ok with the bytes.
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let pout: CGExpr = cg_gen_expr(g, e.kids[0]);
+        g = pout.g;
+        let rt: str = cg_c_type(g, "Result<[int], int>");
+        let empty: str = "(ForgeIntArray){NULL, 0, 0, forge_arr_ref_new()}";
+        let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } __forge_tryreadb" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "write_bytes" {

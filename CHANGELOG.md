@@ -8,6 +8,57 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Panic vs recover boundary, Top-500 #44 (21 Nov 2026, pipeline
+  run — implemented in both compilers; gates passed 22 Nov 2026,
+  Sprint Day 2, tree stable after the closures slice): fail() on a
+  spawned task's thread ends just that task (prints "qasida: task
+  panicked: <msg>", counts one panic, exits the thread); siblings
+  run to completion and the scope join proceeds normally. New
+  builtin panicked_tasks() -> int reads the count after a join, so
+  a program can recover (branch, retry, report, continue). fail()
+  on the main thread is unchanged (exit 1). Own test
+  tests/test_panic_recover_v1.py 41/41 ALL PASS under both
+  compilers; demo ASan-clean under both; fresh hosted binary
+  bootstrap 7/7 byte-identical. v1 limits, stated: forge_fail
+  runtime faults (bounds, overflow, div-by-zero, OOM) still kill
+  the process even in a task; a panicked task's owned locals are
+  not freed (measured 32-byte leak for an allocating failing task
+  under LeakSanitizer); the panic message is printed, not
+  retrievable. Gates 22 Nov (live binary rebuild 5): own test
+  41/41 both compilers; parity 124/124; corpus 99/99; regression
+  62/62; fuzz 102/102 both modes + fv 56/56 + closure 66/66;
+  full suite 79/86 hosted + 78/86 Python (7 known big32
+  pre-existing failures in both; Python run_tests.py scope_demo
+  fast flake, 7/8 reruns clean). Catalog marks #44 [HAVE].
+
+- Error codes as enums, Top-500 #46 (22 Nov 2026, Sprint Day 2
+  gates run, both compilers): typed errno-style errors for
+  syscalls. New builtin last_errno() -> int reads the code of the
+  most recent failed write (0 if none); new fallible read builtins
+  try_read_file(path) -> Result<str, int> and try_read_bytes(path)
+  -> Result<[int], int> (fopen failure returns Err(errno), success
+  returns Ok(content)); library forge_lang/stdlib/errcode.fg with
+  enum ErrCode (Success, NotFound, PermissionDenied, AlreadyExists,
+  IsADirectory, NotADirectory, InvalidArgument, Interrupted,
+  NoSpace, ReadOnlyFs, TooManyOpen, BrokenPipe, ConnectionRefused,
+  TimedOut, Unknown) + err_from_code / err_code / err_name /
+  err_message + read_file_err / read_bytes_err / write_file_err /
+  write_bytes_err. Own test tests/test_errcode_v1.py 56/56 ALL PASS
+  under both compilers; demo ASan-clean under both. Gates 22 Nov
+  (live binary build 4): bootstrap 7/7 byte-identical; parity
+  124/124; corpus 99/99; regression 62/62; fuzz 102/102 both modes
+  + fv 56/56 + closure 66/66; full suite 80/87 hosted + 80/87
+  Python (7 known big32 pre-existing failures in both, no flake);
+  ASan compiler-side fuzz 102/102 + 56/56 + 66/66, zero sanitizer
+  reports. v1 limits, stated: read_file stays process-fatal (no
+  sentinel change — breaking, needs Jayant's word); a failed write
+  records errno but a later success does not clear it; concurrent
+  failing tasks race on last_errno; bookkeeping mallocs can still
+  forge_fail under true OOM; no http_get/mmap errno path; no
+  retryable/fatal classification (#59), no inferred error sets
+  (#50). Catalog marks #46 [HAVE]. NOT pushed (parent verifies
+  and pushes).
+
 - PNG decoder v2 (21 Nov 2026): a REAL general PNG decoder in pure
   Qasida, closing the "PNG/JPEG NOT supported" honest gap for PNG
   (JPEG still needs a DCT decoder — still out of scope, stated).

@@ -84,7 +84,7 @@ STMT_BUILTINS = {"print", "println", "push", "pin", "fail", "assert", "poke32",
                  "mmap_set", "mmap_close", "mmap_set32",
                  "csr_write", "csr_set", "csr_clear",
                  "fail_compile", "eprintln"}
-EXPR_BUILTINS = {"len", "range", "clock_micros", "panicked_tasks", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs",
+EXPR_BUILTINS = {"len", "range", "clock_micros", "panicked_tasks", "last_errno", "try_read_file", "try_read_bytes", "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs",
                  "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg",
                  "read_file", "read_line", "write_file", "read_bytes", "write_bytes",
                  "file_exists", "args", "parse_int", "parse_float",
@@ -2660,7 +2660,7 @@ class Checker:
                 "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
-                "clock_micros", "panicked_tasks", "args", "parallel_dot", "parallel_matmul",
+                "clock_micros", "panicked_tasks", "last_errno", "try_read_file", "try_read_bytes", "args", "parallel_dot", "parallel_matmul",
                 "sqrt", "exp", "log", "sin", "cos", "tan", "pow", "abs", "run_command"):
             raise ForgeError(f"'{call.name}' needs the hosted runtime "
                              f"(not in freestanding v1)",
@@ -2816,6 +2816,12 @@ class Checker:
             if call.args:
                 raise ForgeError("panicked_tasks() takes no arguments", call.line, call.col)
             return "int"
+        if call.name == "last_errno":
+            # Top-500 #46: errno of the most recent failed write
+            # (0 if no write has failed).
+            if call.args:
+                raise ForgeError("last_errno() takes no arguments", call.line, call.col)
+            return "int"
         if call.name in ("alloc_count", "free_count", "arr_alloc_count", "arr_free_count"):
             if call.args:
                 raise ForgeError(f"{call.name}() takes no arguments", call.line, call.col)
@@ -2947,6 +2953,49 @@ class Checker:
             self.struct_instantiations["Result<[int], str>"] = fields
             call.concrete_type = "Result<[int], str>"
             return "Result<[int], str>"
+        if call.name == "try_read_file":
+            # Top-500 #46: fallible read, returns Result<str, int>:
+            # Ok with the file content, or Err(errno) instead of
+            # the fatal forge_fail in read_file. The Result struct
+            # comes from forge_lang/stdlib/result.fg, so the program must
+            # import it; register the concrete instantiation here so
+            # check()'s epilogue appends it to program.structs and
+            # codegen emits the C struct body.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("try_read_file() takes exactly one str argument",
+                                 call.line, call.col)
+            if "Result" not in self.structs:
+                raise ForgeError("try_read_file() needs import \"result.fg\" "
+                                 "(it returns Result<str, int>)",
+                                 call.line, call.col)
+            fields = self.struct_fields_for("Result<str, int>")
+            if fields is None:
+                raise ForgeError("try_read_file() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations["Result<str, int>"] = fields
+            call.concrete_type = "Result<str, int>"
+            return "Result<str, int>"
+        if call.name == "try_read_bytes":
+            # Top-500 #46: fallible byte read, returns Result<[int], int>:
+            # Ok with the file bytes, or Err(errno) instead of
+            # the fatal forge_fail in read_bytes. Same Result
+            # registration as try_read_file.
+            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+                raise ForgeError("try_read_bytes() takes exactly one str argument",
+                                 call.line, call.col)
+            if "Result" not in self.structs:
+                raise ForgeError("try_read_bytes() needs import \"result.fg\" "
+                                 "(it returns Result<[int], int>)",
+                                 call.line, call.col)
+            fields = self.struct_fields_for("Result<[int], int>")
+            if fields is None:
+                raise ForgeError("try_read_bytes() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations["Result<[int], int>"] = fields
+            call.concrete_type = "Result<[int], int>"
+            return "Result<[int], int>"
         if call.name == "write_bytes":
             if len(call.args) != 2:
                 raise ForgeError("write_bytes() takes exactly two arguments",

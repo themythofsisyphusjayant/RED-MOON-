@@ -1,0 +1,20 @@
+fn flaky(n: int) {
+    fail("boom");
+}
+
+fn steady(n: int) {
+    println("steady done", n);
+}
+
+fn main() -> int {
+    println("before", panicked_tasks());
+    scope {
+        spawn flaky(1);
+        spawn steady(2);
+    }
+    println("after", panicked_tasks());
+    if panicked_tasks() > 0 {
+        println("recovered");
+    }
+    return 0;
+}

@@ -2042,7 +2042,7 @@ class RVGen:
             raise ForgeError("range() is only supported as a for-loop source on big32")
         if name in ("print", "println", "push"):
             raise ForgeError(f"{name}() cannot be used as an expression on big32")
-        if name in ("sqrt", "exp", "log", "sin", "cos", "tan", "pow", "clock_micros", "read_file",
+        if name in ("sqrt", "exp", "log", "sin", "cos", "tan", "pow", "clock_micros", "panicked_tasks", "last_errno", "try_read_file", "try_read_bytes", "read_file",
                     "read_line",
                     "write_file", "args", "parse_int", "split", "join",
                     "substr", "trim", "starts_with", "ends_with", "http_get",

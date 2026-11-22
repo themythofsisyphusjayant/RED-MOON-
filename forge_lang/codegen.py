@@ -57,6 +57,7 @@ HEADER = r"""#include <stdio.h>
 #include <openssl/err.h>
 #endif
 #include <time.h>
+#include <errno.h>
 #ifndef _WIN32
 #include <sys/wait.h>
 #endif
@@ -371,9 +372,14 @@ static int64_t forge_poke32(int64_t addr, int64_t val) {
     return val;
 }
 
+/* Top-500 #46: errno of the most recent failed write (0 if no
+   write has failed); read with the last_errno() builtin. Declared
+   here, before its first user forge_write_file. */
+static volatile long long forge_last_errno = 0;
+
 static bool forge_write_file(const char *path, const char *content) {
     FILE *f = fopen(path, "wb");
-    if (!f) return false;
+    if (!f) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); return false; }
     fputs(content, f);
     fclose(f);
     return true;
@@ -401,7 +407,7 @@ static ForgeIntArray forge_read_bytes(const char *path) {
 
 static bool forge_write_bytes(const char *path, ForgeIntArray data) {
     FILE *f = fopen(path, "wb");
-    if (!f) { forge_int_array_free(data); return false; }
+    if (!f) { __atomic_store_n(&forge_last_errno, errno, __ATOMIC_SEQ_CST); forge_int_array_free(data); return false; }
     bool ok = true;
     for (long long i = 0; i < data.len; i++) {
         unsigned char byte = (unsigned char)(data.data[i] & 0xFF);
@@ -1997,10 +2003,13 @@ class Codegen:
                 # site must not inc it (see the move branch in
                 # gen_expr, which also forgets the source).
                 return True
-            if expr.name == "try_alloc":
-                # A try_alloc Result is a new owned value (the
-                # statement expression builds it fresh); the
-                # receiving site must not copy it.
+            if expr.name in ("try_alloc", "try_read_file", "try_read_bytes"):
+                # A try_alloc / try_read_file / try_read_bytes
+                # Result is a new owned value (the statement
+                # expression builds it fresh); the receiving site
+                # must not copy it. (Without this, the assignment
+                # deep-copies the fresh str field and orphans the
+                # original buffer — a leak ASan catches.)
                 return True
             rt = self.func_ret.get(expr.name)
             if rt and self.is_struct_type(rt):
@@ -5038,6 +5047,10 @@ class Codegen:
                 # Top-500 #44: total tasks that have panicked so far
                 # (atomic read; the counter only grows).
                 return "__atomic_load_n(&forge_panicked_total, __ATOMIC_SEQ_CST)"
+            if expr.name == "last_errno":
+                # Top-500 #46: errno of the most recent failed write
+                # (atomic read; 0 if no write has failed).
+                return "__atomic_load_n(&forge_last_errno, __ATOMIC_SEQ_CST)"
             if expr.name in ("sqrt", "exp", "log", "sin", "cos", "tan"):
                 return f"{expr.name}({self.gen_expr(expr.args[0])})"
             if expr.name == "pow":
@@ -5120,6 +5133,84 @@ class Codegen:
                     f".value = __forge_arr{n}, "
                     f".error = forge_copy_str(\"\") }}; }} }} "
                     f"__forge_tryalloc{n}; }})"
+                )
+            if expr.name == "try_read_file":
+                # Top-500 #46: fallible read. Same GNU statement
+                # expression shape as try_alloc (#36): fopen failure
+                # (or a failed size query) yields Err(errno) instead
+                # of the fatal forge_fail in forge_read_file; success
+                # yields Ok with the file content as a fresh heap str.
+                # errno is captured immediately, before any other
+                # call can clobber it. v1 limit: the bookkeeping
+                # mallocs can still forge_fail under true OOM (same
+                # as try_alloc).
+                self.assign_counter += 1
+                n = self.assign_counter
+                p_code = self.gen_expr(expr.args[0])
+                rt = c_type("Result<str, int>")
+                return (
+                    f"({{ {rt} __forge_tryread{n}; "
+                    f"const char *__forge_p{n} = {p_code}; "
+                    f"FILE *__forge_f{n} = fopen(__forge_p{n}, \"rb\"); "
+                    f"if (!__forge_f{n}) {{ "
+                    f"int __forge_e{n} = errno; "
+                    f"__forge_tryread{n} = ({rt}){{ .ok = false, .value = forge_copy_str(\"\"), .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"fseek(__forge_f{n}, 0, SEEK_END); "
+                    f"long __forge_sz{n} = ftell(__forge_f{n}); "
+                    f"if (__forge_sz{n} < 0) {{ "
+                    f"int __forge_e{n} = errno; fclose(__forge_f{n}); "
+                    f"__forge_tryread{n} = ({rt}){{ .ok = false, .value = forge_copy_str(\"\"), .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"fseek(__forge_f{n}, 0, SEEK_SET); "
+                    f"char *__forge_buf{n} = (char *)malloc((size_t)__forge_sz{n} + 1); "
+                    f"if (!__forge_buf{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"size_t __forge_got{n} = fread(__forge_buf{n}, 1, (size_t)__forge_sz{n}, __forge_f{n}); "
+                    f"__forge_buf{n}[__forge_got{n}] = 0; "
+                    f"fclose(__forge_f{n}); "
+                    f"__forge_tryread{n} = ({rt}){{ .ok = true, .value = __forge_buf{n}, .error = 0 }}; }} }} "
+                    f"__forge_tryread{n}; }})"
+                )
+            if expr.name == "try_read_bytes":
+                # Top-500 #46: fallible byte read, same shape as
+                # try_read_file but building a ForgeIntArray like
+                # forge_read_bytes. fopen/size failure yields
+                # Err(errno); success yields Ok with the bytes.
+                # v1 limit: the bookkeeping mallocs can still
+                # forge_fail under true OOM (same as try_alloc).
+                self.assign_counter += 1
+                n = self.assign_counter
+                p_code = self.gen_expr(expr.args[0])
+                rt = c_type("Result<[int], int>")
+                empty = "(ForgeIntArray){NULL, 0, 0, forge_arr_ref_new()}"
+                return (
+                    f"({{ {rt} __forge_tryreadb{n}; "
+                    f"const char *__forge_p{n} = {p_code}; "
+                    f"FILE *__forge_f{n} = fopen(__forge_p{n}, \"rb\"); "
+                    f"if (!__forge_f{n}) {{ "
+                    f"int __forge_e{n} = errno; "
+                    f"__forge_tryreadb{n} = ({rt}){{ .ok = false, .value = {empty}, .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"fseek(__forge_f{n}, 0, SEEK_END); "
+                    f"long __forge_sz{n} = ftell(__forge_f{n}); "
+                    f"if (__forge_sz{n} < 0) {{ "
+                    f"int __forge_e{n} = errno; fclose(__forge_f{n}); "
+                    f"__forge_tryreadb{n} = ({rt}){{ .ok = false, .value = {empty}, .error = __forge_e{n} }}; }} "
+                    f"else {{ "
+                    f"fseek(__forge_f{n}, 0, SEEK_SET); "
+                    f"ForgeIntArray __forge_arr{n}; "
+                    f"__forge_arr{n}.len = __forge_sz{n}; __forge_arr{n}.cap = __forge_sz{n}; "
+                    f"__forge_arr{n}.ref = forge_arr_ref_new(); "
+                    f"__forge_arr{n}.data = __forge_sz{n} ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz{n}) : NULL; "
+                    f"if (__forge_sz{n} && !__forge_arr{n}.data) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"unsigned char *__forge_raw{n} = __forge_sz{n} ? (unsigned char *)malloc((size_t)__forge_sz{n}) : NULL; "
+                    f"if (__forge_sz{n} && !__forge_raw{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"size_t __forge_got{n} = __forge_sz{n} ? fread(__forge_raw{n}, 1, (size_t)__forge_sz{n}, __forge_f{n}) : 0; "
+                    f"fclose(__forge_f{n}); "
+                    f"for (long __forge_i{n} = 0; __forge_i{n} < (long)__forge_got{n}; __forge_i{n}++) __forge_arr{n}.data[__forge_i{n}] = __forge_raw{n}[__forge_i{n}]; "
+                    f"if (__forge_raw{n}) free(__forge_raw{n}); "
+                    f"__forge_tryreadb{n} = ({rt}){{ .ok = true, .value = __forge_arr{n}, .error = 0 }}; }} }} "
+                    f"__forge_tryreadb{n}; }})"
                 )
             if expr.name == "write_bytes":
                 # Ownership (audit fix): forge_write_bytes FREES

@@ -401,7 +401,7 @@ class Infer:
                     return self.set(expr, ret)
             for a in expr.args:
                 self.walk_expr(a)
-            if expr.name in ("len", "clock_micros", "panicked_tasks", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
+            if expr.name in ("len", "clock_micros", "panicked_tasks", "last_errno", "abs", "parse_int", "run_command", "alloc_count", "free_count", "arr_alloc_count", "arr_free_count", "refcount", "weak_new", "mmap_open", "mmap_get", "mmap_grow", "mmap_get32", "peek32", "csr_read", "ecall", "ecall3", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg"):
                 return self.set(expr, "int")
             if expr.name == "weak_upgrade":
                 for a in expr.args:

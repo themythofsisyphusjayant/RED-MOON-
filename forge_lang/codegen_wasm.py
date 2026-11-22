@@ -971,6 +971,21 @@ class WasmGen:
                 # Slice 5 driver builtin: needs a shell; WASM has none.
                 raise ForgeError("wasm: run_command() needs a shell, "
                                  "which WASM does not expose")
+            if expr.name == "panicked_tasks":
+                # Top-500 #44: needs the hosted thread runtime; WASM
+                # has no threads in v1.
+                raise ForgeError("wasm: panicked_tasks() needs threads, "
+                                 "which WASM does not expose")
+            if expr.name == "last_errno":
+                # Top-500 #46: needs the hosted errno record; WASM
+                # has no errno in v1.
+                raise ForgeError("wasm: last_errno() needs errno, "
+                                 "which WASM does not expose")
+            if expr.name in ("try_read_file", "try_read_bytes"):
+                # Top-500 #46: needs the hosted filesystem; WASM
+                # has no filesystem in v1.
+                raise ForgeError(f"wasm: {expr.name}() needs the hosted "
+                                 "filesystem, which WASM does not expose")
             if expr.name in ("peek32", "poke32"):
                 raise ForgeError(f"wasm: {expr.name}() needs raw memory addresses, "
                                  f"which WASM does not expose")

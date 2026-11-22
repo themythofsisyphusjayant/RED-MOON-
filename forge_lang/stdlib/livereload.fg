@@ -1,0 +1,118 @@
+// Top-500 #393: live reload — versioned handler table for hot code swap.
+// Import with: import "livereload.fg";
+//   let t = lr_register(lr_new(), "greet", 1, greet_v1);
+//   println(lr_dispatch(t, "greet", "/hi"));
+// Register a newer version and dispatch calls it; rollback drops the
+// newest version (a bad deploy rolls back without a restart);
+// re-registering the same name+version replaces that version's handler
+// in place. Handlers are fn(str) -> str — named functions or closures
+// capturing config by value (item 101). All ops are pure: the old
+// table is untouched.
+// v1 limits, stated: no file watching (item 183 inotify still GAP) and
+// no dlopen (item 296 still GAP) — the caller drives reloads via
+// lr_register; no live serving (http_server.fg serves); dispatch
+// returns "" for an unknown name.
+// Verified 22 Nov 2026 (sprint day 2): livereload_demo.fg under both
+// compilers + independent Python replica.
+
+struct ReloadEntry {
+    name: str,
+    version: int,
+    handler: fn(str) -> str,
+}
+
+struct ReloadTable {
+    entries: [ReloadEntry],
+}
+
+fn lr_new() -> ReloadTable {
+    return ReloadTable { entries: [] };
+}
+
+fn lr_register(t: ReloadTable, name: str, version: int, handler: fn(str) -> str) -> ReloadTable {
+    let mut out: [ReloadEntry] = [];
+    let mut replaced = false;
+    for e in t.entries {
+        if e.name == name && e.version == version {
+            push(out, ReloadEntry { name: name, version: version, handler: handler });
+            replaced = true;
+        } else {
+            push(out, e);
+        }
+    }
+    if !replaced {
+        push(out, ReloadEntry { name: name, version: version, handler: handler });
+    }
+    return ReloadTable { entries: out };
+}
+
+fn lr_has(t: ReloadTable, name: str) -> bool {
+    for e in t.entries {
+        if e.name == name {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn lr_count(t: ReloadTable, name: str) -> int {
+    let mut n = 0;
+    for e in t.entries {
+        if e.name == name {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+fn lr_latest_version(t: ReloadTable, name: str) -> int {
+    let mut best = -1;
+    for e in t.entries {
+        if e.name == name && e.version > best {
+            best = e.version;
+        }
+    }
+    return best;
+}
+
+fn lr_versions(t: ReloadTable, name: str) -> [int] {
+    let mut out: [int] = [];
+    for e in t.entries {
+        if e.name == name {
+            push(out, e.version);
+        }
+    }
+    return out;
+}
+
+fn lr_dispatch(t: ReloadTable, name: str, req: str) -> str {
+    let mut best = -1;
+    let mut idx = -1;
+    let mut i = 0;
+    for e in t.entries {
+        if e.name == name && e.version > best {
+            best = e.version;
+            idx = i;
+        }
+        i = i + 1;
+    }
+    if idx == -1 {
+        return "";
+    }
+    let h = t.entries[idx].handler;
+    return h(req);
+}
+
+fn lr_rollback(t: ReloadTable, name: str) -> ReloadTable {
+    let best = lr_latest_version(t, name);
+    let mut out: [ReloadEntry] = [];
+    let mut dropped = false;
+    for e in t.entries {
+        if !dropped && best != -1 && e.name == name && e.version == best {
+            dropped = true;
+        } else {
+            push(out, e);
+        }
+    }
+    return ReloadTable { entries: out };
+}

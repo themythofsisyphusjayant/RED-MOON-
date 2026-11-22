@@ -1,0 +1,39 @@
+import "livereload.fg";
+
+fn greet_v1(req: str) -> str { return "hello v1:" + req; }
+fn greet_v2(req: str) -> str { return "hello v2:" + req; }
+fn greet_v2b(req: str) -> str { return "hello v2 fixed:" + req; }
+
+fn main() {
+    let t0 = lr_new();
+    println(lr_has(t0, "greet"));
+    let t1 = lr_register(t0, "greet", 1, greet_v1);
+    println(lr_dispatch(t1, "greet", "/hi"));
+    println(lr_latest_version(t1, "greet"));
+    let t2 = lr_register(t1, "greet", 2, greet_v2);
+    println(lr_dispatch(t2, "greet", "/hi"));
+    println(lr_count(t2, "greet"));
+    println(lr_latest_version(t2, "greet"));
+    let vs = lr_versions(t2, "greet");
+    println(vs[0]);
+    println(vs[1]);
+    let t3 = lr_rollback(t2, "greet");
+    println(lr_dispatch(t3, "greet", "/hi"));
+    println(lr_latest_version(t3, "greet"));
+    println(lr_dispatch(t2, "greet", "/hi"));
+    let t4 = lr_register(t3, "greet", 2, greet_v2b);
+    println(lr_dispatch(t4, "greet", "/hi"));
+    println(lr_count(t4, "greet"));
+    println(lr_dispatch(t4, "missing", "/hi"));
+    println(lr_has(t4, "missing"));
+    let prefix = "bye";
+    let bye_h = fn(req: str) -> str { return prefix + ":" + req; };
+    let t5 = lr_register(t4, "bye", 1, bye_h);
+    println(lr_dispatch(t5, "bye", "/x"));
+    let t6 = lr_rollback(t5, "missing");
+    println(lr_dispatch(t6, "bye", "/x"));
+    let t7 = lr_rollback(t6, "bye");
+    println(lr_has(t7, "bye"));
+    println(lr_dispatch(t7, "bye", "/x"));
+    println(lr_latest_version(t7, "bye"));
+}

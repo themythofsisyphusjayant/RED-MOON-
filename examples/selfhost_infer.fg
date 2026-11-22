@@ -1815,7 +1815,7 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
             h = infer_walk_expr(h, e.kids[i]);
             i = i + 1;
         }
-        if e.name == "len" || e.name == "clock_micros" || e.name == "panicked_tasks" || e.name == "abs" || e.name == "parse_int" || e.name == "run_command" || e.name == "alloc_count" || e.name == "free_count" || e.name == "arr_alloc_count" || e.name == "arr_free_count" || e.name == "refcount" || e.name == "weak_new" || e.name == "mmap_open" || e.name == "mmap_get" || e.name == "mmap_grow" || e.name == "mmap_get32" || e.name == "peek32" || e.name == "csr_read" || e.name == "ecall" || e.name == "ecall3" || e.name == "wrapping_add" || e.name == "wrapping_sub" || e.name == "wrapping_mul" || e.name == "wrapping_neg" {
+        if e.name == "len" || e.name == "clock_micros" || e.name == "panicked_tasks" || e.name == "last_errno" || e.name == "abs" || e.name == "parse_int" || e.name == "run_command" || e.name == "alloc_count" || e.name == "free_count" || e.name == "arr_alloc_count" || e.name == "arr_free_count" || e.name == "refcount" || e.name == "weak_new" || e.name == "mmap_open" || e.name == "mmap_get" || e.name == "mmap_grow" || e.name == "mmap_get32" || e.name == "peek32" || e.name == "csr_read" || e.name == "ecall" || e.name == "ecall3" || e.name == "wrapping_add" || e.name == "wrapping_sub" || e.name == "wrapping_mul" || e.name == "wrapping_neg" {
             return infer_set(h, e, "int");
         }
         if e.name == "weak_upgrade" {
@@ -1868,6 +1868,16 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
             // no concrete_type field, so infer records the constant
             // directly — same result, no checker change.
             return infer_set(h, e, "Result<[int], str>");
+        }
+        if e.name == "try_read_file" {
+            // Top-500 #46: same as try_alloc above — Node has no
+            // concrete_type field, so infer records the constant
+            // directly.
+            return infer_set(h, e, "Result<str, int>");
+        }
+        if e.name == "try_read_bytes" {
+            // Top-500 #46: same as try_alloc above.
+            return infer_set(h, e, "Result<[int], int>");
         }
         if e.name == "read_bytes" {
             return infer_set(h, e, "[int]");

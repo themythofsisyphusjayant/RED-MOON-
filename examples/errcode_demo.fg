@@ -1,0 +1,32 @@
+import "errcode.fg";
+
+fn main() {
+    let w = write_file_err("errcode_demo_out.txt", "hello errcode");
+    if w.ok {
+        println("write ok");
+    } else {
+        println("write err", "=", err_name(w.error));
+    }
+    let bad = write_file_err("no_such_dir_xyz/out.txt", "hi");
+    if bad.ok {
+        println("unexpected write ok");
+    } else {
+        println("write err", "=", err_name(bad.error));
+    }
+    let r = read_file_err("no_such_file_xyz.txt");
+    if r.ok {
+        println("unexpected read ok");
+    } else {
+        println("read err", "=", err_name(r.error));
+    }
+    let back = read_file_err("errcode_demo_out.txt");
+    if back.ok {
+        println("read back", "=", back.value);
+    } else {
+        println("unexpected read err", "=", err_name(back.error));
+    }
+    println("code 2", "=", err_name(err_from_code(2)));
+    println("code 13", "=", err_name(err_from_code(13)));
+    println("code 0", "=", err_name(err_from_code(0)));
+    println("code 999", "=", err_name(err_from_code(999)));
+}

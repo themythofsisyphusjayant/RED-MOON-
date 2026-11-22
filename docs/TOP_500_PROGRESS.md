@@ -1341,3 +1341,132 @@ Sprint batch 14 (21 Nov 2026, same day, LIBS ONLY): 15 flips,
   then push (closures push allowlist must EXCLUDE #44's tree edits
   — they were unpushed when the slice started); queue head after
   #44 is #45 (assertions with messages).
+
+## #44 panic vs recover boundary — HAVE (22 Nov 2026, Sprint Day 2 gates run)
+
+Implemented 21 Nov 2026 (pipeline run, both compilers) and marked
+[PARTIAL] because the full gates were deferred — the closures slice
+(#101/#114/#116) shared the tree. The closures slice landed + pushed
+(8ac792d9), the tree went stable, and the gates re-ran 22 Nov against
+the live binary (rebuild 5, md5 f0e96e58): own test
+tests/test_panic_recover_v1.py 41/41 ALL PASS both compilers
+(re-run); parity 124/124 agree + 124/124 byte-identical; corpus 99/99;
+regression 62/62; fuzz existing 102/102 hosted + 102/102 Python, fv
+56/56, closure 66/66; full suite 79/86 hosted + 78/86 Python (the 7
+known big32 pre-existing failures in both modes; Python run_tests.py
+failed once on the scope_demo fast println-interleaving flake — the
+known class — 7/8 direct reruns clean and the scope-join ordering
+held in all 8, so the flake stands). Gate logs:
+blackmoon-iso/pr44-gates/logs/ (parity, corpus, regression, fuzz,
+suite_hosted, suite_python, scope_demo_fast_rerun_4x). No push from
+this run (parent verifies and pushes); #44's own files (demo, test,
+CHANGELOG entry, codegen_rv.py, codegen_wasm.py) were kept out of the
+closures push and ride with this item's push. v1 limits (unchanged):
+runtime faults stay process-fatal even in a task; a panicking task's
+owned locals leak (measured 32 bytes); the panic message is printed,
+not retrievable. Counts after the flip: HAVE 353, PARTIAL 12, GAP
+135, to build 147. Arithmetic from the closures entry (HAVE 352,
+PARTIAL 13, GAP 135, to build 148): 1 PARTIAL-to-HAVE (#44); 352 + 1
+= 353; 13 - 1 = 12; 148 - 1 = 147 (353 + 12 + 135 = 500). HAVE 353
+of 500 = 70.6%.
+Next: #46 error codes as enums (#45 is already [HAVE] — verified
+from the catalog 22 Nov, not rebuilt).
+
+## #46 Error codes as enums — DONE 22 Nov 2026 (Sprint Day 2 gates run)
+Typed errno-style errors for syscalls, as a small language/runtime
+slice + library (not a pure library: the runtime discarded errno at
+every failure site — forge_read_file/read_bytes forge_fail on any
+fopen failure, write_file/write_bytes return bool with no reason,
+http_get forge_fails, zero `errno` mentions in forge_lang/ — and a
+read failure is process-fatal even in a task, so a read code could
+not be recovered at a task boundary; changing read_file to return a
+sentinel would be a breaking change, NOT taken — needs Jayant's
+word). Runtime: `#include <errno.h>` in HEADER + hosted header
+mirror; `static volatile long long forge_last_errno` (mirrors
+forge_panicked_total); errno recorded only where observable —
+forge_write_file/write_bytes fopen failure stores it before
+`return false`; new zero-arg builtin last_errno() -> int (atomic
+load), following the panicked_tasks/clock_micros pattern (checker
+branch + codegen lowering + hosted mirror + big32/WASM/freestanding
+named rejections). Fallible read builtins following the #36
+try_alloc pattern: try_read_file(path) -> Result<str, int> and
+try_read_bytes(path) -> Result<[int], int> (fopen failure ->
+Err(errno), success -> Ok(content); Err payload is the raw errno
+int). Library forge_lang/stdlib/errcode.fg: enum ErrCode (Success,
+NotFound, PermissionDenied, AlreadyExists, IsADirectory,
+NotADirectory, InvalidArgument, Interrupted, NoSpace, ReadOnlyFs,
+TooManyOpen, BrokenPipe, ConnectionRefused, TimedOut, Unknown) with
+err_from_code / err_code / err_name / err_message and
+read_file_err / read_bytes_err / write_file_err / write_bytes_err
+returning Result<..., ErrCode>; demo examples/errcode_demo.fg.
+Three real bugs found while building, all fixed: (1) NULL str field
+segfault — first try_read_file lowering set Err .value = NULL and
+struct assignment deep-copies str fields via forge_copy_str
+(strlen(NULL) -> SEGV); Err .value is now forge_copy_str("") —
+never a NULL str field (the try_alloc discipline), same in the
+hosted lowering. (2) Hosted `void` type — hosted infer had no case
+for the new builtins, so the variable got type `void` and
+Result_str_int was never emitted; explicit infer cases added in
+selfhost_infer.fg. (3) Fresh-Result leak under ASan — `let r =
+try_read_file(...)` orphaned the fresh buf (14 bytes) because
+is_fresh_struct knew try_alloc but not the new builtins; both names
+join the try_alloc case in Python is_fresh_struct and hosted
+cg_is_fresh_struct. Also fixed: forge_last_errno first placed next
+to forge_panicked_total did not compile (write helpers precede it)
+— moved to just before forge_write_file (same in hosted header);
+hosted try_read_file emits `__forge_bufN[__forge_gotN] = 0;` and
+the Python lowering was changed to match (byte-identical emits).
+Hosted rebuild: build 4 (md5 db234d827ed241952e7c1120036b373e,
+13,688,456 B, 84 cc warnings — pre-existing count), after build 1
+(void-type bug), build 2 (killed mid-cc1 once the leak fix was
+found), build 3 (killed by a VM restart ~04:14 IST 22 Nov at ~16
+min elapsed; /tmp wiped, tree intact). Synced to all 3 live binary
+locations (bin/qasida-hosted, examples/selfhost_cli,
+forge_lang/bin/qasida-hosted). Gates 22 Nov: own test
+tests/test_errcode_v1.py 56/56 ALL PASS both compilers (run twice);
+bootstrap 7/7 byte-identical; parity 124/124 agree + 124/124
+byte-identical; corpus 99/99; regression 62/62; fuzz existing
+102/102 hosted + 102/102 Python, fv 56/56, closure 66/66; full
+suite 80/87 hosted + 80/87 Python (7 known big32 pre-existing
+failures in both; no flake — run_tests.py PASS for real in both
+modes); ASan compiler-side fuzz 102/102 + 56/56 + 66/66 under the
+build-4 ASan binary (md5 79f7ea42320d51f8921a57a3e9ac6c3b), zero
+sanitizer reports. Gate logs: blackmoon-iso/pr46/ (GATES.md, logs/
+bootstrap_emit, parity, corpus, regression, fuzz_existing_hosted/
+python, fuzz_fv, fuzz_cl, suite_hosted, suite_python,
+fuzz_asan_existing/fv/cl, asan_build). Test-harness note: the hosted
+binary resolves stdlib imports relative to CWD, so the test runs
+everything with cwd=repo root and unlinks the demo outputs before
+and after. v1 limits: read_file stays process-fatal; a failed write
+records errno but a later success does NOT clear it; concurrent
+failing tasks race on last_errno; bookkeeping mallocs can still
+forge_fail under true OOM; no http_get/mmap errno path; no
+retryable/fatal classification (#59), no inferred error sets (#50).
+NOT pushed (parent verifies and pushes). Counts after the flip:
+HAVE 354, PARTIAL 12, GAP 134, to build 146. Arithmetic from the
+#44 entry (HAVE 353, PARTIAL 12, GAP 135, to build 147): 1
+GAP-to-HAVE (#46); 353 + 1 = 354; 135 - 1 = 134; 147 - 1 = 146
+(354 + 12 + 134 = 500). HAVE 354 of 500 = 70.8%.
+Next: #47 Backtraces on fail in debug builds.
+
+## #393 Live reload — HAVE (22 Nov 2026, Sprint Day 2)
+forge_lang/stdlib/livereload.fg — versioned handler table for hot code
+swap: register a newer version and dispatch calls it, rollback drops the
+newest version (a bad deploy rolls back without a restart),
+re-registering the same name+version replaces that version's handler in
+place; handlers are fn(str) -> str, named functions or closures
+capturing config by value (item 101); all ops pure (the old table is
+untouched). Demo examples/livereload_demo.fg (20-line transcript).
+Verified: tests/test_daily_20261122.py 4/4 checks both compilers,
+independent Python replica 20/20 (replica_20261122.py). v1 limits: no
+file watching (item 183 inotify still GAP) and no dlopen (item 296
+still GAP) — the caller drives reloads via lr_register; no live
+serving (http_server.fg serves); dispatch returns "" for an unknown
+name. Note: the cron run's scratch copy was lost when a VM restart
+wiped /tmp (~09:40 IST); rebuilt from the surviving LANDING_NOTES.md +
+replica and re-verified in-tree against hosted build 4 (md5 db234d82).
+Counts after the flip: HAVE 355, PARTIAL 12, GAP 133, to build 145.
+Arithmetic from the #46 entry (HAVE 354, PARTIAL 12, GAP 134, to
+build 146): 1 GAP-to-HAVE (#393); 354 + 1 = 355; 134 - 1 = 133;
+146 - 1 = 145 (355 + 12 + 133 = 500). HAVE 355 of 500 = 71.0%.
+Next: #47 Backtraces on fail in debug builds.
