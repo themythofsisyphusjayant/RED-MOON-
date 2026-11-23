@@ -1,0 +1,32 @@
+// Qasida — timeout errors as values (Top-500 #52).
+// Import with: import "errtimeout.fg";
+// Deadline-exceeded is data, not a crash: check_deadline returns
+// Err(TimedOut) when a deadline has passed, else Ok(remaining_us),
+// over timeout.fg deadlines and errcode.fg's ErrCode.
+// v1 limits: a deadline only reports expiry — no async cancellation,
+// no interrupting a running call; the caller must poll check_deadline.
+import "errcode.fg";
+import "timeout.fg";
+
+fn err_timeout() -> ErrCode {
+    return TimedOut;
+}
+
+fn err_is_timeout(e: ErrCode) -> bool {
+    return e == TimedOut;
+}
+
+fn err_new_deadline(ms: int) -> int {
+    return to_new_deadline(ms);
+}
+
+fn check_deadline(deadline_us: int, now_us: int) -> Result<int, ErrCode> {
+    if to_expired(deadline_us, now_us) {
+        return Result { ok: false, value: 0, error: TimedOut };
+    }
+    return Result { ok: true, value: to_remaining(deadline_us, now_us), error: Success };
+}
+
+fn err_check_now(deadline_us: int) -> Result<int, ErrCode> {
+    return check_deadline(deadline_us, clock_micros());
+}

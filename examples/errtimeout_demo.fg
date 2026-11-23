@@ -1,0 +1,26 @@
+import "errtimeout.fg";
+
+fn main() {
+    let d = to_deadline(1000000, 500);
+    let r = check_deadline(d, 1200000);
+    if r.ok {
+        println("remaining", r.value);
+    } else {
+        println("expired", err_name(r.error));
+    }
+    let at = check_deadline(d, 1500000);
+    if at.ok {
+        println("remaining", at.value);
+    } else {
+        println("expired", err_name(at.error));
+    }
+    let late = check_deadline(d, 2000000);
+    if late.ok {
+        println("remaining", late.value);
+    } else {
+        println("expired", err_name(late.error));
+    }
+    println("timeout", err_name(err_timeout()));
+    println("is timeout", err_is_timeout(err_timeout()));
+    println("is timeout", err_is_timeout(NotFound));
+}

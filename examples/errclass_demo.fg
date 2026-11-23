@@ -1,0 +1,14 @@
+import "errclass.fg";
+
+fn main() {
+    println("TimedOut", err_class_name(classify(TimedOut)));
+    println("Interrupted", err_class_name(classify(Interrupted)));
+    println("ConnectionRefused", err_class_name(classify(ConnectionRefused)));
+    println("NotFound", err_class_name(classify(NotFound)));
+    println("PermissionDenied", err_class_name(classify(PermissionDenied)));
+    println("Unknown", err_class_name(classify(Unknown)));
+    println("delay TimedOut 0", retryable_delay(TimedOut, 0, 100, 1000));
+    println("delay TimedOut 2", retryable_delay(TimedOut, 2, 100, 1000));
+    println("delay ConnectionRefused 3", retryable_delay(ConnectionRefused, 3, 100, 1000));
+    println("delay NotFound 0", retryable_delay(NotFound, 0, 100, 1000));
+}

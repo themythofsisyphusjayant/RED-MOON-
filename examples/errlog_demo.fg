@@ -1,0 +1,19 @@
+import "errlog.fg";
+
+fn main() {
+    let mut log: ErrLog = errlog_new();
+    let good: Result<int, str> = Result { ok: true, value: 7, error: "" };
+    log = log_on_err_int(log, good);
+    println("count after ok", errlog_count(log));
+    let bad: Result<int, str> = Result { ok: false, value: 0, error: "boom" };
+    log = log_on_err_int(log, bad);
+    println("count after err", errlog_count(log));
+    println("first", errlog_first(log));
+    log = errlog_drain(log);
+    println("count after drain", errlog_count(log));
+    let missing = read_file_err("no_such_file_xyz.txt");
+    log = log_on_err_code_str(log, missing);
+    println("count after code err", errlog_count(log));
+    log = errlog_drain(log);
+    println("done");
+}

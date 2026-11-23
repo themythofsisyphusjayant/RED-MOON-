@@ -1,0 +1,20 @@
+import "errtranslate.fg";
+
+fn main() {
+    println("NotFound ->", translate_io(NotFound));
+    println("TimedOut ->", translate_io(TimedOut));
+    println("PermissionDenied ->", translate_io(PermissionDenied));
+    println("Unknown ->", translate_io(Unknown));
+    let table0 = errmap_new();
+    let table = errmap_add(table0, NotFound, "storage: gone");
+    println("custom:", translate(NotFound, table));
+    println("custom unknown:", translate(TimedOut, table));
+    let ok_r: Result<int, ErrCode> = Result { ok: true, value: 7, error: Success };
+    let mapped = map_result_int(ok_r);
+    println("mapped value:", mapped.value);
+    let err_r: Result<int, ErrCode> = Result { ok: false, value: 0, error: NotFound };
+    let mapped2 = map_result_int(err_r);
+    println("mapped error:", mapped2.error);
+    let mapped3 = map_result_int_with(err_r, table);
+    println("mapped custom:", mapped3.error);
+}

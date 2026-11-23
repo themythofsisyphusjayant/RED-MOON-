@@ -1,0 +1,30 @@
+import "errmode.fg";
+
+fn main() -> int {
+    let errs: [str] = ["bad age", "bad name"];
+    let ff = collect_or_fail(FailFast, errs);
+    println(ff.ok);
+    println(ff.error);
+    println(len(ff.value));
+    let cc = collect_or_fail(Collect, errs);
+    println(cc.ok);
+    println(len(cc.value));
+    let vals: [str] = cc.value;
+    println(vals[0]);
+    println(vals[1]);
+    let mut c: ErrCollector = em_new(Collect);
+    c = em_add(c, "bad age");
+    c = em_add(c, "bad name");
+    println(em_count(c));
+    println(em_render(c));
+    let mut f: ErrCollector = em_new(FailFast);
+    f = em_add(f, "first");
+    f = em_add(f, "second");
+    println(em_count(f));
+    println(em_first(f));
+    let r = em_resolve(f);
+    println(r.ok);
+    println(r.error);
+    println(em_mode_name(Collect));
+    return 0;
+}

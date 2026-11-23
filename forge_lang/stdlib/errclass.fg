@@ -1,0 +1,50 @@
+// Qasida — retryable vs fatal classification (Top-500 #59).
+// Import with: import "errclass.fg";
+// Classify an ErrCode as Retryable or Fatal, and get the
+// retry-backoff.fg delay for retryable codes (-1 when fatal).
+// v1 limits: a static table, not observed behaviour; no jitter;
+// Success -> Fatal (nothing to retry); Unknown -> Fatal (an error we
+// cannot name is not one to blindly retry); BrokenPipe is retryable
+// only by re-establishing the connection, never by resending on the
+// same pipe.
+import "errcode.fg";
+import "retry-backoff.fg";
+
+enum ErrClass { Retryable, Fatal }
+
+fn err_class_name(c: ErrClass) -> str {
+    if c == Retryable {
+        return "Retryable";
+    }
+    return "Fatal";
+}
+
+fn classify(code: ErrCode) -> ErrClass {
+    if code == Interrupted {
+        return Retryable;
+    }
+    if code == TimedOut {
+        return Retryable;
+    }
+    if code == TooManyOpen {
+        return Retryable;
+    }
+    if code == ConnectionRefused {
+        return Retryable;
+    }
+    if code == BrokenPipe {
+        return Retryable;
+    }
+    return Fatal;
+}
+
+fn err_is_retryable(code: ErrCode) -> bool {
+    return classify(code) == Retryable;
+}
+
+fn retryable_delay(code: ErrCode, attempt: int, base_ms: int, cap_ms: int) -> int {
+    if classify(code) == Fatal {
+        return -1;
+    }
+    return retry_delay_ms(attempt, base_ms, cap_ms);
+}

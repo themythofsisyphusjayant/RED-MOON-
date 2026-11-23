@@ -1,0 +1,155 @@
+// Qasida — deferred error logging (Top-500 #51).
+// Import with: import "errlog.fg";
+// Log-on-return helpers: an ErrLog wraps multierr.fg's MultiErr and
+// records a line when a Result returns Err; the caller drains it later
+// (errlog_drain to stdout, errlog_drain_stderr via eprintln).
+// v1 limits: in-memory log only — no file sink, timestamps, or levels
+// (log.fg covers immediate leveled output); the stderr drain needs the
+// hosted runtime (eprintln is rejected on freestanding/big32/WASM);
+// log_on_err_code logs an Unknown code as "ERR: Unknown".
+// The log_on_err helpers are CONCRETE variants (_int / _str /
+// _code_int / _code_str), not generics: a generic log_on_err<T> leaks
+// under the hosted compiler — its generic-call assignment emits an
+// extra unbalanced forge_arr_inc on the returned struct's array field
+// (probed 23 Nov 2026: generic call leaks 42 bytes, the identical
+// concrete call is clean). The generic form is withheld until that
+// hosted codegen bug is fixed.
+import "result.fg";
+import "errcode.fg";
+import "multierr.fg";
+
+struct ErrLog {
+    m: MultiErr;
+}
+
+fn errlog_new() -> ErrLog {
+    return ErrLog { m: me_new() };
+}
+
+fn errlog_add(log: ErrLog, msg: str) -> ErrLog {
+    return ErrLog { m: me_add(log.m, "ERR: " + msg) };
+}
+
+fn errlog_count(log: ErrLog) -> int {
+    return me_count(log.m);
+}
+
+fn errlog_has(log: ErrLog) -> bool {
+    return me_has(log.m);
+}
+
+fn errlog_first(log: ErrLog) -> str {
+    return me_first(log.m);
+}
+
+fn errlog_last(log: ErrLog) -> str {
+    let n: int = me_count(log.m);
+    if n == 0 {
+        return "";
+    }
+    return log.m.errs[n - 1];
+}
+
+fn errlog_lines(log: ErrLog) -> [str] {
+    return log.m.errs;
+}
+
+fn errlog_render(log: ErrLog) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(log.m.errs) {
+        if i > 0 {
+            out = out + "\n";
+        }
+        out = out + log.m.errs[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn errlog_clear(log: ErrLog) -> ErrLog {
+    return errlog_new();
+}
+
+fn errlog_drain(log: ErrLog) -> ErrLog {
+    let mut i: int = 0;
+    while i < len(log.m.errs) {
+        println(log.m.errs[i]);
+        i = i + 1;
+    }
+    return errlog_new();
+}
+
+fn errlog_drain_stderr(log: ErrLog) -> ErrLog {
+    let mut i: int = 0;
+    while i < len(log.m.errs) {
+        eprintln(log.m.errs[i]);
+        i = i + 1;
+    }
+    return errlog_new();
+}
+
+// The four dummy constructors below exist only to force the Python
+// backend to emit the generic Result struct definitions for every
+// shape this library's functions reference — a parameter type alone
+// does not trigger emission there (a program importing this file and
+// only calling log_on_err_int would otherwise fail to compile under
+// --python with "unknown type name 'Result_str_str'"). Call them
+// never. The hosted compiler does not need them.
+fn errlog_result_int_str_dummy() -> Result<int, str> {
+    return Result { ok: false, value: 0, error: "" };
+}
+
+fn errlog_result_str_str_dummy() -> Result<str, str> {
+    return Result { ok: false, value: "", error: "" };
+}
+
+fn errlog_result_int_errcode_dummy() -> Result<int, ErrCode> {
+    return Result { ok: false, value: 0, error: Unknown };
+}
+
+fn errlog_result_str_errcode_dummy() -> Result<str, ErrCode> {
+    return Result { ok: false, value: "", error: Unknown };
+}
+
+fn log_on_err_int(log: ErrLog, r: Result<int, str>) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, r.error);
+}
+
+fn log_on_err_str(log: ErrLog, r: Result<str, str>) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, r.error);
+}
+
+fn log_on_err_msg_int(log: ErrLog, r: Result<int, str>, msg: str) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, msg + ": " + r.error);
+}
+
+fn log_on_err_msg_str(log: ErrLog, r: Result<str, str>, msg: str) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, msg + ": " + r.error);
+}
+
+fn log_on_err_code_int(log: ErrLog, r: Result<int, ErrCode>) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, err_name(r.error));
+}
+
+fn log_on_err_code_str(log: ErrLog, r: Result<str, ErrCode>) -> ErrLog {
+    if r.ok {
+        return log;
+    }
+    return errlog_add(log, err_name(r.error));
+}

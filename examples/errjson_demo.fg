@@ -1,0 +1,19 @@
+import "errjson.fg";
+
+fn main() {
+    println(error_to_json("E0001", "type mismatch: expected int, got str", "main.fg", 3, 5));
+    println(error_to_json("E0002", "undefined variable \"total\"", "main.fg", 7, 1));
+    println(error_to_json("E0003", "array index out of bounds\ncheck the length first", "lib.fg", 12, 9));
+    let codes: [str] = ["E0004", "E0005"];
+    let msgs: [str] = ["division by zero", "cannot read file"];
+    let files: [str] = ["main.fg", "data.txt"];
+    let lines: [int] = [1, 0];
+    let cols: [int] = [1, 0];
+    println(errors_to_json(codes, msgs, files, lines, cols));
+    let no_codes: [str] = [];
+    let no_msgs: [str] = [];
+    let no_files: [str] = [];
+    let no_lines: [int] = [];
+    let no_cols: [int] = [];
+    println(errors_to_json(no_codes, no_msgs, no_files, no_lines, no_cols));
+}

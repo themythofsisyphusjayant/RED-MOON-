@@ -1,0 +1,162 @@
+// Qasida — structured error rendering (Top-500 #54).
+// Import with: import "errrender.fg";
+// Miette-style snippet rendering as pure string functions:
+// render_snippet / render_error print a numbered source line with a
+// caret underline and a label. The caller supplies the source text.
+// v1 limits: single-line spans only (no multi-line underline); no
+// colour/ANSI; no file reading; no severity or help-note lines yet.
+fn er_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    return "9";
+}
+
+fn er_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut v: int = n;
+    let mut neg: bool = false;
+    if v < 0 {
+        neg = true;
+        v = -v;
+    }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + er_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + substr(rev, i, 1);
+        i = i - 1;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn er_spaces(n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + " ";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn er_carets(n: int) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < n {
+        out = out + "^";
+        i = i + 1;
+    }
+    if out == "" {
+        return "^";
+    }
+    return out;
+}
+
+fn er_label_suffix(label: str) -> str {
+    if label == "" {
+        return "";
+    }
+    return " " + label;
+}
+
+fn er_line_text(source: str, line: int) -> str {
+    let lines: [str] = split(source, "\n");
+    if len(lines) == 0 {
+        return "";
+    }
+    let mut ln: int = line;
+    if ln < 1 {
+        ln = 1;
+    }
+    if ln > len(lines) {
+        ln = len(lines);
+    }
+    return lines[ln - 1];
+}
+
+fn render_snippet(source: str, line: int, col: int, span: int, label: str) -> str {
+    let lines: [str] = split(source, "\n");
+    if len(lines) == 0 {
+        return "";
+    }
+    let mut ln: int = line;
+    if ln < 1 {
+        ln = 1;
+    }
+    if ln > len(lines) {
+        ln = len(lines);
+    }
+    let text: str = lines[ln - 1];
+    let mut c: int = col;
+    if c < 1 {
+        c = 1;
+    }
+    if c > len(text) + 1 {
+        c = len(text) + 1;
+    }
+    let mut sp: int = span;
+    if sp < 1 {
+        sp = 1;
+    }
+    if c + sp - 1 > len(text) {
+        sp = len(text) - c + 1;
+    }
+    if sp < 1 {
+        sp = 1;
+    }
+    let num: str = er_int_str(ln);
+    let gutter: str = er_spaces(len(num));
+    let caret: str = gutter + " | " + er_spaces(c - 1) + er_carets(sp) + er_label_suffix(label);
+    return num + " | " + text + "\n" + caret;
+}
+
+fn render_error(code: str, message: str, file: str, source: str, line: int, col: int, span: int, label: str) -> str {
+    let lines: [str] = split(source, "\n");
+    let mut ln: int = line;
+    if ln < 1 {
+        ln = 1;
+    }
+    if len(lines) > 0 && ln > len(lines) {
+        ln = len(lines);
+    }
+    let mut c: int = col;
+    if c < 1 {
+        c = 1;
+    }
+    let head: str = code + ": " + message + "\n  --> " + file + ":" + er_int_str(ln) + ":" + er_int_str(c);
+    return head + "\n" + render_snippet(source, ln, c, span, label);
+}

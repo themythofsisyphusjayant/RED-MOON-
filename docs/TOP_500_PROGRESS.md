@@ -1578,3 +1578,61 @@ Arithmetic from the filesystem entry (HAVE 360, PARTIAL 12, GAP 128, to
 build 140): 1 GAP-to-HAVE (#47); 360 + 1 = 361; 128 - 1 = 127; 140 - 1
 = 139 (361 + 12 + 127 = 500). HAVE 361 of 500 = 72.2%.
 Next: #48 in catalog order.
+
+## Sprint Day 3 (23 Nov 2026) — error-cluster libraries + diagnostics rendering
+
+Ten pure-.fg libraries landed in one batch, all verified by real runs
+under both compilers (hosted qasida binary + Python forge.py): #51
+errlog.fg, #52 errtimeout.fg, #54 errrender.fg, #55 errmode.fg, #56
+errdoc.fg, #57 sentinel.fg, #58 errtranslate.fg, #59 errclass.fg, #341
+errjson.fg, #344 errexplain.fg. Each ships its demo (exact stdout,
+both compilers) and its own test file; coordinator re-ran all ten
+test files: errlog 36/36, sentinel 26/26, errtimeout 20/20, errclass
+20/20, errrender 26/26, errmode 24/24, errdoc 24/24, errtranslate
+20/20, errjson 28/28, errexplain 24/24 — 248 checks, ALL PASS, exit 0.
+ASan program-side (emit C + cc -fsanitize=address, leak detection
+on): 20/20, all ten demos under both compilers. Full suite 23 Nov:
+93/100 hosted + 93/100 Python; the 7 failures are the known
+pre-existing big32 failures, identical files to the 22 Nov suite
+(checked_casts, never, opaques, readonly, sizedarrays, sizedunif_fix,
+top500_batch1 — each fails on a big32 sub-case inside the file), no
+new failure and no flake this run (run_tests.py passed in both modes).
+fmt: demos idempotent; the libs keep their header comments, so like
+errcode.fg and errwrap.fg they fail `fmt --check` — `forge.py fmt`
+strips // comments, and the tests fmt-check the demo only, same as
+test_errcode_v1.py.
+
+Two things found while verifying, both worked around honestly in the
+libraries and recorded as compiler follow-ups, not hidden: (1) the
+errlog demo leaked 112 bytes in 7 allocations under HOSTED ASan only
+(Python clean). Isolated with minimal probes: the trigger is a
+GENERIC function call — the hosted generic-call assignment emits an
+extra unbalanced forge_arr_inc on the returned struct's array field
+(pe.c:1672-1675 vs the Python emit, which lacks the inc); the
+identical concrete call is clean. Fixed at the library level by
+de-genericizing log_on_err<T> into six concrete variants
+(log_on_err_int/str, _msg_int/str, _code_int/str) plus four
+never-call dummy Result constructors (the Python backend only emits
+a generic Result struct when a literal of that shape appears in the
+program — the same quirk #58's errtranslate.fg works around). The
+hosted generic-call lowering bug itself is a follow-up fix item.
+(2) The hosted C backend miscompiles indexing a [str] field of a
+generic Result (r.value[0] emitted as forge_int_get) — errmode.fg
+binds to a local first; also a follow-up. Other quirks worked around
+in the batch: the Python backend rejects enum-typed struct fields
+(errmode stores the mode as an int tag); [ErrCode] arrays cannot be
+struct fields or push targets in either compiler (errtranslate stores
+POSIX ints). #48 try/catch was NOT implemented: a design doc only
+(blackmoon-iso/trycatch-slice/DESIGN.md) — no setjmp/longjmp exists,
+no module exists at runtime, and the "module boundary" semantics need
+Jayant's pick (option B try_call recommended; questions in DESIGN.md
+§7). #50 inferred error sets was not taken (a pure-library version
+would be fake — it needs the checker).
+
+Counts after the flips: HAVE 371, PARTIAL 12, GAP 117, to build 129.
+Arithmetic from the #47 entry (HAVE 361, PARTIAL 12, GAP 127, to
+build 139): 10 GAP-to-HAVE (#51, #52, #54, #55, #56, #57, #58, #59,
+#341, #344); 361 + 10 = 371; 127 - 10 = 117; 139 - 10 = 129
+(371 + 12 + 117 = 500). HAVE 371 of 500 = 74.2%.
+Next: #48 in catalog order (blocked on Jayant's design pick — see the
+design doc); otherwise #60 / #62 in catalog order.

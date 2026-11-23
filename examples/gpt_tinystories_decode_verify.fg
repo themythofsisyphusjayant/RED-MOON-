@@ -1,0 +1,154 @@
+// TinyStories decode VERIFICATION probe (21 Nov 2026): small, crash-safe.
+// Loads the REAL checkpoint (read-only) and verifies the numpy replica:
+//   - per-window eval losses on windows 20000..20004 (each persisted at once
+//     via write_file, so a VM restart loses at most the in-flight window)
+//   - greedy 12 words + temp-0.8 12 words from the "once upon a time..."
+//     prompt (each generation persisted at once)
+// Total: 5 + 12 + 12 = 29 forwards. Never saves to the checkpoint path.
+import "gpt2.fg";
+import "nn.fg";
+
+fn build_tape(params: [float]) -> Ag {
+    let mut s: Ag = ag_input(tape_new(), params[0]);
+    let mut i: int = 1;
+    while i < len(params) {
+        s = ag_input(s.tape, params[i]);
+        i = i + 1;
+    }
+    return s;
+}
+
+fn load_vocab() -> [str] {
+    let text: str = read_file("data/tinystories_vocab.txt");
+    let lines: [str] = split(text, "\n");
+    let mut out: [str] = [];
+    for line in lines {
+        if len(line) > 0 {
+            push(out, line);
+        }
+    }
+    return out;
+}
+
+fn load_ids() -> [int] {
+    let text: str = read_file("data/tinystories_ids.txt");
+    let parts: [str] = split(text, " ");
+    let mut out: [int] = [];
+    for piece in parts {
+        if len(piece) > 0 {
+            push(out, parse_int(piece));
+        }
+    }
+    return out;
+}
+
+fn word_id(vocab: [str], word: str) -> int {
+    let mut i: int = 0;
+    while i < len(vocab) {
+        if vocab[i] == word {
+            return i;
+        }
+        i = i + 1;
+    }
+    return len(vocab) - 1;
+}
+
+fn window_loss(params: [float], ids: [int], start: int, vocab_len: int) -> float {
+    let mut x: [int] = [];
+    let mut y: [int] = [];
+    let mut i: int = 0;
+    while i < 8 {
+        push(x, ids[start + i]);
+        push(y, ids[start + i + 1]);
+        i = i + 1;
+    }
+    let tape: Ag = build_tape(params);
+    let logits: NodeVec = g2_logits(tape, x, 8, 16, 2, 32, vocab_len, 2);
+    let loss: Ag = g2_loss(logits.ag, logits.ids, y, 8, vocab_len);
+    return loss.tape.vals[loss.last];
+}
+
+fn gen_words(params: [float], ctx0: [int], vocab: [str], steps: int, sampled: bool) -> str {
+    let vlen: int = len(vocab);
+    let mut ctx: [int] = ctx0;
+    let mut gen: str = vocab[ctx0[0]];
+    let mut i: int = 1;
+    while i < 8 {
+        gen = gen + " " + vocab[ctx0[i]];
+        i = i + 1;
+    }
+    let mut seed: int = 123;
+    let mut step: int = 0;
+    while step < steps {
+        let tape: Ag = build_tape(params);
+        let logits: NodeVec = g2_logits(tape, ctx, 8, 16, 2, 32, vlen, 2);
+        let base: int = 7 * vlen;
+        let mut best: int = 0;
+        if sampled {
+            let mut last_logits: [float] = [];
+            let mut v: int = 0;
+            while v < vlen {
+                push(last_logits, logits.ag.tape.vals[base + v]);
+                v = v + 1;
+            }
+            seed = rand_next(seed);
+            best = sample_temperature(last_logits, 0.8, rand_float(seed));
+        } else {
+            let mut v: int = 1;
+            while v < vlen {
+                if logits.ag.tape.vals[base + v] > logits.ag.tape.vals[base + best] {
+                    best = v;
+                }
+                v = v + 1;
+            }
+        }
+        gen = gen + " " + vocab[best];
+        let mut next: [int] = [];
+        let mut j: int = 1;
+        while j < 8 {
+            push(next, ctx[j]);
+            j = j + 1;
+        }
+        push(next, best);
+        ctx = next;
+        step = step + 1;
+    }
+    return gen;
+}
+
+fn main() -> int {
+    let dir: str = "/home/hatch/workspace/gpt2eval/decode-20261121-61008/";
+    let vocab: [str] = load_vocab();
+    let ids: [int] = load_ids();
+    let vlen: int = len(vocab);
+    let params: [float] = checkpoint_load("/home/hatch/workspace/gpt2eval/tinystories_ckpt.txt");
+    println("ckpt len =", len(params), "vocab =", vlen);
+    let mut w: int = 0;
+    while w < 5 {
+        let l: float = window_loss(params, ids, 20000 + w, vlen);
+        println("window", 20000 + w, "loss =", l);
+        let scaled: float = l * 10000.0;
+        let li: int = scaled as int;
+        let ok: bool = write_file(dir + "probe_w" + int_to_str(20000 + w) + ".txt", int_to_str(li));
+        println("persisted w", 20000 + w, "=", ok);
+        w = w + 1;
+    }
+    let mut ctx: [int] = [];
+    push(ctx, word_id(vocab, "once"));
+    push(ctx, word_id(vocab, "upon"));
+    push(ctx, word_id(vocab, "a"));
+    push(ctx, word_id(vocab, "time"));
+    push(ctx, word_id(vocab, "there"));
+    push(ctx, word_id(vocab, "was"));
+    push(ctx, word_id(vocab, "a"));
+    push(ctx, word_id(vocab, "little"));
+    let greedy: str = gen_words(params, ctx, vocab, 12, false);
+    println("greedy =", greedy);
+    let ok1: bool = write_file(dir + "probe_greedy.txt", greedy);
+    println("persisted greedy =", ok1);
+    let sampled: str = gen_words(params, ctx, vocab, 12, true);
+    println("sampled =", sampled);
+    let ok2: bool = write_file(dir + "probe_sampled.txt", sampled);
+    println("persisted sampled =", ok2);
+    return 0;
+}

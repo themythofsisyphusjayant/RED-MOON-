@@ -1,0 +1,132 @@
+// Top-500 #58: error translation layers (hexagonal).
+// Import with: import "errtranslate.fg";
+//   let r = read_file_err("missing.txt");
+//   if !r.ok { println(translate_io(r.error)); }
+// A driver (filesystem, network, ...) reports a low-level ErrCode;
+// the domain layer speaks its own vocabulary ("storage: not found",
+// "network: timed out"). This module maps between the two: a
+// caller-built ErrMap table of (from, to) pairs with translate(),
+// a built-in default table translate_io() for the common ErrCode
+// values, and a Result mapper for Result<int, ErrCode>.
+// v1 limits, stated: translate_io() is one fixed domain vocabulary
+// (storage / network / auth / input / system) — there is no
+// per-module custom domain beyond a caller-built ErrMap table; a
+// code registered twice in a table keeps its FIRST mapping; an
+// unmapped code translates to "unknown domain error", never to a
+// fabricated domain string; the Result mapper covers only the
+// concrete shape Result<int, ErrCode> -> Result<int, str> (the
+// generic Result<T, E> has no map function; write one per T); the
+// table stores POSIX ints, not ErrCode values, because [ErrCode]
+// arrays cannot be struct fields or push targets in either compiler
+// (v1) — errmap_add converts with err_code() on the way in, so the
+// public API still speaks ErrCode; the Result mapper needs
+// err_result_int_dummy() in this file (never call it) so the Python
+// backend emits the Result<int, ErrCode> type — a parameter type
+// alone does not trigger emission there (hosted is unaffected).
+
+import "errcode.fg";
+
+struct ErrMap {
+    from: [int];
+    to: [str];
+}
+
+fn errmap_new() -> ErrMap {
+    let from: [int] = [];
+    let to: [str] = [];
+    return ErrMap { from: from, to: to };
+}
+
+fn errmap_add(table: ErrMap, from: ErrCode, to: str) -> ErrMap {
+    let mut out = table;
+    push(out.from, err_code(from));
+    push(out.to, to);
+    return out;
+}
+
+fn errmap_count(table: ErrMap) -> int {
+    return len(table.from);
+}
+
+fn translate(code: ErrCode, table: ErrMap) -> str {
+    let n = err_code(code);
+    let mut i = 0;
+    while i < len(table.from) {
+        if table.from[i] == n {
+            return table.to[i];
+        }
+        i = i + 1;
+    }
+    return "unknown domain error";
+}
+
+fn translate_io(code: ErrCode) -> str {
+    if code == Success {
+        return "ok";
+    }
+    if code == NotFound {
+        return "storage: not found";
+    }
+    if code == PermissionDenied {
+        return "auth: permission denied";
+    }
+    if code == AlreadyExists {
+        return "storage: already exists";
+    }
+    if code == IsADirectory {
+        return "storage: is a directory";
+    }
+    if code == NotADirectory {
+        return "storage: not a directory";
+    }
+    if code == InvalidArgument {
+        return "input: invalid argument";
+    }
+    if code == Interrupted {
+        return "system: interrupted";
+    }
+    if code == NoSpace {
+        return "storage: no space left";
+    }
+    if code == ReadOnlyFs {
+        return "storage: read-only file system";
+    }
+    if code == TooManyOpen {
+        return "system: too many open files";
+    }
+    if code == BrokenPipe {
+        return "network: broken pipe";
+    }
+    if code == ConnectionRefused {
+        return "network: connection refused";
+    }
+    if code == TimedOut {
+        return "network: timed out";
+    }
+    return "unknown domain error";
+}
+
+fn map_result_int(r: Result<int, ErrCode>) -> Result<int, str> {
+    if r.ok {
+        return Result { ok: true, value: r.value, error: "" };
+    }
+    return Result { ok: false, value: 0, error: translate_io(r.error) };
+}
+
+// The Python backend emits a generic struct's C definition only
+// when a literal of that exact shape appears in the program, and a
+// function parameter type alone does not count — so a program that
+// imports this file and only calls translate_io() would fail to
+// compile under --python (unknown type name 'Result_int_ErrCode').
+// This constructor exists only to force that definition to be
+// emitted; call it never. The hosted compiler does not need it.
+fn err_result_int_dummy() -> Result<int, ErrCode> {
+    return Result { ok: false, value: 0, error: Unknown };
+}
+
+fn map_result_int_with(r: Result<int, ErrCode>, table: ErrMap) -> Result<int, str> {
+    if r.ok {
+        return Result { ok: true, value: r.value, error: "" };
+    }
+    return Result { ok: false, value: 0, error: translate(r.error, table) };
+}

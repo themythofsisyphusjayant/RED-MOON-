@@ -1,0 +1,89 @@
+// Qasida — fail-fast vs collect mode (Top-500 #55).
+// Import with: import "errmode.fg";
+// A per-call choice of error strategy: collect_or_fail(mode, errors)
+// returns Err(first) under FailFast and Ok(all) under Collect, and
+// ErrCollector accumulates errors and resolves per mode. The mode is
+// per call / per collector, never global.
+// v1 limits: string errors only (like multierr); no per-error codes
+// or severities; the mode cannot change once a collector is created;
+// ErrCollector stores the mode as an int tag — the Python backend
+// rejects an enum-typed struct field.
+import "multierr.fg";
+import "result.fg";
+
+struct ErrCollector {
+    mode: int;
+    acc: MultiErr;
+}
+
+enum ErrMode { FailFast, Collect }
+
+fn em_mode_name(mode: ErrMode) -> str {
+    if mode == FailFast {
+        return "FailFast";
+    }
+    return "Collect";
+}
+
+fn collect_or_fail(mode: ErrMode, errors: [str]) -> Result<[str], str> {
+    if len(errors) == 0 {
+        return Result { ok: true, value: errors, error: "" };
+    }
+    if mode == FailFast {
+        return Result { ok: false, value: errors, error: errors[0] };
+    }
+    return Result { ok: true, value: errors, error: "" };
+}
+
+fn em_collect(mode: ErrMode, m: MultiErr) -> Result<[str], str> {
+    return collect_or_fail(mode, m.errs);
+}
+
+fn em_mode_tag(mode: ErrMode) -> int {
+    if mode == FailFast {
+        return 0;
+    }
+    return 1;
+}
+
+fn em_tag_mode(tag: int) -> ErrMode {
+    if tag == 0 {
+        return FailFast;
+    }
+    return Collect;
+}
+
+fn em_new(mode: ErrMode) -> ErrCollector {
+    return ErrCollector { mode: em_mode_tag(mode), acc: me_new() };
+}
+
+fn em_add(c: ErrCollector, err: str) -> ErrCollector {
+    if c.mode == 0 && me_has(c.acc) {
+        return c;
+    }
+    return ErrCollector { mode: c.mode, acc: me_add(c.acc, err) };
+}
+
+fn em_resolve(c: ErrCollector) -> Result<[str], str> {
+    return collect_or_fail(em_tag_mode(c.mode), c.acc.errs);
+}
+
+fn em_count(c: ErrCollector) -> int {
+    return me_count(c.acc);
+}
+
+fn em_has(c: ErrCollector) -> bool {
+    return me_has(c.acc);
+}
+
+fn em_first(c: ErrCollector) -> str {
+    return me_first(c.acc);
+}
+
+fn em_render(c: ErrCollector) -> str {
+    return me_render(c.acc);
+}
+
+fn em_mode(c: ErrCollector) -> ErrMode {
+    return em_tag_mode(c.mode);
+}

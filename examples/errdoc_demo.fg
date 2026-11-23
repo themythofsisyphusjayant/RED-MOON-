@@ -1,0 +1,20 @@
+import "errdoc.fg";
+
+fn main() {
+    let reg0 = errdoc_new();
+    let cfg: [str] = ["NotFound", "PermissionDenied"];
+    let reg1 = doc_register(reg0, "read_config", cfg);
+    let net: [str] = ["TimedOut", "ConnectionRefused"];
+    let reg = doc_register(reg1, "fetch_url", net);
+    println("registered:", doc_count(reg));
+    let errs = doc_errors_for(reg, "read_config");
+    println("first error:", errs[0]);
+    println("second error:", errs[1]);
+    println("has NotFound:", doc_has_error(reg, "read_config", "NotFound"));
+    println("has TimedOut:", doc_has_error(reg, "read_config", "TimedOut"));
+    let missing = doc_errors_for(reg, "missing_fn");
+    println("unknown errors:", len(missing));
+    println(doc_render(reg, "read_config"));
+    println(doc_render(reg, "fetch_url"));
+    println(doc_render(reg, "missing_fn"));
+}

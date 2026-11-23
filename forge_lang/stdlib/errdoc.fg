@@ -1,0 +1,87 @@
+// Top-500 #56: documented errors in signatures (Java checked, softened).
+// Import with: import "errdoc.fg";
+//   let reg = errdoc_new();
+//   let errs: [str] = ["NotFound", "PermissionDenied"];
+//   let reg = doc_register(reg, "read_config", errs);
+//   println(doc_render(reg, "read_config"));
+// The catalog wording is "Doc-level only, not enforced", and this
+// module is exactly that: a registry mapping a function name to the
+// list of errors its documentation says it may fail with. The
+// checker does NOT verify that a function fails only with its
+// documented errors, and nothing in this module can make it do so:
+// doc_register records a claim, doc_errors_for reads it back, and
+// doc_render prints it. If the code and the registry disagree, the
+// registry is wrong and nothing complains.
+// v1 limits, stated: the registry is caller-populated (there is no
+// way to read a function's documentation from the compiler); a name
+// registered twice keeps its FIRST entry (no update or remove API);
+// lookup is a linear scan, so a large registry is slow; the error
+// names are plain strings with no link to the ErrCode enum, so a
+// typo in a name is invisible to the checker.
+
+struct ErrDoc {
+    names: [str];
+    errors: [[str]];
+}
+
+fn errdoc_new() -> ErrDoc {
+    let names: [str] = [];
+    let errors: [[str]] = [];
+    return ErrDoc { names: names, errors: errors };
+}
+
+fn doc_register(reg: ErrDoc, name: str, errors: [str]) -> ErrDoc {
+    let mut out = reg;
+    push(out.names, name);
+    push(out.errors, errors);
+    return out;
+}
+
+fn doc_count(reg: ErrDoc) -> int {
+    return len(reg.names);
+}
+
+fn doc_errors_for(reg: ErrDoc, name: str) -> [str] {
+    let mut i = 0;
+    while i < len(reg.names) {
+        if reg.names[i] == name {
+            return reg.errors[i];
+        }
+        i = i + 1;
+    }
+    let empty: [str] = [];
+    return empty;
+}
+
+fn doc_has_error(reg: ErrDoc, name: str, err: str) -> bool {
+    let errs = doc_errors_for(reg, name);
+    let mut i = 0;
+    while i < len(errs) {
+        if errs[i] == err {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn doc_join(errs: [str]) -> str {
+    let mut out = "";
+    let mut i = 0;
+    while i < len(errs) {
+        if i > 0 {
+            out = out + ", ";
+        }
+        out = out + errs[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn doc_render(reg: ErrDoc, name: str) -> str {
+    let errs = doc_errors_for(reg, name);
+    if len(errs) == 0 {
+        return "fn " + name + " has no documented errors";
+    }
+    return "fn " + name + " may fail with: " + doc_join(errs);
+}

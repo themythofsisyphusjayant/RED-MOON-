@@ -1,0 +1,47 @@
+// Qasida — sentinel errors (Top-500 #57).
+// Import with: import "sentinel.fg";
+// Named EOF/timeout sentinels over errcode.fg's ErrCode, so callers
+// compare against a name instead of a raw int: sent_timeout() /
+// sent_not_found() accessors, is_timeout / is_not_found / is_sentinel
+// predicates, sentinel_name, and is_eof_read on Result<str, ErrCode>.
+// v1 limits: there is NO sent_eof() — ErrCode has no Eof variant (EOF
+// is not an errno and never passes through last_errno), and aliasing
+// Unknown would mislabel real errors; is_eof_read (ok + empty value)
+// cannot tell a zero-byte file from EOF; only Timeout and NotFound
+// have ErrCode sentinels so far.
+import "result.fg";
+import "errcode.fg";
+
+fn sent_timeout() -> ErrCode {
+    return TimedOut;
+}
+
+fn sent_not_found() -> ErrCode {
+    return NotFound;
+}
+
+fn is_timeout(e: ErrCode) -> bool {
+    return e == TimedOut;
+}
+
+fn is_not_found(e: ErrCode) -> bool {
+    return e == NotFound;
+}
+
+fn is_sentinel(e: ErrCode) -> bool {
+    return e == TimedOut || e == NotFound;
+}
+
+fn sentinel_name(e: ErrCode) -> str {
+    if e == TimedOut {
+        return "Timeout";
+    }
+    if e == NotFound {
+        return "NotFound";
+    }
+    return err_name(e);
+}
+
+fn is_eof_read(r: Result<str, ErrCode>) -> bool {
+    return r.ok && r.value == "";
+}

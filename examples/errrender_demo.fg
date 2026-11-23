@@ -1,0 +1,9 @@
+import "errrender.fg";
+
+fn main() -> int {
+    let src: str = "let x = foo(;\nlet y = 2;";
+    println(render_error("E001", "unexpected token", "src/main.fg", src, 1, 9, 3, "expected ')'"));
+    println(render_snippet(src, 2, 5, 1, ""));
+    println(render_snippet(src, 99, 99, 5, "clamped"));
+    return 0;
+}

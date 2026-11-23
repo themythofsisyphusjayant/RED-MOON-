@@ -1,0 +1,22 @@
+import "sentinel.fg";
+
+fn main() {
+    let nf: ErrCode = err_from_code(2);
+    let to: ErrCode = err_from_code(110);
+    let unk: ErrCode = err_from_code(999);
+    println("notfound?", is_not_found(nf));
+    println("timeout?", is_timeout(to));
+    println("sentinel?", is_sentinel(nf));
+    println("sentinel?", is_sentinel(unk));
+    println("name", sentinel_name(to));
+    println("name", sentinel_name(unk));
+    println("timeout is", sentinel_name(sent_timeout()));
+    println("notfound is", sentinel_name(sent_not_found()));
+    let empty: Result<str, ErrCode> = Result { ok: true, value: "", error: Success };
+    println("eof?", is_eof_read(empty));
+    let some: Result<str, ErrCode> = Result { ok: true, value: "x", error: Success };
+    println("eof?", is_eof_read(some));
+    let missing = read_file_err("no_such_file_xyz.txt");
+    println("eof?", is_eof_read(missing));
+    println("is not found", is_not_found(missing.error));
+}

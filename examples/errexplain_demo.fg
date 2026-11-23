@@ -1,0 +1,9 @@
+import "errexplain.fg";
+
+fn main() {
+    println(explain_error("E0002"));
+    println(explain_error("E9999"));
+    println(has_explanation("E0007"));
+    println(has_explanation("E9999"));
+    println(len(known_codes()));
+}

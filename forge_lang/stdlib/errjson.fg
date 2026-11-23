@@ -1,0 +1,121 @@
+// Qasida — structured error output (Top-500 #341).
+// Import with: import "errjson.fg";
+// Render a compiler-style error as a JSON object string for editors:
+// error_to_json / errors_to_json, with ej_escape for quotes,
+// backslashes, and newlines/tabs/returns.
+// v1 limits: rendering as a library only — it does NOT hook the
+// compiler's diagnostics (the checker emits plain text, no E-codes);
+// control characters other than \n, \t, \r pass through unescaped;
+// errors_to_json renders up to the shortest array when the parallel
+// arrays disagree in length.
+fn ej_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    return "9";
+}
+
+fn ej_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut v: int = n;
+    let mut neg: bool = false;
+    if n < 0 {
+        neg = true;
+        v = 0 - n;
+    }
+    let mut rev: str = "";
+    while v > 0 {
+        rev = rev + ej_digit(v % 10);
+        v = v / 10;
+    }
+    let mut out: str = "";
+    let mut i: int = len(rev) - 1;
+    while i >= 0 {
+        out = out + substr(rev, i, 1);
+        i = i - 1;
+    }
+    if neg {
+        out = "-" + out;
+    }
+    return out;
+}
+
+fn ej_escape(s: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(s) {
+        let c: str = substr(s, i, 1);
+        if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn error_to_json(code: str, message: str, file: str, line: int, col: int) -> str {
+    return "{\"code\":\"" + ej_escape(code) + "\",\"message\":\"" + ej_escape(message) + "\",\"file\":\"" + ej_escape(file) + "\",\"line\":" + ej_int_str(line) + ",\"col\":" + ej_int_str(col) + "}";
+}
+
+fn errors_to_json(codes: [str], messages: [str], files: [str], lines: [int], cols: [int]) -> str {
+    let mut n: int = len(codes);
+    if len(messages) < n {
+        n = len(messages);
+    }
+    if len(files) < n {
+        n = len(files);
+    }
+    if len(lines) < n {
+        n = len(lines);
+    }
+    if len(cols) < n {
+        n = len(cols);
+    }
+    let mut out: str = "{\"errors\":[";
+    let mut i: int = 0;
+    while i < n {
+        if i > 0 {
+            out = out + ",";
+        }
+        out = out + error_to_json(codes[i], messages[i], files[i], lines[i], cols[i]);
+        i = i + 1;
+    }
+    out = out + "]}";
+    return out;
+}

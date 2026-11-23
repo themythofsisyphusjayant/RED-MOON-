@@ -1,0 +1,80 @@
+// Qasida — long-form error explanations (Top-500 #344).
+// Import with: import "errexplain.fg";
+// E0308-style write-ups: explain_error(code) returns a what / why /
+// fix / compiler-says block for a fixed table of 10 codes, grounded
+// in the checker's and runtime's real messages.
+// v1 limits: the E-codes are library-side numbering — the compiler
+// today emits no E-codes and its messages are plain text; this table
+// labels the real messages, it does not hook the compiler. Fixed
+// table of 10 codes; no per-error suggestions beyond the write-up.
+fn explain_error(code: str) -> str {
+    if code == "E0001" {
+        return "E0001: type mismatch\nWhat went wrong: a value of one type was used where another type was expected.\nWhy: Qasida checks types before running; an int is not a str, and a Result<str, _> is not a plain str.\nFix: convert the value to the expected type, or change the declared type to match the value.\nCompiler says: cannot assign <type> to <type> variable '<name>'";
+    }
+    if code == "E0002" {
+        return "E0002: undefined name\nWhat went wrong: the checker could not find a variable, function, or struct with this name.\nWhy: Qasida has no implicit declarations; every name must be declared before use, and names are case-sensitive.\nFix: check the spelling, declare the name before using it, or add the missing import.\nCompiler says: undefined variable '<name>' / undefined function '<name>' / undefined struct '<name>'";
+    }
+    if code == "E0003" {
+        return "E0003: index out of bounds\nWhat went wrong: an array or string was indexed past its end (or below zero).\nWhy: indexes are checked at run time; a valid index is 0 through len - 1.\nFix: guard the index with a length check, or loop with i < len(a) instead of i <= len(a).\nRuntime says: array index out of bounds / string index out of bounds";
+    }
+    if code == "E0004" {
+        return "E0004: division by zero\nWhat went wrong: an int division or remainder had a zero divisor.\nWhy: integer division by zero is a fatal runtime error, not a value.\nFix: check the divisor before dividing, or return early when it is zero.\nRuntime says: division by zero";
+    }
+    if code == "E0005" {
+        return "E0005: file not found\nWhat went wrong: read_file or read_bytes could not open the path.\nWhy: the file does not exist at that path, or the program has no permission to read it.\nFix: check the path and the working directory, or use try_read_file and handle the Err instead of failing.\nRuntime says: cannot read file";
+    }
+    if code == "E0006" {
+        return "E0006: arity mismatch\nWhat went wrong: a function or builtin was called with the wrong number of arguments.\nWhy: Qasida checks call arity before running; there are no optional or default arguments.\nFix: pass exactly the declared number of arguments, in the declared order.\nCompiler says: <name> takes <n> argument(s), got <m>";
+    }
+    if code == "E0007" {
+        return "E0007: integer overflow\nWhat went wrong: an int add, subtract, multiply, negate, or divide overflowed 64 bits.\nWhy: int arithmetic is checked; the result must fit in a signed 64-bit integer.\nFix: check the operands before the operation, or split the work so no intermediate overflows.\nRuntime says: integer overflow";
+    }
+    if code == "E0008" {
+        return "E0008: immutable assignment\nWhat went wrong: code tried to assign to a binding that was not declared mutable.\nWhy: bindings are immutable by default; only let mut bindings (and function parameters copied to a local) can be reassigned.\nFix: declare the binding with let mut, or copy a function parameter to a let mut local first.\nCompiler says: cannot assign to immutable variable '<name>' (declare it with 'let mut')";
+    }
+    if code == "E0009" {
+        return "E0009: wrong return type\nWhat went wrong: a function returned a value of the wrong type, or returned nothing where a value was required.\nWhy: the declared return type is part of the function; every return must match it.\nFix: return a value of the declared type, or change the declared return type.\nCompiler says: function must return <type>";
+    }
+    if code == "E0010" {
+        return "E0010: unknown type\nWhat went wrong: a declared type name does not exist.\nWhy: struct, enum, newtype, and alias names must be declared before use, just like variables.\nFix: check the spelling, declare the type first, or import the file that declares it.\nCompiler says: unknown type '<name>' / unknown field type '<name>'";
+    }
+    return "No long-form explanation for code " + code + " yet.";
+}
+
+fn has_explanation(code: str) -> bool {
+    if code == "E0001" {
+        return true;
+    }
+    if code == "E0002" {
+        return true;
+    }
+    if code == "E0003" {
+        return true;
+    }
+    if code == "E0004" {
+        return true;
+    }
+    if code == "E0005" {
+        return true;
+    }
+    if code == "E0006" {
+        return true;
+    }
+    if code == "E0007" {
+        return true;
+    }
+    if code == "E0008" {
+        return true;
+    }
+    if code == "E0009" {
+        return true;
+    }
+    if code == "E0010" {
+        return true;
+    }
+    return false;
+}
+
+fn known_codes() -> [str] {
+    return ["E0001", "E0002", "E0003", "E0004", "E0005", "E0006", "E0007", "E0008", "E0009", "E0010"];
+}
