@@ -1553,6 +1553,199 @@ class Codegen:
         return (f"if ({var_code}.tag == {s}) "
                 f"forge_free_str({var_code}.payload._{s});")
 
+    # ---- Enums: ownership (leak follow-ups, 23 Nov 2026) ----
+    # An enum value is a plain struct copy, so it changes owners
+    # freely; a scope-end free for one owner needs a copy for
+    # every other owner, exactly like unions. These three helpers
+    # are the enum mirror of union_free_code / union_copy_stmt /
+    # is_fresh_union, extended to every payload type (a nested
+    # enum payload recurses).
+
+    def is_enum_type(self, t):
+        """True when t is a concrete enum type."""
+        return self.enum_concrete_info(t) is not None
+
+    def enum_free_code(self, var_code, enum_type):
+        """Statement freeing an enum value's owned payload, or ''.
+
+        Tag-switched per variant: a str payload is freed, an
+        array/struct/tuple/union/fn payload goes through
+        closure_free_code, a nested-enum payload recurses.
+        Empty when no variant has an owned payload (unit enums
+        and scalar-payload enums: zero behaviour change).
+        A zero-initialised enum (tag 0, NULL payload, as
+        _dummy_value produces) is safe: forge_free_str
+        null-checks, and every other free path tolerates NULL.
+        """
+        info = self.enum_concrete_info(enum_type)
+        if info is None:
+            return ""
+        _base, variant_info = info
+        parts = []
+        for variant, (tag, pt) in variant_info.items():
+            if pt is None:
+                continue
+            code = f"{var_code}.payload.payload_{variant}"
+            if self.enum_concrete_info(pt) is not None:
+                free = self.enum_free_code(code, pt)
+            else:
+                free = self.closure_free_code(code, pt)
+            if free:
+                parts.append(f"if ({var_code}.tag == {tag}) {free}")
+        return " ".join(parts)
+
+    def enum_copy_stmt(self, temp_code, enum_type):
+        """Statement deep-copying an enum temp's payload in place,
+        or ''.
+
+        The mirror of enum_free_code for duplication sites: a
+        shared enum value gains an independent payload before the
+        new owner takes it. Empty when no variant has an owned
+        payload.
+        """
+        info = self.enum_concrete_info(enum_type)
+        if info is None:
+            return ""
+        _base, variant_info = info
+        parts = []
+        for variant, (tag, pt) in variant_info.items():
+            if pt is None:
+                continue
+            code = f"{temp_code}.payload.payload_{variant}"
+            if self.enum_concrete_info(pt) is not None:
+                copy = self.enum_copy_stmt(code, pt)
+            else:
+                copy = self.closure_own_code(code, pt)
+            if copy:
+                parts.append(f"if ({temp_code}.tag == {tag}) {copy}")
+        return " ".join(parts)
+
+    def _enum_payload_own(self, code, arg, pt):
+        """C code for an enum-construction payload that the new enum
+        OWNS (leak follow-ups §2a): a shared argument must be copied
+        or refcounted here, because the enum's scope-end free frees
+        the payload. Mirrors the StructLit field branches, driven by
+        the CONCRETE payload type — the template type is a type
+        parameter for generic enums, so a template-only str check
+        missed generic str payloads entirely (generic_enums_demo
+        segfaulted freeing a string literal) and never owned
+        array/struct/tuple/fn/enum payloads at all (a shared array
+        payload double-freed under ASan).
+        """
+        from .fntypes import is_fn_type
+        from .tuples import is_tuple_type
+        if pt == "str" and not self.is_fresh_str(arg):
+            return f"forge_copy_str({code})"
+        if is_union_type(pt):
+            fvt = self.expr_type(arg)
+            if fvt in union_members(pt):
+                copy_str = fvt == "str" and not self.is_fresh_str(arg)
+                return self.union_wrap(code, fvt, pt, copy_str=copy_str)
+            if self.expr_type(arg) == pt and not self.is_fresh_union(arg):
+                self.assign_counter += 1
+                n = self.assign_counter
+                copy = self.union_copy_stmt(f"__forge_arg{n}", pt)
+                return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"{copy} __forge_arg{n};}})")
+            return code
+        if self.is_enum_type(pt):
+            if self.expr_type(arg) == pt and not self.is_fresh_enum(arg):
+                self.assign_counter += 1
+                n = self.assign_counter
+                copy = self.enum_copy_stmt(f"__forge_arg{n}", pt)
+                return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                        f"{copy} __forge_arg{n};}})")
+            return code
+        if self.is_array_type(pt) and not self.is_fresh_array(arg):
+            self.assign_counter += 1
+            n = self.assign_counter
+            return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                    f"forge_arr_inc(__forge_arg{n}.ref); __forge_arg{n};}})")
+        if self.is_struct_type(pt) and not self.is_fresh_struct(arg):
+            self.assign_counter += 1
+            n = self.assign_counter
+            own = self.struct_own_code(f"__forge_arg{n}", pt)
+            return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                    f"{own} __forge_arg{n};}})")
+        if is_tuple_type(pt) and not self.is_fresh_tuple(arg):
+            self.assign_counter += 1
+            n = self.assign_counter
+            own = self.tuple_own_code(f"__forge_arg{n}", pt)
+            return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                    f"{own} __forge_arg{n};}})")
+        if is_fn_type(pt) and not self.is_fresh_fn(arg):
+            self.assign_counter += 1
+            n = self.assign_counter
+            return (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                    f"forge_closure_inc(__forge_arg{n}.env); __forge_arg{n};}})")
+        return code
+
+    def is_fresh_enum(self, expr):
+        """True if the expression creates a fresh enum value (sole
+        owner, no copy needed at the receiving site)."""
+        if isinstance(expr, A.Call):
+            if expr.name in self._enum_variant_map():
+                return True
+            if expr.name == "move":
+                return True
+            rt = self.func_ret.get(expr.name)
+            if rt and self.enum_concrete_info(rt) is not None:
+                return True
+            return False
+        if isinstance(expr, A.MethodCall):
+            from .traits import mangle
+            struct_t = self.expr_type(expr.base)
+            mangled = mangle(struct_t, expr.method)
+            rt = self.func_ret.get(mangled)
+            return bool(rt and self.enum_concrete_info(rt) is not None)
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base.
+            # ([Enum] is checker-rejected, so this never fires
+            # in checked code.)
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage.
+            return self._is_fresh_storage(expr.base)
+        return False
+
+    def _is_fresh_base(self, expr):
+        """True if expr (an Index/FieldAccess base) is fresh, per
+        the base's own type predicate (leak follow-ups §3c). Each
+        call goes to a strictly smaller AST node, so the mutual
+        recursion with the is_fresh_* predicates terminates."""
+        from .tuples import is_tuple_type
+        from .fntypes import is_fn_type
+        t = self.expr_type(expr)
+        if self.is_array_type(t):
+            return self.is_fresh_array(expr)
+        if self.is_struct_type(t):
+            return self.is_fresh_struct(expr)
+        if is_tuple_type(t):
+            return self.is_fresh_tuple(expr)
+        if t == "str":
+            return self.is_fresh_str(expr)
+        if is_union_type(t):
+            return self.is_fresh_union(expr)
+        if self.is_enum_type(t):
+            return self.is_fresh_enum(expr)
+        if is_fn_type(t):
+            return self.is_fresh_fn(expr)
+        return False
+
+    def _is_fresh_storage(self, expr):
+        """True if expr's value is backed by temporary storage
+        that a FieldAccess must free (leak follow-ups §3c). Unlike
+        _is_fresh_base, an Index into an array is fresh only when
+        the ARRAY is fresh: the _get copy is owned, but the
+        element's storage lives in the array, so `arr[0].x` on a
+        shared array is a borrowed view (the special case) and
+        must NOT be treated as fresh — the receiving site would
+        free memory the array still owns."""
+        if isinstance(expr, A.Index):
+            return self._is_fresh_storage(expr.base)
+        return self._is_fresh_base(expr)
+
     # ---- Fixed-width integers (Top-500 #9, v1) ----
     # Checked arithmetic by widening: small widths compute in long
     # long / unsigned long long (where they cannot overflow), then
@@ -1685,6 +1878,13 @@ class Codegen:
         """A union value fresh from its producer (no copy needed)."""
         if isinstance(expr, (A.Call, A.MethodCall)):
             return True
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base.
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (for an Index base, the array must be fresh).
+            return self._is_fresh_storage(expr.base)
         return False
 
     # ---- Opaque values (Top-500 #8, v1) ----
@@ -1816,6 +2016,10 @@ class Codegen:
             self.emit(f"forge_free_str({name});")
         elif is_union_type(typ):
             code = self.union_free_code(name, typ)
+            if code:
+                self.emit(code)
+        elif self.is_enum_type(typ):
+            code = self.enum_free_code(name, typ)
             if code:
                 self.emit(code)
         elif is_opaque_type(typ):
@@ -1999,6 +2203,14 @@ class Codegen:
                 parts.append(f"forge_arr_inc({code}.ref);")
             elif self.is_struct_type(ftype):
                 parts.append(self.struct_own_code(code, ftype))
+            elif self.is_enum_type(ftype):
+                # An enum field gains an independent payload for
+                # this owner (leak follow-ups): without it the
+                # struct copy shares the payload and the source's
+                # scope-end free leaves it dangling.
+                ecopy = self.enum_copy_stmt(code, ftype)
+                if ecopy:
+                    parts.append(ecopy)
             elif is_fn_type(ftype):
                 # A fn-typed field gains an env reference for this
                 # owner (Top-500 #101).
@@ -2025,6 +2237,10 @@ class Codegen:
                 ucopy = self.union_copy_stmt(code, et)
                 if ucopy:
                     parts.append(ucopy)
+            elif self.is_enum_type(et):
+                ecopy = self.enum_copy_stmt(code, et)
+                if ecopy:
+                    parts.append(ecopy)
             elif is_opaque_type(et):
                 parts.append(f"{code} = forge_copy_{opaque_c_name(et)}({code});")
             elif self.is_array_type(et):
@@ -2056,6 +2272,10 @@ class Codegen:
                 ufree = self.union_free_code(code, et)
                 if ufree:
                     parts.append(ufree)
+            elif self.is_enum_type(et):
+                efree = self.enum_free_code(code, et)
+                if efree:
+                    parts.append(efree)
             elif is_opaque_type(et):
                 parts.append(f"forge_free_{opaque_c_name(et)}({code});")
             elif self.is_array_type(et):
@@ -2086,6 +2306,8 @@ class Codegen:
             return f"{var_code} = forge_copy_str({var_code});"
         if is_union_type(t):
             return self.union_copy_stmt(var_code, t) or ""
+        if self.is_enum_type(t):
+            return self.enum_copy_stmt(var_code, t) or ""
         if is_opaque_type(t):
             return f"{var_code} = forge_copy_{opaque_c_name(t)}({var_code});"
         if self.is_array_type(t):
@@ -2107,6 +2329,8 @@ class Codegen:
             return f"forge_free_str({var_code});"
         if is_union_type(t):
             return self.union_free_code(var_code, t) or ""
+        if self.is_enum_type(t):
+            return self.enum_free_code(var_code, t) or ""
         if is_opaque_type(t):
             return f"forge_free_{opaque_c_name(t)}({var_code});"
         if self.is_array_type(t):
@@ -2122,6 +2346,13 @@ class Codegen:
     def is_fresh_tuple(self, expr):
         if isinstance(expr, (A.TupleLit, A.Call, A.MethodCall)):
             return True
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base.
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (for an Index base, the array must be fresh).
+            return self._is_fresh_storage(expr.base)
         return False
 
     def struct_free_code(self, var_code, t, path=None):
@@ -2143,6 +2374,10 @@ class Codegen:
                 ufree = self.union_free_code(code, ftype)
                 if ufree:
                     parts.append(ufree)
+            elif self.is_enum_type(ftype):
+                efree = self.enum_free_code(code, ftype)
+                if efree:
+                    parts.append(efree)
             elif is_opaque_type(ftype):
                 # Unreachable in checked code (opaque struct fields
                 # are rejected), but free correctly if one appears.
@@ -2195,6 +2430,10 @@ class Codegen:
         if isinstance(expr, A.Index) and self.is_struct_type(self.expr_type(expr)):
             # A struct-array get already returns an owned copy.
             return True
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (for an Index base, the array must be fresh).
+            return self._is_fresh_storage(expr.base)
         return False
 
     def _dummy_value(self, t):
@@ -2233,6 +2472,13 @@ class Codegen:
             if self.func_ret.get(expr.name) and self.is_array_type(self.func_ret[expr.name]):
                 return True
             return False
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base.
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (for an Index base, the array must be fresh).
+            return self._is_fresh_storage(expr.base)
         return False
 
     def is_fresh_str(self, expr):
@@ -2263,6 +2509,14 @@ class Codegen:
             return True
         if isinstance(expr, A.Index) and self.expr_type(expr.base) == "str":
             return True
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base
+            # (e.g. words()[0]).
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (e.g. f().name).
+            return self._is_fresh_storage(expr.base)
         return False
 
     def _capture_code(self, name):
@@ -2314,6 +2568,13 @@ class Codegen:
                 return parts is not None and is_fn_type(parts[1])
             rt = self.func_ret.get(expr.name)
             return bool(rt and is_fn_type(rt))
+        if isinstance(expr, A.Index):
+            # The §3 wrap owns an element out of a fresh base.
+            return self._is_fresh_base(expr.base)
+        if isinstance(expr, A.FieldAccess):
+            # The §3 wrap owns a field out of a fresh base's
+            # storage (for an Index base, the array must be fresh).
+            return self._is_fresh_storage(expr.base)
         return False
 
     def collect_spawns(self, block, out):
@@ -2949,7 +3210,8 @@ class Codegen:
         for pn, pt in lam.params:
             self.local_types[pn] = pt
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
-                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt):
+                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt) \
+                    or self.is_enum_type(pt):
                 self.owned_stack[0][pn] = pt
         sig_params = ", ".join(["void *__forge_env"]
                                + [f"{c_type(pt)} {pn}" for pn, pt in lam.params])
@@ -2966,7 +3228,7 @@ class Codegen:
         for pn, pt in lam.params:
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                     or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt) \
-                    or is_fn_type(pt):
+                    or is_fn_type(pt) or self.is_enum_type(pt):
                 self.emit(f"int {self.moved_flag(pn)} = 0;")
         if lam.captures:
             self.emit(f"{fn_env_name(lid)} *__forge_e = ({fn_env_name(lid)} *)__forge_env;")
@@ -3116,13 +3378,15 @@ class Codegen:
         # Array parameters own a reference after refcount-on-call (see gen_expr Call).
         # Struct parameters own their fields after own-on-call (see gen_expr Call).
         # Union and opaque parameters own their value after copy-on-call (see gen_expr Call).
+        # Enum parameters own their payload after copy-on-call (see gen_expr Call, leak follow-ups).
         # Fn parameters own an env reference after inc-on-call (see gen_expr Call, Top-500 #101).
         # Tuple parameters own their elements after own-on-call (see gen_expr Call).
         from .fntypes import is_fn_type
         for pn, pt in fn.params:
             self.local_types[pn] = pt
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
-                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt):
+                    or is_union_type(pt) or is_opaque_type(pt) or is_fn_type(pt) \
+                    or self.is_enum_type(pt):
                 self.owned_stack[0][pn] = pt
         sig = ("long long qasida_main(void)"
                if fn.name == "main" and self.freestanding
@@ -3146,7 +3410,7 @@ class Codegen:
         for pn, pt in fn.params:
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                     or is_union_type(pt) or is_opaque_type(pt) or is_tuple_type(pt) \
-                    or is_fn_type(pt):
+                    or is_fn_type(pt) or self.is_enum_type(pt):
                 self.emit(f"int {self.moved_flag(pn)} = 0;")
         if fn.name == "main" and not self.freestanding:
             self.emit("forge_args_global.len = __forge_argc > 0 ? __forge_argc - 1 : 0;")
@@ -3542,6 +3806,21 @@ class Codegen:
                 self.emit(f"{c_type(t)} {stmt.name} = {expr};")
                 self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
                 return
+            elif self.is_enum_type(t):
+                # A fresh enum value is taken as-is; a shared enum
+                # value gains an independent payload before this
+                # owner takes it (leak follow-ups — without the
+                # copy, the scope-end free would double-free).
+                if self.expr_type(stmt.expr) == t and not self.is_fresh_enum(stmt.expr):
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    copy = self.enum_copy_stmt(f"__forge_let{n}", t)
+                    expr = (f"({{{c_type(t)} __forge_let{n} = {expr}; "
+                            f"{copy} __forge_let{n};}})")
+                self.owned_add(stmt.name, t)
+                self.emit(f"{c_type(t)} {stmt.name} = {expr};")
+                self.emit(f"int {self.moved_flag(stmt.name)} = 0;")
+                return
             elif self.is_array_type(t):
                 # Fresh arrays are taken as-is (ref=1); shared arrays
                 # gain a reference for this new owner.
@@ -3624,6 +3903,23 @@ class Codegen:
                         self.emit(copy)
                 if self.owned_contains(stmt.name):
                     self.emit_guarded(stmt.name, self.union_free_code(stmt.name, vt))
+                self.emit(f"{stmt.name} = {temp};")
+                self.owned_add(stmt.name, vt)
+                self.emit(f"{self.moved_flag(stmt.name)} = 0;")
+            elif vt is not None and self.is_enum_type(vt):
+                # Same temp-first shape as unions (leak
+                # follow-ups): copy a shared enum payload before
+                # freeing the old value, then take the temp.
+                self.assign_counter += 1
+                n = self.assign_counter
+                temp = f"__forge_assign{n}"
+                self.emit(f"{c_type(vt)} {temp} = {expr};")
+                if et == vt and not self.is_fresh_enum(stmt.expr):
+                    copy = self.enum_copy_stmt(temp, vt)
+                    if copy:
+                        self.emit(copy)
+                if self.owned_contains(stmt.name):
+                    self.emit_guarded(stmt.name, self.enum_free_code(stmt.name, vt))
                 self.emit(f"{stmt.name} = {temp};")
                 self.owned_add(stmt.name, vt)
                 self.emit(f"{self.moved_flag(stmt.name)} = 0;")
@@ -3744,6 +4040,21 @@ class Codegen:
                 ufree = self.union_free_code(target_code, ft)
                 if ufree and not field_moved:
                     self.emit(ufree)
+                self.emit(f"{target_code} = __forge_fa{n};")
+            elif self.is_enum_type(ft):
+                # Same temp-first shape as unions (leak
+                # follow-ups): copy a shared enum payload before
+                # freeing the old field value.
+                self.assign_counter += 1
+                n = self.assign_counter
+                self.emit(f"{c_type(ft)} __forge_fa{n} = {val};")
+                if self.expr_type(stmt.expr) == ft and not self.is_fresh_enum(stmt.expr):
+                    copy = self.enum_copy_stmt(f"__forge_fa{n}", ft)
+                    if copy:
+                        self.emit(copy)
+                efree = self.enum_free_code(target_code, ft)
+                if efree and not field_moved:
+                    self.emit(efree)
                 self.emit(f"{target_code} = __forge_fa{n};")
             elif self.is_array_type(ft):
                 self.assign_counter += 1
@@ -3927,6 +4238,10 @@ class Codegen:
                 self.emit("{")
                 self.indent += 1
                 self.emit(f"{c_type(et)} {temp} = {self.gen_expr(stmt.expr)};")
+                # A fresh scrutinee's temp is the sole owner of its
+                # payload: free it at match end (leak follow-ups).
+                # A shared scrutinee's temp is a borrowed view.
+                scrutinee_fresh = self.is_fresh_union(stmt.expr)
                 match_pre = dict(self._facts)
                 for idx, (pat, binding, body) in enumerate(stmt.arms):
                     if pat == "_":
@@ -3936,7 +4251,13 @@ class Codegen:
                             self.emit("} else {")
                         self.indent += 1
                         self._facts = dict(match_pre)
+                        # Arm frame: the arm body's lets are freed
+                        # at arm end, not at the enclosing scope
+                        # end (leak follow-ups).
+                        self.owned_stack.append({})
                         self.gen_arm_block(body, ret_type)
+                        self.emit_free_frame()
+                        self.owned_stack.pop()
                         self.indent -= 1
                         self.emit("}")
                     else:
@@ -3945,6 +4266,7 @@ class Codegen:
                         self.emit(f"{kw} ({temp}.tag == {midx}) {{")
                         self.indent += 1
                         self._facts = dict(match_pre)
+                        self.owned_stack.append({})
                         payload_code = f"{temp}.payload._{midx}"
                         if pat == "str":
                             payload_code = f"forge_copy_str({payload_code})"
@@ -3952,11 +4274,24 @@ class Codegen:
                         if pat == "str" or self.is_array_type(pat) or self.is_struct_type(pat) \
                                 or is_tuple_type(pat) or is_union_type(pat) or is_opaque_type(pat):
                             self.emit(f"int {self.moved_flag(binding)} = 0;")
+                        if pat == "str":
+                            # The str binding is an independent copy
+                            # (forge_copy_str above): register it so
+                            # the arm frame frees it at arm end.
+                            # Other payload bindings are borrowed
+                            # views of the temp — never registered.
+                            self.owned_add(binding, "str")
                         self._facts.pop(binding, None)
                         self.gen_arm_block(body, ret_type, shadow_names=(binding,))
+                        self.emit_free_frame()
+                        self.owned_stack.pop()
                         self.indent -= 1
                         if idx == len(stmt.arms) - 1:
                             self.emit("}")
+                if scrutinee_fresh:
+                    ufree = self.union_free_code(temp, et)
+                    if ufree:
+                        self.emit(ufree)
                 self.indent -= 1
                 self.emit("}")
                 self._facts = {}
@@ -4002,6 +4337,10 @@ class Codegen:
             self.emit("{")
             self.indent += 1
             self.emit(f"{c_type(et)} {temp} = {self.gen_expr(stmt.expr)};")
+            # A fresh scrutinee's temp is the sole owner of its
+            # payload: free it at match end (leak follow-ups).
+            # A shared scrutinee's temp is a borrowed view.
+            scrutinee_fresh = self.is_fresh_enum(stmt.expr)
             match_pre = dict(self._facts)
             for idx, (pat, binding, body) in enumerate(stmt.arms):
                 if pat == "_":
@@ -4011,7 +4350,10 @@ class Codegen:
                         self.emit("} else {")
                     self.indent += 1
                     self._facts = dict(match_pre)
+                    self.owned_stack.append({})
                     self.gen_arm_block(body, ret_type)
+                    self.emit_free_frame()
+                    self.owned_stack.pop()
                     self.indent -= 1
                     self.emit("}")
                 else:
@@ -4020,6 +4362,7 @@ class Codegen:
                     self.emit(f"{kw} ({temp}.tag == {tag}) {{")
                     self.indent += 1
                     self._facts = dict(match_pre)
+                    self.owned_stack.append({})
                     if binding is not None:
                         payload_code = f"{temp}.payload.payload_{pat}"
                         if pt == "str":
@@ -4028,14 +4371,27 @@ class Codegen:
                         if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                                 or is_tuple_type(pt) or is_union_type(pt) or is_opaque_type(pt):
                             self.emit(f"int {self.moved_flag(binding)} = 0;")
+                        if pt == "str":
+                            # The str binding is an independent copy
+                            # (forge_copy_str above): register it so
+                            # the arm frame frees it at arm end.
+                            # Other payload bindings are borrowed
+                            # views of the temp — never registered.
+                            self.owned_add(binding, "str")
                         # The payload binding shadows any outer variable
                         # of the same name for this arm: its value is
                         # unknown, so drop the outer variable's facts.
                         self._facts.pop(binding, None)
                     self.gen_arm_block(body, ret_type, shadow_names=(binding,) if binding is not None else ())
+                    self.emit_free_frame()
+                    self.owned_stack.pop()
                     self.indent -= 1
                     if idx == len(stmt.arms) - 1:
                         self.emit("}")
+            if scrutinee_fresh:
+                efree = self.enum_free_code(temp, et)
+                if efree:
+                    self.emit(efree)
             self.indent -= 1
             self.emit("}")
             self._facts = {}
@@ -4129,6 +4485,10 @@ class Codegen:
             for start_var, depth in reversed(self.scope_stack):
                 if depth == len(self.loop_frames):
                     self.emit(f"forge_join_scope({start_var});")
+            # Break lands on the statement after the loop —
+            # the post-loop for-frame free (§4a) — so it frees
+            # downto the body frame only (loop_frames[-1]).
+            # Freeing the for-frame here would double-free.
             self.emit_free_frames_downto(self.loop_frames[-1])
             self.emit("break;")
             return
@@ -4143,6 +4503,9 @@ class Codegen:
             for start_var, depth in reversed(self.scope_stack):
                 if depth == len(self.loop_frames):
                     self.emit(f"forge_join_scope({start_var});")
+            # Continue keeps the loop alive, so it frees downto
+            # the body frame only (loop_frames), NOT the for-frame
+            # — leak follow-ups §4b.
             self.emit_free_frames_downto(self.loop_frames[-1])
             self.emit("continue;")
             return
@@ -4232,7 +4595,17 @@ class Codegen:
                     self.emit(_g)
             self.emit("{")
             self.indent += 1
+            # For-frame (leak follow-ups §4): the iterable temp
+            # lives in its own owned frame, pushed BEFORE the temp
+            # declaration, so a break or a return inside the body
+            # frees it. A fresh iterable's temp is registered here
+            # (the sole hold); a shared iterable's temp is a
+            # borrowed view and the frame stays empty.
+            self.owned_stack.append({})
             self.emit(f"{c_type(arr_type)} {arr_tmp} = {self.gen_expr(stmt.expr)};")
+            if self.is_fresh_array(stmt.expr):
+                self.owned_add(arr_tmp, arr_type)
+                self.emit(f"int {self.moved_flag(arr_tmp)} = 0;")
             self.emit(f"for (long long {idx} = 0; {idx} < {arr_tmp}.len; {idx}++) {{")
             self.indent += 1
             # Borrowed element view (like str loop vars): the array
@@ -4251,12 +4624,13 @@ class Codegen:
             self.owned_stack.pop()
             self.indent -= 1
             self.emit("}")
-            if self.is_fresh_array(stmt.expr):
-                # Builtin-arg temp leak fix (§13): the iterable
-                # temp is the sole hold when fresh — free it after
-                # the loop. A shared iterable's temp is a borrowed
-                # view and is never freed.
-                self.emit(self.array_free_code(arr_tmp, arr_type))
+            # The post-loop array_free_code is REPLACED by the
+            # for-frame free: it runs on the normal path AND on
+            # break (a break lands right after the loop, on this
+            # free); a return frees the for-frame via
+            # emit_free_owned instead (it jumps past this free).
+            self.emit_free_frame()
+            self.owned_stack.pop()
             self.indent -= 1
             self.emit("}")
             self._facts = {}
@@ -4353,6 +4727,14 @@ class Codegen:
                     # Shared union return: gain an independent str
                     # payload before freeing owned locals.
                     copy = self.union_copy_stmt("__forge_ret", ret_type)
+                    if copy:
+                        self.emit(copy)
+                if self.is_enum_type(ret_type) and self.expr_type(stmt.expr) == ret_type \
+                        and not self.is_fresh_enum(stmt.expr):
+                    # Shared enum return: gain an independent
+                    # payload before freeing owned locals, so the
+                    # returned enum survives (leak follow-ups).
+                    copy = self.enum_copy_stmt("__forge_ret", ret_type)
                     if copy:
                         self.emit(copy)
                 self.emit_free_owned()
@@ -4750,6 +5132,15 @@ class Codegen:
                     copy = self.union_copy_stmt(f"__forge_arg{n}", pt)
                     code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
                             f"{copy} __forge_arg{n};}})")
+            elif self.is_enum_type(pt):
+                if self.expr_type(a) == pt and not self.is_fresh_enum(a):
+                    # Shared enum argument: callee gains an
+                    # independent payload (leak follow-ups).
+                    self.assign_counter += 1
+                    n = self.assign_counter
+                    copy = self.enum_copy_stmt(f"__forge_arg{n}", pt)
+                    code = (f"({{{c_type(pt)} __forge_arg{n} = {code}; "
+                            f"{copy} __forge_arg{n};}})")
             elif pt == "str" and not self.is_fresh_str(a):
                 code = f"forge_copy_str({code})"
             elif self.is_array_type(pt) and not self.is_fresh_array(a):
@@ -4784,6 +5175,112 @@ class Codegen:
             for a in expr.args[len(params):]:
                 arg_codes.append(self.gen_expr(a))
         return arg_codes
+
+    def _index_fresh_wrap(self, expr):
+        """Index into a fresh base (leak follow-ups §3a): bind the
+        base once, read the element, own it, free the base, yield
+        the owned result. The base code is evaluated exactly once.
+        Safe mode keeps the existing checking getters (forge_str_at
+        / forge_<S>_get / GET_FN) or the explicit check for direct
+        reads; fast mode reads directly, as today. The wrap comes
+        first in the Index branch, so fresh bases bypass the Fix-1
+        fast paths and the _check_cache (which would return a bare
+        read with no free)."""
+        from .fntypes import is_fn_type
+        from .tuples import is_tuple_type
+        base_t = self.expr_type(expr.base)
+        et = self.expr_type(expr)
+        base = self.gen_expr(expr.base)
+        idx = self.gen_expr(expr.index)
+        self.assign_counter += 1
+        n = self.assign_counter
+        if base_t == "str":
+            # Str index yields a fresh 1-char string (forge_str_at
+            # allocates): no own step; the receiving site frees it
+            # (is_fresh_str(Index on str) is True).
+            read = (f"forge_str_at(__forge_base{n}, __forge_idx{n})"
+                    if self._bounds_on
+                    else f"forge_str_at_fast(__forge_base{n}, __forge_idx{n})")
+            return (f"({{ char * __forge_base{n} = {base}; "
+                    f"long long __forge_idx{n} = {idx}; "
+                    f"char * __forge_elem{n} = {read}; "
+                    f"forge_free_str(__forge_base{n}); __forge_elem{n}; }})")
+        arr_t = c_type(base_t)
+        free_base = self.array_free_code(f"__forge_base{n}", base_t)
+        if self.is_struct_type(et):
+            # forge_<S>_get bounds-checks (safe) and deep-copies:
+            # the element is already owned, no own step.
+            read = (f"forge_{self.struct_type_name(et)}_get(__forge_base{n}, __forge_idx{n})"
+                    if self._bounds_on
+                    else f"forge_{self.struct_type_name(et)}_get_fast(__forge_base{n}, __forge_idx{n})")
+            return (f"({{ {arr_t} __forge_base{n} = {base}; "
+                    f"long long __forge_idx{n} = {idx}; "
+                    f"{c_type(et)} __forge_elem{n} = {read}; "
+                    f"{free_base} __forge_elem{n}; }})")
+        # Direct read (explicit bounds check in safe mode, as in
+        # the array/fn branches) + own step for owned element types.
+        if self._bounds_on:
+            check = (f"if (__forge_idx{n} < 0 || __forge_idx{n} >= __forge_base{n}.len) "
+                     f"forge_fail(\"array index out of bounds\"); ")
+        else:
+            check = ""
+        elem_c = c_type(et)
+        if et == "str":
+            # The element is BORROWED: forge_str_get returns
+            # a.data[i] directly (it does NOT copy — the design's
+            # first draft said otherwise, wrongly). Copy it so the
+            # wrap yields an owned value; the explicit bounds
+            # check above (safe mode) covers the direct read.
+            read = f"forge_copy_str(__forge_base{n}.data[__forge_idx{n}])"
+            own = ""
+        elif self.is_array_type(et):
+            read = f"__forge_base{n}.data[__forge_idx{n}]"
+            own = f"forge_arr_inc(__forge_elem{n}.ref); "
+        elif is_fn_type(et):
+            read = f"__forge_base{n}.data[__forge_idx{n}]"
+            own = f"forge_closure_inc(__forge_elem{n}.env); "
+        elif is_tuple_type(et) or is_union_type(et) or self.is_enum_type(et) or is_opaque_type(et):
+            read = f"__forge_base{n}.data[__forge_idx{n}]"
+            own = self.closure_own_code(f"__forge_elem{n}", et)
+            if own:
+                own = own + " "
+        elif self._bounds_on:
+            read = f"{GET_FN[et]}(__forge_base{n}, __forge_idx{n})"
+            own = ""
+        else:
+            read = f"__forge_base{n}.data[__forge_idx{n}]"
+            own = ""
+        return (f"({{ {arr_t} __forge_base{n} = {base}; "
+                f"long long __forge_idx{n} = {idx}; {check}"
+                f"{elem_c} __forge_elem{n} = {read}; {own}{free_base} __forge_elem{n}; }})")
+
+    def _fieldaccess_fresh_wrap(self, expr):
+        """FieldAccess on a fresh base (leak follow-ups §3a): bind
+        the base once, read the field, own it (closure_own_code),
+        free the base, yield the owned result. Comes first in the
+        FieldAccess branch, before the arr[i].field special case
+        (which would inline a fresh array and leak it). Chained
+        f()[0].x composes: the inner Index wrap frees the array,
+        this wrap frees the (owned) struct."""
+        base_t = self.expr_type(expr.base)
+        ft = self.expr_type(expr)
+        base = self.gen_expr(expr.base)
+        self.assign_counter += 1
+        n = self.assign_counter
+        base_c = c_type(base_t)
+        field_c = c_type(ft)
+        own = self.closure_own_code(f"__forge_field{n}", ft)
+        if own:
+            own = own + " "
+        if self.is_struct_type(base_t):
+            free_base = self.struct_free_code(f"__forge_base{n}", base_t)
+        elif is_tuple_type(base_t):
+            free_base = self.tuple_free_code(f"__forge_base{n}", base_t)
+        else:
+            free_base = ""
+        return (f"({{ {base_c} __forge_base{n} = {base}; "
+                f"{field_c} __forge_field{n} = __forge_base{n}.{expr.field}; "
+                f"{own}{free_base} __forge_field{n}; }})")
 
     def gen_expr(self, expr):
         if self.freestanding:
@@ -4891,6 +5388,15 @@ class Codegen:
                         copy = self.union_copy_stmt(f"__forge_arg{n}", et)
                         code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
                                 f"{copy} __forge_arg{n};}})")
+                elif self.is_enum_type(et):
+                    if self.expr_type(eexpr) == et and not self.is_fresh_enum(eexpr):
+                        # Shared enum stored in a tuple: tuple gains
+                        # an independent payload (leak follow-ups).
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        copy = self.enum_copy_stmt(f"__forge_arg{n}", et)
+                        code = (f"({{{c_type(et)} __forge_arg{n} = {code}; "
+                                f"{copy} __forge_arg{n};}})")
                 elif is_opaque_type(et):
                     code = self.opaque_convert(code, self.expr_type(eexpr),
                                                et, eexpr)
@@ -4946,6 +5452,16 @@ class Codegen:
                         copy = self.union_copy_stmt(f"__forge_arg{n}", ft)
                         code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
                                 f"{copy} __forge_arg{n};}})")
+                elif ft and self.is_enum_type(ft):
+                    if self.expr_type(fexpr) == ft and not self.is_fresh_enum(fexpr):
+                        # Shared enum stored in a struct: struct
+                        # gains an independent payload (leak
+                        # follow-ups).
+                        self.assign_counter += 1
+                        n = self.assign_counter
+                        copy = self.enum_copy_stmt(f"__forge_arg{n}", ft)
+                        code = (f"({{{c_type(ft)} __forge_arg{n} = {code}; "
+                                f"{copy} __forge_arg{n};}})")
                 elif ft and self.is_array_type(ft) and not self.is_fresh_array(fexpr):
                     # Shared array stored in a struct: struct gains a reference.
                     self.assign_counter += 1
@@ -4979,6 +5495,10 @@ class Codegen:
             base = self.gen_expr(expr.base)
             return f"({base})._{expr.index}"
         if isinstance(expr, A.FieldAccess):
+            if self._is_fresh_storage(expr.base):
+                # Fresh base storage: the base would leak — wrap
+                # it (§3a), before the arr[i].field special case.
+                return self._fieldaccess_fresh_wrap(expr)
             if (isinstance(expr.base, A.Index)
                     and self.is_array_type(self.expr_type(expr.base.base))
                     and self.is_struct_type(self.expr_type(expr.base))):
@@ -5043,6 +5563,11 @@ class Codegen:
             body += f"{tmp}"
             return "({" + " ".join(parts) + "; " + body + "; })"
         if isinstance(expr, A.Index):
+            if self._is_fresh_base(expr.base):
+                # Fresh base: the base would leak — wrap it (§3a),
+                # before the str branch, the Fix-1 fast paths and
+                # the _check_cache.
+                return self._index_fresh_wrap(expr)
             idx_pure = (not self._subtree_has_call(expr.base)
                         and not self._subtree_has_call(expr.index))
             if self.expr_type(expr.base) == "str":
@@ -5129,6 +5654,14 @@ class Codegen:
                     return f"({base}).data[{idx}]"
                 if idx_pure:
                     self._check_cache[key] = True
+                if et not in GET_FN:
+                    # Mirror the hosted Index handler
+                    # (selfhost_codegen.fg, "unsupported index element
+                    # type"): tuple/enum/union/opaque array elements
+                    # have no checked getter — fail cleanly instead
+                    # of a KeyError. Found by the own test's q2/q5
+                    # reject cases (23 Nov 2026).
+                    raise ForgeError(f"unsupported index element type {et}", expr.line, expr.col)
                 return f"{GET_FN[et]}({base}, {idx})"
             return f"({base}).data[{idx}]"
         if isinstance(expr, A.Cast):
@@ -6068,8 +6601,12 @@ class Codegen:
                 if not expr.args:
                     return f"({cname}){{ .tag = {tag} }}"
                 arg_code = self.gen_expr(expr.args[0])
-                if payload_type == "str" and not self.is_fresh_str(expr.args[0]):
-                    arg_code = f"forge_copy_str({arg_code})"
+                # The constructed enum OWNS its payload (§2a): use
+                # the CONCRETE payload type from variant_info — the
+                # template type is a type parameter for generic enums.
+                _vtag, cpt = variant_info.get(expr.name, (None, payload_type))
+                if cpt is not None:
+                    arg_code = self._enum_payload_own(arg_code, expr.args[0], cpt)
                 return f"({cname}){{ .tag = {tag}, .payload.payload_{expr.name} = {arg_code} }}"
             # User-function call: string arguments are copied, so the
             # callee owns its parameter and can free it on return.

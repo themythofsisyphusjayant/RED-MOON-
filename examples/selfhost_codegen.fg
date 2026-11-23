@@ -1728,6 +1728,14 @@ fn cg_is_fresh_str(g: HCodegen, e: Node) -> bool {
     if e.kind == 36 && cg_expr_type(g, e.kids[0]) == "str" {
         return true;
     }
+    if e.kind == 36 {
+        // The §3 wrap owns an element out of a fresh base.
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
     return false;
 }
 
@@ -1757,6 +1765,14 @@ fn cg_is_fresh_array(g: HCodegen, e: Node) -> bool {
             return true;
         }
         return false;
+    }
+    if e.kind == 36 {
+        // The §3 wrap owns an element out of a fresh base.
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
     }
     return false;
 }
@@ -1805,6 +1821,10 @@ fn cg_is_fresh_struct(g: HCodegen, e: Node) -> bool {
     if e.kind == 36 && cg_is_struct_type(g, cg_expr_type(g, e)) {
         return true;
     }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
     return false;
 }
 
@@ -1812,12 +1832,28 @@ fn cg_is_fresh_tuple(g: HCodegen, e: Node) -> bool {
     if e.kind == 30 || e.kind == 35 || e.kind == 33 {
         return true;
     }
+    if e.kind == 36 {
+        // The §3 wrap owns an element out of a fresh base.
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
     return false;
 }
 
 fn cg_is_fresh_union(g: HCodegen, e: Node) -> bool {
     if e.kind == 35 || e.kind == 33 {
         return true;
+    }
+    if e.kind == 36 {
+        // The §3 wrap owns an element out of a fresh base.
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
     }
     return false;
 }
@@ -1910,7 +1946,104 @@ fn cg_is_fresh_fn(g: HCodegen, e: Node) -> bool {
         }
         return false;
     }
+    if e.kind == 36 {
+        // The §3 wrap owns an element out of a fresh base.
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        // The §3 wrap owns a field out of a fresh base's storage.
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
     return false;
+}
+
+// is_fresh_enum (codegen.py:1623): true when the expression
+// creates a fresh enum value (sole owner, no copy needed at the
+// receiving site). No IndirectCall case, matching Python: a
+// closure returning an enum is treated as shared there.
+fn cg_is_fresh_enum(g: HCodegen, e: Node) -> bool {
+    if e.kind == 35 {
+        let v: [str] = cg_variant_lookup(g, e.name);
+        if v[0] == "1" {
+            return true;
+        }
+        if e.name == "move" {
+            return true;
+        }
+        let found: [str] = cg_fn_lookup(g, e.name);
+        if found[0] == "1" && cg_template_lookup(g, e.name)[0] == "0" {
+            // Concrete function: decide from its declared return.
+            if cg_is_enum_type(g, found[1]) {
+                return true;
+            }
+            return false;
+        }
+        // Generic instantiation: the infer map holds the
+        // (instantiated) return type of the call itself.
+        if cg_is_enum_type(g, cg_expr_type(g, e)) {
+            return true;
+        }
+        return false;
+    }
+    if e.kind == 33 {
+        let rt: str = cg_expr_type(g, e.kids[0]);
+        let mangled: str = infer_mangle_method(rt, e.name);
+        let found: [str] = cg_fn_lookup(g, mangled);
+        if found[0] == "1" && cg_is_enum_type(g, found[1]) {
+            return true;
+        }
+        return false;
+    }
+    if e.kind == 36 {
+        return cg_is_fresh_base(g, e.kids[0]);
+    }
+    if e.kind == 32 {
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
+    return false;
+}
+
+// _is_fresh_base (codegen.py:1652): true when expr (an
+// Index/FieldAccess base) is fresh, per the base's own type
+// predicate. Each call goes to a strictly smaller AST node, so
+// the mutual recursion with the is_fresh_* predicates terminates.
+fn cg_is_fresh_base(g: HCodegen, e: Node) -> bool {
+    let t: str = cg_expr_type(g, e);
+    if cg_is_array_type(g, t) {
+        return cg_is_fresh_array(g, e);
+    }
+    if cg_is_struct_type(g, t) {
+        return cg_is_fresh_struct(g, e);
+    }
+    if infer_is_tuple_type(t) {
+        return cg_is_fresh_tuple(g, e);
+    }
+    if t == "str" {
+        return cg_is_fresh_str(g, e);
+    }
+    if is_union_type(t) {
+        return cg_is_fresh_union(g, e);
+    }
+    if cg_is_enum_type(g, t) {
+        return cg_is_fresh_enum(g, e);
+    }
+    if is_fn_type(t) {
+        return cg_is_fresh_fn(g, e);
+    }
+    return false;
+}
+
+// _is_fresh_storage (codegen.py:1676): true when expr's value is
+// backed by temporary storage that a FieldAccess must free. An
+// Index into an array is fresh only when the ARRAY is fresh: the
+// _get copy is owned, but the element's storage lives in the
+// array, so `arr[0].x` on a shared array is a borrowed view (the
+// special case) and must NOT be treated as fresh.
+fn cg_is_fresh_storage(g: HCodegen, e: Node) -> bool {
+    if e.kind == 36 {
+        return cg_is_fresh_storage(g, e.kids[0]);
+    }
+    return cg_is_fresh_base(g, e);
 }
 
 // _is_simple_lvalue (codegen.py:4248): a Var, or a FieldAccess /
@@ -2122,6 +2255,9 @@ fn cg_closure_own_code(g: HCodegen, var_code: str, t: str) -> str {
     if is_union_type(t) {
         return cg_union_copy_stmt(var_code, t);
     }
+    if cg_is_enum_type(g, t) {
+        return cg_enum_copy_stmt(g, var_code, t);
+    }
     if cg_is_opaque_type(t) {
         return var_code + " = forge_copy_" + cg_opaque_c_name(t) + "(" + var_code + ");";
     }
@@ -2149,6 +2285,9 @@ fn cg_closure_free_code(g0: HCodegen, var_code: str, t: str) -> CGExpr {
     }
     if is_union_type(t) {
         return CGExpr { g: g, code: cg_union_free_code(var_code, t) };
+    }
+    if cg_is_enum_type(g, t) {
+        return cg_enum_free_code(g, var_code, t);
     }
     if cg_is_opaque_type(t) {
         return CGExpr { g: g, code: "forge_free_" + cg_opaque_c_name(t) + "(" + var_code + ");" };
@@ -2853,6 +2992,81 @@ fn cg_union_free_code(var_code: str, ut: str) -> str {
     return "if (" + var_code + ".tag == " + itoa(s) + ") forge_free_str(" + var_code + ".payload._" + itoa(s) + ");";
 }
 
+// is_enum_type (codegen.py:1564): true when t is a concrete enum
+// type (cg_enum_concrete_variants returns "" otherwise).
+fn cg_is_enum_type(g: HCodegen, t: str) -> bool {
+    return cg_enum_concrete_variants(g, t) != "";
+}
+
+// enum_free_code (codegen.py:1568): statement freeing an enum
+// value's owned payload, or "" when no variant has one.
+// Tag-switched per variant in declaration order; a nested-enum
+// payload recurses, every other owned payload goes through
+// cg_closure_free_code. A zero-initialised enum (tag 0, NULL
+// payload) is safe: forge_free_str null-checks, and every other
+// free path tolerates NULL.
+fn cg_enum_free_code(g0: HCodegen, var_code: str, ut: str) -> CGExpr {
+    let mut g: HCodegen = g0;
+    let variants: str = cg_enum_concrete_variants(g, ut);
+    if variants == "" {
+        return CGExpr { g: g, code: "" };
+    }
+    let parts: [str] = split(variants, "~");
+    let mut pieces: [str] = [];
+    let mut i: int = 0;
+    while i < len(parts) {
+        let kv: [str] = split(parts[i], ":");
+        if len(kv) >= 2 && kv[1] != "" {
+            let code: str = var_code + ".payload.payload_" + kv[0];
+            let mut free: str = "";
+            if cg_is_enum_type(g, kv[1]) {
+                let ef: CGExpr = cg_enum_free_code(g, code, kv[1]);
+                g = ef.g;
+                free = ef.code;
+            } else {
+                let fc: CGExpr = cg_closure_free_code(g, code, kv[1]);
+                g = fc.g;
+                free = fc.code;
+            }
+            if free != "" {
+                push(pieces, "if (" + var_code + ".tag == " + itoa(i) + ") " + free);
+            }
+        }
+        i = i + 1;
+    }
+    return CGExpr { g: g, code: join(pieces, " ") };
+}
+
+// enum_copy_stmt (codegen.py:1597): statement deep-copying an
+// enum temp's payload in place, or "" when no variant has one.
+// The mirror of cg_enum_free_code for duplication sites.
+fn cg_enum_copy_stmt(g: HCodegen, temp_code: str, ut: str) -> str {
+    let variants: str = cg_enum_concrete_variants(g, ut);
+    if variants == "" {
+        return "";
+    }
+    let parts: [str] = split(variants, "~");
+    let mut pieces: [str] = [];
+    let mut i: int = 0;
+    while i < len(parts) {
+        let kv: [str] = split(parts[i], ":");
+        if len(kv) >= 2 && kv[1] != "" {
+            let code: str = temp_code + ".payload.payload_" + kv[0];
+            let mut copy: str = "";
+            if cg_is_enum_type(g, kv[1]) {
+                copy = cg_enum_copy_stmt(g, code, kv[1]);
+            } else {
+                copy = cg_closure_own_code(g, code, kv[1]);
+            }
+            if copy != "" {
+                push(pieces, "if (" + temp_code + ".tag == " + itoa(i) + ") " + copy);
+            }
+        }
+        i = i + 1;
+    }
+    return join(pieces, " ");
+}
+
 fn cg_opaque_c_name(t: str) -> str {
     return "Opaque_" + cg_opaque_trait(t);
 }
@@ -2926,6 +3140,13 @@ fn cg_struct_own_code(g: HCodegen, var_code: str, t: str) -> str {
                 push(pieces, "forge_arr_inc(" + code + ".ref);");
             } else if cg_is_struct_type(g, ftype) {
                 push(pieces, cg_struct_own_code(g, code, ftype));
+            } else if cg_is_enum_type(g, ftype) {
+                // An enum field gains an independent payload for
+                // this owner (leak follow-ups).
+                let ecopy: str = cg_enum_copy_stmt(g, code, ftype);
+                if ecopy != "" {
+                    push(pieces, ecopy);
+                }
             } else if is_fn_type(ftype) {
                 // A fn-typed field gains an env reference for this
                 // owner (Top-500 #101).
@@ -2951,6 +3172,11 @@ fn cg_tuple_own_code(g: HCodegen, var_code: str, t: str) -> str {
             let ucopy: str = cg_union_copy_stmt(code, et);
             if ucopy != "" {
                 push(pieces, ucopy);
+            }
+        } else if cg_is_enum_type(g, et) {
+            let ecopy: str = cg_enum_copy_stmt(g, code, et);
+            if ecopy != "" {
+                push(pieces, ecopy);
             }
         } else if cg_is_opaque_type(et) {
             push(pieces, code + " = forge_copy_" + cg_opaque_c_name(et) + "(" + code + ");");
@@ -2995,6 +3221,12 @@ fn cg_struct_free_code(g0: HCodegen, var_code: str, t: str, path: str) -> CGExpr
                     if ufree != "" {
                         push(pieces, ufree);
                     }
+                } else if cg_is_enum_type(g, ftype) {
+                    let efree: CGExpr = cg_enum_free_code(g, code, ftype);
+                    g = efree.g;
+                    if efree.code != "" {
+                        push(pieces, efree.code);
+                    }
                 } else if cg_is_opaque_type(ftype) {
                     push(pieces, "forge_free_" + cg_opaque_c_name(ftype) + "(" + code + ");");
                 } else if cg_is_array_type(g, ftype) {
@@ -3036,6 +3268,12 @@ fn cg_tuple_free_code(g0: HCodegen, var_code: str, t: str) -> CGExpr {
             let ufree: str = cg_union_free_code(code, et);
             if ufree != "" {
                 push(pieces, ufree);
+            }
+        } else if cg_is_enum_type(g, et) {
+            let efree: CGExpr = cg_enum_free_code(g, code, et);
+            g = efree.g;
+            if efree.code != "" {
+                push(pieces, efree.code);
             }
         } else if cg_is_opaque_type(et) {
             push(pieces, "forge_free_" + cg_opaque_c_name(et) + "(" + code + ");");
@@ -3470,6 +3708,15 @@ fn cg_convert_owned(g0: HCodegen, code0: str, child_t: str, et: str, child: Node
             g.assign_counter = g.assign_counter + 1;
             let n: int = g.assign_counter;
             let copy: str = cg_union_copy_stmt("__forge_arg" + itoa(n), et);
+            code = "({" + cg_c_type(g, et) + " __forge_arg" + itoa(n) + " = " + code + "; " + copy + " __forge_arg" + itoa(n) + ";})";
+        }
+    } else if cg_is_enum_type(g, et) {
+        // Shared enum argument / element / field: the receiver
+        // gains an independent payload (leak follow-ups).
+        if cg_expr_type(g, child) == et && !cg_is_fresh_enum(g, child) {
+            g.assign_counter = g.assign_counter + 1;
+            let n: int = g.assign_counter;
+            let copy: str = cg_enum_copy_stmt(g, "__forge_arg" + itoa(n), et);
             code = "({" + cg_c_type(g, et) + " __forge_arg" + itoa(n) + " = " + code + "; " + copy + " __forge_arg" + itoa(n) + ";})";
         }
     } else if cg_is_opaque_type(et) {
@@ -4281,6 +4528,12 @@ fn cg_emit_free_one(g0: HCodegen, name: str, typ: str) -> HCodegen {
         if idx >= 0 {
             g = cg_emit(g, "if (" + name + ".tag == " + itoa(idx) + ") forge_free_str(" + name + ".payload._" + itoa(idx) + ");");
         }
+    } else if cg_is_enum_type(g, typ) {
+        let ef: CGExpr = cg_enum_free_code(g, name, typ);
+        g = ef.g;
+        if ef.code != "" {
+            g = cg_emit(g, ef.code);
+        }
     } else if cg_is_opaque_type(typ) {
         g = cg_emit(g, "forge_free_Opaque_" + cg_opaque_trait(typ) + "(" + name + ");");
     } else if cg_is_array_type(g, typ) {
@@ -4738,6 +4991,130 @@ fn cg_fix1_idx_wrap(e: Node, fast: str, no_bounds_checks: bool) -> str {
     return fast;
 }
 
+// _index_fresh_wrap (codegen.py:5119): index into a fresh base —
+// bind the base once, read the element, own it, free the base,
+// yield the owned result. The base code is evaluated exactly
+// once. Safe mode keeps the existing checking getters
+// (forge_str_at / forge_<S>_get / GET_FN) or the explicit check
+// for direct reads; fast mode reads directly, as today. The wrap
+// comes first in the Index branch, so fresh bases bypass the
+// Fix-1 fast paths and the check cache (which would return a
+// bare read with no free).
+fn cg_index_fresh_wrap(g0: HCodegen, e: Node) -> CGExpr {
+    let mut g: HCodegen = g0;
+    let base_t: str = cg_expr_type(g, e.kids[0]);
+    let et: str = cg_expr_type(g, e);
+    let bout: CGExpr = cg_gen_expr(g, e.kids[0]);
+    g = bout.g;
+    let iout: CGExpr = cg_gen_expr(g, e.kids[1]);
+    g = iout.g;
+    g.assign_counter = g.assign_counter + 1;
+    let n: int = g.assign_counter;
+    if base_t == "str" {
+        // Str index yields a fresh 1-char string (forge_str_at
+        // allocates): no own step; the receiving site frees it
+        // (is_fresh_str(Index on str) is True).
+        let mut read: str = "";
+        if g.no_bounds_checks {
+            read = "forge_str_at_fast(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        } else {
+            read = "forge_str_at(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        }
+        return CGExpr { g: g, code: "({ char * __forge_base" + itoa(n) + " = " + bout.code + "; long long __forge_idx" + itoa(n) + " = " + iout.code + "; char * __forge_elem" + itoa(n) + " = " + read + "; forge_free_str(__forge_base" + itoa(n) + "); __forge_elem" + itoa(n) + "; })" };
+    }
+    let arr_t: str = cg_c_type(g, base_t);
+    let fb: CGExpr = cg_array_free_code(g, "__forge_base" + itoa(n), base_t);
+    g = fb.g;
+    let free_base: str = fb.code;
+    if cg_is_struct_type(g, et) {
+        // forge_<S>_get bounds-checks (safe) and deep-copies:
+        // the element is already owned, no own step.
+        let sname: str = cg_struct_type_name(g, et);
+        let mut read: str = "";
+        if g.no_bounds_checks {
+            read = "forge_" + sname + "_get_fast(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        } else {
+            read = "forge_" + sname + "_get(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        }
+        return CGExpr { g: g, code: "({ " + arr_t + " __forge_base" + itoa(n) + " = " + bout.code + "; long long __forge_idx" + itoa(n) + " = " + iout.code + "; " + cg_c_type(g, et) + " __forge_elem" + itoa(n) + " = " + read + "; " + free_base + " __forge_elem" + itoa(n) + "; })" };
+    }
+    // Direct read (explicit bounds check in safe mode, as in the
+    // array/fn branches) + own step for owned element types.
+    let mut check: str = "";
+    if !g.no_bounds_checks {
+        check = "if (__forge_idx" + itoa(n) + " < 0 || __forge_idx" + itoa(n) + " >= __forge_base" + itoa(n) + ".len) forge_fail(\"array index out of bounds\"); ";
+    }
+    let elem_c: str = cg_c_type(g, et);
+    let mut read: str = "";
+    let mut own: str = "";
+    if et == "str" {
+        // The element is BORROWED: forge_str_get returns
+        // a.data[i] directly (it does NOT copy). Copy it so the
+        // wrap yields an owned value; the explicit bounds check
+        // above (safe mode) covers the direct read.
+        read = "forge_copy_str(__forge_base" + itoa(n) + ".data[__forge_idx" + itoa(n) + "])";
+    } else if cg_is_array_type(g, et) {
+        read = "__forge_base" + itoa(n) + ".data[__forge_idx" + itoa(n) + "]";
+        own = "forge_arr_inc(__forge_elem" + itoa(n) + ".ref); ";
+    } else if is_fn_type(et) {
+        read = "__forge_base" + itoa(n) + ".data[__forge_idx" + itoa(n) + "]";
+        own = "forge_closure_inc(__forge_elem" + itoa(n) + ".env); ";
+    } else if infer_is_tuple_type(et) || is_union_type(et) || cg_is_enum_type(g, et) || cg_is_opaque_type(et) {
+        read = "__forge_base" + itoa(n) + ".data[__forge_idx" + itoa(n) + "]";
+        own = cg_closure_own_code(g, "__forge_elem" + itoa(n), et);
+        if own != "" {
+            own = own + " ";
+        }
+    } else if !g.no_bounds_checks {
+        // Scalar element (int/float/bool — arrays of fixed ints
+        // are checker-rejected, so GET_FN always has an entry).
+        if et == "int" {
+            read = "forge_int_get(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        } else if et == "float" {
+            read = "forge_float_get(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        } else {
+            read = "forge_bool_get(__forge_base" + itoa(n) + ", __forge_idx" + itoa(n) + ")";
+        }
+    } else {
+        read = "__forge_base" + itoa(n) + ".data[__forge_idx" + itoa(n) + "]";
+    }
+    return CGExpr { g: g, code: "({ " + arr_t + " __forge_base" + itoa(n) + " = " + bout.code + "; long long __forge_idx" + itoa(n) + " = " + iout.code + "; " + check + elem_c + " __forge_elem" + itoa(n) + " = " + read + "; " + own + free_base + " __forge_elem" + itoa(n) + "; })" };
+}
+
+// _fieldaccess_fresh_wrap (codegen.py:5197): FieldAccess on a
+// fresh base — bind the base once, read the field, own it
+// (closure_own_code), free the base, yield the owned result.
+// Comes first in the FieldAccess branch, before the arr[i].field
+// special case (which would inline a fresh array and leak it).
+// Chained f()[0].x composes: the inner Index wrap frees the
+// array, this wrap frees the (owned) struct.
+fn cg_fieldaccess_fresh_wrap(g0: HCodegen, e: Node) -> CGExpr {
+    let mut g: HCodegen = g0;
+    let base_t: str = cg_expr_type(g, e.kids[0]);
+    let ft: str = cg_expr_type(g, e);
+    let bout: CGExpr = cg_gen_expr(g, e.kids[0]);
+    g = bout.g;
+    g.assign_counter = g.assign_counter + 1;
+    let n: int = g.assign_counter;
+    let base_c: str = cg_c_type(g, base_t);
+    let field_c: str = cg_c_type(g, ft);
+    let mut own: str = cg_closure_own_code(g, "__forge_field" + itoa(n), ft);
+    if own != "" {
+        own = own + " ";
+    }
+    let mut free_base: str = "";
+    if cg_is_struct_type(g, base_t) {
+        let fb: CGExpr = cg_struct_free_code(g, "__forge_base" + itoa(n), base_t, "");
+        g = fb.g;
+        free_base = fb.code;
+    } else if infer_is_tuple_type(base_t) {
+        let fb: CGExpr = cg_tuple_free_code(g, "__forge_base" + itoa(n), base_t);
+        g = fb.g;
+        free_base = fb.code;
+    }
+    return CGExpr { g: g, code: "({ " + base_c + " __forge_base" + itoa(n) + " = " + bout.code + "; " + field_c + " __forge_field" + itoa(n) + " = __forge_base" + itoa(n) + "." + e.name + "; " + own + free_base + " __forge_field" + itoa(n) + "; })" };
+}
+
 fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
     let mut g: HCodegen = g0;
     if g.freestanding {
@@ -4932,6 +5309,11 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
     }
     if e.kind == 32 {
         // FieldAccess (codegen.py:3693): name = field, kids = [base].
+        if cg_is_fresh_storage(g, e.kids[0]) {
+            // Fresh base storage: the base would leak — wrap it
+            // (§3a), before the arr[i].field special case.
+            return cg_fieldaccess_fresh_wrap(g, e);
+        }
         // Struct-array fast path: base is an Index over an array of
         // structs -> direct (arr).data[idx].field. A pure repeat in
         // this statement takes the fast form (codegen.py:3712).
@@ -4974,6 +5356,12 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
         // index read in one statement takes the fast/direct form
         // (codegen.py:3766-3808); the first one takes the checked
         // form and records the key.
+        if cg_is_fresh_base(g, e.kids[0]) {
+            // Fresh base: the base would leak — wrap it (§3a),
+            // before the str branch, the Fix-1 fast paths and
+            // the _check_cache.
+            return cg_index_fresh_wrap(g, e);
+        }
         let base_t: str = cg_expr_type(g, e.kids[0]);
         let et: str = cg_expr_type(g, e);
         let bout: CGExpr = cg_gen_expr(g, e.kids[0]);
@@ -6549,8 +6937,37 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         let aout: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = aout.g;
         let mut arg_code: str = aout.code;
-        if payload == "str" && !cg_is_fresh_str(g, e.kids[0]) {
-            arg_code = "forge_copy_str(" + arg_code + ")";
+        // The constructed enum OWNS its payload (leak follow-ups
+        // §2a): a shared argument must be copied or refcounted
+        // here, because the enum's scope-end free frees the
+        // payload. Use the CONCRETE payload type — the template
+        // type is a type parameter for generic enums, so a
+        // template-only str check missed generic str payloads
+        // entirely (generic_enums_demo segfaulted freeing a
+        // string literal) and never owned array/struct/tuple/
+        // fn/enum payloads at all (a shared array payload
+        // double-freed under ASan). cg_convert_owned is the
+        // shared helper (same shape as StructLit fields).
+        let mut cpt: str = "";
+        let variants: str = cg_enum_concrete_variants(g, conc);
+        if variants != "" {
+            let parts: [str] = split(variants, "~");
+            let mut i: int = 0;
+            while i < len(parts) {
+                let kv: [str] = split(parts[i], ":");
+                if len(kv) >= 2 && kv[0] == e.name {
+                    cpt = kv[1];
+                }
+                i = i + 1;
+            }
+        }
+        if cpt == "" {
+            cpt = payload;
+        }
+        if cpt != "" {
+            let conv: CGExpr = cg_convert_owned(g, arg_code, cg_expr_type(g, e.kids[0]), cpt, e.kids[0], false);
+            g = conv.g;
+            arg_code = conv.code;
         }
         return CGExpr { g: g, code: "(" + cname + "){ .tag = " + tag + ", .payload.payload_" + e.name + " = " + arg_code + " }" };
     }
@@ -6745,6 +7162,10 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_emit(g, "{");
         g.indent = g.indent + 1;
         g = cg_emit(g, cg_c_type(g, et) + " " + temp + " = " + sout.code + ";");
+        // A fresh scrutinee's temp is the sole owner of its
+        // payload: free it at match end (leak follow-ups). A
+        // shared scrutinee's temp is a borrowed view.
+        let scrutinee_fresh: bool = cg_is_fresh_union(g, st.kids[0]);
         let match_pre: FactSnap = cg_facts_snap(g);
         let mut a: int = 1;
         while a < len(st.kids) {
@@ -6757,7 +7178,12 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                     g = cg_emit(g, "} else {");
                 }
                 g.indent = g.indent + 1;
+                // Arm frame: the arm body's lets are freed at arm
+                // end, not at the enclosing scope end.
+                g = cg_push_owned_frame(g);
                 g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
+                g = cg_emit_free_frame(g);
+                g = cg_pop_owned_frame(g);
                 g.indent = g.indent - 1;
                 g = cg_emit(g, "}");
             } else {
@@ -6775,6 +7201,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 }
                 g = cg_emit(g, kw + " (" + temp + ".tag == " + itoa(midx) + ") {");
                 g.indent = g.indent + 1;
+                g = cg_push_owned_frame(g);
                 let mut payload_code: str = temp + ".payload._" + itoa(midx);
                 if arm.name == "str" {
                     payload_code = "forge_copy_str(" + payload_code + ")";
@@ -6783,14 +7210,30 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 if arm.name == "str" || cg_is_array_type(g, arm.name) || cg_is_struct_type(g, arm.name) || infer_is_tuple_type(arm.name) || is_union_type(arm.name) || cg_is_opaque_type(arm.name) {
                     g = cg_emit(g, "int " + cg_moved_flag(arm.sval) + " = 0;");
                 }
+                if arm.name == "str" {
+                    // The str binding is an independent copy
+                    // (forge_copy_str above): register it so the
+                    // arm frame frees it at arm end. Other payload
+                    // bindings are borrowed views of the temp —
+                    // never registered.
+                    g = cg_owned_add(g, arm.sval, "str");
+                }
                 g = cg_facts_pop(g, arm.sval);
                 g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
+                g = cg_emit_free_frame(g);
+                g = cg_pop_owned_frame(g);
                 g.indent = g.indent - 1;
                 if a == len(st.kids) - 1 {
                     g = cg_emit(g, "}");
                 }
             }
             a = a + 1;
+        }
+        if scrutinee_fresh {
+            let ufree: str = cg_union_free_code(temp, et);
+            if ufree != "" {
+                g = cg_emit(g, ufree);
+            }
         }
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
@@ -6856,6 +7299,10 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     g = cg_emit(g, "{");
     g.indent = g.indent + 1;
     g = cg_emit(g, cg_c_type(g, et) + " " + temp + " = " + sout.code + ";");
+    // A fresh scrutinee's temp is the sole owner of its payload:
+    // free it at match end (leak follow-ups). A shared
+    // scrutinee's temp is a borrowed view.
+    let scrutinee_fresh: bool = cg_is_fresh_enum(g, st.kids[0]);
     let match_pre: FactSnap = cg_facts_snap(g);
     let mut a: int = 1;
     while a < len(st.kids) {
@@ -6868,7 +7315,12 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "} else {");
             }
             g.indent = g.indent + 1;
+            // Arm frame: the arm body's lets are freed at arm
+            // end, not at the enclosing scope end.
+            g = cg_push_owned_frame(g);
             g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
+            g = cg_emit_free_frame(g);
+            g = cg_pop_owned_frame(g);
             g.indent = g.indent - 1;
             g = cg_emit(g, "}");
         } else {
@@ -6889,6 +7341,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
             g = cg_emit(g, kw + " (" + temp + ".tag == " + itoa(tag) + ") {");
             g.indent = g.indent + 1;
+            g = cg_push_owned_frame(g);
             if arm.sval != "" {
                 let mut payload_code: str = temp + ".payload.payload_" + arm.name;
                 if pt == "str" {
@@ -6898,15 +7351,32 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || infer_is_tuple_type(pt) || is_union_type(pt) || cg_is_opaque_type(pt) {
                     g = cg_emit(g, "int " + cg_moved_flag(arm.sval) + " = 0;");
                 }
+                if pt == "str" {
+                    // The str binding is an independent copy
+                    // (forge_copy_str above): register it so the
+                    // arm frame frees it at arm end. Other payload
+                    // bindings are borrowed views of the temp —
+                    // never registered.
+                    g = cg_owned_add(g, arm.sval, "str");
+                }
                 g = cg_facts_pop(g, arm.sval);
             }
             g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
+            g = cg_emit_free_frame(g);
+            g = cg_pop_owned_frame(g);
             g.indent = g.indent - 1;
             if a == len(st.kids) - 1 {
                 g = cg_emit(g, "}");
             }
         }
         a = a + 1;
+    }
+    if scrutinee_fresh {
+        let ef: CGExpr = cg_enum_free_code(g, temp, et);
+        g = ef.g;
+        if ef.code != "" {
+            g = cg_emit(g, ef.code);
+        }
     }
     g.indent = g.indent - 1;
     g = cg_emit(g, "}");
@@ -7034,6 +7504,28 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
             if cg_owned_contains(g, st.name) {
                 g = cg_emit_guarded(g, st.name, cg_union_free_code(st.name, vt));
+            }
+            g = cg_emit(g, st.name + " = " + temp + ";");
+            g = cg_owned_add(g, st.name, vt);
+            g = cg_emit(g, cg_moved_flag(st.name) + " = 0;");
+        } else if vt != "" && cg_is_enum_type(g, vt) {
+            // Same temp-first shape as unions (leak follow-ups):
+            // copy a shared enum payload before freeing the old
+            // value, then take the temp.
+            g.assign_counter = g.assign_counter + 1;
+            let n: int = g.assign_counter;
+            let temp: str = "__forge_assign" + itoa(n);
+            g = cg_emit(g, cg_c_type(g, vt) + " " + temp + " = " + expr + ";");
+            if et == vt && !cg_is_fresh_enum(g, rhs) {
+                let copy: str = cg_enum_copy_stmt(g, temp, vt);
+                if copy != "" {
+                    g = cg_emit(g, copy);
+                }
+            }
+            if cg_owned_contains(g, st.name) {
+                let ef: CGExpr = cg_enum_free_code(g, st.name, vt);
+                g = ef.g;
+                g = cg_emit_guarded(g, st.name, ef.code);
             }
             g = cg_emit(g, st.name + " = " + temp + ";");
             g = cg_owned_add(g, st.name, vt);
@@ -7171,6 +7663,25 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             let ufree: str = cg_union_free_code(tcode.code, ft);
             if ufree != "" && !field_moved {
                 g = cg_emit(g, ufree);
+            }
+            g = cg_emit(g, tcode.code + " = __forge_fa" + itoa(n) + ";");
+        } else if cg_is_enum_type(g, ft) {
+            // Same temp-first shape as unions (leak follow-ups):
+            // copy a shared enum payload before freeing the old
+            // field value.
+            g.assign_counter = g.assign_counter + 1;
+            let n: int = g.assign_counter;
+            g = cg_emit(g, cg_c_type(g, ft) + " __forge_fa" + itoa(n) + " = " + val + ";");
+            if cg_expr_type(g, rhs) == ft && !cg_is_fresh_enum(g, rhs) {
+                let copy: str = cg_enum_copy_stmt(g, "__forge_fa" + itoa(n), ft);
+                if copy != "" {
+                    g = cg_emit(g, copy);
+                }
+            }
+            let ef: CGExpr = cg_enum_free_code(g, tcode.code, ft);
+            g = ef.g;
+            if ef.code != "" && !field_moved {
+                g = cg_emit(g, ef.code);
             }
             g = cg_emit(g, tcode.code + " = __forge_fa" + itoa(n) + ";");
         } else if cg_is_array_type(g, ft) {
@@ -7708,7 +8219,18 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = iout.g;
         g = cg_emit(g, "{");
         g.indent = g.indent + 1;
+        // For-frame (leak follow-ups §4): the iterable temp lives
+        // in its own owned frame, pushed BEFORE the temp
+        // declaration, so a break or a return inside the body
+        // frees it. A fresh iterable's temp is registered here
+        // (the sole hold); a shared iterable's temp is a borrowed
+        // view and the frame stays empty.
+        g = cg_push_owned_frame(g);
         g = cg_emit(g, cg_c_type(g, at) + " " + arr_tmp + " = " + iout.code + ";");
+        if cg_is_fresh_array(g, iter) {
+            g = cg_owned_add(g, arr_tmp, at);
+            g = cg_emit(g, "int " + cg_moved_flag(arr_tmp) + " = 0;");
+        }
         g = cg_emit(g, "for (long long " + idx + " = 0; " + idx + " < " + arr_tmp + ".len; " + idx + "++) {");
         g.indent = g.indent + 1;
         g = cg_emit(g, cg_c_type(g, et) + " " + st.name + " = " + arr_tmp + ".data[" + idx + "];");
@@ -7731,15 +8253,13 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g.loop_depth = g.loop_depth - 1;
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
-        if cg_is_fresh_array(g, iter) {
-            // Builtin-arg temp leak fix (§13): the iterable temp
-            // is the sole hold when fresh — free it after the
-            // loop. A shared iterable's temp is a borrowed view
-            // and is never freed.
-            let fout: CGExpr = cg_array_free_code(g, arr_tmp, at);
-            g = fout.g;
-            g = cg_emit(g, fout.code);
-        }
+        // The post-loop array_free_code is REPLACED by the
+        // for-frame free: it runs on the normal path AND on break
+        // (a break lands right after the loop, on this free); a
+        // return frees the for-frame via emit_free_owned instead
+        // (it jumps past this free).
+        g = cg_emit_free_frame(g);
+        g = cg_pop_owned_frame(g);
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
         g = cg_facts_clear(g);
@@ -7823,6 +8343,24 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g.assign_counter = g.assign_counter + 1;
                 let n: int = g.assign_counter;
                 let copy: str = cg_union_copy_stmt("__forge_let" + itoa(n), t);
+                e2 = "({" + cg_c_type(g, t) + " __forge_let" + itoa(n) + " = " + expr + "; " + copy + " __forge_let" + itoa(n) + ";})";
+            }
+            g = cg_owned_add(g, st.name, t);
+            g = cg_emit(g, cg_c_type(g, t) + " " + st.name + " = " + e2 + ";");
+            g = cg_emit(g, "int " + cg_moved_flag(st.name) + " = 0;");
+            return g;
+        }
+        if cg_is_enum_type(g, t) {
+            // A fresh enum value is taken as-is; a shared enum
+            // value gains an independent payload before this
+            // owner takes it (leak follow-ups — without the copy,
+            // the scope-end free would double-free).
+            let et: str = cg_expr_type(g, init);
+            let mut e2: str = expr;
+            if et == t && !cg_is_fresh_enum(g, init) {
+                g.assign_counter = g.assign_counter + 1;
+                let n: int = g.assign_counter;
+                let copy: str = cg_enum_copy_stmt(g, "__forge_let" + itoa(n), t);
                 e2 = "({" + cg_c_type(g, t) + " __forge_let" + itoa(n) + " = " + expr + "; " + copy + " __forge_let" + itoa(n) + ";})";
             }
             g = cg_owned_add(g, st.name, t);
@@ -7947,6 +8485,15 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         }
         if is_union_type(ret_type) && cg_expr_type(g, e) == ret_type && !cg_is_fresh_union(g, e) {
             let copy: str = cg_union_copy_stmt("__forge_ret", ret_type);
+            if copy != "" {
+                g = cg_emit(g, copy);
+            }
+        }
+        if cg_is_enum_type(g, ret_type) && cg_expr_type(g, e) == ret_type && !cg_is_fresh_enum(g, e) {
+            // Shared enum return: gain an independent payload
+            // before freeing owned locals, so the returned enum
+            // survives (leak follow-ups).
+            let copy: str = cg_enum_copy_stmt(g, "__forge_ret", ret_type);
             if copy != "" {
                 g = cg_emit(g, copy);
             }
@@ -8355,7 +8902,7 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
         let pt: str = cg_subst(g, lam.kids[pi].sval);
         push(g.local_names, pn);
         push(g.local_types, pt);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) || cg_is_enum_type(g, pt) {
             g = cg_owned_add(g, pn, pt);
         }
         pi = pi + 1;
@@ -8382,7 +8929,7 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
     while pi < nparams {
         let pn: str = lam.kids[pi].name;
         let pt: str = cg_subst(g, lam.kids[pi].sval);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) || cg_is_enum_type(g, pt) {
             g = cg_emit(g, "int " + cg_moved_flag(pn) + " = 0;");
         }
         pi = pi + 1;
@@ -8544,7 +9091,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
         push(g.local_names, kv[0]);
         push(g.local_types, cg_subst(g, kv[1]));
         let pt: str = cg_subst(g, kv[1]);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || is_fn_type(pt) || cg_is_enum_type(g, pt) {
             g = cg_owned_add(g, kv[0], pt);
         }
         i = i + 1;
@@ -8571,7 +9118,7 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     while i < len(params) {
         let kv: [str] = split(params[i], ":");
         let pt: str = cg_subst(g, kv[1]);
-        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) {
+        if pt == "str" || cg_is_array_type(g, pt) || cg_is_struct_type(g, pt) || is_union_type(pt) || cg_is_opaque_type(pt) || infer_is_tuple_type(pt) || is_fn_type(pt) || cg_is_enum_type(g, pt) {
             g = cg_emit(g, "int " + cg_moved_flag(kv[0]) + " = 0;");
         }
         i = i + 1;
