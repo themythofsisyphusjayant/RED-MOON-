@@ -1,0 +1,27 @@
+struct Bag {
+    items: [str];
+    n: int;
+}
+
+fn make_bag<T>(seed: T) -> Bag {
+    let mut items: [str] = [];
+    push(items, "x");
+    push(items, "y");
+    return Bag { items: items, n: 2 };
+}
+
+fn make_bag_concrete(seed: int) -> Bag {
+    let mut items: [str] = [];
+    push(items, "x");
+    push(items, "y");
+    return Bag { items: items, n: 2 };
+}
+
+fn main() {
+    let b: Bag = make_bag(7);
+    println(b.n);
+    println(len(b.items));
+    let c: Bag = make_bag_concrete(7);
+    println(c.n);
+    println(len(c.items));
+}

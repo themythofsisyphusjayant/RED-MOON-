@@ -1740,7 +1740,20 @@ fn cg_is_fresh_array(g: HCodegen, e: Node) -> bool {
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
-        if found[0] == "1" && cg_is_array_type(g, found[1]) {
+        if found[0] == "1" && cg_template_lookup(g, e.name)[0] == "0" {
+            // Concrete function: decide from its declared return.
+            if cg_is_array_type(g, found[1]) {
+                return true;
+            }
+            return false;
+        }
+        // Generic instantiation or indirect call: the infer map
+        // holds the (instantiated) return type of the call itself.
+        // (A generic call's name is the unmangled template name,
+        // so the table lookup above misses — the old code returned
+        // false here and the receiving site emitted an extra
+        // unbalanced forge_arr_inc on the fresh return value.)
+        if cg_is_array_type(g, cg_expr_type(g, e)) {
             return true;
         }
         return false;
@@ -1770,7 +1783,21 @@ fn cg_is_fresh_struct(g: HCodegen, e: Node) -> bool {
             return true;
         }
         let found: [str] = cg_fn_lookup(g, e.name);
-        if found[0] == "1" && cg_is_struct_type(g, found[1]) {
+        if found[0] == "1" && cg_template_lookup(g, e.name)[0] == "0" {
+            // Concrete function: decide from its declared return.
+            if cg_is_struct_type(g, found[1]) {
+                return true;
+            }
+            return false;
+        }
+        // Generic instantiation or indirect call: the infer map
+        // holds the (instantiated) return type of the call itself.
+        // (A generic call's name is the unmangled template name,
+        // so the table lookup above misses — the old code returned
+        // false here and the receiving site emitted an extra
+        // unbalanced forge_arr_inc on the returned struct's array
+        // field, leaking it at scope end.)
+        if cg_is_struct_type(g, cg_expr_type(g, e)) {
             return true;
         }
         return false;
@@ -1860,6 +1887,16 @@ fn cg_is_fresh_fn(g: HCodegen, e: Node) -> bool {
         let found: [str] = cg_fn_lookup(g, e.name);
         if found[0] == "1" {
             return is_fn_type(found[1]);
+        }
+        // Generic instantiation: the infer map holds the
+        // (instantiated) return type of the call itself. (A generic
+        // call's name is the unmangled template name, so the table
+        // lookup above misses — the old code fell through to the
+        // indirect-call check and returned false, and the receiving
+        // site emitted an extra unbalanced forge_closure_inc on the
+        // fresh closure's env, leaking it at scope end.)
+        if is_fn_type(cg_expr_type(g, e)) {
+            return true;
         }
         // Indirect call through a fn-typed variable: a capture
         // has no local binding, so its type comes from the

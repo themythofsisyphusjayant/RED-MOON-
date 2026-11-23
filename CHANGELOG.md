@@ -8,6 +8,30 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Hosted generic-call refcount fix (23 Nov 2026): a generic function
+  call returning a struct, array or closure leaked under the hosted
+  compiler only (Day 3's errlog demo: 112 bytes in 7 allocs). Root
+  cause: the hosted checker does not rewrite generic call names to
+  mangled instantiation names (unlike Python's checker), so the hosted
+  freshness predicates (cg_is_fresh_struct / cg_is_fresh_array /
+  cg_is_fresh_fn) looked the unmangled template name up in the
+  function table, missed, and the receiving site emitted an extra
+  unbalanced ownership inc (forge_arr_inc on the returned struct's
+  array field, forge_arr_inc on a returned array, forge_closure_inc
+  on a returned closure's env). Fix mirrors the cg_is_fresh_str
+  pattern: fall back to the infer map, which holds the substituted
+  return type. Minimal probes before the fix — generic struct 44
+  bytes in 4 allocs, generic [str] 8 bytes in 1 alloc, generic
+  capturing-lambda return 24 bytes in 1 alloc, all hosted-only,
+  Python clean; after the fix all four probes are leak-free under
+  ASan and hosted emit is byte-identical to Python's on the repro.
+  Own test tests/test_generic_inc_fix_v1.py 24/24 ALL PASS both
+  compilers (incl. ASan runs); bootstrap 7/7 byte-identical; parity
+  124/124; corpus 99/99; regression 62/62; fuzz 102/102 both modes
+  + fv 56/56 + closure 66/66 + fs 56/56; full suite 94/101 hosted +
+  94/101 Python (7 known big32 pre-existing failures in both).
+  Python compiler unchanged; errlog.fg stays de-genericized.
+
 - Panic vs recover boundary, Top-500 #44 (21 Nov 2026, pipeline
   run — implemented in both compilers; gates passed 22 Nov 2026,
   Sprint Day 2, tree stable after the closures slice): fail() on a
