@@ -899,7 +899,7 @@ fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool
     let mut merged_box: [Node] = [parse_src("")];
     let fn_files: [str] = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks, debug, merged_box);
     let merged: Node = merged_box[0];
-    let ok: bool = check_program(merged, freestanding);
+    let ok: bool = check_program(merged, freestanding, fn_files);
     if !ok {
         fail_compile("check failed");
     }

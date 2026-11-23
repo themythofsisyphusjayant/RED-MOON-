@@ -8,6 +8,43 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- try/catch across a module boundary, Top-500 #48 (23 Nov 2026,
+  sprint): new builtin `try_call(f, ...)` returning `Result<R, str>`,
+  f a bare foreign function name (defined in a different .fg file
+  from the caller), v1 arity 0-or-1 argument, fail()-only. A guarded
+  call that fail()s returns Err(message) and the program continues;
+  success returns Ok(value); `?` propagates. Only fail() is caught:
+  runtime faults (bounds, overflow, div-by-zero, OOM) and assert
+  stay fatal via forge_fail, untouched. In a --debug build a caught
+  failure still prints its backtrace, and the catch path truncates
+  the backtrace stack so a later failure's trace shows only its own
+  frames. Nesting ships (handler stack, cap 32); try_call inside a
+  spawned task works and panicked_tasks() stays 0; a task spawned
+  inside a guarded call is NOT caught (#44 behaviour). Mechanism: a
+  thread-local setjmp/longjmp handler stack in the native preamble
+  (ForgeHandler: jmp_buf + volatile char *msg + bt_depth/bt_dropped);
+  the fail() lowering checks the handler first (copies the message
+  into the handler slot and longjmps — no print, no panicked_tasks
+  bump, no exit), else today's behaviour byte-identically;
+  forge_fail untouched. Requires import "result.fg". Named
+  rejections: same-file callee, closure/fn-typed-variable/method
+  callee, generic or void callee, no Result import, arity outside
+  0-or-1, --freestanding, --target big32, --target wasm. Own test
+  tests/test_trycatch_v1.py 68/68 ALL PASS both compilers; demo
+  examples/trycatch_demo.fg. Gates 23 Nov (live binary rebuild 1,
+  md5 125537498a7a0f584a6cec28149ece2d): emit comparison 12/12;
+  bootstrap 7/7 byte-identical; parity 124/124; corpus 99/99;
+  regression 62/62; fuzz 102/102 both modes + fv 56/56 + closure
+  66/66 + fs 56/56 + tc 38/38; full suite 95/102 hosted + 95/102
+  Python (7 known big32); ASan compiler-side clean; ASan
+  program-side demo clean, unwind leak measured 60 bytes in 3
+  allocations (identical debug/release); benchmarks tick q_safe
+  3566 us, matmul q_safe 17704 us — no regression attributable to
+  #48 (old #47 binary measures identically on this VM today).
+  v1 limits: on the Err path the callee's owned locals and fresh
+  argument temps leak (measured 60 bytes / 3 allocs), and defers in
+  the guarded call do not run.
+
 - Hosted generic-call refcount fix (23 Nov 2026): a generic function
   call returning a struct, array or closure leaked under the hosted
   compiler only (Day 3's errlog demo: 112 bytes in 7 allocs). Root

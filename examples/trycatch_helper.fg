@@ -1,0 +1,15 @@
+// Foreign helpers for the try/catch demo (Top-500 #48). These live
+// in a different file from the demo's main, so try_call may guard
+// calls into them — that file boundary is the module boundary.
+fn helper_ok(x: int) -> int {
+    return x + 1;
+}
+
+fn helper_boom(x: int) -> int {
+    fail("helper boom");
+    return 0;
+}
+
+fn helper_deep(x: int) -> int {
+    return helper_boom(x);
+}

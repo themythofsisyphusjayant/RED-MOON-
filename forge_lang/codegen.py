@@ -58,6 +58,7 @@ HEADER = r"""#include <stdio.h>
 #endif
 #include <time.h>
 #include <errno.h>
+#include <setjmp.h>
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -172,6 +173,55 @@ static void forge_bt_print(void) {
     }
 }
 #endif
+
+/* try/catch (Top-500 #48): a thread-local stack of setjmp
+   handlers. try_call pushes a handler, calls the guarded
+   function, and pops it; when the guarded function fail()s, the
+   fail() lowering copies the message into the live handler's
+   slot and longjmps back into try_call, which returns
+   Err(message). Only fail() is caught in v1: forge_fail (bounds,
+   overflow, div-by-zero, OOM, assert) never touches the handler
+   stack. The handler is per-thread, like the backtrace stack, so
+   a task spawned inside a guarded call starts with an empty
+   stack (#44 behaviour: the task panics, it is not caught). Cap
+   32: nesting try_call deeper than that is a programmer error,
+   caught by an explicit fail at push time. The msg slot is
+   volatile: it is written by the fail() lowering between the
+   try_call's setjmp and its longjmp, and C11 leaves a
+   non-volatile automatic modified in that window indeterminate.
+   bt_depth/bt_dropped are written by push before setjmp, so
+   plain ints are fine. */
+#define FORGE_HANDLER_CAP 32
+typedef struct { jmp_buf jb; volatile char *msg; int bt_depth; int bt_dropped; } ForgeHandler;
+static __thread ForgeHandler *forge_handler_stack[FORGE_HANDLER_CAP];
+static __thread int forge_handler_depth = 0;
+static ForgeHandler *forge_handler_top(void) {
+    if (forge_handler_depth > 0) return forge_handler_stack[forge_handler_depth - 1];
+    return NULL;
+}
+static void forge_handler_push(ForgeHandler *h) {
+    if (forge_handler_depth >= FORGE_HANDLER_CAP) forge_fail("try_call() nesting exceeds 32");
+    h->msg = NULL;
+#if FORGE_DEBUG
+    h->bt_depth = forge_bt_depth;
+    h->bt_dropped = forge_bt_dropped;
+#else
+    h->bt_depth = 0;
+    h->bt_dropped = 0;
+#endif
+    forge_handler_stack[forge_handler_depth++] = h;
+}
+static void forge_handler_pop(void) {
+    if (forge_handler_depth > 0) forge_handler_depth--;
+}
+static void forge_handler_truncate_bt(ForgeHandler *h) {
+#if FORGE_DEBUG
+    forge_bt_depth = h->bt_depth;
+    forge_bt_dropped = h->bt_dropped;
+#else
+    (void)h;
+#endif
+}
 
 static void forge_fail(const char *msg) {
     fprintf(stderr, "qasida: runtime error: %s\n", msg);
@@ -2129,11 +2179,11 @@ class Codegen:
                 # site must not inc it (see the move branch in
                 # gen_expr, which also forgets the source).
                 return True
-            if expr.name in ("try_alloc", "try_read_file", "try_read_bytes", "try_readdir", "try_readlink"):
+            if expr.name in ("try_alloc", "try_read_file", "try_read_bytes", "try_readdir", "try_readlink", "try_call"):
                 # A try_alloc / try_read_file / try_read_bytes /
-                # try_readdir / try_readlink Result is a new owned
-                # value (the statement expression builds it fresh);
-                # the receiving site must not copy it. (Without
+                # try_readdir / try_readlink / try_call Result is a
+                # new owned value (the statement expression builds it
+                # fresh); the receiving site must not copy it. (Without
                 # this, the assignment deep-copies the fresh str
                 # field and orphans the original buffer — a leak
                 # ASan catches.)
@@ -2146,6 +2196,32 @@ class Codegen:
             # A struct-array get already returns an owned copy.
             return True
         return False
+
+    def _dummy_value(self, t):
+        """C expression for a fresh, freeable dummy value of type t
+        (Top-500 #48): the Err arm of try_call's Result needs a
+        .value of the callee's return type, and Forge has no null.
+        The dummy must be safe for scope-end freeing: a str is a
+        heap copy, an array gets a fresh refcount, a struct/enum/
+        tuple/union/fn value is zero-initialised (every free path
+        tolerates NULL/0 fields). Opaque types have no dummy (an
+        incomplete C type cannot be zero-initialised) — the
+        checker rejects them before codegen."""
+        t = self.resolve_newtype(t)
+        if is_opaque_type(t):
+            raise ForgeError(f"try_call() of a function returning opaque "
+                             f"type '{t}' is not supported in v1")
+        if t == "int" or is_fixed_int(t):
+            return "0"
+        if t == "float":
+            return "0.0"
+        if t == "bool":
+            return "false"
+        if t == "str":
+            return 'forge_copy_str("")'
+        if self.is_array_type(t):
+            return f"({c_type(t)}){{NULL, 0, 0, forge_arr_ref_new()}}"
+        return f"({c_type(t)}){{0}}"
 
     def is_fresh_array(self, expr):
         """True if the expression creates a fresh array (ref=1, sole owner)."""
@@ -4444,6 +4520,29 @@ class Codegen:
                     mfree = f"forge_free_str(__forge_msg{n});"
                 else:
                     mfree = None
+                # Top-500 #48: a live try_call handler catches this
+                # fail() first — copy the message into the handler's
+                # slot and longjmp back into try_call (no print, no
+                # panicked_tasks bump, no exit). Otherwise today's
+                # behaviour below, byte-identically. forge_fail is
+                # untouched (only fail() is caught in v1).
+                self.assign_counter += 1
+                hn = self.assign_counter
+                self.emit(f"ForgeHandler *__forge_h{hn} = forge_handler_top();")
+                self.emit(f"if (__forge_h{hn}) {{")
+                self.indent += 1
+                # #47 backtraces: a caught failure still prints its
+                # call chain in a debug build (debuggability); the
+                # catch path then truncates the stack so a later
+                # failure's trace shows only its own frames.
+                if self.debug:
+                    self.emit("forge_bt_print();")
+                self.emit(f"__forge_h{hn}->msg = forge_copy_str({msg});")
+                if mfree:
+                    self.emit(mfree)
+                self.emit(f"longjmp(__forge_h{hn}->jb, 1);")
+                self.indent -= 1
+                self.emit("}")
                 self.emit("if (forge_in_task) {")
                 self.indent += 1
                 self.emit(f'fprintf(stderr, "qasida: task panicked: %s\\n", {msg});')
@@ -5564,6 +5663,64 @@ class Codegen:
                     f"if (__forge_raw{n}) free(__forge_raw{n}); "
                     f"__forge_tryreadb{n} = ({rt}){{ .ok = true, .value = __forge_arr{n}, .error = 0 }}; }} }} "
                     f"{pfree}__forge_tryreadb{n}; }})"
+                )
+            if expr.name == "try_call":
+                # Top-500 #48: guarded call across a module boundary.
+                # Same GNU statement expression shape as try_alloc:
+                # push a handler, setjmp, call the foreign function,
+                # pop the handler, wrap the value in Ok. When the
+                # callee fail()s, the fail() lowering copies the
+                # message into the handler slot and longjmps here;
+                # the Err arm truncates the backtrace stack to the
+                # depth recorded at push (so a later failure's trace
+                # shows only its own frames) and wraps the message
+                # in Err. The callee's fn type comes from the
+                # checker's trycall_fn_type stamp; the inner call is
+                # a synthetic IndirectCall through the bare fn name
+                # (a fn value with a NULL env — the wrapper was
+                # generated from the checker's is_fn_value stamp on
+                # the original arg node). Arguments are evaluated
+                # INSIDE the guarded region (after setjmp), so a
+                # fail() during argument evaluation is caught too.
+                # v1 limits: on the Err path the callee's owned
+                # locals and any fresh argument temps leak (the
+                # unwind never runs their frees), and defers in the
+                # guarded call do not run — measured, not fixed.
+                from .fntypes import fn_parts
+                ft = getattr(expr, "trycall_fn_type", None)
+                if ft is None:
+                    raise ForgeError("try_call() was not checked "
+                                     "(missing callee type)",
+                                     expr.line, expr.col)
+                parts = fn_parts(ft)
+                if parts is None:
+                    raise ForgeError("try_call() was not checked "
+                                     "(bad callee type)",
+                                     expr.line, expr.col)
+                ret = parts[1]
+                rt = c_type(getattr(expr, "concrete_type", None)
+                            or f"Result<{ret}, str>")
+                dummy = self._dummy_value(ret)
+                self.assign_counter += 1
+                n = self.assign_counter
+                ind = A.IndirectCall(expr.args[0], list(expr.args[1:]),
+                                     expr.line, expr.col)
+                ind.fn_type = ft
+                call_code = self.gen_expr(ind)
+                return (
+                    f"({{ {rt} __forge_trycall{n}; "
+                    f"ForgeHandler __forge_h{n}; "
+                    f"forge_handler_push(&__forge_h{n}); "
+                    f"if (setjmp(__forge_h{n}.jb) == 0) {{ "
+                    f"{c_type(ret)} __forge_v{n} = {call_code}; "
+                    f"forge_handler_pop(); "
+                    f"__forge_trycall{n} = ({rt}){{ .ok = true, .value = __forge_v{n}, .error = forge_copy_str(\"\") }}; }} "
+                    f"else {{ "
+                    f"forge_handler_pop(); "
+                    f"forge_handler_truncate_bt(&__forge_h{n}); "
+                    f"__forge_trycall{n} = ({rt}){{ .ok = false, .value = {dummy}, .error = __forge_h{n}.msg }}; "
+                    f"__forge_h{n}.msg = NULL; }} "
+                    f"__forge_trycall{n}; }})"
                 )
             if expr.name == "mkdir":
                 # Top-500 #181 (filesystem slice): mkdir(path, 0755).

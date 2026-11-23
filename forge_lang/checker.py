@@ -90,6 +90,7 @@ EXPR_BUILTINS = {"len", "range", "clock_micros", "panicked_tasks", "last_errno",
                  "file_exists", "args", "parse_int", "parse_float",
                  "run_command",
                  "try_alloc",
+                 "try_call",
                  "split", "join", "substr", "trim", "starts_with", "ends_with",
                  "http_get", "http_listen", "http_accept", "http_read_request",
                  "http_respond", "http_respond_status", "http_close",
@@ -145,6 +146,7 @@ class Checker:
         self.scopes = []
         self.current_ret = "void"
         self.current_fn = None
+        self.current_file = ""  # file the function being checked lives in (Top-500 #48)
         self.current_type_params = []
         self.loop_depth = 0
         self.branch_depth = 0
@@ -1094,7 +1096,7 @@ class Checker:
         # Save outer state: checking a generic instantiation can happen
         # in the middle of checking another function (a call site), and
         # must not wipe that function's scopes/return type.
-        saved = (self.scopes, self.current_ret, self.current_fn, self.current_type_params,
+        saved = (self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
                  self.moved_fields, self.loop_vars, self.pinned,
                  self._for_iterables, self._lambda_frames)
@@ -1134,6 +1136,7 @@ class Checker:
                 return
             self.current_ret = fn.ret
             self.current_fn = fn
+            self.current_file = getattr(fn, "file", "")
             self.scopes = [{n: (t, False) for n, t in fn.params}]
             self.unresolved = {}
             self.check_block(fn.body)
@@ -1163,7 +1166,7 @@ class Checker:
                                          f"of type {fn.ret} at the end of the function",
                                          fn.line, fn.col)
         finally:
-            self.scopes, self.current_ret, self.current_fn, self.current_type_params, \
+            self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
                 self.moved_fields, self.loop_vars, self.pinned, \
                 self._for_iterables, self._lambda_frames = saved
@@ -2660,7 +2663,7 @@ class Checker:
                              call.line, call.col)
         if self.freestanding and call.name in (
                 "read_file", "write_file", "read_bytes", "write_bytes",
-                "file_exists", "read_line", "try_alloc",
+                "file_exists", "read_line", "try_alloc", "try_call",
                 "mmap_open", "mmap_get", "mmap_grow", "mmap_get32",
                 "http_get", "http_listen", "http_accept", "http_read_request",
                 "http_respond", "http_respond_status", "http_close",
@@ -3001,6 +3004,74 @@ class Checker:
             self.struct_instantiations["Result<[int], int>"] = fields
             call.concrete_type = "Result<[int], int>"
             return "Result<[int], int>"
+        if call.name == "try_call":
+            # Top-500 #48: guarded call across a module boundary.
+            # try_call(f) / try_call(f, x) calls the foreign function
+            # f and returns Result<R, str>: Ok with f's return value,
+            # or Err(message) when f fail()s. Only fail() is caught
+            # in v1 (runtime faults and assert stay fatal via
+            # forge_fail). f must be a bare function name defined in
+            # a different .fg file from the caller (the module
+            # boundary, fn.file comparison); the Result struct comes
+            # from forge_lang/stdlib/result.fg, so the program must
+            # import it; register the concrete instantiation here so
+            # check()'s epilogue appends it to program.structs and
+            # codegen emits the C struct body. The callee's fn type
+            # is stamped on call.trycall_fn_type (NOT call.fn_type:
+            # is_fresh_str/is_fresh_fn read fn_type and would
+            # wrongly treat try_call as returning R instead of
+            # Result).
+            if len(call.args) not in (1, 2):
+                raise ForgeError("try_call() takes a bare function name and 0 or 1 "
+                                 "arguments (v1 arity 0-or-1)", call.line, call.col)
+            callee = call.args[0]
+            if not isinstance(callee, A.Var) \
+                    or any(callee.name in scope for scope in self.scopes) \
+                    or callee.name not in self.funcs:
+                raise ForgeError("try_call() takes a bare function name defined in "
+                                 "another file (not a closure, fn-typed variable, or "
+                                 "method)", call.line, call.col)
+            ft = self.check_expr(callee)
+            parts = fn_parts(ft)
+            if parts is None:
+                raise ForgeError("try_call() takes a bare function name defined in "
+                                 "another file (not a closure, fn-typed variable, or "
+                                 "method)", call.line, call.col)
+            params, ret = parts
+            if len(params) != len(call.args) - 1:
+                raise ForgeError(f"try_call() callee '{callee.name}' takes "
+                                 f"{len(params)} argument(s), got {len(call.args) - 1}",
+                                 call.line, call.col)
+            if ret in ("void", "never"):
+                raise ForgeError(f"try_call() callee '{callee.name}' returns {ret}; "
+                                 f"the guarded call needs a value to wrap in Result",
+                                 call.line, call.col)
+            if is_opaque_type(ret):
+                raise ForgeError(f"try_call() callee '{callee.name}' returns opaque "
+                                 f"type '{ret}' (no value can be built for the Err arm)",
+                                 call.line, call.col)
+            if getattr(self.funcs[callee.name], "file", "") == self.current_file:
+                raise ForgeError(f"try_call() is for calls across a module boundary; "
+                                 f"'{callee.name}' is defined in this file",
+                                 call.line, call.col)
+            value_call = A.Call(name=callee.name, args=list(call.args[1:]),
+                                line=call.line, col=call.col)
+            self._check_indirect_args(value_call, ft,
+                                      f"try_call() callee '{callee.name}'")
+            if "Result" not in self.structs:
+                raise ForgeError("try_call() needs import \"result.fg\" "
+                                 "(it returns Result<R, str>)",
+                                 call.line, call.col)
+            result_t = f"Result<{ret}, str>"
+            fields = self.struct_fields_for(result_t)
+            if fields is None:
+                raise ForgeError("try_call() needs Result<T, E> with ok/value/error "
+                                 "fields (import \"result.fg\")",
+                                 call.line, call.col)
+            self.struct_instantiations[result_t] = fields
+            call.concrete_type = result_t
+            call.trycall_fn_type = ft
+            return result_t
         if call.name == "mkdir":
             # Top-500 #181 (filesystem slice): mkdir(path, 0755).
             # False on failure; the errno is readable with

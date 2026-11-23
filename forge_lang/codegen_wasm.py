@@ -557,6 +557,9 @@ class WasmGen:
         from .allocfail import uses_try_alloc
         if uses_try_alloc(self.program):
             raise ForgeError("wasm: try_alloc is not supported")
+        from .allocfail import uses_try_call
+        if uses_try_call(self.program):
+            raise ForgeError("wasm: try_call is not supported")
         from .mmaps import uses_mmap
         if uses_mmap(self.program):
             raise ForgeError("wasm: mmap is not supported in v1")

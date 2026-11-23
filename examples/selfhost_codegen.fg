@@ -1775,7 +1775,7 @@ fn cg_is_fresh_struct(g: HCodegen, e: Node) -> bool {
         return false;
     }
     if e.kind == 35 {
-        if e.name == "move" || e.name == "try_alloc" || e.name == "try_read_file" || e.name == "try_read_bytes" || e.name == "try_readdir" || e.name == "try_readlink" {
+        if e.name == "move" || e.name == "try_alloc" || e.name == "try_read_file" || e.name == "try_read_bytes" || e.name == "try_readdir" || e.name == "try_readlink" || e.name == "try_call" {
             // Top-500 #46: same fresh-Result rule as try_alloc
             // (Python codegen.py is_fresh_struct) — the
             // statement expression builds the Result fresh, so
@@ -4637,6 +4637,36 @@ fn cg_try_dummy(y: str) -> str {
     return "";
 }
 
+// Dummy value for the Err arm of try_call's Result, for any
+// return type (Top-500 #48): the mirror of Python codegen's
+// _dummy_value. A str is a heap copy, an array gets a fresh
+// refcount, a struct/enum/tuple/union/fn value is
+// zero-initialised (every free path tolerates NULL/0 fields).
+// "" when the type has no dummy (opaque: an incomplete C type
+// cannot be zero-initialised — the checker rejects it first).
+fn cg_trycall_dummy(g: HCodegen, t: str) -> str {
+    let r: str = cg_resolve_newtype(g, t);
+    if cg_is_opaque_type(r) {
+        return "";
+    }
+    if r == "int" || cg_is_fixed_int(r) {
+        return "0";
+    }
+    if r == "float" {
+        return "0.0";
+    }
+    if r == "bool" {
+        return "false";
+    }
+    if r == "str" {
+        return "forge_copy_str(\"\")";
+    }
+    if cg_is_array_type(g, r) {
+        return "(" + cg_c_type(g, r) + "){NULL, 0, 0, forge_arr_ref_new()}";
+    }
+    return "(" + cg_c_type(g, r) + "){0}";
+}
+
 // Last index of a one-char string, or -1.
 fn cg_find_last(s: str, ch: str) -> int {
     let mut out: int = -1;
@@ -6068,6 +6098,40 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
             pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
         }
         let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryreadb" + itoa(n) + "; })";
+        return CGExpr { g: g, code: code };
+    }
+    if e.name == "try_call" {
+        // Top-500 #48: guarded call across a module boundary.
+        // Same GNU statement expression shape as try_alloc, and
+        // the same emission as Python codegen's try_call branch:
+        // push a handler, setjmp, call the foreign function
+        // through a synthetic IndirectCall (kind 46) over the
+        // bare fn name, pop the handler, wrap the value in Ok.
+        // When the callee fail()s, the fail() lowering copies the
+        // message into the handler slot and longjmps here; the Err
+        // arm truncates the backtrace stack to the depth recorded
+        // at push and wraps the message in Err. The callee's
+        // return type comes from the fn table; the Result C type
+        // from infer's type for this node. Arguments are evaluated
+        // INSIDE the guarded region (after setjmp), so a fail()
+        // during argument evaluation is caught too.
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let found: [str] = cg_fn_lookup(g, e.kids[0].name);
+        if found[0] != "1" {
+            fail("try_call() callee '" + e.kids[0].name + "' not found");
+        }
+        let ret: str = found[1];
+        let rt: str = cg_c_type(g, cg_expr_type(g, e));
+        let dummy: str = cg_trycall_dummy(g, ret);
+        if dummy == "" {
+            fail("try_call() of a function returning opaque type '" + ret + "' is not supported in v1");
+        }
+        let mut ind: Node = new_node(46, e.line, e.col);
+        ind.kids = e.kids;
+        let callout: CGExpr = cg_gen_expr(g, ind);
+        g = callout.g;
+        let code: str = "({ " + rt + " __forge_trycall" + itoa(n) + "; ForgeHandler __forge_h" + itoa(n) + "; forge_handler_push(&__forge_h" + itoa(n) + "); if (setjmp(__forge_h" + itoa(n) + ".jb) == 0) { " + cg_c_type(g, ret) + " __forge_v" + itoa(n) + " = " + callout.code + "; forge_handler_pop(); __forge_trycall" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_v" + itoa(n) + ", .error = forge_copy_str(\"\") }; } else { forge_handler_pop(); forge_handler_truncate_bt(&__forge_h" + itoa(n) + "); __forge_trycall" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + dummy + ", .error = __forge_h" + itoa(n) + ".msg }; __forge_h" + itoa(n) + ".msg = NULL; } __forge_trycall" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "mkdir" {
@@ -8074,6 +8138,31 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 msg = "__forge_msg" + itoa(n);
                 mfree = "forge_free_str(__forge_msg" + itoa(n) + ");";
             }
+            // Top-500 #48: a live try_call handler catches this
+            // fail() first — copy the message into the handler's
+            // slot and longjmp back into try_call (no print, no
+            // panicked_tasks bump, no exit). Otherwise today's
+            // behaviour below, byte-identically. forge_fail is
+            // untouched (only fail() is caught in v1).
+            g.assign_counter = g.assign_counter + 1;
+            let hn: int = g.assign_counter;
+            g = cg_emit(g, "ForgeHandler *__forge_h" + itoa(hn) + " = forge_handler_top();");
+            g = cg_emit(g, "if (__forge_h" + itoa(hn) + ") {");
+            g.indent = g.indent + 1;
+            // #47 backtraces: a caught failure still prints its
+            // call chain in a debug build (debuggability); the
+            // catch path then truncates the stack so a later
+            // failure's trace shows only its own frames.
+            if g.debug {
+                g = cg_emit(g, "forge_bt_print();");
+            }
+            g = cg_emit(g, "__forge_h" + itoa(hn) + "->msg = forge_copy_str(" + msg + ");");
+            if mfree != "" {
+                g = cg_emit(g, mfree);
+            }
+            g = cg_emit(g, "longjmp(__forge_h" + itoa(hn) + "->jb, 1);");
+            g.indent = g.indent - 1;
+            g = cg_emit(g, "}");
             g = cg_emit(g, "if (forge_in_task) {");
             g.indent = g.indent + 1;
             g = cg_emit(g, "fprintf(stderr, \"qasida: task panicked: %s\\n\", " + msg + ");");

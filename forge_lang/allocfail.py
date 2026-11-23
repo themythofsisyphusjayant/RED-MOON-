@@ -8,13 +8,13 @@ named error.
 import forge_lang.ast_nodes as A
 
 
-def _walk(node):
-    if isinstance(node, A.Call) and node.name == "try_alloc":
+def _walk(node, name="try_alloc"):
+    if isinstance(node, A.Call) and node.name == name:
         return True
     if isinstance(node, (list, tuple)):
-        return any(_walk(x) for x in node)
+        return any(_walk(x, name) for x in node)
     if hasattr(node, "__dict__"):
-        return any(_walk(v) for v in vars(node).values())
+        return any(_walk(v, name) for v in vars(node).values())
     return False
 
 
@@ -24,5 +24,18 @@ def uses_try_alloc(program):
         if getattr(fn, "type_params", None):
             continue
         if getattr(fn, "body", None) is not None and _walk(fn.body):
+            return True
+    return False
+
+
+def uses_try_call(program):
+    """True when any function body calls try_call (Top-500 #48).
+    try_call is native-only in v1 (it uses setjmp/longjmp on the
+    hosted runtime); big32 and WASM reject try_call programs with
+    a named error."""
+    for fn in getattr(program, "funcs", []) or []:
+        if getattr(fn, "type_params", None):
+            continue
+        if getattr(fn, "body", None) is not None and _walk(fn.body, "try_call"):
             return True
     return False

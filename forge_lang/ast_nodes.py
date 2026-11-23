@@ -310,6 +310,10 @@ class Call:
     fn_type: str = None  # set by checker for indirect calls through
     # a fn-typed variable (Top-500 #103): the callee's fn type,
     # which codegen uses for the argument-ownership loop.
+    trycall_fn_type: str = None  # set by checker for try_call
+    # (Top-500 #48): the callee's fn type. Deliberately NOT
+    # fn_type — is_fresh_str/is_fresh_fn read fn_type and would
+    # wrongly treat try_call as returning R instead of Result.
 
 
 @dataclass

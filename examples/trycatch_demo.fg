@@ -1,0 +1,54 @@
+import "result.fg";
+import "trycatch_helper.fg";
+
+fn guarded_double(x: int) -> Result<int, str> {
+    let r: Result<int, str> = try_call(helper_ok, x);
+    let v: int = r?;
+    return Result { ok: true, value: v * 2, error: "" };
+}
+
+fn guarded_boom(x: int) -> Result<int, str> {
+    let r: Result<int, str> = try_call(helper_boom, x);
+    let v: int = r?;
+    return Result { ok: true, value: v * 2, error: "" };
+}
+
+fn same_file_boom() -> int {
+    fail("same-file boom");
+    return 0;
+}
+
+fn main() -> int {
+    let r1: Result<int, str> = try_call(helper_ok, 41);
+    if r1.ok {
+        println(r1.value);
+    } else {
+        println("unexpected err");
+    }
+    let r2: Result<int, str> = try_call(helper_boom, 7);
+    if r2.ok {
+        println("unexpected ok");
+    } else {
+        println(r2.error);
+    }
+    let r3: Result<int, str> = try_call(helper_deep, 7);
+    if r3.ok {
+        println("unexpected ok");
+    } else {
+        println(r3.error);
+    }
+    let d1: Result<int, str> = guarded_double(21);
+    if d1.ok {
+        println(d1.value);
+    } else {
+        println("unexpected err");
+    }
+    let d2: Result<int, str> = guarded_boom(3);
+    if d2.ok {
+        println("unexpected ok");
+    } else {
+        println(d2.error);
+    }
+    println("boundary ok");
+    return 0;
+}

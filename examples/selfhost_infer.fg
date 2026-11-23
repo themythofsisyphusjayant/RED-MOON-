@@ -1889,6 +1889,19 @@ fn infer_walk_expr(h0: HInfer, e: Node) -> HInfer {
             // Filesystem slice: same as try_read_file above.
             return infer_set(h, e, "Result<str, int>");
         }
+        if e.name == "try_call" {
+            // Top-500 #48: Result<R, str> where R is the callee's
+            // return type. The checker has already validated the
+            // callee (a bare foreign fn name); infer only needs its
+            // return type. A missing callee cannot happen in checked
+            // code — fall back to Result<int, str> rather than
+            // failing infer (the checker is authoritative).
+            let found: [str] = infer_fn_lookup(h, e.kids[0].name);
+            if found[0] == "1" {
+                return infer_set(h, e, "Result<" + found[1] + ", str>");
+            }
+            return infer_set(h, e, "Result<int, str>");
+        }
         if e.name == "read_bytes" {
             return infer_set(h, e, "[int]");
         }

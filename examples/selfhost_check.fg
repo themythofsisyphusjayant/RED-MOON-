@@ -95,6 +95,13 @@ struct HChecker {
     // #103: an extern fn cannot be used as a value — its C ABI
     // type differs from the Qasida fn type).
     func_extern: [bool];
+    // (name, file) pairs from load_merged, parallel entries
+    // (Top-500 #48): the file each function was defined in, for
+    // try_call's module boundary. Impl methods are recorded as
+    // Struct__method.
+    fn_files: [str];
+    // File the function being checked lives in (Top-500 #48).
+    current_file: str;
     ret_type: str;
     // Branch/loop depth (conditional-move rule + break/continue).
     loop_depth: int;
@@ -133,7 +140,48 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false };
+}
+
+// Last index of a one-char string in s, or -1 (Top-500 #48:
+// helper for hc_func_file's suffix-strip fallback).
+fn hc_find_last(s: str, ch: str) -> int {
+    let mut out: int = -1;
+    let mut i: int = 0;
+    while i < len(s) {
+        if substr(s, i, 1) == ch {
+            out = i;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// File a function was defined in, from the (name, file) pairs
+// load_merged records (Top-500 #48: the module boundary for
+// try_call). "" when unknown. Generic instantiations are mangled
+// (base_T_int); the suffix-strip fallback resolves them to their
+// template, mirroring cg_fn_file in selfhost_codegen.fg. Impl
+// methods are recorded as Struct__method.
+fn hc_func_file(c: HChecker, name: str) -> str {
+    let mut nm: str = name;
+    let mut guard: int = 0;
+    while guard < 64 {
+        let mut i: int = 0;
+        while i + 1 < len(c.fn_files) {
+            if c.fn_files[i] == nm {
+                return c.fn_files[i + 1];
+            }
+            i = i + 2;
+        }
+        let u: int = hc_find_last(nm, "_");
+        if u < 0 {
+            return "";
+        }
+        nm = substr(nm, 0, u);
+        guard = guard + 1;
+    }
+    return "";
 }
 
 // C keywords that are not Qasida keywords: user names colliding
@@ -478,7 +526,7 @@ fn heap_error(n: Node, t: str) -> str {
 // Freestanding blocklist (Python checker.py:2251): builtins
 // that need the hosted runtime.
 fn is_fs_blocked_builtin(name: str) -> bool {
-    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
+    return name == "read_file" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "read_line" || name == "try_alloc" || name == "try_call" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "args" || name == "parallel_dot" || name == "parallel_matmul" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "run_command" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
 }
 
 fn elem_type(t: str) -> str {
@@ -927,7 +975,7 @@ fn is_stmt_builtin(name: str) -> bool {
 }
 
 fn is_expr_builtin(name: str) -> bool {
-    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
+    return name == "len" || name == "range" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "try_read_file" || name == "try_read_bytes" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" || name == "abs" || name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" || name == "wrapping_neg" || name == "read_file" || name == "read_line" || name == "write_file" || name == "read_bytes" || name == "write_bytes" || name == "file_exists" || name == "args" || name == "parse_int" || name == "parse_float" || name == "run_command" || name == "try_alloc" || name == "try_call" || name == "split" || name == "join" || name == "substr" || name == "trim" || name == "starts_with" || name == "ends_with" || name == "http_get" || name == "http_listen" || name == "http_accept" || name == "http_read_request" || name == "http_respond" || name == "http_respond_status" || name == "http_close" || name == "alloc_count" || name == "free_count" || name == "parallel_dot" || name == "parallel_matmul" || name == "arr_alloc_count" || name == "arr_free_count" || name == "refcount" || name == "weak_new" || name == "weak_upgrade" || name == "move" || name == "mmap_open" || name == "mmap_get" || name == "mmap_grow" || name == "mmap_get32" || name == "peek32" || name == "csr_read" || name == "ecall" || name == "ecall3" || name == "mkdir" || name == "readdir" || name == "try_readdir" || name == "rename" || name == "symlink" || name == "readlink" || name == "try_readlink" || name == "chmod" || name == "chown" || name == "stat_mode" || name == "stat_uid" || name == "stat_gid" || name == "is_dir" || name == "str_compare";
 }
 
 // Length N of a "[T; N]" spelling.
@@ -3473,6 +3521,61 @@ fn check_builtin_call(c0: HChecker, n: Node) -> COut {
         }
         return COut { c: c, typ: "Result<[int], int>" };
     }
+    if n.name == "try_call" {
+        // Top-500 #48: guarded call across a module boundary.
+        // try_call(f) / try_call(f, x) calls the foreign function
+        // f and returns Result<R, str>: Ok with f's return value,
+        // or Err(message) when f fail()s. Only fail() is caught in
+        // v1 (runtime faults and assert stay fatal via forge_fail).
+        // f must be a bare function name defined in a different
+        // .fg file from the caller (the module boundary, fn_files
+        // comparison); the Result struct comes from
+        // stdlib/result.fg, so the program must define (or import)
+        // it. Value arguments are validated by
+        // check_indirect_args against the callee's fn type.
+        if len(n.kids) < 1 || len(n.kids) > 2 {
+            fail_at(n.line, n.col, "try_call() takes a bare function name and 0 or 1 arguments (v1 arity 0-or-1)");
+        }
+        let callee: Node = n.kids[0];
+        if callee.kind != 34 || var_known(c, callee.name) || func_sig(c, callee.name) == "" || enum_of_variant(c, callee.name) != "" {
+            fail_at(n.line, n.col, "try_call() takes a bare function name defined in another file (not a closure, fn-typed variable, or method)");
+        }
+        if func_tparams(c, callee.name) != "" {
+            fail_at(n.line, n.col, "generic function '" + callee.name + "' cannot be used as a value; call it (the call instantiates it)");
+        }
+        if func_is_extern(c, callee.name) {
+            fail_at(n.line, n.col, "extern function '" + callee.name + "' cannot be used as a value (its C ABI type differs from the Qasida type)");
+        }
+        let ft: str = fn_type_of_sig(func_sig(c, callee.name));
+        let params: [str] = fn_type_params(ft);
+        let ret: str = fn_type_ret(ft);
+        if len(params) != len(n.kids) - 1 {
+            fail_at(n.line, n.col, "try_call() callee '" + callee.name + "' takes " + itoa(len(params)) + " argument(s), got " + itoa(len(n.kids) - 1));
+        }
+        if ret == "void" || ret == "never" {
+            fail_at(n.line, n.col, "try_call() callee '" + callee.name + "' returns " + ret + "; the guarded call needs a value to wrap in Result");
+        }
+        if is_opaque_type(ret) {
+            fail_at(n.line, n.col, "try_call() callee '" + callee.name + "' returns opaque type '" + ret + "' (no value can be built for the Err arm)");
+        }
+        if hc_func_file(c, callee.name) == c.current_file {
+            fail_at(n.line, n.col, "try_call() is for calls across a module boundary; '" + callee.name + "' is defined in this file");
+        }
+        let a: COut = check_indirect_args(c, n, ft, "try_call() callee '" + callee.name + "'", 1);
+        c = a.c;
+        let mut found: bool = false;
+        let mut fi: int = 0;
+        while fi < len(c.struct_names) {
+            if c.struct_names[fi] == "Result" {
+                found = true;
+            }
+            fi = fi + 1;
+        }
+        if !found {
+            fail_at(n.line, n.col, "try_call() needs import \"result.fg\" (it returns Result<R, str>)");
+        }
+        return COut { c: c, typ: "Result<" + ret + ", str>" };
+    }
     if n.name == "mkdir" {
         // Top-500 #181 (filesystem slice): mkdir(path, 0755).
         c = expect_builtin_msg(c, n, ["str"], "mkdir() takes exactly one str argument");
@@ -5350,8 +5453,12 @@ fn check_lambda(c0: HChecker, n: Node) -> COut {
     return COut { c: c, typ: ft };
 }
 
-fn check_func(c0: HChecker, fn_node: Node) -> HChecker {
+fn check_func(c0: HChecker, fn_node: Node, file: str) -> HChecker {
     let mut c: HChecker = c0;
+    // Top-500 #48: the file this function was defined in, for
+    // try_call's module boundary (passed in by check_program,
+    // which knows the exact name — plain fn or Struct__method).
+    c.current_file = file;
     // Generic template: the body is checked only on instantiation,
     // when every type parameter is concrete.
     let sp: [str] = split_tparams(fn_node.name);
@@ -5987,10 +6094,13 @@ fn type_name_cands(c: HChecker) -> [str] {
 // ---------- program entry ----------
 // Returns true if the program checks clean; fails otherwise.
 
-fn check_program(prog: Node, freestanding: bool) -> bool {
+fn check_program(prog: Node, freestanding: bool, fn_files: [str]) -> bool {
     let mut p: Node = expand_aliases_prog(prog);
     let mut c: HChecker = new_checker();
     c.freestanding = freestanding;
+    // Top-500 #48: (name, file) pairs for try_call's module
+    // boundary (load_merged records them; test harnesses pass []).
+    c.fn_files = fn_files;
     c = collect_defs(c, p);
     let mut i: int = 0;
     while i < len(p.kids) {
@@ -6001,13 +6111,13 @@ fn check_program(prog: Node, freestanding: bool) -> bool {
                 i = i + 1;
                 continue;
             }
-            c = check_func(c, n);
+            c = check_func(c, n, hc_func_file(c, n.name));
         }
         if n.kind == 6 {
             // ImplDef: check each method body like a function.
             let mut j: int = 0;
             while j < len(n.kids) {
-                c = check_func(c, n.kids[j]);
+                c = check_func(c, n.kids[j], hc_func_file(c, n.name + "__" + n.kids[j].name));
                 j = j + 1;
             }
         }

@@ -1636,3 +1636,42 @@ build 139): 10 GAP-to-HAVE (#51, #52, #54, #55, #56, #57, #58, #59,
 (371 + 12 + 117 = 500). HAVE 371 of 500 = 74.2%.
 Next: #48 in catalog order (blocked on Jayant's design pick — see the
 design doc); otherwise #60 / #62 in catalog order.
+
+## Sprint Day 3 follow-up: #48 try/catch (23 Nov 2026)
+
+Jayant picked "Build #48 as designed" 23 Nov ~11:33 IST (option B:
+try_call(f, ...) returning Result<R, str>, foreign fn only, v1 arity
+0-or-1, fail()-only). Built as designed (DESIGN.md §8;
+blackmoon-iso/trycatch-slice/). #48 GAP -> HAVE. Verification:
+own test tests/test_trycatch_v1.py 68/68 ALL PASS both compilers;
+emit comparison 12/12; bootstrap 7/7 byte-identical (emit-only,
+matching the #47 gate); parity 124/124 + byte-identical; corpus
+99/99; regression 62/62; fuzz existing 102/102 both modes, fv 56/56,
+closure 66/66, fs 56/56, tc 38/38; full suite 95/102 hosted + 95/102
+Python (7 known big32); ASan compiler-side clean (102+56+66+56+38,
+zero reports); ASan program-side: demo clean both modes, unwind
+leak measured 60 bytes in 3 allocations (identical debug/release);
+fmt idempotent on demo + helper; benchmarks tick q_safe 3566 us,
+matmul q_safe 17704 us — no regression attributable to #48 (old #47
+binary measures identically on this VM today; the whole VM is
+slower than the 2321/12815 baseline day, C baselines included).
+Two findings recorded, not fixed in-slice: (1) the
+bootstrap_wrap_codegen.fg emit does not compile under cc
+(pre-existing latent bug, NOT caused by #48 and NOT a divergence —
+the old #47 binary fails identically: HCodegen's array-free helper
+precedes Node's in self.structs order, so forge_HCodegen_array_free
+calls forge_Node_array_free before its static definition; the CLI
+build compiles fine; the wrapper-order fix is a separate slice).
+(2) MinGW is not installed on the VM (no compiler, no package), so
+the Windows setjmp/longjmp preamble path remains unprobed (§1d);
+setjmp/longjmp are C89 and exist on MinGW in principle, unproven
+here. v1 limits: unwind leak (60 bytes / 3 allocs for a probe
+allocating one string + one array before failing) + defers skipped
+on catch, both stated in plain language in the catalog entry.
+
+Counts after the flip: HAVE 372, PARTIAL 12, GAP 116, to build 128.
+Arithmetic from the Day 3 entry (HAVE 371, PARTIAL 12, GAP 117, to
+build 129): 1 GAP-to-HAVE (#48); 371 + 1 = 372; 117 - 1 = 116;
+129 - 1 = 128 (372 + 12 + 116 = 500). HAVE 372 of 500 = 74.4%.
+Next: #50 in catalog order (checker slice, inferred error sets);
+otherwise #60 / #62 in catalog order.
