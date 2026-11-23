@@ -1675,3 +1675,58 @@ build 129): 1 GAP-to-HAVE (#48); 371 + 1 = 372; 117 - 1 = 116;
 129 - 1 = 128 (372 + 12 + 116 = 500). HAVE 372 of 500 = 74.4%.
 Next: #50 in catalog order (checker slice, inferred error sets);
 otherwise #60 / #62 in catalog order.
+
+## #50 inferred error sets — landed 24 Nov 2026 (sprint, both compilers)
+
+#50 GAP -> HAVE. Option A as picked by Jayant 23 Nov 2026 ~21:54 IST:
+inferred sets over ANY enum error type, with match narrowing + a
+`qasida check --dump-error-sets` dump flag; empty-means-empty (a
+function that only ever fail()s has an empty error-set). No new
+syntax, no codegen change, no new runtime behaviour. Second checker
+pass with a worklist fixpoint over the call graph; two summaries per
+function (value-set for bare enum returns, error-set for Result
+returns). Records: ~/workspace/blackmoon-iso/errsets-slice/
+(DESIGN.md, PLAN.md, SUMMARY.md, probes/, fuzz/, logs/, after/).
+
+Verification (live, 24 Nov 2026): own test tests/test_errsets_v1.py
+75/75 ALL PASS both compilers; demo examples/errsets_demo.fg; ES
+fuzz 20 cases 40/40 both compilers; soundness spot-check 8/8 (one
+program per ES-C4 widening rule — indirect call, extern,
+struct-field flow, computed error expr — must infer TOP); emit
+comparison 21/21 (new-hosted == old-hosted where comparable;
+hosted-vs-Python struct-ordering divergence is pre-existing);
+bootstrap 7/7 byte-identical (lex 88280, parse 719937, check
+7151586, infer 8193722, codegen 25826093, header 103474, cli
+26061181); parity 124/124 agree + byte-identical; corpus 99/99;
+regression 62/62; fuzz existing 102/102, fv 56/56, closure 66/66,
+fs 56/56, tc 38/38, lf 20/20, es 40/40; full suite 97/104 hosted +
+97/104 Python (7 known big32); ASan program-side 8/8 clean; ASan
+compiler-side passing `check` leaks 612 bytes / 36 allocs (510/30
+pre-existing + 102/6 new from the ES walker state, same class);
+fmt 30/30 unchanged, selfhost_check.fg fmt-neutral on code;
+benchmarks tick q_safe 2408 us, matmul q_safe 13370 us — no
+regression. Check-time ratio: hosted codegen ~1.95x, check ~2.7x
+(OVER the ~2x flag), cli ~1.86x; Python ~1.7-1.8x.
+
+Two real bugs found and fixed in-slice: (1) Python `_es_methodcall`
+used `mangle` without importing it (NameError — broke corpus
+v33/v40/v48/v51 + regression v23; fixed with a local import from
+.traits); (2) the hosted fixpoint walked externs as empty-bodied
+functions (parse_extern appends an empty Block body) — fixed by
+skipping `bval` (extern) nodes in the collection. Also fixed: the
+own test invoked the compiler via forge.py, which honors ambient
+QASIDA_COMPILER=python and silently routed "hosted" runs to Python
+in the suite's python mode — fixed by scrubbing QASIDA_COMPILER in
+the test's run helper. Findings recorded, not fixed in-slice: (1)
+the Step-6 cache serves C WITHOUT re-running the checker (a cached
+entry lets even a compiler that would reject the program "emit" it)
+— the emit gate clears the cache before every emit; (2) the
+hosted-vs-Python struct typedef ordering divergence for
+Result-heavy programs (pre-existing); (3) the hosted check path
+leaks heap state on a passing check (510/30 pre-existing).
+
+Counts after the flip: HAVE 373, PARTIAL 12, GAP 115, to build 127.
+Arithmetic from the #48 entry (HAVE 372, PARTIAL 12, GAP 116, to
+build 128): 1 GAP-to-HAVE (#50); 372 + 1 = 373; 116 - 1 = 115;
+128 - 1 = 127 (373 + 12 + 115 = 500). HAVE 373 of 500 = 74.6%.
+Next: #60 / #62 in catalog order.

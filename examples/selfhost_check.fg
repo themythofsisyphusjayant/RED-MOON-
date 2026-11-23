@@ -132,6 +132,31 @@ struct HChecker {
     // no hosted runtime — the checker rejects heap-backed
     // values and hosted-only features at first use.
     freestanding: bool;
+    // Top-500 #50 inferred error sets: summaries (name,
+    // kind "S"/"V", enum, "~"-joined set / "TOP" / ""),
+    // the reverse call graph ("caller~callee"), the walk
+    // locals table + scope marks, the per-function
+    // accumulators, the callees of the current walk, the
+    // verdict switch (final walk only), and the fixpoint
+    // bound flag.
+    es_names: [str];
+    es_kinds: [str];
+    es_enums: [str];
+    es_sets: [str];
+    es_edges: [str];
+    es_loc_names: [str];
+    es_loc_typs: [str];
+    es_loc_kinds: [str];
+    es_loc_enums: [str];
+    es_loc_sets: [str];
+    es_marks: [int];
+    es_acc_err_enum: str;
+    es_acc_err_set: str;
+    es_acc_val_enum: str;
+    es_acc_val_set: str;
+    es_callees: [str];
+    es_verdicts: bool;
+    es_bound_hit: bool;
 }
 
 struct COut {
@@ -140,7 +165,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
 }
 
 // Last index of a one-char string in s, or -1 (Top-500 #48:
@@ -5034,7 +5059,11 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if !is_enum(c, base) {
             fail_at(n.line, n.col, "match needs an enum value, got " + et.typ);
         }
-        let variants: [str] = enum_variant_names(c, base);
+        // Top-500 #50: the exhaustiveness verdict moved to
+        // the second pass (es_infer's verdict walk), where
+        // the inferred error set narrows it. Phase 1 still
+        // checks the arm names, payloads, duplicates, and
+        // the wildcard-last rule; it no longer verdicts.
         let before: HChecker = checker_snapshot(c);
         let mut seen: [str] = [];
         let mut has_wildcard: bool = false;
@@ -5105,27 +5134,6 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             push(results, ac);
             c = checker_snapshot(before);
             a = a + 1;
-        }
-        if !has_wildcard {
-            let mut missing: bool = false;
-            let mut mi: int = 0;
-            while mi < len(variants) {
-                let mut found: bool = false;
-                let mut si: int = 0;
-                while si < len(seen) {
-                    if seen[si] == variants[mi] {
-                        found = true;
-                    }
-                    si = si + 1;
-                }
-                if !found {
-                    missing = true;
-                }
-                mi = mi + 1;
-            }
-            if missing {
-                fail_at(n.line, n.col, "match is not exhaustive");
-            }
         }
         return join_moved(before, results);
     }
@@ -6091,10 +6099,1437 @@ fn type_name_cands(c: HChecker) -> [str] {
     return out;
 }
 
+// ---------- Top-500 #50: inferred error sets ----------
+// Second checker pass (option A, DESIGN.md in
+// ~/workspace/blackmoon-iso/errsets-slice/): for every function
+// returning Result<T, E> where E is an enum, the checker computes
+// the set of E-variants it can produce (own literal Err-returns,
+// `?`-propagated callee sets, directly returned callee Results,
+// enum-typed locals), by a worklist fixpoint over the call graph.
+// A match on a value with a known inferred set is exhaustive over
+// that set, not the whole enum (ES-C5). Sets are compile-time only
+// and erased at runtime: no codegen change, no new syntax.
+//
+// Sets are encoded as "~"-joined variant names in enum-declaration
+// order; "" is the empty set; "TOP" is the full enum (unknown).
+// Soundness invariant (ES-SOUND): the set is always an
+// over-approximation; anything unprovable widens to TOP, never to
+// empty. Empty means "provably never returns an error" (ES-C7:
+// fail()/faults/assert are never members).
+//
+// Verbatim mirror of forge_lang/checker.py's second pass, with one
+// deliberate asymmetry: the Python checker records pending matches
+// in phase 1 and verdicts them after the fixpoint; the hosted
+// checker RE-DERIVES the verdict in the second-pass walk (a record
+// pushed on the checker after the arm loop would be lost —
+// join_moved rebuilds from a snapshot of `before`, and
+// checker_snapshot deep-copies only the var/env arrays). Both
+// verdict logics are identical (missing = variants - seen, same
+// message format) and the own test runs both compilers on the same
+// cases, so any divergence fails the test.
+//
+// Hosted gaps (documented, not bugs): the hosted checker never
+// checks generic template bodies, so a generic call's summary is
+// TOP (ES-C4) while Python narrows per-instantiation; the own
+// test asserts exactly that split.
+
+struct ESExpr {
+    typ: str;
+    kind: str;
+    enm: str;
+    set: str;
+}
+
+struct ESOut {
+    c: HChecker;
+    e: ESExpr;
+}
+
+struct ESFnOut {
+    c: HChecker;
+    err_enum: str;
+    err_set: str;
+    val_enum: str;
+    val_set: str;
+}
+
+// ---------- set helpers ----------
+// Sets are "~"-joined variant names (declaration order), "" for
+// empty, "TOP" for the full enum (unknown).
+
+fn es_join(parts: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(parts) {
+        if i > 0 {
+            out = out + "~";
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn es_join_comma(parts: [str]) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(parts) {
+        if i > 0 {
+            out = out + ", ";
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn es_has(set: str, variant: str) -> bool {
+    if set == "TOP" {
+        return true;
+    }
+    if set == "" {
+        return false;
+    }
+    let parts: [str] = split(set, "~");
+    let mut i: int = 0;
+    while i < len(parts) {
+        if parts[i] == variant {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn es_union(a: str, b: str) -> str {
+    if a == "TOP" || b == "TOP" {
+        return "TOP";
+    }
+    if a == "" {
+        return b;
+    }
+    if b == "" {
+        return a;
+    }
+    let av: [str] = split(a, "~");
+    let bv: [str] = split(b, "~");
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(av) {
+        push(out, av[i]);
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(bv) {
+        if !es_has(a, bv[j]) {
+            push(out, bv[j]);
+        }
+        j = j + 1;
+    }
+    return es_join(out);
+}
+
+// Alphabetical sort (insertion sort; string < does not exist,
+// str_compare is the ordering primitive). The verdict's missing
+// list is sorted to match Python's message (sorted(variants -
+// seen)); the dump keeps declaration order instead.
+fn es_sort_str(parts: [str]) -> [str] {
+    let mut out: [str] = [];
+    let mut i: int = 0;
+    while i < len(parts) {
+        push(out, parts[i]);
+        i = i + 1;
+    }
+    let mut j: int = 1;
+    while j < len(out) {
+        let key: str = out[j];
+        let mut k: int = j - 1;
+        while k >= 0 && str_compare(out[k], key) > 0 {
+            out[k + 1] = out[k];
+            k = k - 1;
+        }
+        out[k + 1] = key;
+        j = j + 1;
+    }
+    return out;
+}
+
+// ---------- type helpers ----------
+
+// The enum a type denotes (itself, or the base of a generic
+// instantiation), or "" when it is not an enum.
+fn es_enum_base(c: HChecker, t: str) -> str {
+    if is_enum(c, t) {
+        return t;
+    }
+    let base: str = generic_base(t);
+    if base != "" && base != t && is_enum(c, base) {
+        return base;
+    }
+    return "";
+}
+
+// The E of a Result<T, E> spelling, or "".
+fn es_result_err(t: str) -> str {
+    if generic_base(t) == "Result" {
+        let args: [str] = generic_args(t);
+        if len(args) == 2 {
+            return args[1];
+        }
+    }
+    return "";
+}
+
+// "result" when t is Result<T, E> with E an enum, "enum" when t
+// is an enum, "other" otherwise.
+fn es_kind_of(c: HChecker, t: str) -> str {
+    let e: str = es_result_err(t);
+    if e != "" && es_enum_base(c, e) != "" {
+        return "result";
+    }
+    if es_enum_base(c, t) != "" {
+        return "enum";
+    }
+    return "other";
+}
+
+// The enum a set-bearing value's set is over: E for a Result,
+// the type itself for a bare enum, "" otherwise.
+fn es_enum_of(c: HChecker, t: str) -> str {
+    let e: str = es_result_err(t);
+    if e != "" && es_enum_base(c, e) != "" {
+        return e;
+    }
+    return es_enum_base(c, t);
+}
+
+// The return type of a "params=>ret" signature.
+fn es_sig_ret(sig: str) -> str {
+    let mut ai: int = -1;
+    let mut i: int = 0;
+    while i + 1 < len(sig) {
+        if substr(sig, i, 1) == "=" && substr(sig, i + 1, 1) == ">" {
+            ai = i;
+        }
+        i = i + 1;
+    }
+    if ai < 0 {
+        return "?";
+    }
+    return substr(sig, ai + 2, len(sig) - ai - 2);
+}
+
+// The return type of a call: the "=>ret" part of the signature,
+// with generic type params substituted from the argument types
+// (mirrors check_call's generic handling; a failed unify leaves
+// that param as "?", which makes the return untypeable and the
+// call site widen to TOP — phase 1 already validated the call,
+// so this walker never fails here).
+fn es_call_ret(c: HChecker, name: str, sig: str, arg_typs: [str]) -> str {
+    let mut ai: int = -1;
+    let mut i: int = 0;
+    while i + 1 < len(sig) {
+        if substr(sig, i, 1) == "=" && substr(sig, i + 1, 1) == ">" {
+            ai = i;
+        }
+        i = i + 1;
+    }
+    if ai < 0 {
+        return "?";
+    }
+    let param_part: str = substr(sig, 0, ai);
+    let ret0: str = substr(sig, ai + 2, len(sig) - ai - 2);
+    let tps: str = func_tparams(c, name);
+    if tps == "" {
+        return ret0;
+    }
+    let bnames: [str] = split(tps, "~");
+    let mut btypes: [str] = [];
+    let mut q: int = 0;
+    while q < len(bnames) {
+        push(btypes, "?");
+        q = q + 1;
+    }
+    let mut want: [str] = [];
+    if param_part != "" {
+        want = split(param_part, "~");
+    }
+    let mut j: int = 0;
+    while j < len(want) && j < len(arg_typs) {
+        let u: UOut = unify(want[j], arg_typs[j], bnames, btypes);
+        if u.ok {
+            btypes = u.types;
+        }
+        j = j + 1;
+    }
+    return substitute_type(ret0, bnames, btypes);
+}
+
+// Index of the "__" in a mangled method name, or -1.
+fn es_find_dunder(name: str) -> int {
+    let mut i: int = 0;
+    while i + 1 < len(name) {
+        if substr(name, i, 1) == "_" && substr(name, i + 1, 1) == "_" {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// ---------- summary store ----------
+// es_names/es_kinds/es_enums/es_sets: one row per (function, kind)
+// where kind is "S" (error-set) or "V" (value-set). A stored set
+// is the last walk's result; "TOP" means unknown/widened, "" means
+// provably empty.
+
+// The stored set for (name, kind), or "" when no row exists yet
+// (behaves exactly like the empty set: a walkable function that
+// has not been walked yet contributes nothing until its first
+// walk lands).
+fn es_get_set(c: HChecker, name: str, kind: str) -> str {
+    let mut i: int = 0;
+    while i < len(c.es_names) {
+        if c.es_names[i] == name && c.es_kinds[i] == kind {
+            return c.es_sets[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn es_put_set(c0: HChecker, name: str, kind: str, enm: str, set: str) -> HChecker {
+    let mut c: HChecker = c0;
+    let mut i: int = 0;
+    while i < len(c.es_names) {
+        if c.es_names[i] == name && c.es_kinds[i] == kind {
+            c.es_enums[i] = enm;
+            c.es_sets[i] = set;
+            return c;
+        }
+        i = i + 1;
+    }
+    push(c.es_names, name);
+    push(c.es_kinds, kind);
+    push(c.es_enums, enm);
+    push(c.es_sets, set);
+    return c;
+}
+
+// A callee's summary as seen by a caller. A stored row wins.
+// Otherwise: an extern, a generic template (no per-instantiation
+// summary exists in hosted — its body is never checked), or an
+// unknown name is TOP (ES-C4); a concrete function or method the
+// fixpoint will walk contributes the empty set until its first
+// walk lands.
+fn es_summary_members(c: HChecker, name: str, kind: str) -> str {
+    // A stored row wins (including a stored empty set).
+    let mut i: int = 0;
+    while i < len(c.es_names) {
+        if c.es_names[i] == name && c.es_kinds[i] == kind {
+            return c.es_sets[i];
+        }
+        i = i + 1;
+    }
+    // No row yet. An extern, a generic template (no
+    // per-instantiation summary exists in hosted — its body is
+    // never checked), or an unknown name is TOP (ES-C4); a
+    // concrete function or method the fixpoint will walk
+    // contributes the empty set until its first walk lands.
+    if func_sig(c, name) != "" {
+        if func_is_extern(c, name) {
+            return "TOP";
+        }
+        if func_tparams(c, name) != "" {
+            return "TOP";
+        }
+        return "";
+    }
+    // A mangled method name (Struct__method): methods live in the
+    // method table, not func_names. Walkable when the method
+    // exists there.
+    let us: int = es_find_dunder(name);
+    if us >= 0 {
+        let sname: str = substr(name, 0, us);
+        let mname: str = substr(name, us + 2, len(name) - us - 2);
+        if method_sig(c, sname, mname) != "" {
+            return "";
+        }
+    }
+    return "TOP";
+}
+
+fn es_has_edge(c: HChecker, edge: str) -> bool {
+    let mut i: int = 0;
+    while i < len(c.es_edges) {
+        if c.es_edges[i] == edge {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------- walk locals ----------
+// The locals table mirrors the source scopes: es_marks holds the
+// length of the locals arrays at each scope entry, so a scope
+// exit truncates back to it. Lookup scans from the end, so an
+// inner binding shadows an outer one (and reappears when the
+// inner scope is popped).
+
+fn es_loc_lookup(c: HChecker, name: str) -> ESExpr {
+    let mut i: int = len(c.es_loc_names) - 1;
+    while i >= 0 {
+        if c.es_loc_names[i] == name {
+            return ESExpr { typ: c.es_loc_typs[i], kind: c.es_loc_kinds[i], enm: c.es_loc_enums[i], set: c.es_loc_sets[i] };
+        }
+        i = i - 1;
+    }
+    return ESExpr { typ: "", kind: "", enm: "", set: "" };
+}
+
+fn es_loc_bind(c0: HChecker, name: str, e: ESExpr) -> HChecker {
+    let mut c: HChecker = c0;
+    push(c.es_loc_names, name);
+    push(c.es_loc_typs, e.typ);
+    push(c.es_loc_kinds, e.kind);
+    push(c.es_loc_enums, e.enm);
+    push(c.es_loc_sets, e.set);
+    return c;
+}
+
+// Reassignment unions the new set into the local (ES-C3: sets
+// only grow within a body). A kind/enum change widens to TOP.
+fn es_loc_assign_union(c0: HChecker, name: str, e: ESExpr) -> HChecker {
+    let mut c: HChecker = c0;
+    let mut i: int = len(c.es_loc_names) - 1;
+    while i >= 0 {
+        if c.es_loc_names[i] == name {
+            if c.es_loc_kinds[i] == "result" || c.es_loc_kinds[i] == "enum" {
+                if e.kind == c.es_loc_kinds[i] && e.enm == c.es_loc_enums[i] {
+                    c.es_loc_sets[i] = es_union(c.es_loc_sets[i], e.set);
+                } else {
+                    c.es_loc_sets[i] = "TOP";
+                }
+            }
+            return c;
+        }
+        i = i - 1;
+    }
+    return c;
+}
+
+fn es_push_scope(c0: HChecker) -> HChecker {
+    let mut c: HChecker = c0;
+    push(c.es_marks, len(c.es_loc_names));
+    return c;
+}
+
+fn es_pop_scope(c0: HChecker) -> HChecker {
+    let mut c: HChecker = c0;
+    let mark: int = c.es_marks[len(c.es_marks) - 1];
+    c.es_loc_names = trunc_str(c.es_loc_names, mark);
+    c.es_loc_typs = trunc_str(c.es_loc_typs, mark);
+    c.es_loc_kinds = trunc_str(c.es_loc_kinds, mark);
+    c.es_loc_enums = trunc_str(c.es_loc_enums, mark);
+    c.es_loc_sets = trunc_str(c.es_loc_sets, mark);
+    c.es_marks = trunc_int(c.es_marks, len(c.es_marks) - 1);
+    return c;
+}
+
+// A fresh arm state: a copy of the checker whose locals arrays
+// are unshared, so index writes inside the arm cannot corrupt
+// the `before` snapshot (index assignment writes through a shared
+// buffer; push is copy-on-write and needs no copy).
+fn es_arm_start(c: HChecker) -> HChecker {
+    let mut out: HChecker = c;
+    out.es_loc_names = copy_str(c.es_loc_names);
+    out.es_loc_typs = copy_str(c.es_loc_typs);
+    out.es_loc_kinds = copy_str(c.es_loc_kinds);
+    out.es_loc_enums = copy_str(c.es_loc_enums);
+    out.es_loc_sets = copy_str(c.es_loc_sets);
+    out.es_marks = copy_int(c.es_marks);
+    return out;
+}
+
+// ---------- accumulators ----------
+// es_acc_err_* tracks the error-set of the function being walked
+// (its return type's E); es_acc_val_* tracks the value-set of a
+// bare-enum return. A function returns one type, so at most one
+// is live; both enums are "" for a non-set-bearing return.
+
+fn es_acc_add_error(c0: HChecker, enm: str, set: str) -> HChecker {
+    let mut c: HChecker = c0;
+    if c.es_acc_err_enum == "" {
+        return c;
+    }
+    if enm == c.es_acc_err_enum {
+        c.es_acc_err_set = es_union(c.es_acc_err_set, set);
+    } else {
+        c.es_acc_err_set = "TOP";
+    }
+    return c;
+}
+
+fn es_acc_add_return(c0: HChecker, e: ESExpr) -> HChecker {
+    let mut c: HChecker = c0;
+    if c.es_acc_err_enum != "" {
+        if e.kind == "result" && e.enm == c.es_acc_err_enum {
+            c.es_acc_err_set = es_union(c.es_acc_err_set, e.set);
+        } else {
+            c.es_acc_err_set = "TOP";
+        }
+    }
+    if c.es_acc_val_enum != "" {
+        if e.kind == "enum" && e.enm == c.es_acc_val_enum {
+            c.es_acc_val_set = es_union(c.es_acc_val_set, e.set);
+        } else {
+            c.es_acc_val_set = "TOP";
+        }
+    }
+    return c;
+}
+
+// The locals-table entry for a let with an annotation: the kind
+// and enum come from the annotation, the set from the value when
+// the value agrees with the annotation, else TOP (ES-C3).
+fn es_local_for_ann(c: HChecker, ann: str, e: ESExpr) -> ESExpr {
+    if ann == "" {
+        return e;
+    }
+    let kind: str = es_kind_of(c, ann);
+    let enm: str = es_enum_of(c, ann);
+    if kind == "other" {
+        return ESExpr { typ: ann, kind: "other", enm: "", set: "TOP" };
+    }
+    if e.kind == kind && e.enm == enm {
+        return ESExpr { typ: ann, kind: kind, enm: enm, set: e.set };
+    }
+    return ESExpr { typ: ann, kind: kind, enm: enm, set: "TOP" };
+}
+
+// ---------- expression walker ----------
+// Returns (updated checker, ESExpr). The typ is the best-known
+// type string ("?" when unknowable); kind is "result" / "enum" /
+// "other"; enm is the set's enum ("" when not set-bearing); set
+// is the "~"-joined set, "TOP" when unknown, "" when empty.
+// Anything untypeable is ("?", "other", "", "TOP"): a
+// return/store of such a value in a set-bearing position falls
+// back to TOP of the enclosing/declared enum (sound).
+
+fn es_expr(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    if n.kind == 34 {
+        // Bare name: a local, a bare enum variant, or a fn value.
+        let lv: ESExpr = es_loc_lookup(c, n.name);
+        if lv.typ != "" {
+            return ESOut { c: c, e: lv };
+        }
+        let en: str = enum_of_variant(c, n.name);
+        if en != "" {
+            return ESOut { c: c, e: ESExpr { typ: en, kind: "enum", enm: en, set: n.name } };
+        }
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 35 {
+        return es_call(c, n);
+    }
+    if n.kind == 31 {
+        return es_structlit(c, n);
+    }
+    if n.kind == 32 {
+        return es_fieldaccess(c, n);
+    }
+    if n.kind == 33 {
+        return es_methodcall(c, n);
+    }
+    if n.kind == 42 {
+        // `?`: the operand's error set propagates to the enclosing
+        // function (ES-C2b), wherever the `?` appears.
+        let inner: ESOut = es_expr(c, n.kids[0]);
+        c = inner.c;
+        if inner.e.kind == "result" && inner.e.enm != "" {
+            c = es_acc_add_error(c, inner.e.enm, inner.e.set);
+        }
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 46 {
+        return es_indirectcall(c, n);
+    }
+    if n.kind == 47 {
+        // Lambda value: TOP; the body is NOT walked — its `?`s
+        // and returns belong to the lambda, never the enclosing
+        // function, and a lambda value is only ever called
+        // indirectly (= TOP), so its body summary is unobservable
+        // in v1 (ES-C8).
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 40 {
+        let l: ESOut = es_expr(c, n.kids[0]);
+        c = l.c;
+        let r: ESOut = es_expr(c, n.kids[1]);
+        c = r.c;
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 41 {
+        let o: ESOut = es_expr(c, n.kids[0]);
+        c = o.c;
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 39 {
+        // Cast: the target type, widened to TOP.
+        let o: ESOut = es_expr(c, n.kids[0]);
+        c = o.c;
+        let kind: str = es_kind_of(c, n.sval);
+        let enm: str = es_enum_of(c, n.sval);
+        return ESOut { c: c, e: ESExpr { typ: n.sval, kind: kind, enm: enm, set: "TOP" } };
+    }
+    if n.kind == 36 {
+        // Index: the element type, widened to TOP (ES-C4: array
+        // elements are untracked sources).
+        let b: ESOut = es_expr(c, n.kids[0]);
+        c = b.c;
+        let ix: ESOut = es_expr(c, n.kids[1]);
+        c = ix.c;
+        if is_array(b.e.typ) {
+            let et: str = elem_type(b.e.typ);
+            return ESOut { c: c, e: ESExpr { typ: et, kind: es_kind_of(c, et), enm: es_enum_of(c, et), set: "TOP" } };
+        }
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 37 {
+        let b: ESOut = es_expr(c, n.kids[0]);
+        c = b.c;
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 29 || n.kind == 30 {
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let o: ESOut = es_expr(c, n.kids[i]);
+            c = o.c;
+            i = i + 1;
+        }
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if n.kind == 38 {
+        let s: ESOut = es_expr(c, n.kids[0]);
+        c = s.c;
+        let e: ESOut = es_expr(c, n.kids[1]);
+        c = e.c;
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    // Literals (25/26/27/28) and anything else: a plain value,
+    // never an enum/Result.
+    return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+}
+
+fn es_call(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    // Variant construction first (mirrors check_call order).
+    let ven: str = enum_of_variant(c, n.name);
+    if ven != "" {
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let o: ESOut = es_expr(c, n.kids[i]);
+            c = o.c;
+            i = i + 1;
+        }
+        return ESOut { c: c, e: ESExpr { typ: ven, kind: "enum", enm: ven, set: n.name } };
+    }
+    // try_call: Result<R, str> — E is str, never set-bearing.
+    // Walk only the value args (kids[0] is a bare fn name). The
+    // func_sig guard keeps a user-defined try_call (which phase 1
+    // resolves as a normal function) from being mistaken for the
+    // builtin.
+    if n.name == "try_call" && func_sig(c, n.name) == "" {
+        let mut i: int = 1;
+        while i < len(n.kids) {
+            let o: ESOut = es_expr(c, n.kids[i]);
+            c = o.c;
+            i = i + 1;
+        }
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    let sig: str = func_sig(c, n.name);
+    if sig != "" {
+        // Direct call to a known function.
+        let mut i: int = 0;
+        let mut arg_typs: [str] = [];
+        while i < len(n.kids) {
+            let o: ESOut = es_expr(c, n.kids[i]);
+            c = o.c;
+            push(arg_typs, o.e.typ);
+            i = i + 1;
+        }
+        push(c.es_callees, n.name);
+        let ret: str = es_call_ret(c, n.name, sig, arg_typs);
+        let kind: str = es_kind_of(c, ret);
+        let enm: str = es_enum_of(c, ret);
+        if kind == "result" {
+            // A generic callee's summary is TOP in hosted (ES-C4:
+            // no per-instantiation summary exists — template
+            // bodies are never checked); Python narrows
+            // per-instantiation. The own test asserts exactly
+            // that split.
+            if func_tparams(c, n.name) != "" {
+                return ESOut { c: c, e: ESExpr { typ: ret, kind: "result", enm: enm, set: "TOP" } };
+            }
+            return ESOut { c: c, e: ESExpr { typ: ret, kind: "result", enm: enm, set: es_summary_members(c, n.name, "S") } };
+        }
+        if kind == "enum" {
+            if func_tparams(c, n.name) != "" {
+                return ESOut { c: c, e: ESExpr { typ: ret, kind: "enum", enm: enm, set: "TOP" } };
+            }
+            return ESOut { c: c, e: ESExpr { typ: ret, kind: "enum", enm: enm, set: es_summary_members(c, n.name, "V") } };
+        }
+        return ESOut { c: c, e: ESExpr { typ: ret, kind: "other", enm: "", set: "TOP" } };
+    }
+    // Indirect call through a fn-typed variable (FN-C2), or a
+    // builtin / unknown name: walk the args, TOP. (The walker's
+    // own locals table is the source here — phase 1's var table
+    // is stale in the second pass, so var_type_or_empty would
+    // read the last function phase 1 checked.)
+    let lv: ESExpr = es_loc_lookup(c, n.name);
+    if lv.typ != "" && is_fn_type(lv.typ) {
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let o: ESOut = es_expr(c, n.kids[i]);
+            c = o.c;
+            i = i + 1;
+        }
+        let ret: str = fn_type_ret(lv.typ);
+        return ESOut { c: c, e: ESExpr { typ: ret, kind: es_kind_of(c, ret), enm: es_enum_of(c, ret), set: "TOP" } };
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let o: ESOut = es_expr(c, n.kids[i]);
+        c = o.c;
+        i = i + 1;
+    }
+    return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+}
+
+fn es_structlit(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    // kids are StructField nodes (kind 44): name = field, kids[0]
+    // = value. The error field's enum tag is the concrete E (the
+    // Result literal's error field has type E).
+    let mut i: int = 0;
+    let mut ok_is_true: bool = false;
+    let mut err_e: ESExpr = ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" };
+    let mut has_err: bool = false;
+    while i < len(n.kids) {
+        let f: Node = n.kids[i];
+        let o: ESOut = es_expr(c, f.kids[0]);
+        c = o.c;
+        if f.name == "ok" && f.kids[0].kind == 28 && f.kids[0].bval {
+            ok_is_true = true;
+        }
+        if f.name == "error" {
+            err_e = o.e;
+            has_err = true;
+        }
+        i = i + 1;
+    }
+    if n.name != "Result" {
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    let e: str = err_e.enm;
+    if e == "" || es_enum_base(c, e) == "" {
+        // E unknown (or not an enum): not set-bearing for the
+        // walker; the return-site/local-site fallback supplies
+        // TOP(E).
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if ok_is_true {
+        return ESOut { c: c, e: ESExpr { typ: "Result", kind: "result", enm: e, set: "" } };
+    }
+    if !has_err {
+        return ESOut { c: c, e: ESExpr { typ: "Result", kind: "result", enm: e, set: "TOP" } };
+    }
+    if err_e.kind == "enum" && err_e.enm == e {
+        return ESOut { c: c, e: ESExpr { typ: "Result", kind: "result", enm: e, set: err_e.set } };
+    }
+    return ESOut { c: c, e: ESExpr { typ: "Result", kind: "result", enm: e, set: "TOP" } };
+}
+
+fn es_fieldaccess(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    let b: ESOut = es_expr(c, n.kids[0]);
+    c = b.c;
+    if b.e.kind == "result" && n.name == "error" {
+        return ESOut { c: c, e: ESExpr { typ: b.e.enm, kind: "enum", enm: b.e.enm, set: b.e.set } };
+    }
+    if b.e.kind == "result" {
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    if b.e.kind == "other" && b.e.typ != "" {
+        // A struct field read: the field's type, widened to TOP
+        // (ES-C4: values flowing through struct fields are
+        // untracked).
+        let base: str = generic_base(b.e.typ);
+        let mut is_struct: bool = false;
+        let mut si: int = 0;
+        while si < len(c.struct_names) {
+            if c.struct_names[si] == base {
+                is_struct = true;
+            }
+            si = si + 1;
+        }
+        if is_struct && struct_has_field(c, base, n.name) {
+            let ft: str = struct_field_type(c, base, n.name, n.line, n.col);
+            let kind: str = es_kind_of(c, ft);
+            let enm: str = es_enum_of(c, ft);
+            if kind != "other" {
+                return ESOut { c: c, e: ESExpr { typ: ft, kind: kind, enm: enm, set: "TOP" } };
+            }
+        }
+    }
+    return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+}
+
+fn es_methodcall(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    let b: ESOut = es_expr(c, n.kids[0]);
+    c = b.c;
+    let mut i: int = 1;
+    while i < len(n.kids) {
+        let o: ESOut = es_expr(c, n.kids[i]);
+        c = o.c;
+        i = i + 1;
+    }
+    let bt: str = b.e.typ;
+    if bt == "" || bt == "?" {
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    let base: str = generic_base(bt);
+    if base != bt {
+        // Generic-struct receiver: the method instantiation is
+        // not tracked in hosted — TOP (ES-C4).
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    let sig: str = method_sig(c, base, n.name);
+    if sig == "" {
+        return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+    }
+    // sig is "params=>ret" (params after the receiver).
+    let ret: str = es_sig_ret(sig);
+    let kind: str = es_kind_of(c, ret);
+    let enm: str = es_enum_of(c, ret);
+    let mangled: str = base + "__" + n.name;
+    push(c.es_callees, mangled);
+    if kind == "result" {
+        return ESOut { c: c, e: ESExpr { typ: ret, kind: "result", enm: enm, set: es_summary_members(c, mangled, "S") } };
+    }
+    if kind == "enum" {
+        return ESOut { c: c, e: ESExpr { typ: ret, kind: "enum", enm: enm, set: es_summary_members(c, mangled, "V") } };
+    }
+    return ESOut { c: c, e: ESExpr { typ: ret, kind: "other", enm: "", set: "TOP" } };
+}
+
+fn es_indirectcall(c0: HChecker, n: Node) -> ESOut {
+    let mut c: HChecker = c0;
+    let cal: ESOut = es_expr(c, n.kids[0]);
+    c = cal.c;
+    let mut i: int = 1;
+    while i < len(n.kids) {
+        let o: ESOut = es_expr(c, n.kids[i]);
+        c = o.c;
+        i = i + 1;
+    }
+    // Indirect: the callee is unknown at the call site — TOP
+    // (ES-C4). The return type comes from the fn-typed value when
+    // it is known.
+    if is_fn_type(cal.e.typ) {
+        let ret: str = fn_type_ret(cal.e.typ);
+        return ESOut { c: c, e: ESExpr { typ: ret, kind: es_kind_of(c, ret), enm: es_enum_of(c, ret), set: "TOP" } };
+    }
+    return ESOut { c: c, e: ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" } };
+}
+
+// ---------- statement walker ----------
+
+fn es_walk_block(c0: HChecker, block: Node) -> HChecker {
+    let mut c: HChecker = c0;
+    c = es_push_scope(c);
+    let mut i: int = 0;
+    while i < len(block.kids) {
+        c = es_walk_stmt(c, block.kids[i]);
+        i = i + 1;
+    }
+    c = es_pop_scope(c);
+    return c;
+}
+
+// Merge the arm-end states into `before`: each binding's set is
+// the union across the arms (sets only grow, ES-C3), and the
+// accumulators/callees are unioned too (they are not scoped —
+// returns and `?`s inside a branch still contribute to the
+// function). The arms all started from the same snapshot, so
+// indices below len(before) are the same bindings in every arm.
+fn es_branch_merge(before: HChecker, afters: [HChecker]) -> HChecker {
+    let mut out: HChecker = before;
+    out.es_loc_names = copy_str(before.es_loc_names);
+    out.es_loc_typs = copy_str(before.es_loc_typs);
+    out.es_loc_kinds = copy_str(before.es_loc_kinds);
+    out.es_loc_enums = copy_str(before.es_loc_enums);
+    out.es_loc_sets = copy_str(before.es_loc_sets);
+    out.es_marks = copy_int(before.es_marks);
+    out.es_callees = copy_str(before.es_callees);
+    let mut i: int = 0;
+    while i < len(before.es_loc_names) {
+        let mut acc: str = before.es_loc_sets[i];
+        let mut a: int = 0;
+        while a < len(afters) {
+            let ac: HChecker = afters[a];
+            if i < len(ac.es_loc_names) {
+                acc = es_union(acc, ac.es_loc_sets[i]);
+            }
+            a = a + 1;
+        }
+        out.es_loc_sets[i] = acc;
+        i = i + 1;
+    }
+    // Accumulators are not scoped: union the arms' contributions
+    // (each arm's accumulator started from `before`'s, so the
+    // union is before's set plus every arm's additions).
+    let mut a2: int = 0;
+    while a2 < len(afters) {
+        let ac2: HChecker = afters[a2];
+        if ac2.es_acc_err_enum != "" {
+            out.es_acc_err_enum = ac2.es_acc_err_enum;
+            out.es_acc_err_set = es_union(out.es_acc_err_set, ac2.es_acc_err_set);
+        }
+        if ac2.es_acc_val_enum != "" {
+            out.es_acc_val_enum = ac2.es_acc_val_enum;
+            out.es_acc_val_set = es_union(out.es_acc_val_set, ac2.es_acc_val_set);
+        }
+        let mut ci: int = 0;
+        while ci < len(ac2.es_callees) {
+            let cn: str = ac2.es_callees[ci];
+            let mut found: bool = false;
+            let mut cj: int = 0;
+            while cj < len(out.es_callees) {
+                if out.es_callees[cj] == cn {
+                    found = true;
+                }
+                cj = cj + 1;
+            }
+            if !found {
+                push(out.es_callees, cn);
+            }
+            ci = ci + 1;
+        }
+        a2 = a2 + 1;
+    }
+    return out;
+}
+
+fn es_walk_stmt(c0: HChecker, n: Node) -> HChecker {
+    let mut c: HChecker = c0;
+    if n.kind == 9 {
+        return es_walk_block(c, n);
+    }
+    if n.kind == 10 {
+        let o: ESOut = es_expr(c, n.kids[0]);
+        c = o.c;
+        let bound: ESExpr = es_local_for_ann(c, n.sval, o.e);
+        c = es_loc_bind(c, n.name, bound);
+        return c;
+    }
+    if n.kind == 11 {
+        let o: ESOut = es_expr(c, n.kids[0]);
+        c = o.c;
+        c = es_loc_assign_union(c, n.name, o.e);
+        return c;
+    }
+    if n.kind == 12 {
+        // IndexAssign: the element is stored into an array —
+        // untracked (ES-C3). Walk the target and the value for
+        // their `?`s and discard.
+        let t: ESOut = es_expr(c, n.kids[0]);
+        c = t.c;
+        let v: ESOut = es_expr(c, n.kids[1]);
+        c = v.c;
+        return c;
+    }
+    if n.kind == 13 {
+        // FieldAssign: a value stored into a struct field —
+        // untracked (ES-C4). Walk the target and the value for
+        // their `?`s and discard.
+        let t: ESOut = es_expr(c, n.kids[0]);
+        c = t.c;
+        let v: ESOut = es_expr(c, n.kids[1]);
+        c = v.c;
+        return c;
+    }
+    if n.kind == 14 {
+        let cond: ESOut = es_expr(c, n.kids[0]);
+        c = cond.c;
+        let before: HChecker = c;
+        let mut then_arm: HChecker = es_arm_start(c);
+        then_arm = es_walk_block(then_arm, n.kids[1]);
+        if len(n.kids) > 2 {
+            let mut else_arm: HChecker = es_arm_start(c);
+            else_arm = es_walk_block(else_arm, n.kids[2]);
+            return es_branch_merge(before, [then_arm, else_arm]);
+        }
+        return es_branch_merge(before, [then_arm, before]);
+    }
+    if n.kind == 15 {
+        let cond: ESOut = es_expr(c, n.kids[0]);
+        c = cond.c;
+        let before: HChecker = c;
+        let mut body_arm: HChecker = es_arm_start(c);
+        body_arm = es_walk_block(body_arm, n.kids[1]);
+        return es_branch_merge(before, [body_arm]);
+    }
+    if n.kind == 16 {
+        let it: ESOut = es_expr(c, n.kids[0]);
+        c = it.c;
+        let before: HChecker = c;
+        let mut body_arm: HChecker = es_arm_start(c);
+        body_arm = es_push_scope(body_arm);
+        let mut vt: str = "int";
+        if is_array(it.e.typ) {
+            vt = elem_type(it.e.typ);
+        }
+        let loop_e: ESExpr = ESExpr { typ: vt, kind: es_kind_of(c, vt), enm: es_enum_of(c, vt), set: "TOP" };
+        body_arm = es_loc_bind(body_arm, n.name, loop_e);
+        body_arm = es_walk_block(body_arm, n.kids[1]);
+        body_arm = es_pop_scope(body_arm);
+        return es_branch_merge(before, [body_arm]);
+    }
+    if n.kind == 17 {
+        if len(n.kids) == 0 {
+            return c;
+        }
+        let v: ESOut = es_expr(c, n.kids[0]);
+        c = v.c;
+        c = es_acc_add_return(c, v.e);
+        return c;
+    }
+    if n.kind == 18 || n.kind == 19 {
+        return c;
+    }
+    if n.kind == 20 {
+        let s: ESOut = es_expr(c, n.kids[0]);
+        c = s.c;
+        // The exhaustiveness verdict, re-derived here (ES-C5):
+        // phase 1 no longer verdicts enum matches. Union matches
+        // were verdict'd in phase 1 and are skipped.
+        if c.es_verdicts && !is_union_type(s.e.typ) {
+            let base: str = es_enum_base(c, s.e.typ);
+            if base != "" {
+                let variants: [str] = enum_variant_names(c, base);
+                let mut seen: [str] = [];
+                let mut has_wildcard: bool = false;
+                let mut a: int = 1;
+                while a < len(n.kids) {
+                    let arm: Node = n.kids[a];
+                    if arm.name == "_" {
+                        has_wildcard = true;
+                    } else {
+                        push(seen, arm.name);
+                    }
+                    a = a + 1;
+                }
+                if !has_wildcard {
+                    let seen_s: str = es_join(seen);
+                    // The scrutinee's set: a concrete set narrows
+                    // the verdict; anything else (TOP, or an
+                    // untyped scrutinee) uses the full enum.
+                    let vset: str = s.e.set;
+                    if s.e.kind == "enum" && vset != "TOP" {
+                        let parts: [str] = split(vset, "~");
+                        let mut missing: [str] = [];
+                        let mut pi: int = 0;
+                        while pi < len(parts) {
+                            if parts[pi] != "" && !es_has(seen_s, parts[pi]) {
+                                push(missing, parts[pi]);
+                            }
+                            pi = pi + 1;
+                        }
+                        if len(missing) > 0 {
+                            let sm: [str] = es_sort_str(missing);
+                            fail_at(n.line, n.col, "match is not exhaustive; missing: " + es_join_comma(sm));
+                        }
+                    } else {
+                        // TOP: today's rule (the full enum) and
+                        // today's hosted message (bare, no list).
+                        let mut missing: bool = false;
+                        let mut mi: int = 0;
+                        while mi < len(variants) {
+                            if !es_has(seen_s, variants[mi]) {
+                                missing = true;
+                            }
+                            mi = mi + 1;
+                        }
+                        if missing {
+                            fail_at(n.line, n.col, "match is not exhaustive");
+                        }
+                    }
+                }
+            }
+        }
+        // Walk the arms for their sets and `?`s, merging locals
+        // after. The payload binding (if any) is seeded in the
+        // arm's own scope from the scrutinee's concrete type.
+        let before: HChecker = c;
+        let mut arms: [HChecker] = [];
+        let mut a2: int = 1;
+        while a2 < len(n.kids) {
+            let arm: Node = n.kids[a2];
+            let mut arm_c: HChecker = es_arm_start(c);
+            arm_c = es_push_scope(arm_c);
+            if arm.sval != "" {
+                let mbase: str = es_enum_base(c, s.e.typ);
+                let mut bpt: str = "?";
+                if mbase != "" {
+                    let payload: str = enum_payload(c, mbase, arm.name, n.line, n.col);
+                    bpt = payload;
+                    let gargs: [str] = generic_args(s.e.typ);
+                    let etps: str = enum_tparams(c, mbase);
+                    if len(gargs) > 0 && etps != "" {
+                        let enames: [str] = split(etps, "~");
+                        if len(enames) == len(gargs) {
+                            bpt = substitute_type(payload, enames, gargs);
+                        }
+                    }
+                }
+                let bind_e: ESExpr = ESExpr { typ: bpt, kind: es_kind_of(c, bpt), enm: es_enum_of(c, bpt), set: "TOP" };
+                arm_c = es_loc_bind(arm_c, arm.sval, bind_e);
+            }
+            arm_c = es_walk_block(arm_c, arm.kids[0]);
+            arm_c = es_pop_scope(arm_c);
+            push(arms, arm_c);
+            a2 = a2 + 1;
+        }
+        return es_branch_merge(before, arms);
+    }
+    if n.kind == 21 {
+        // Spawn: the spawned call runs in another task — its
+        // Result is discarded, so only the argument expressions
+        // (evaluated in this frame) are walked.
+        let call: Node = n.kids[0];
+        let mut i: int = 0;
+        while i < len(call.kids) {
+            let o: ESOut = es_expr(c, call.kids[i]);
+            c = o.c;
+            i = i + 1;
+        }
+        return c;
+    }
+    if n.kind == 22 {
+        return es_walk_block(c, n.kids[0]);
+    }
+    if n.kind == 23 || n.kind == 24 {
+        // Defer / ExprStmt: walk the expression and discard the
+        // set (`?`s inside still contribute to the accumulator).
+        let o: ESOut = es_expr(c, n.kids[0]);
+        c = o.c;
+        return c;
+    }
+    return c;
+}
+
+// ---------- function walk ----------
+
+fn es_walk_fn(c0: HChecker, fn_node: Node, key: str, verdicts: bool) -> ESFnOut {
+    let mut c: HChecker = c0;
+    // Reset the per-function walk state. (A bare [] has type
+    // [?] and cannot be assigned to a typed field; trunc to 0
+    // yields an empty array of the field's element type.)
+    c.es_loc_names = trunc_str(c.es_loc_names, 0);
+    c.es_loc_typs = trunc_str(c.es_loc_typs, 0);
+    c.es_loc_kinds = trunc_str(c.es_loc_kinds, 0);
+    c.es_loc_enums = trunc_str(c.es_loc_enums, 0);
+    c.es_loc_sets = trunc_str(c.es_loc_sets, 0);
+    c.es_marks = trunc_int(c.es_marks, 0);
+    c.es_callees = trunc_str(c.es_callees, 0);
+    c.es_verdicts = verdicts;
+    // Accumulators from the return type.
+    let ret: str = fn_node.sval;
+    let e: str = es_result_err(ret);
+    if e != "" && es_enum_base(c, e) != "" {
+        c.es_acc_err_enum = e;
+        c.es_acc_err_set = "";
+        c.es_acc_val_enum = "";
+        c.es_acc_val_set = "";
+    } else if es_enum_base(c, ret) != "" {
+        c.es_acc_err_enum = "";
+        c.es_acc_err_set = "";
+        c.es_acc_val_enum = ret;
+        c.es_acc_val_set = "";
+    } else {
+        c.es_acc_err_enum = "";
+        c.es_acc_err_set = "";
+        c.es_acc_val_enum = "";
+        c.es_acc_val_set = "";
+    }
+    // Seed the parameters (TOP of their enum, ES-C3).
+    let mut i: int = 0;
+    while i < len(fn_node.kids) {
+        let k: Node = fn_node.kids[i];
+        if k.kind == 43 {
+            let pe: ESExpr = es_local_for_ann(c, k.sval, ESExpr { typ: "?", kind: "other", enm: "", set: "TOP" });
+            c = es_loc_bind(c, k.name, pe);
+        }
+        i = i + 1;
+    }
+    // The body is the last kid.
+    let body: Node = fn_node.kids[len(fn_node.kids) - 1];
+    c = es_walk_block(c, body);
+    return ESFnOut { c: c, err_enum: c.es_acc_err_enum, err_set: c.es_acc_err_set, val_enum: c.es_acc_val_enum, val_set: c.es_acc_val_set };
+}
+
+// The FuncDef node for a walkable function key (plain name, or
+// Struct__method for a method), or a kind -1 node when absent.
+// Template functions (name carries "~" type params) are skipped:
+// their bodies are never checked, so they have no summary.
+fn es_find_fn(prog: Node, key: str) -> Node {
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            let sp: [str] = split_tparams(n.name);
+            if sp[0] == key && sp[1] == "" {
+                return n;
+            }
+        }
+        if n.kind == 6 {
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                let msp: [str] = split_tparams(m.name);
+                if n.name + "__" + msp[0] == key && msp[1] == "" {
+                    return m;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return new_node(-1, 0, 0);
+}
+
+// ---------- fixpoint ----------
+
+// Worklist fixpoint over the call graph (ES-C6). Every walkable
+// function is walked once in program order; when a walk grows a
+// summary, every caller of that function is enqueued. Summaries
+// only grow (union, TOP at most), so the worklist terminates;
+// the 10,000-step bound widens everything not yet stable to TOP
+// on hit (and records it). After the fixpoint, every function is
+// re-walked once with verdicts enabled (ES-C5).
+fn es_infer(c0: HChecker, prog: Node, dump: bool) -> HChecker {
+    let mut c: HChecker = c0;
+    // Collect the walkable functions (key, in program order):
+    // concrete FuncDefs with a body, and ImplDef methods with a
+    // body. Externs (no body) and generic templates are skipped.
+    let mut keys: [str] = [];
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            let sp: [str] = split_tparams(n.name);
+            // Externs carry an empty Block body (parse_extern
+            // appends one), so the body check alone does not
+            // exclude them — the bval flag is the extern test.
+            if sp[1] == "" && !n.bval && len(n.kids) > 0 && n.kids[len(n.kids) - 1].kind == 9 {
+                push(keys, sp[0]);
+            }
+        }
+        if n.kind == 6 {
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                let msp: [str] = split_tparams(m.name);
+                if msp[1] == "" && !m.bval && len(m.kids) > 0 && m.kids[len(m.kids) - 1].kind == 9 {
+                    push(keys, n.name + "__" + msp[0]);
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    let mut work: [str] = [];
+    let mut wi: int = 0;
+    let mut k: int = 0;
+    while k < len(keys) {
+        push(work, keys[k]);
+        k = k + 1;
+    }
+    let mut steps: int = 0;
+    while wi < len(work) {
+        let name: str = work[wi];
+        wi = wi + 1;
+        steps = steps + 1;
+        if steps > 10000 {
+            c.es_bound_hit = true;
+            break;
+        }
+        let fn_node: Node = es_find_fn(prog, name);
+        if fn_node.kind == -1 {
+            continue;
+        }
+        let out: ESFnOut = es_walk_fn(c, fn_node, name, false);
+        c = out.c;
+        // Record the callee edges (reverse graph) from this walk.
+        let mut ei: int = 0;
+        while ei < len(c.es_callees) {
+            let edge: str = name + "~" + c.es_callees[ei];
+            if !es_has_edge(c, edge) {
+                push(c.es_edges, edge);
+            }
+            ei = ei + 1;
+        }
+        // Store the summaries; enqueue callers when one grew.
+        let mut grew: bool = false;
+        if out.err_enum != "" {
+            if out.err_set != es_get_set(c, name, "S") {
+                grew = true;
+            }
+            c = es_put_set(c, name, "S", out.err_enum, out.err_set);
+        }
+        if out.val_enum != "" {
+            if out.val_set != es_get_set(c, name, "V") {
+                grew = true;
+            }
+            c = es_put_set(c, name, "V", out.val_enum, out.val_set);
+        }
+        if grew {
+            let mut ci: int = 0;
+            while ci < len(c.es_edges) {
+                let parts: [str] = split(c.es_edges[ci], "~");
+                if len(parts) == 2 && parts[1] == name {
+                    let caller: str = parts[0];
+                    let mut queued: bool = false;
+                    let mut qi: int = wi;
+                    while qi < len(work) {
+                        if work[qi] == caller {
+                            queued = true;
+                        }
+                        qi = qi + 1;
+                    }
+                    if !queued {
+                        push(work, caller);
+                    }
+                }
+                ci = ci + 1;
+            }
+        }
+    }
+    if c.es_bound_hit {
+        // Widen every stored summary to TOP (sound, ES-C4).
+        let mut bi: int = 0;
+        while bi < len(c.es_names) {
+            c.es_sets[bi] = "TOP";
+            bi = bi + 1;
+        }
+    }
+    // Final verdict walk (ES-C5): re-walk every walkable function
+    // with verdicts enabled (the verdicts use the final
+    // summaries).
+    let mut vi: int = 0;
+    while vi < len(keys) {
+        let fn_node: Node = es_find_fn(prog, keys[vi]);
+        if fn_node.kind != -1 {
+            let out: ESFnOut = es_walk_fn(c, fn_node, keys[vi], true);
+            c = out.c;
+        }
+        vi = vi + 1;
+    }
+    if dump {
+        c = es_dump(c, prog);
+    }
+    return c;
+}
+
+// ---------- dump ----------
+
+fn es_format_set(c: HChecker, enm: str, set: str) -> str {
+    if set == "TOP" {
+        return "TOP";
+    }
+    if set == "" {
+        return "{}";
+    }
+    let variants: [str] = enum_variant_names(c, enm);
+    let mut names: [str] = [];
+    let mut i: int = 0;
+    while i < len(variants) {
+        if es_has(set, variants[i]) {
+            push(names, variants[i]);
+        }
+        i = i + 1;
+    }
+    // Any member outside the enum's list (defensive) goes last,
+    // in encoded order.
+    let parts: [str] = split(set, "~");
+    let mut j: int = 0;
+    while j < len(parts) {
+        if !es_has(es_join(variants), parts[j]) {
+            push(names, parts[j]);
+        }
+        j = j + 1;
+    }
+    return "{" + es_join_comma(names) + "}";
+}
+
+fn es_dump_fn(c: HChecker, key: str, ret: str) -> HChecker {
+    let mut k: int = 0;
+    while k < len(c.es_names) {
+        if c.es_names[k] == key {
+            if c.es_kinds[k] == "S" {
+                let e: str = es_result_err(ret);
+                eprintln("fn " + key + " -> Result<_, " + e + ">: " + es_format_set(c, c.es_enums[k], c.es_sets[k]));
+            }
+            if c.es_kinds[k] == "V" {
+                eprintln("fn " + key + " -> " + ret + ": " + es_format_set(c, c.es_enums[k], c.es_sets[k]));
+            }
+        }
+        k = k + 1;
+    }
+    return c;
+}
+
+// One line per function with a set-bearing return, in program
+// order — plain functions first, then methods (matching Python's
+// dump order: source funcs, then the method specs appended by
+// collect_impls, then generic instantiations, which hosted never
+// creates): `fn <name> -> Result<_, E>: {A, B}` or `TOP` or `{}`,
+// and `fn <name> -> <Enum>: {...}` for bare-enum returns.
+fn es_dump(c0: HChecker, prog: Node) -> HChecker {
+    let mut c: HChecker = c0;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            c = es_dump_fn(c, split_tparams(n.name)[0], n.sval);
+        }
+        i = i + 1;
+    }
+    let mut j: int = 0;
+    while j < len(prog.kids) {
+        let n: Node = prog.kids[j];
+        if n.kind == 6 {
+            let mut m: int = 0;
+            while m < len(n.kids) {
+                let md: Node = n.kids[m];
+                c = es_dump_fn(c, n.name + "__" + split_tparams(md.name)[0], md.sval);
+                m = m + 1;
+            }
+        }
+        j = j + 1;
+    }
+    return c;
+}
+
 // ---------- program entry ----------
 // Returns true if the program checks clean; fails otherwise.
 
-fn check_program(prog: Node, freestanding: bool, fn_files: [str]) -> bool {
+fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_sets: bool) -> bool {
     let mut p: Node = expand_aliases_prog(prog);
     let mut c: HChecker = new_checker();
     c.freestanding = freestanding;
@@ -6123,5 +7558,11 @@ fn check_program(prog: Node, freestanding: bool, fn_files: [str]) -> bool {
         }
         i = i + 1;
     }
+    // Top-500 #50: second pass — inferred error sets
+    // (ES-C1–ES-C9). Runs inside check_program so the
+    // checker (with its def tables) is still live; the
+    // verdicts fire here, after the fixpoint, and the dump
+    // prints before codegen.
+    c = es_infer(c, p, dump_error_sets);
     return true;
 }

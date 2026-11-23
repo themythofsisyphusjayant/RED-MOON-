@@ -132,9 +132,24 @@ def elem_type(arr_type):
 
 
 class Checker:
-    def __init__(self, program, freestanding=False):
+    def __init__(self, program, freestanding=False, dump_error_sets=False):
         self.program = program
         self.freestanding = freestanding
+        self.dump_error_sets = dump_error_sets  # Top-500 #50: print
+        # inferred error sets to stderr after checking (qasida check
+        # --dump-error-sets).
+        # Top-500 #50 (inferred error sets, ES-C1–ES-C9): per-function
+        # summaries, name -> (enum, members) where members is a
+        # frozenset of variant names, or None for TOP. The empty set
+        # is real (ES-C7) and distinct from TOP.
+        self.error_sets = {}
+        self.value_sets = {}
+        # Deferred match verdicts (ES-C5): id(stmt) -> (fn name, base
+        # enum, seen arm patterns, has_wildcard). Recorded in phase 1;
+        # the verdict is issued by the post-fixpoint walk.
+        self._pending_matches = {}
+        self._es_fn_table = {}  # name -> FuncDef (built in the 2nd pass)
+        self._es_bound_hit = False  # worklist bound hit: summaries widened
         self.funcs = {}
         self.structs = {}  # name -> {field: type}
         self.struct_params = {}  # name -> [type params]
@@ -1025,7 +1040,643 @@ class Checker:
             from . import ast_nodes as _A
             self.program.structs.append(
                 _A.StructDef(mangle_type(ctype), list(fields.items()), 0, 0))
+        # Top-500 #50: second pass — inferred error sets (ES-C1–ES-C9).
+        # Walks already-checked bodies, computes per-function value-sets
+        # and error-sets by a worklist fixpoint, then issues the deferred
+        # match-exhaustiveness verdicts (ES-C5).
+        self._infer_error_sets()
         return self.program
+
+    # ------------------------------------------------------------------
+    # Top-500 #50: inferred error sets (option A, ES-C1–ES-C9).
+    #
+    # A set is (enum, members) where members is a frozenset of variant
+    # names, or None for TOP ("any variant of the enum"). The empty
+    # frozenset is a real set (ES-C7: a function that only ever fail()s
+    # has an EMPTY error-set), distinct from TOP. Sets are compile-time
+    # only and erased at runtime (ES-C9): no codegen change.
+    #
+    # The walker returns a 4-tuple (typ, kind, enum, members) for every
+    # expression: kind is "result" (a Result value whose error set is
+    # members over enum), "enum" (a bare enum value), or "other". It
+    # never re-implements check_expr: types come only from the
+    # enclosing return type, let annotations, callee signatures (the
+    # function table built after phase 1, which includes generic
+    # instantiations — phase 1 rewrites generic call.name to the
+    # mangled name), StructLit.concrete_type, and the locals table.
+    # Anything it cannot type is ("?", "other", "", None); a
+    # return/store of such a value in a set-bearing position falls
+    # back to TOP of the enclosing/declared enum, which is sound.
+    # ------------------------------------------------------------------
+
+    def _es_union(self, a, b):
+        """Union two (enum, members|None) sets; None members = TOP."""
+        enum = a[0] or b[0]
+        if a[1] is None or b[1] is None:
+            return (enum, None)
+        return (enum, a[1] | b[1])
+
+    def _es_enum_base(self, t):
+        """Base enum name for a (possibly instantiated) enum type, else None."""
+        if t in self.enums and not self.enum_params.get(t):
+            return t
+        g = parse_generic(t)
+        if g is not None and g[0] in self.enums:
+            return g[0]
+        return None
+
+    def _es_result_parts(self, t):
+        """(T, E) for a Result<T, E> type string, else None."""
+        g = parse_generic(t)
+        if g is not None and g[0] == "Result" and len(g[1]) == 2:
+            return g[1][0], g[1][1]
+        return None
+
+    def _es_kind_of_type(self, t):
+        """("result", E) / ("enum", E) / ("other", "") for a type string."""
+        rp = self._es_result_parts(t)
+        if rp is not None:
+            _T, E = rp
+            if self._es_enum_base(E) is not None:
+                return ("result", E)
+            return ("other", "")
+        eb = self._es_enum_base(t)
+        if eb is not None:
+            return ("enum", eb)
+        return ("other", "")
+
+    def _es_summary_members(self, name, kind):
+        """Members (frozenset|None) for a callee's summary; None = TOP.
+        A walkable callee with no stored summary yet contributes empty
+        (the fixpoint grows it); an extern/template/unknown callee is
+        TOP (ES-C4)."""
+        table = self.error_sets if kind == "error" else self.value_sets
+        if name in table:
+            return table[name][1]
+        fn = self._es_fn_table.get(name)
+        if fn is None or fn.is_extern or fn.body is None or getattr(fn, "type_params", None):
+            return None
+        return frozenset()
+
+    def _es_local_for_ann(self, ann, t):
+        """The locals-table entry for a `let`: the annotation (when
+        present) fixes the kind/enum; the set comes from the
+        initializer, coerced to that enum (unknown -> TOP). Without an
+        annotation the initializer's tuple is used as-is."""
+        if ann is None:
+            return t
+        kind, enum = self._es_kind_of_type(ann)
+        if kind == "other":
+            return (ann, "other", "", None)
+        _t2, k2, e2, m2 = t
+        if k2 == kind and e2 == enum:
+            return (ann, kind, enum, m2)
+        return (ann, kind, enum, None)
+
+    def _es_lookup(self, name):
+        """Locals-table entry for a name, or None."""
+        for scope in reversed(self._es_scopes):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def _es_acc_add_error(self, s):
+        """Add a `?`-propagated error set to the enclosing accumulator
+        (ES-C2b)."""
+        if self._es_acc_err is None:
+            return
+        E = self._es_acc_err[0]
+        enum, members = s
+        if enum == E:
+            self._es_acc_err = self._es_union(self._es_acc_err, (E, members))
+        else:
+            # A `?` whose E differs from the enclosing ret's E: phase 1
+            # rejects this, so it cannot occur; TOP defensively.
+            self._es_acc_err = (E, None)
+
+    def _es_acc_add_return(self, t):
+        """Contribute a returned expression's set to the enclosing
+        function's accumulator (ES-C2a/c/d). Anything the walker
+        cannot prove about the returned value widens to TOP of the
+        enclosing enum (sound: phase 1 already proved the value HAS
+        the return type)."""
+        _typ, kind, enum, members = t
+        if self._es_acc_err is not None:
+            E = self._es_acc_err[0]
+            if kind == "result" and enum == E:
+                self._es_acc_err = self._es_union(self._es_acc_err, (E, members))
+            else:
+                self._es_acc_err = (E, None)
+        if self._es_acc_val is not None:
+            E = self._es_acc_val[0]
+            if kind == "enum" and enum == E:
+                self._es_acc_val = self._es_union(self._es_acc_val, (E, members))
+            else:
+                self._es_acc_val = (E, None)
+
+    def _es_assign_union(self, name, t):
+        """Reassignment unions the new value's set into the local
+        (ES-C3: sets only grow). A value the walker cannot track
+        widens the local to TOP of its enum."""
+        for scope in reversed(self._es_scopes):
+            if name in scope:
+                _typ, kind, enum, members = scope[name]
+                if kind in ("result", "enum"):
+                    _t2, k2, e2, m2 = t
+                    if k2 == kind and e2 == enum:
+                        new_members = (members | m2) if (members is not None and m2 is not None) else None
+                        scope[name] = (_typ, kind, enum, new_members)
+                    else:
+                        scope[name] = (_typ, kind, enum, None)
+                return
+
+    def _es_expr(self, expr):
+        """(typ, kind, enum, members) for an expression. `?`
+        contributions are added to the enclosing accumulator as a side
+        effect (ES-C2b)."""
+        if isinstance(expr, A.Var):
+            v = self._es_lookup(expr.name)
+            if v is not None:
+                return v
+            if expr.name in self.enum_variants:
+                e = self.enum_variants[expr.name]
+                return (e, "enum", e, frozenset([expr.name]))
+            # A bare function name is a fn value (FN-C1): never an
+            # enum/Result value.
+            return ("?", "other", "", None)
+        if isinstance(expr, A.Call):
+            return self._es_call(expr)
+        if isinstance(expr, A.StructLit):
+            return self._es_structlit(expr)
+        if isinstance(expr, A.FieldAccess):
+            return self._es_fieldaccess(expr)
+        if isinstance(expr, A.Try):
+            _t, kind, enum, members = self._es_expr(expr.expr)
+            if kind == "result" and enum:
+                # ES-C2b: `?` propagates the inner Result's error set
+                # to the enclosing function.
+                self._es_acc_add_error((enum, members))
+            return ("?", "other", "", None)
+        if isinstance(expr, A.MethodCall):
+            return self._es_methodcall(expr)
+        if isinstance(expr, A.IndirectCall):
+            return self._es_indirectcall(expr)
+        if isinstance(expr, A.Lambda):
+            # ES-C8: a lambda value flowing into a call contributes
+            # TOP; its body summary is unobservable in v1 (a lambda is
+            # only ever called indirectly, which is TOP by ES-C4), so
+            # the body is not walked for the enclosing function: its
+            # `?`s belong to the lambda, not the enclosing function.
+            return ("?", "other", "", None)
+        if isinstance(expr, A.BinOp):
+            self._es_expr(expr.left)
+            self._es_expr(expr.right)
+            return ("?", "other", "", None)
+        if isinstance(expr, A.UnaryOp):
+            self._es_expr(expr.expr)
+            return ("?", "other", "", None)
+        if isinstance(expr, A.Cast):
+            self._es_expr(expr.expr)
+            kind, enum = self._es_kind_of_type(expr.target)
+            return (expr.target, kind, enum, None)
+        if isinstance(expr, A.Index):
+            bt, _bk, _be, _bs = self._es_expr(expr.base)
+            self._es_expr(expr.index)
+            # Array elements widen to TOP (ES-C4); the element type
+            # comes from the array type string when known.
+            if bt.startswith("[") and bt.endswith("]"):
+                et = bt[1:-1]
+                kind, enum = self._es_kind_of_type(et)
+                return (et, kind, enum, None)
+            return ("?", "other", "", None)
+        if isinstance(expr, A.TupleIndex):
+            self._es_expr(expr.base)
+            return ("?", "other", "", None)
+        if isinstance(expr, (A.ArrayLit, A.TupleLit)):
+            for e in expr.elems:
+                self._es_expr(e)
+            return ("?", "other", "", None)
+        if isinstance(expr, A.RangeLit):
+            self._es_expr(expr.start)
+            self._es_expr(expr.end)
+            return ("?", "other", "", None)
+        # IntLit, FloatLit, StrLit, BoolLit (and anything else): a
+        # value, never an enum/Result.
+        return ("?", "other", "", None)
+
+    def _es_call(self, call):
+        # Variant construction first (mirrors check_call order).
+        if call.name in self.enum_variants:
+            for a in call.args:
+                self._es_expr(a)
+            e = self.enum_variants[call.name]
+            return (e, "enum", e, frozenset([call.name]))
+        if call.name == "try_call":
+            # Result<R, str> — E is str, never set-bearing. Walk only
+            # the value args (arg 0 is a bare fn name).
+            for a in call.args[1:]:
+                self._es_expr(a)
+            return ("?", "other", "", None)
+        fn = self._es_fn_table.get(call.name)
+        if fn is not None:
+            # Direct call to a known function (a same-named function
+            # wins over a same-named local, as in check_call).
+            for a in call.args:
+                self._es_expr(a)
+            self._es_callees.add(call.name)
+            ret = fn.ret
+            kind, enum = self._es_kind_of_type(ret)
+            if kind == "result":
+                return (ret, "result", enum, self._es_summary_members(call.name, "error"))
+            if kind == "enum":
+                return (ret, "enum", enum, self._es_summary_members(call.name, "value"))
+            return (ret, "other", "", None)
+        lv = self._es_lookup(call.name)
+        if lv is not None and is_fn_type(lv[0]):
+            # Indirect call through a fn-typed variable (FN-C2): the
+            # callee is unknown at the call site — TOP (ES-C4).
+            for a in call.args:
+                self._es_expr(a)
+            parts = fn_parts(lv[0])
+            ret = parts[1] if parts else "?"
+            kind, enum = self._es_kind_of_type(ret)
+            return (ret, kind, enum, None)
+        # Builtins (and anything unknown): never enum/Result-typed in
+        # a set-bearing way. Walk args for `?`s.
+        for a in call.args:
+            self._es_expr(a)
+        return ("?", "other", "", None)
+
+    def _es_structlit(self, node):
+        tuples = {}
+        for fname, fexpr in node.fields:
+            tuples[fname] = self._es_expr(fexpr)
+        ct = node.concrete_type or node.name
+        rp = self._es_result_parts(ct)
+        if rp is None:
+            return ("?", "other", "", None)
+        _T, E = rp
+        if self._es_enum_base(E) is None:
+            return (ct, "other", "", None)
+        field_nodes = dict(node.fields)
+        ok_node = field_nodes.get("ok")
+        if isinstance(ok_node, A.BoolLit) and ok_node.value is True:
+            # Definitely an Ok: the dummy error value can never be
+            # produced as an error, so this literal contributes nothing.
+            return (ct, "result", E, frozenset())
+        err_t = tuples.get("error")
+        if err_t is None:
+            return (ct, "result", E, None)
+        _t, kind, enum, members = err_t
+        if kind == "enum" and enum == E:
+            return (ct, "result", E, members)
+        # The error value is not an enum value the walker can track
+        # (struct field, computed expr, ...): TOP (ES-C4).
+        return (ct, "result", E, None)
+
+    def _es_fieldaccess(self, node):
+        bt, bk, be, bs = self._es_expr(node.base)
+        if bk == "result" and node.field == "error":
+            return (be, "enum", be, bs)
+        if bk == "result":
+            # .value / .ok: the Ok payload / flag — not a tracked set.
+            return ("?", "other", "", None)
+        if bk == "other" and bt:
+            # A struct field read: look up the field's type. A Result /
+            # enum field widens to TOP (ES-C4: values flowing through
+            # struct fields are untracked).
+            fields = self.struct_fields_for(bt)
+            if fields is not None and node.field in fields:
+                ft = fields[node.field]
+                kind, enum = self._es_kind_of_type(ft)
+                if kind != "other":
+                    return (ft, kind, enum, None)
+        return ("?", "other", "", None)
+
+    def _es_methodcall(self, node):
+        from .traits import mangle
+        bt, _bk, _be, _bs = self._es_expr(node.base)
+        for a in node.args:
+            self._es_expr(a)
+        if not bt or "<" in bt or bt not in self.method_types:
+            return ("?", "other", "", None)
+        methods = self.method_types[bt]
+        if node.method not in methods:
+            return ("?", "other", "", None)
+        _params, ret = methods[node.method]
+        mangled = mangle(bt, node.method)
+        self._es_callees.add(mangled)
+        kind, enum = self._es_kind_of_type(ret)
+        if kind == "result":
+            return (ret, "result", enum, self._es_summary_members(mangled, "error"))
+        if kind == "enum":
+            return (ret, "enum", enum, self._es_summary_members(mangled, "value"))
+        return (ret, "other", "", None)
+
+    def _es_indirectcall(self, node):
+        # The callee is a computed fn value: unknown at the call site
+        # — TOP (ES-C4). The return type comes from the checker's
+        # stamped fn type when known.
+        ft = node.fn_type or "?"
+        ct, _ck, _ce, _cs = self._es_expr(node.callee)
+        for a in node.args:
+            self._es_expr(a)
+        if ft == "?":
+            ft = ct
+        parts = fn_parts(ft) if ft and ft != "?" else None
+        ret = parts[1] if parts else "?"
+        kind, enum = self._es_kind_of_type(ret)
+        return (ret, kind, enum, None)
+
+    def _es_walk_block(self, block):
+        self._es_scopes.append({})
+        for stmt in block.stmts:
+            self._es_walk_stmt(stmt)
+        self._es_scopes.pop()
+
+    def _es_branch_merge(self, before, afters):
+        """Merge locals after a branch: `before` is the snapshot stack
+        (list of dicts), `afters` the end-stacks, one per arm. Each name
+        present before the branch ends with the union of its set across
+        the arms (sets only grow, ES-C3); names declared inside an arm
+        disappear."""
+        merged = [dict(d) for d in before]
+        for i, scope in enumerate(before):
+            for name, val in scope.items():
+                acc = val
+                for after in afters:
+                    if i < len(after) and name in after[i]:
+                        other = after[i][name]
+                        if acc[1] == other[1] and acc[1] in ("result", "enum"):
+                            m1, m2 = acc[3], other[3]
+                            acc = (acc[0], acc[1], acc[2] or other[2],
+                                   (m1 | m2) if (m1 is not None and m2 is not None) else None)
+                merged[i][name] = acc
+        self._es_scopes = merged
+
+    def _es_match_payload_type(self, enum_base, pat):
+        """Payload type of a match arm's binding, with the scrutinee's
+        concrete type args substituted when known; None when the
+        variant has no payload or the enum is unknown."""
+        if not enum_base or enum_base not in self.enum_payloads:
+            return None
+        pt = self.enum_payloads[enum_base].get(pat)
+        if pt is None:
+            return None
+        return pt
+
+    def _es_walk_stmt(self, stmt):
+        if isinstance(stmt, A.Block):
+            self._es_walk_block(stmt)
+            return
+        if isinstance(stmt, A.Let):
+            t = self._es_expr(stmt.expr)
+            self._es_scopes[-1][stmt.name] = self._es_local_for_ann(stmt.ann, t)
+            return
+        if isinstance(stmt, A.Assign):
+            t = self._es_expr(stmt.expr)
+            self._es_assign_union(stmt.name, t)
+            return
+        if isinstance(stmt, A.IndexAssign):
+            self._es_expr(stmt.base)
+            self._es_expr(stmt.expr)
+            return
+        if isinstance(stmt, A.FieldAssign):
+            self._es_expr(stmt.target)
+            self._es_expr(stmt.expr)
+            return
+        if isinstance(stmt, A.Return):
+            if stmt.expr is not None:
+                self._es_acc_add_return(self._es_expr(stmt.expr))
+            return
+        if isinstance(stmt, A.If):
+            self._es_expr(stmt.cond)
+            before = [dict(d) for d in self._es_scopes]
+            self._es_scopes = [dict(d) for d in before]
+            self._es_walk_block(stmt.then)
+            then_end = self._es_scopes
+            self._es_scopes = [dict(d) for d in before]
+            if stmt.els is not None:
+                self._es_walk_block(stmt.els)
+                else_end = self._es_scopes
+            else:
+                else_end = [dict(d) for d in before]
+            self._es_branch_merge(before, [then_end, else_end])
+            return
+        if isinstance(stmt, A.While):
+            self._es_expr(stmt.cond)
+            before = [dict(d) for d in self._es_scopes]
+            self._es_scopes = [dict(d) for d in before]
+            self._es_walk_block(stmt.body)
+            self._es_branch_merge(before, [self._es_scopes])
+            return
+        if isinstance(stmt, A.For):
+            it, _ik, _ie, _im = self._es_expr(stmt.expr)
+            if it.startswith("[") and it.endswith("]"):
+                et = it[1:-1]
+            else:
+                et = "?"
+            kind, enum = self._es_kind_of_type(et)
+            before = [dict(d) for d in self._es_scopes]
+            self._es_scopes = [dict(d) for d in before]
+            # The loop variable comes from an array element: TOP (ES-C4).
+            self._es_scopes.append({stmt.name: (et, kind, enum, None)})
+            self._es_walk_block(stmt.body)
+            self._es_scopes.pop()
+            self._es_branch_merge(before, [self._es_scopes])
+            return
+        if isinstance(stmt, A.Match):
+            st, _sk, se, sm = self._es_expr(stmt.expr)
+            rec = self._pending_matches.get(id(stmt))
+            if self._es_verdicts and rec is not None:
+                _fn_name, base, seen, has_wildcard = rec
+                enum = se or base
+                if sm is None:
+                    variants = set(self.enums.get(enum, []))
+                else:
+                    variants = set(sm)
+                if not has_wildcard:
+                    missing = sorted(variants - set(seen))
+                    if missing:
+                        raise ForgeError(
+                            f"match is not exhaustive; missing: {', '.join(missing)}",
+                            stmt.line, stmt.col)
+            before = [dict(d) for d in self._es_scopes]
+            afters = []
+            for (pat, binding, body) in stmt.arms:
+                self._es_scopes = [dict(d) for d in before]
+                if binding is not None:
+                    # The binding is the payload of the matched variant;
+                    # its set is untracked (TOP) — the scrutinee's set
+                    # says which VARIANTS occur, not what payloads they
+                    # carry. Its type comes from the enum payload table
+                    # (generic enums: substitute the scrutinee's type
+                    # args when known).
+                    pt = self._es_match_payload_type(se or (rec[1] if rec else ""), pat)
+                    if pt is not None and st:
+                        g = parse_generic(st)
+                        base = self._es_enum_base(st)
+                        if g is not None and base:
+                            params = self.enum_params.get(base, [])
+                            if len(params) == len(g[1]):
+                                pt = substitute_type(pt, dict(zip(params, g[1])))
+                    kind, enum = self._es_kind_of_type(pt) if pt else ("other", "")
+                    self._es_scopes.append({binding: (pt or "?", kind, enum, None)})
+                    self._es_walk_block(body)
+                    self._es_scopes.pop()
+                else:
+                    self._es_walk_block(body)
+                afters.append(self._es_scopes)
+            self._es_branch_merge(before, afters)
+            return
+        if isinstance(stmt, A.Spawn):
+            # Only the call's arguments are evaluated in the enclosing
+            # function; the callee's own `?`s belong to the spawned task.
+            for a in stmt.call.args:
+                self._es_expr(a)
+            return
+        if isinstance(stmt, A.Scope):
+            self._es_walk_block(stmt.body)
+            return
+        if isinstance(stmt, A.Defer):
+            # The deferred call's result is discarded; its arguments'
+            # `?`s are evaluated in the enclosing function.
+            self._es_expr(stmt.call)
+            return
+        if isinstance(stmt, A.ExprStmt):
+            self._es_expr(stmt.expr)
+            return
+        # Break / Continue: nothing to track.
+        return
+
+    def _es_walk_fn(self, fn, verdicts):
+        """Walk one concrete function body. Returns (err_set, val_set,
+        callees): the accumulated summaries (or None when the return
+        type is not set-bearing) and the callee names encountered.
+        `verdicts` issues deferred match verdicts (final walk only)."""
+        ret = fn.ret
+        rp = self._es_result_parts(ret)
+        if rp is not None and self._es_enum_base(rp[1]) is not None:
+            self._es_acc_err = (rp[1], frozenset())
+            self._es_acc_val = None
+        elif self._es_enum_base(ret) is not None:
+            self._es_acc_err = None
+            self._es_acc_val = (ret, frozenset())
+        else:
+            self._es_acc_err = None
+            self._es_acc_val = None
+        self._es_scopes = [{}]
+        self._es_callees = set()
+        self._es_verdicts = verdicts
+        self._es_fn = fn
+        for (pn, pt) in fn.params:
+            # Params are untracked sources: TOP of their enum (ES-C3).
+            self._es_scopes[0][pn] = self._es_local_for_ann(
+                pt, ("?", "other", "", None))
+        if fn.body is not None:
+            self._es_walk_block(fn.body)
+        err = self._es_acc_err
+        val = self._es_acc_val
+        callees = self._es_callees
+        self._es_scopes = [{}]
+        self._es_callees = set()
+        self._es_verdicts = False
+        return err, val, callees
+
+    def _infer_error_sets(self):
+        """Second pass (ES-C6): worklist fixpoint over the call graph,
+        then the deferred match verdicts (ES-C5) and the dump flag."""
+        from collections import deque
+        self._es_fn_table = {fn.name: fn for fn in self.program.funcs}
+        walkable = []
+        for fn in self.program.funcs:
+            if fn.body is None or fn.is_extern:
+                continue
+            if getattr(fn, "type_params", None):
+                continue  # generic template: checked only on instantiation
+            walkable.append(fn)
+        self.error_sets = {}
+        self.value_sets = {}
+        callers = {}  # callee name -> set of caller names
+        worklist = deque([fn.name for fn in walkable])
+        in_worklist = set(worklist)
+        steps = 0
+        bound_hit = False
+        while worklist:
+            name = worklist.popleft()
+            in_worklist.discard(name)
+            steps += 1
+            if steps > 10000:
+                bound_hit = True
+                break
+            fn = self._es_fn_table[name]
+            err, val, callees = self._es_walk_fn(fn, verdicts=False)
+            for callee in callees:
+                callers.setdefault(callee, set()).add(name)
+            grew = False
+            if err is not None:
+                old = self.error_sets.get(name)
+                old_members = old[1] if old is not None else frozenset()
+                if err[1] != old_members:
+                    grew = True
+                self.error_sets[name] = err
+            if val is not None:
+                old = self.value_sets.get(name)
+                old_members = old[1] if old is not None else frozenset()
+                if val[1] != old_members:
+                    grew = True
+                self.value_sets[name] = val
+            if grew:
+                for caller in callers.get(name, ()):
+                    if caller not in in_worklist:
+                        worklist.append(caller)
+                        in_worklist.add(caller)
+        if bound_hit:
+            # Widen every not-yet-stable summary to TOP (sound, ES-C4).
+            self._es_bound_hit = True
+            for fn in walkable:
+                if fn.name in self.error_sets:
+                    enum, _m = self.error_sets[fn.name]
+                    self.error_sets[fn.name] = (enum, None)
+                if fn.name in self.value_sets:
+                    enum, _m = self.value_sets[fn.name]
+                    self.value_sets[fn.name] = (enum, None)
+        # Final verdict walk (ES-C5): re-walk every function holding a
+        # deferred match, with final summaries, issuing verdicts.
+        pending_fns = {rec[0] for rec in self._pending_matches.values() if rec[0]}
+        for fn in walkable:
+            if fn.name in pending_fns:
+                self._es_walk_fn(fn, verdicts=True)
+        if self.dump_error_sets:
+            self._es_dump()
+
+    def _es_format_set(self, enum, members):
+        if members is None:
+            return "TOP"
+        if not members:
+            return "{}"
+        order = self.enums.get(enum, [])
+        names = [v for v in order if v in members]
+        names += sorted(m for m in members if m not in order)
+        return "{" + ", ".join(names) + "}"
+
+    def _es_dump(self):
+        """Print inferred sets to stderr (qasida check --dump-error-sets):
+        one line per function with a set-bearing return, in program
+        order: `fn <name> -> Result<_, E>: {A, B}` or `TOP` or `{}`."""
+        import sys
+        for fn in self.program.funcs:
+            if fn.name in self.error_sets:
+                enum, members = self.error_sets[fn.name]
+                _T, E = self._es_result_parts(fn.ret)
+                sys.stderr.write(
+                    f"fn {fn.name} -> Result<_, {E}>: "
+                    f"{self._es_format_set(enum, members)}\n")
+            elif fn.name in self.value_sets:
+                enum, members = self.value_sets[fn.name]
+                sys.stderr.write(
+                    f"fn {fn.name} -> {fn.ret}: "
+                    f"{self._es_format_set(enum, members)}\n")
 
     def instantiate_func(self, fn, bindings, call_line, call_col):
         """Check a concrete copy of a generic function; return it."""
@@ -1689,10 +2340,15 @@ class Checker:
                     finally:
                         self.branch_depth -= 1
                 match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
-            if not has_wildcard and seen != variants:
-                missing = sorted(variants - seen)
-                raise ForgeError(f"match is not exhaustive; missing: {', '.join(missing)}",
-                                 stmt.line, stmt.col)
+            # Top-500 #50: the exhaustiveness verdict moves to the
+            # post-fixpoint pass (ES-C5) — the scrutinee's inferred
+            # set is only known after the fixpoint. Record the
+            # pending match; _es_verdict_matches issues the verdict
+            # after _infer_error_sets. (The union branch above keeps
+            # its verdict in phase 1: no union-set machinery in v1.)
+            self._pending_matches[id(stmt)] = (
+                self.current_fn.name if self.current_fn is not None else "",
+                _base, frozenset(seen), has_wildcard)
             self.moved, self.moved_fields, self.pinned = self._join_moved(
                 match_before_moved, match_before_fields, match_before_pinned, match_results)
             return
@@ -3486,5 +4142,6 @@ class Checker:
         raise ForgeError(f"unknown operator '{op}'", node.line, node.col)
 
 
-def check(program, require_main=True, freestanding=False):
-    Checker(program, freestanding).check(require_main=require_main)
+def check(program, require_main=True, freestanding=False, dump_error_sets=False):
+    Checker(program, freestanding,
+            dump_error_sets=dump_error_sets).check(require_main=require_main)

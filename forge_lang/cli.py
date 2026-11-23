@@ -60,6 +60,10 @@ def main(argv=None):
         p.add_argument("--freestanding", action="store_true",
                        help="build without libc/OS: no files, sockets, threads, "
                             "clock, print, or strings/arrays (freestanding v1)")
+        if name == "check":
+            # Top-500 #50: print inferred error sets to stderr.
+            p.add_argument("--dump-error-sets", action="store_true",
+                           help="print inferred error sets to stderr after checking")
         if name == "emit":
             # Fix 1 B0 measurement toggles: hidden (help=SUPPRESS),
             # NOT on `check` (DESIGN.md §5).
@@ -168,7 +172,8 @@ def main(argv=None):
             # which works both from a checkout and from an installed wheel.
             return dispatch(list(args.pkg_args), os.path.abspath(__file__), os.getcwd())
         if args.cmd == "check":
-            compile_file(args.file, mode=args.mode, freestanding=args.freestanding)
+            compile_file(args.file, mode=args.mode, freestanding=args.freestanding,
+                         dump_error_sets=args.dump_error_sets)
             print("ok: no errors")
             return 0
         if args.cmd == "emit":

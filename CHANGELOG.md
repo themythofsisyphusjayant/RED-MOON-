@@ -8,6 +8,27 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Inferred error sets, Top-500 #50 (24 Nov 2026, sprint): for every
+  function returning `Result<T, E>` where E is an enum, the checker
+  now computes the set of E-variants it can produce (own literal
+  Err-returns, `?`-propagated callee sets, directly returned callee
+  Results, enum-typed locals), by a second checker pass with a
+  worklist fixpoint over the call graph — and a `match` on a value
+  with a known inferred set is exhaustive over that set, not the
+  whole enum. No new syntax, no codegen change, no new runtime
+  behaviour. A function that only ever fail()s has an EMPTY
+  error-set; a match on an empty set needs zero arms. Extra match
+  arms are permitted. New flag `qasida check --dump-error-sets`
+  prints one line per analysed function to stderr after checking.
+  v1 limits: generic functions narrow per-instantiation under
+  Python only (hosted infers TOP for generic callees); a `?` whose
+  error type mismatches the enclosing return is rejected by Python
+  but accepted by hosted (widens to TOP, pre-existing divergence);
+  Python rejects enum/Result-typed struct fields (pre-existing);
+  hosted check is ~2x slower on big files (selfhost_check.fg 2.7x,
+  over the flag). Own test tests/test_errsets_v1.py 75/75 both
+  compilers; full suite 97/104 both modes (7 known big32).
+
 - try/catch across a module boundary, Top-500 #48 (23 Nov 2026,
   sprint): new builtin `try_call(f, ...)` returning `Result<R, str>`,
   f a bare foreign function name (defined in a different .fg file

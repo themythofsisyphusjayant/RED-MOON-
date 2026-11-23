@@ -1,0 +1,51 @@
+import "result.fg";
+import "errcode.fg";
+
+fn read_maybe(x: int) -> Result<int, ErrCode> {
+    if x == 0 {
+        return Result { ok: false, value: 0, error: NotFound };
+    }
+    if x < 0 {
+        return Result { ok: false, value: 0, error: TimedOut };
+    }
+    return Result { ok: true, value: x, error: Success };
+}
+
+fn caller(x: int) -> Result<int, ErrCode> {
+    let v: int = read_maybe(x)?;
+    return Result { ok: true, value: v * 2, error: Success };
+}
+
+fn main() -> int {
+    let r: Result<int, ErrCode> = caller(0);
+    if !r.ok {
+        match r.error {
+            NotFound => {
+                println("not found");
+            }
+            TimedOut => {
+                println("timed out");
+            }
+        }
+    } else {
+        println(r.value);
+    }
+    let r2: Result<int, ErrCode> = caller(-1);
+    if !r2.ok {
+        match r2.error {
+            NotFound => {
+                println("not found");
+            }
+            TimedOut => {
+                println("timed out");
+            }
+        }
+    } else {
+        println(r2.value);
+    }
+    let r3: Result<int, ErrCode> = caller(21);
+    if r3.ok {
+        println(r3.value);
+    }
+    return 0;
+}

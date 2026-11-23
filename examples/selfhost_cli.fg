@@ -77,7 +77,7 @@ fn usage_top() -> str {
 // missing required file errors.
 fn usage_for(cmd: str) -> str {
     if cmd == "check" {
-        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding] file";
+        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding]\n                    [--dump-error-sets]\n                    file";
     }
     if cmd == "emit" {
         return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file";
@@ -97,7 +97,7 @@ fn help_text(cmd: str) -> str {
         return "usage: qasida [-h] [--version]\n              {check,emit,run,test,fmt,doc,lsp,repl,pkg,build,emit-big32,emit-cuda,emit-wasm,stack}\n              ...\n\nQasida compiler\n\npositional arguments:\n  {check,emit,run,test,fmt,doc,lsp,repl,pkg,build,emit-big32,emit-cuda,emit-wasm,stack}\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show program's version number and exit";
     }
     if cmd == "check" {
-        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)";
+        return "usage: qasida check [-h] [--mode {safe,fast}] [--freestanding]\n                    [--dump-error-sets]\n                    file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)\n  --dump-error-sets   print inferred error sets to stderr after checking";
     }
     if cmd == "emit" {
         return "usage: qasida emit [-h] [--mode {safe,fast}] [--freestanding] file\n\npositional arguments:\n  file\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {safe,fast}\n  --freestanding      build without libc/OS: no files, sockets, threads,\n                      clock, print, or strings/arrays (freestanding v1)";
@@ -887,8 +887,15 @@ fn load_merged(path: str, fp_box: [str], freestanding: bool, mode: str, no_bound
 // anything the lookup computed (see the design doc,
 // speed/step6_design.md §9). The manifest is stored alongside
 // the entry so the next run can find it.
-fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool) -> str {
-    let hit: str = cache_manifest_lookup(path, freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
+fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool, no_overflow_checks: bool, debug: bool, dump_error_sets: bool) -> str {
+    // Top-500 #50: a dump run must not take the Step-6
+    // cache hit — the cached C is returned without running
+    // check, so the dump would never print. The C itself
+    // is identical, so the store below still runs.
+    let mut hit: str = "";
+    if !dump_error_sets {
+        hit = cache_manifest_lookup(path, freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
+    }
     if hit != "" {
         return hit;
     }
@@ -899,7 +906,7 @@ fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool
     let mut merged_box: [Node] = [parse_src("")];
     let fn_files: [str] = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks, debug, merged_box);
     let merged: Node = merged_box[0];
-    let ok: bool = check_program(merged, freestanding, fn_files);
+    let ok: bool = check_program(merged, freestanding, fn_files, dump_error_sets);
     if !ok {
         fail_compile("check failed");
     }
@@ -1153,7 +1160,7 @@ fn cmd_run(argv: [str]) -> int {
         }
         prog_args = rest;
     }
-    let c: str = compile_to_c(file, false, mode, no_bounds_checks, no_overflow_checks, false);
+    let c: str = compile_to_c(file, false, mode, no_bounds_checks, no_overflow_checks, false, false);
     let stamp: str = itoa(clock_micros());
     let c_path: str = "/tmp/qasida_run_" + stamp + ".c";
     let prog: str = "/tmp/qasida_run_" + stamp;
@@ -1232,6 +1239,7 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
     let mut wit: str = "";
     let mut debug: bool = false;
     let mut shared: bool = false;
+    let mut dump_error_sets: bool = false;
     let mut file: str = "";
     let mut have_file: bool = false;
     let mut unknowns: [str] = [];
@@ -1249,6 +1257,14 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         if !no_more_flags && starts_with(tok, "-") && len(tok) > 1 {
             if tok == "--freestanding" {
                 freestanding = true;
+                i = i + 1;
+                continue;
+            }
+            // Top-500 #50: check-only (emit/build report
+            // it as unrecognized, mirroring Python's
+            // argparse).
+            if tok == "--dump-error-sets" && cmd == "check" {
+                dump_error_sets = true;
                 i = i + 1;
                 continue;
             }
@@ -1407,7 +1423,7 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
             fail_compile("--debug is not supported with --freestanding");
         }
     }
-    let c: str = compile_to_c(file, freestanding, mode, no_bounds_checks, no_overflow_checks, debug);
+    let c: str = compile_to_c(file, freestanding, mode, no_bounds_checks, no_overflow_checks, debug, dump_error_sets);
     if cmd == "check" {
         println("ok: no errors");
         return 0;

@@ -176,7 +176,7 @@ fn main() -> int {
     }
     let mut merged: Node = prog.n;
     merged.kids = kids;
-    let ok: bool = check_program(merged, freestanding, []);
+    let ok: bool = check_program(merged, freestanding, [], false);
     if !ok {
         println("CHECK FAIL");
         return 1;
