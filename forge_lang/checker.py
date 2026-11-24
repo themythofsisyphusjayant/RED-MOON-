@@ -165,6 +165,12 @@ class Checker:
         self.current_type_params = []
         self.loop_depth = 0
         self.branch_depth = 0
+        # Top-500 #62: labels of the enclosing labeled loops,
+        # innermost last — a separate namespace from variables, so
+        # a label may share a name with one. Reset on fn entry
+        # (like loop_depth): a labeled break/continue inside a
+        # nested function must not see the outer fn's labels.
+        self.label_stack = []
         self.moved = set()
         self.moved_fields = set()
         self.pinned = set()
@@ -1750,7 +1756,7 @@ class Checker:
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
                  self.moved_fields, self.loop_vars, self.pinned,
-                 self._for_iterables, self._lambda_frames)
+                 self._for_iterables, self._lambda_frames, self.label_stack)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1758,6 +1764,7 @@ class Checker:
             self.current_type_params = list(getattr(fn, "type_params", None) or [])
             self.loop_depth = 0
             self.branch_depth = 0
+            self.label_stack = []
             self.moved = set()
             self.moved_fields = set()
             self.pinned = set()
@@ -1844,7 +1851,7 @@ class Checker:
             self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
                 self.moved_fields, self.loop_vars, self.pinned, \
-                self._for_iterables, self._lambda_frames = saved
+                self._for_iterables, self._lambda_frames, self.label_stack = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -2436,6 +2443,14 @@ class Checker:
                 raise ForgeError("while condition must be bool", stmt.line, stmt.col)
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
             before_pinned = set(self.pinned)
+            # Top-500 #62: labels shadow (choice 3) — an inner loop
+            # may reuse an outer label name; innermost wins while
+            # in scope (the stack holds only enclosing labels —
+            # popped at loop end). No duplicate-label error.
+            pushed_label = False
+            if getattr(stmt, "label", None) is not None:
+                self.label_stack.append(stmt.label)
+                pushed_label = True
             self.loop_depth += 1
             try:
                 self.check_block(stmt.body)
@@ -2443,6 +2458,8 @@ class Checker:
                 body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
+                if pushed_label:
+                    self.label_stack.pop()
             # Loop-back edge (Top-500 #40): the condition is
             # evaluated again after the body runs, so a value
             # the body moved is dead on the second evaluation —
@@ -2482,6 +2499,12 @@ class Checker:
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
             before_pinned = set(self.pinned)
             self.scopes.append({stmt.name: (et, False)})
+            # Top-500 #62: label stack alongside loop_depth (see
+            # While above — labels shadow, no duplicate error).
+            pushed_label = False
+            if getattr(stmt, "label", None) is not None:
+                self.label_stack.append(stmt.label)
+                pushed_label = True
             self.loop_depth += 1
             self.loop_vars.append(stmt.name)
             # The iterable's buffer is read again on every
@@ -2505,6 +2528,8 @@ class Checker:
                 body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
+                if pushed_label:
+                    self.label_stack.pop()
                 self.loop_vars.pop()
                 if iter_root is not None:
                     self._for_iterables.pop()
@@ -2514,12 +2539,24 @@ class Checker:
                 [(body_moved, body_fields, body_pinned)])
             return
         if isinstance(stmt, A.Break):
-            if self.loop_depth == 0:
+            # Top-500 #62: a labeled break must name an enclosing
+            # labeled loop; the label stack is function-scoped (reset
+            # on fn/lambda entry), so a label from an outer function
+            # is invisible here by construction.
+            if getattr(stmt, "label", None) is not None:
+                if stmt.label not in self.label_stack:
+                    raise ForgeError(f"break label '{stmt.label}' does not "
+                                     f"name an enclosing loop", stmt.line, stmt.col)
+            elif self.loop_depth == 0:
                 raise ForgeError("break outside a loop; move it inside a "
                                  "'while' or 'for' loop", stmt.line, stmt.col)
             return
         if isinstance(stmt, A.Continue):
-            if self.loop_depth == 0:
+            if getattr(stmt, "label", None) is not None:
+                if stmt.label not in self.label_stack:
+                    raise ForgeError(f"continue label '{stmt.label}' does not "
+                                     f"name an enclosing loop", stmt.line, stmt.col)
+            elif self.loop_depth == 0:
                 raise ForgeError("continue outside a loop; move it inside "
                                  "a 'while' or 'for' loop", stmt.line, stmt.col)
             return
@@ -3269,12 +3306,13 @@ class Checker:
         saved = (self.current_ret, self.current_fn, self.loop_depth,
                  self.branch_depth, self.moved, self.moved_fields,
                  self.pinned, self.loop_vars, self._for_iterables,
-                 self.unresolved)
+                 self.unresolved, self.label_stack)
         try:
             self.current_ret = expr.ret
             self.current_fn = None
             self.loop_depth = 0
             self.branch_depth = 0
+            self.label_stack = []
             self.moved = set(self.moved)
             self.moved_fields = set(self.moved_fields)
             self.pinned = set(self.pinned)
@@ -3321,7 +3359,7 @@ class Checker:
             (self.current_ret, self.current_fn, self.loop_depth,
              self.branch_depth, self.moved, self.moved_fields,
              self.pinned, self.loop_vars, self._for_iterables,
-             self.unresolved) = saved
+             self.unresolved, self.label_stack) = saved
 
     def _check_indirect_args(self, call, fn_type, what):
         """Check a call's args against a fn type (FN-C2).

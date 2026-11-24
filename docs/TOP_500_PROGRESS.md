@@ -1851,3 +1851,67 @@ build 116): 1 GAP-to-HAVE (#60); 384 + 1 = 385; 106 - 1 = 105;
 116 - 1 = 115 (385 + 10 + 105 = 500). HAVE 385 of 500 = 77.0%.
 Next: #62 (needs Jayant's syntax pick), #67/#76 verification slices,
 then #69/#70/#72/#74.
+
+## #62 Labeled break/continue — HAVE (24 Nov 2026, sprint, both compilers)
+
+Decision: Jayant's word 24 Nov ~22:52 IST ("do whatever is best" after the
+A/B choice was presented with recommendation A): Option A — SHADOWING
+ALLOWED, inner wins (design choice 3, DESIGN-62-67-76.md lines 117-122).
+The "duplicate on enclosing loops is an error" clause in the first
+build brief was the parent's error, traced to the design's pre-decision
+sketch (line 55), superseded by choice 3. The first coordinator built
+everything except this decision (own test 58/60, only case 12 failing
+in both compilers with "duplicate label 'outer' on enclosing loops");
+the fix removed the duplicate-label check from forge_lang/checker.py
+and examples/selfhost_check.fg (both checkers agree), deleted error
+case E3 from tests/test_labeled_break_v1.py (its program is now valid
+shadowing, covered by case 12), and touched nothing else — label stack,
+fn/lambda reset, codegen, and all other error cases unchanged. New
+own-test total 58 (60 - 2: E3 ran under both compilers).
+
+Own test tests/test_labeled_break_v1.py 58/58 ALL PASS both compilers
+(live binary rebuild 2, md5 b3460a74a14095f551bd45ea9c050cf6, 18,331,856
+bytes, synced to all 3 locations). Gates 24 Nov: bootstrap 7/7
+byte-identical under ulimit -s 65536 (lex 90709, parse 754147, check
+7456886, infer 8511923, codegen 27040059, header 113790, cli 27279078);
+parity 124/124 agree + byte-identical; corpus 99/99; regression 62/62;
+fuzz existing 102/102 both modes (manifest holds 102 cases — NOT 122),
+fv 56/56, closure 66/66, fs 56/56, tc 38/38, lf 20/20, es 40/40,
+crashdump own test 109/109; full suite hosted 110/117 + python
+111/117 (the 6 fails are exactly the known big32 set in both; hosted
+run_tests.py failed once on the scope_demo println-interleaving flake,
+4/4 direct reruns clean, so hosted is effectively 111/117); ASan
+program-side 16/16 clean (8 programs x 2 modes, incl. the new
+shadow_break_inner case); ASan compiler-side new == old on cold cache
+(dump-flag 612/36, selfhost_check 4002/149, selfhost_codegen 9984/357,
+selfhost_cli 10082/363 — the plain-check leaks are pre-existing
+cold-cache exit-path heap state, #62 adds nothing; the dump-flag
+612/36 is the documented #50 baseline); fmt 0 failures (11 new files
+canonical after reformat to 4-space — fmt's canonical indent; the
+demo's 3 file-leading // comment lines dropped, content in the slice
+SUMMARY; selfhost_parse/check/codegen fmt-neutral on code); emit
+compare 12/12 (unlabeled new-hosted == old-hosted byte-identical,
+incl. selfhost_cli.fg 27,278,992 bytes; labeled new-hosted ==
+new-Python byte-identical, incl. p_defer.fg); benchmarks tick q_safe
+3558 us vs c_o3 3527 (1.01x), matmul q_safe 17909 us vs c_o3 41304
+(0.43x) — no regression (absolute numbers up vs #60 across the
+board, C baselines included — VM-wide slowdown, ratios unchanged).
+Honest notes: the hosted binary's stack — p_defer.fg segfaults the new
+binary at the default 8 MB stack (label-stack/snapshot work pushed it
+over the edge) and selfhost_cli.fg segfaults BOTH binaries at 8 MB
+(the known pre-existing hosted stack-depth condition); the driver
+(forge.py _raise_hosted_stack, 64 MB) and bootstrap (ulimit -s 65536)
+already raise it, and the emit-compare harness was fixed the same way
+(a preexec_fn stack raise to 64 MB, mirroring forge.py) — no compiler
+change, and the own test (through forge.py) was always green. The
+first asan_compare run was killed ~46 min in by a VM restart during
+the NEW-codegen re-run; the resume script ran ONLY the missing OLD cli
+check and printed the full table — ALL MATCH. Two VM restarts hit this
+session (one killed an asan_lb.py run ~4 min in, one killed the
+compare ~46 min in). NOT pushed (parent verifies and pushes).
+
+Counts after the flip: HAVE 386, PARTIAL 10, GAP 104, to build 114.
+Arithmetic from the #60 entry (HAVE 385, PARTIAL 10, GAP 105, to
+build 115): 1 GAP-to-HAVE (#62); 385 + 1 = 386; 105 - 1 = 104;
+115 - 1 = 114 (386 + 10 + 104 = 500). HAVE 386 of 500 = 77.2%.
+Next: #67/#76 verification slices, then #69/#70/#72/#74.

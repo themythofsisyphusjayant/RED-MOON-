@@ -207,6 +207,16 @@ struct HCodegen {
     defer_calls: [Node];
     defer_frame_starts: [int];
     loop_frames: [int];
+    // Top-500 #62: parallel to loop_frames — the Qasida label of
+    // each active loop ("" when unlabeled), and the C `goto`
+    // target names for its end / continue ("" when unlabeled).
+    // loop_label_counter is program-wide (never reset): the C
+    // labels must be unique within each emitted C function, and
+    // a monotone counter guarantees that.
+    loop_labels: [str];
+    loop_end_labels: [str];
+    loop_cont_labels: [str];
+    loop_label_counter: int;
     defer_loop_stack: [int];
     scope_vars: [str];
     scope_depths: [int];
@@ -612,7 +622,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], loop_labels: [], loop_end_labels: [], loop_cont_labels: [], loop_label_counter: 0, defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -7423,6 +7433,45 @@ fn cg_gen_spawn(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     return g;
 }
 
+// Top-500 #62: index (into loop_frames) of the enclosing loop
+// named `label` — innermost match wins, so an inner loop may
+// shadow an outer label of the same name. The checker guarantees
+// the label names an enclosing labeled loop; this is the
+// codegen-side guard for the same invariant.
+fn cg_loop_target(g: HCodegen, label: str) -> int {
+    let mut i: int = len(g.loop_labels) - 1;
+    while i >= 0 {
+        if g.loop_labels[i] == label {
+            return i;
+        }
+        i = i - 1;
+    }
+    fail("break label '" + label + "' does not name an enclosing loop");
+    return -1;
+}
+
+// Top-500 #62: crossed-frame cleanup for a break/continue out
+// of the loop at loop_frames[target]: defers downto that loop's
+// defer frame, joins for scopes entered inside it (depth >
+// target — scopes entered outside it survive), frees downto its
+// body frame. The target loop's own for-frame (array for-loops)
+// is NOT freed here: the landing point runs its post-loop free.
+// For target == innermost this is exactly the old unlabeled
+// behaviour (depth > len-1 is depth == len).
+fn cg_emit_loop_exit(g0: HCodegen, target: int, ret_type: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    g = cg_emit_defers_downto(g, g.defer_loop_stack[target], ret_type);
+    let mut si: int = len(g.scope_vars) - 1;
+    while si >= 0 {
+        if g.scope_depths[si] > target {
+            g = cg_emit(g, "forge_join_scope(" + g.scope_vars[si] + ");");
+        }
+        si = si - 1;
+    }
+    g = cg_emit_free_frames_downto(g, g.loop_frames[target]);
+    return g;
+}
+
 fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     let mut g: HCodegen = g0;
     // Duplicate checks live within one statement only: every
@@ -8067,6 +8116,10 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         // Break / Continue (codegen.py:3229, 3245): defers down to
         // the loop-entry depth, join scopes entered inside this
         // loop, free owned frames down to the loop-body frame.
+        // Top-500 #62: a labeled break/continue exits the named
+        // loop, so the cleanup runs for EVERY crossed frame, then
+        // a goto to that loop's end/continue label — a bare C
+        // `break;` cannot cross frames.
         let is_break: bool = st.kind == 18;
         if len(g.loop_frames) == 0 {
             if is_break {
@@ -8074,15 +8127,17 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             }
             fail("continue outside a loop");
         }
-        g = cg_emit_defers_downto(g, g.defer_loop_stack[len(g.defer_loop_stack) - 1], ret_type);
-        let mut si: int = len(g.scope_vars) - 1;
-        while si >= 0 {
-            if g.scope_depths[si] == len(g.loop_frames) {
-                g = cg_emit(g, "forge_join_scope(" + g.scope_vars[si] + ");");
+        if st.label != "" {
+            let target: int = cg_loop_target(g, st.label);
+            g = cg_emit_loop_exit(g, target, ret_type);
+            if is_break {
+                g = cg_emit(g, "goto " + g.loop_end_labels[target] + ";");
+            } else {
+                g = cg_emit(g, "goto " + g.loop_cont_labels[target] + ";");
             }
-            si = si - 1;
+            return g;
         }
-        g = cg_emit_free_frames_downto(g, g.loop_frames[len(g.loop_frames) - 1]);
+        g = cg_emit_loop_exit(g, len(g.loop_frames) - 1, ret_type);
         if is_break {
             g = cg_emit(g, "break;");
         } else {
@@ -8118,10 +8173,23 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             // Ungated on mode: the proof is mode-independent.
             g = cg_emit(g, "_Pragma(\"GCC ivdep\")");
         }
+        // Top-500 #62: only labeled loops get C goto targets —
+        // unlabeled loops emit byte-identical C to before.
+        let mut end_label: str = "";
+        let mut cont_label: str = "";
+        if st.label != "" {
+            let n: int = g.loop_label_counter;
+            g.loop_label_counter = g.loop_label_counter + 1;
+            end_label = "__forge_end" + itoa(n);
+            cont_label = "__forge_cont" + itoa(n);
+        }
         g = cg_emit(g, "while (" + cout.code + ") {");
         g.indent = g.indent + 1;
         g = cg_push_owned_frame(g);
         push(g.loop_frames, len(g.owned_frame_starts) - 1);
+        push(g.loop_labels, st.label);
+        push(g.loop_end_labels, end_label);
+        push(g.loop_cont_labels, cont_label);
         push(g.defer_loop_stack, len(g.defer_frame_starts));
         g = cg_push_defer_frame(g);
         g.loop_depth = g.loop_depth + 1;
@@ -8130,11 +8198,26 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
         g = cg_pop_defer_frame(g);
         g.loop_frames = cg_trunc_int(g.loop_frames, len(g.loop_frames) - 1);
+        g.loop_labels = cg_trunc_str(g.loop_labels, len(g.loop_labels) - 1);
+        g.loop_end_labels = cg_trunc_str(g.loop_end_labels, len(g.loop_end_labels) - 1);
+        g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, len(g.loop_cont_labels) - 1);
         g = cg_emit_free_frame(g);
         g = cg_pop_owned_frame(g);
         g.loop_depth = g.loop_depth - 1;
+        // Top-500 #62: the continue label sits after the body's
+        // defer-frame and free, inside the braces — a labeled
+        // continue gotos here having already run both inline, so
+        // it skips them and falls through to the condition
+        // re-check. The end label sits after the loop, where a
+        // labeled break lands.
+        if cont_label != "" {
+            g = cg_emit(g, cont_label + ": ;");
+        }
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
+        if end_label != "" {
+            g = cg_emit(g, end_label + ": ;");
+        }
         g = cg_facts_clear(g);
         return g;
     }
@@ -8161,6 +8244,16 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 gi = gi + 1;
             }
         }
+        // Top-500 #62: only labeled loops get C goto targets —
+        // unlabeled loops emit byte-identical C to before.
+        let mut end_label: str = "";
+        let mut cont_label: str = "";
+        if st.label != "" {
+            let n: int = g.loop_label_counter;
+            g.loop_label_counter = g.loop_label_counter + 1;
+            end_label = "__forge_end" + itoa(n);
+            cont_label = "__forge_cont" + itoa(n);
+        }
         if at == "range" {
             push(g.local_names, st.name);
             push(g.local_types, "int");
@@ -8176,6 +8269,9 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g.indent = g.indent + 1;
             g = cg_push_owned_frame(g);
             push(g.loop_frames, len(g.owned_frame_starts) - 1);
+            push(g.loop_labels, st.label);
+            push(g.loop_end_labels, end_label);
+            push(g.loop_cont_labels, cont_label);
             push(g.defer_loop_stack, len(g.defer_frame_starts));
             g = cg_push_defer_frame(g);
             g.loop_depth = g.loop_depth + 1;
@@ -8188,13 +8284,25 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
             g = cg_pop_defer_frame(g);
             g.loop_frames = cg_trunc_int(g.loop_frames, len(g.loop_frames) - 1);
+            g.loop_labels = cg_trunc_str(g.loop_labels, len(g.loop_labels) - 1);
+            g.loop_end_labels = cg_trunc_str(g.loop_end_labels, len(g.loop_end_labels) - 1);
+            g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, len(g.loop_cont_labels) - 1);
             g = cg_emit_free_frame(g);
             g = cg_pop_owned_frame(g);
             g.loop_depth = g.loop_depth - 1;
+            // Top-500 #62: continue label inside the for braces
+            // (after the body free — see While); end label after
+            // the outer block, where a labeled break lands.
+            if cont_label != "" {
+                g = cg_emit(g, cont_label + ": ;");
+            }
             g.indent = g.indent - 1;
             g = cg_emit(g, "}");
             g.indent = g.indent - 1;
             g = cg_emit(g, "}");
+            if end_label != "" {
+                g = cg_emit(g, end_label + ": ;");
+            }
             g = cg_facts_clear(g);
             return g;
         }
@@ -8236,6 +8344,9 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_emit(g, cg_c_type(g, et) + " " + st.name + " = " + arr_tmp + ".data[" + idx + "];");
         g = cg_push_owned_frame(g);
         push(g.loop_frames, len(g.owned_frame_starts) - 1);
+        push(g.loop_labels, st.label);
+        push(g.loop_end_labels, end_label);
+        push(g.loop_cont_labels, cont_label);
         push(g.defer_loop_stack, len(g.defer_frame_starts));
         g = cg_push_defer_frame(g);
         g.loop_depth = g.loop_depth + 1;
@@ -8248,9 +8359,17 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_emit_defer_frame(g, len(g.defer_frame_starts) - 1, ret_type);
         g = cg_pop_defer_frame(g);
         g.loop_frames = cg_trunc_int(g.loop_frames, len(g.loop_frames) - 1);
+        g.loop_labels = cg_trunc_str(g.loop_labels, len(g.loop_labels) - 1);
+        g.loop_end_labels = cg_trunc_str(g.loop_end_labels, len(g.loop_end_labels) - 1);
+        g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, len(g.loop_cont_labels) - 1);
         g = cg_emit_free_frame(g);
         g = cg_pop_owned_frame(g);
         g.loop_depth = g.loop_depth - 1;
+        // Top-500 #62: continue label inside the for braces
+        // (after the body free — see While).
+        if cont_label != "" {
+            g = cg_emit(g, cont_label + ": ;");
+        }
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
         // The post-loop array_free_code is REPLACED by the
@@ -8262,6 +8381,11 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_pop_owned_frame(g);
         g.indent = g.indent - 1;
         g = cg_emit(g, "}");
+        // Top-500 #62: end label after the for-frame free — a
+        // labeled break out of this loop lands here, on the free.
+        if end_label != "" {
+            g = cg_emit(g, end_label + ": ;");
+        }
         g = cg_facts_clear(g);
         return g;
     }
@@ -8900,6 +9024,9 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
     g.defer_frame_starts = cg_trunc_int(g.defer_frame_starts, 0);
     push(g.defer_frame_starts, 0);
     g.loop_frames = cg_trunc_int(g.loop_frames, 0);
+    g.loop_labels = cg_trunc_str(g.loop_labels, 0);
+    g.loop_end_labels = cg_trunc_str(g.loop_end_labels, 0);
+    g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, 0);
     g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, 0);
     g.scope_vars = cg_trunc_str(g.scope_vars, 0);
     g.scope_depths = cg_trunc_int(g.scope_depths, 0);
@@ -9000,6 +9127,9 @@ fn cg_gen_lambda_trampoline(g0: HCodegen, lid: int) -> HCodegen {
     g.owned_frame_starts = cg_trunc_int(g.owned_frame_starts, 0);
     push(g.owned_frame_starts, 0);
     g.loop_frames = cg_trunc_int(g.loop_frames, 0);
+    g.loop_labels = cg_trunc_str(g.loop_labels, 0);
+    g.loop_end_labels = cg_trunc_str(g.loop_end_labels, 0);
+    g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, 0);
     g.defer_calls = cg_trunc_node(g.defer_calls, 0);
     g.defer_frame_starts = cg_trunc_int(g.defer_frame_starts, 0);
     push(g.defer_frame_starts, 0);
@@ -9098,6 +9228,9 @@ fn cg_gen_func_named(g0: HCodegen, fn_node: Node, fname: str) -> HCodegen {
     g.defer_frame_starts = cg_trunc_int(g.defer_frame_starts, 0);
     push(g.defer_frame_starts, 0);
     g.loop_frames = cg_trunc_int(g.loop_frames, 0);
+    g.loop_labels = cg_trunc_str(g.loop_labels, 0);
+    g.loop_end_labels = cg_trunc_str(g.loop_end_labels, 0);
+    g.loop_cont_labels = cg_trunc_str(g.loop_cont_labels, 0);
     g.defer_loop_stack = cg_trunc_int(g.defer_loop_stack, 0);
     g.scope_vars = cg_trunc_str(g.scope_vars, 0);
     g.scope_depths = cg_trunc_int(g.scope_depths, 0);

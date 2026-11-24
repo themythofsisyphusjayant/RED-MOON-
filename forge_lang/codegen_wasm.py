@@ -478,8 +478,27 @@ class WasmGen:
         # Structured-label depth tracking for `break`: every if/block/
         # loop opcode is a label, so a break must branch to the loop's
         # enclosing block at its absolute depth.
+        # Top-500 #62: wasm_loop_exits holds (label, depth) pairs —
+        # the Qasida label of each active loop (None when unlabeled)
+        # with the absolute depth of its enclosing block. A labeled
+        # break/continue resolves its target by searching this stack
+        # from the top (innermost match wins).
         self.wasm_label_depth = 0
         self.wasm_loop_exits = []
+
+    def _wasm_loop_target(self, stmt, what):
+        """Absolute depth of the enclosing block of the loop named
+        `stmt.label` (Top-500 #62) — innermost match wins; unlabeled
+        means the innermost loop. The checker guarantees the label
+        names an enclosing labeled loop."""
+        label = getattr(stmt, "label", None)
+        if label is None:
+            return self.wasm_loop_exits[-1][1]
+        for lab, depth in reversed(self.wasm_loop_exits):
+            if lab == label:
+                return depth
+        raise ForgeError(f"wasm: {what} label '{label}' does not name "
+                         f"an enclosing loop", stmt.line, stmt.col)
 
     def expr_type(self, expr):
         return self.types.get(id(expr), "int")
@@ -748,7 +767,7 @@ class WasmGen:
         if isinstance(stmt, A.Break):
             if not self.wasm_loop_exits:
                 raise ForgeError("wasm: break outside a loop", stmt.line, stmt.col)
-            rel = self.wasm_label_depth - self.wasm_loop_exits[-1]
+            rel = self.wasm_label_depth - self._wasm_loop_target(stmt, "break")
             return b"\x0c" + uleb(rel)  # br to the loop's enclosing block
         if isinstance(stmt, A.Continue):
             if not self.wasm_loop_exits:
@@ -756,12 +775,13 @@ class WasmGen:
             # The loop itself sits one label inside its enclosing
             # block, so branching to it re-runs the condition check
             # at the loop head (the check lives inside the loop).
-            rel = self.wasm_label_depth - (self.wasm_loop_exits[-1] + 1)
+            rel = self.wasm_label_depth - (self._wasm_loop_target(stmt, "continue") + 1)
             return b"\x0c" + uleb(rel)  # br to the loop head
         if isinstance(stmt, A.While):
             # block { loop { if !cond br 1; body; br 0 } }
             out = b"\x02\x40\x03\x40"
-            self.wasm_loop_exits.append(self.wasm_label_depth + 1)  # the block
+            self.wasm_loop_exits.append((getattr(stmt, "label", None),
+                                         self.wasm_label_depth + 1))  # the block
             self.wasm_label_depth += 2
             out += self.gen_expr(stmt.cond)
             out += b"\x45\x0d\x01"  # i32.eqz, br_if 1 (exit block)

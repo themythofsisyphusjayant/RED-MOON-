@@ -26,6 +26,9 @@ import "selfhost_lex.fg";
 struct Node {
     kind: int;
     name: str;
+    // Top-500 #62: label of a labeled loop (While/For) or a
+    // labeled break/continue; "" when unlabeled.
+    label: str;
     ival: int;
     fval: float;
     sval: str;
@@ -70,7 +73,7 @@ struct TOut {
 }
 
 fn new_node(kind: int, line: int, col: int) -> Node {
-    return Node { kind: kind, name: "", ival: 0, fval: 0.0, sval: "", bval: false, kids: [], line: line, col: col, has_nul: false };
+    return Node { kind: kind, name: "", label: "", ival: 0, fval: 0.0, sval: "", bval: false, kids: [], line: line, col: col, has_nul: false };
 }
 
 fn node_kind_name(k: int) -> str {
@@ -1008,6 +1011,21 @@ fn parse_block(p0: HParser) -> POut {
 
 fn parse_stmt(p0: HParser) -> POut {
     let mut p: HParser = p0;
+    // Top-500 #62: a label prefix on a loop (`outer: for ...`,
+    // `outer: while ...`). `ident:` at statement position is
+    // otherwise a parse error, so the prefix is free: claim it
+    // only when a loop keyword follows, else name the misuse.
+    let mut label: str = "";
+    if peek_kind(p) == 3 && peek_kind_at(p, 1) == 5 && peek_at(p, 1) == ":" {
+        let nm: TOut = expect_ident(p);
+        p = nm.p;
+        let c: TOut = expect_op(p, ":");
+        p = c.p;
+        if !at_kw(p, "while") && !at_kw(p, "for") {
+            fail_at(nm.line, nm.col, "label '" + nm.text + "' must prefix a 'while' or 'for' loop (labels attach to loops only in v1)");
+        }
+        label = nm.text;
+    }
     if at_kw(p, "let") {
         let kw: TOut = expect_kw(p, "let");
         p = kw.p;
@@ -1075,6 +1093,7 @@ fn parse_stmt(p0: HParser) -> POut {
         let body: POut = parse_block(p);
         p = body.p;
         let mut n: Node = new_node(15, kw.line, kw.col);
+        n.label = label;
         n.kids = [cond.n, body.n];
         return POut { p: p, n: n };
     }
@@ -1091,6 +1110,7 @@ fn parse_stmt(p0: HParser) -> POut {
         p = body.p;
         let mut n: Node = new_node(16, kw.line, kw.col);
         n.name = nm.text;
+        n.label = label;
         n.kids = [ex.n, body.n];
         return POut { p: p, n: n };
     }
@@ -1112,17 +1132,27 @@ fn parse_stmt(p0: HParser) -> POut {
     if at_kw(p, "break") {
         let tok: TOut = expect_kw(p, "break");
         p = tok.p;
+        let mut n: Node = new_node(18, tok.line, tok.col);
+        if peek_kind(p) == 3 {
+            let l: TOut = expect_ident(p);
+            p = l.p;
+            n.label = l.text;
+        }
         let s: TOut = expect_op(p, ";");
         p = s.p;
-        let n: Node = new_node(18, tok.line, tok.col);
         return POut { p: p, n: n };
     }
     if at_kw(p, "continue") {
         let tok: TOut = expect_kw(p, "continue");
         p = tok.p;
+        let mut n: Node = new_node(19, tok.line, tok.col);
+        if peek_kind(p) == 3 {
+            let l: TOut = expect_ident(p);
+            p = l.p;
+            n.label = l.text;
+        }
         let s: TOut = expect_op(p, ";");
         p = s.p;
-        let n: Node = new_node(19, tok.line, tok.col);
         return POut { p: p, n: n };
     }
     if at_kw(p, "defer") {
@@ -1678,9 +1708,17 @@ fn dump(n: Node) -> str {
         return s + ")";
     }
     if k == 15 {
+        // Top-500 #62: the label shows only when present, so
+        // unlabeled loops dump exactly as before.
+        if n.label != "" {
+            return "(While " + n.label + " " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+        }
         return "(While " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
     }
     if k == 16 {
+        if n.label != "" {
+            return "(For " + n.label + " " + n.name + " " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+        }
         return "(For " + n.name + " " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
     }
     if k == 17 {
@@ -1690,9 +1728,15 @@ fn dump(n: Node) -> str {
         return "(Return " + dump(n.kids[0]) + ")";
     }
     if k == 18 {
+        if n.label != "" {
+            return "(Break " + n.label + ")";
+        }
         return "(Break)";
     }
     if k == 19 {
+        if n.label != "" {
+            return "(Continue " + n.label + ")";
+        }
         return "(Continue)";
     }
     if k == 20 {

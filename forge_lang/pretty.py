@@ -251,20 +251,26 @@ class Formatter:
                 self.emit(indent, "}")
             return
         if isinstance(stmt, A.While):
-            self.emit(indent, f"while {fmt_expr(stmt.cond)} {{")
+            # Top-500 #62: the label prefix round-trips on its own
+            # line head (`outer: while ... {`).
+            prefix = f"{stmt.label}: " if getattr(stmt, "label", None) is not None else ""
+            self.emit(indent, f"{prefix}while {fmt_expr(stmt.cond)} {{")
             self.fmt_block(stmt.body, indent + 1)
             self.emit(indent, "}")
             return
         if isinstance(stmt, A.For):
-            self.emit(indent, f"for {stmt.name} in {fmt_expr(stmt.expr)} {{")
+            prefix = f"{stmt.label}: " if getattr(stmt, "label", None) is not None else ""
+            self.emit(indent, f"{prefix}for {stmt.name} in {fmt_expr(stmt.expr)} {{")
             self.fmt_block(stmt.body, indent + 1)
             self.emit(indent, "}")
             return
         if isinstance(stmt, A.Break):
-            self.emit(indent, "break;")
+            label = f" {stmt.label}" if getattr(stmt, "label", None) is not None else ""
+            self.emit(indent, f"break{label};")
             return
         if isinstance(stmt, A.Continue):
-            self.emit(indent, "continue;")
+            label = f" {stmt.label}" if getattr(stmt, "label", None) is not None else ""
+            self.emit(indent, f"continue{label};")
             return
         if isinstance(stmt, A.Return):
             if stmt.expr is None:

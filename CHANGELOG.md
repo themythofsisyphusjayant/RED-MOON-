@@ -8,6 +8,27 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Labeled break/continue, Top-500 #62 (24 Nov 2026, sprint, both
+  compilers): Go-style `outer: for ... { break outer; }` /
+  `continue outer;` — a label prefix on the loop, no new lexer token.
+  Labels are function-scoped in their own namespace (a label may
+  share a name with a variable); an inner loop may reuse an outer
+  label name — the inner wins while in scope (Rust-like); there is
+  NO duplicate-label error for loops; a labeled break/continue inside
+  a nested function/closure does not see the outer function's labels.
+  A labeled break runs crossed-frame cleanup (defers downto the
+  labeled loop's defer frame, scope joins at each crossed depth,
+  frame frees downto the labeled loop's frame) then gotos the
+  per-loop end label; a labeled continue jumps to the labeled loop's
+  continue label after the same cleanup. Unlabeled break/continue
+  are unchanged; v1 is loops only (no labeled blocks). Own test
+  tests/test_labeled_break_v1.py 58/58 ALL PASS both compilers;
+  demo examples/labeled_break_demo.fg. Note: p_defer.fg segfaults
+  the new hosted binary at the default 8 MB stack (the label-stack /
+  snapshot work pushed it over the edge) — the driver already raises
+  the hosted child's stack to 64 MB, and the emit-compare harness
+  was fixed the same way; no compiler change.
+
 - Crash dumps in freestanding mode, Top-500 #60 (24 Nov 2026,
   sprint, both compilers): on fail, the compiler snapshots
   registers, calls a user-defined `crash_handler(code: int, pc: int)`

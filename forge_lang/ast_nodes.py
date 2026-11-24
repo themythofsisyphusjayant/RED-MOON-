@@ -127,6 +127,7 @@ class While:
     body: object
     line: int
     col: int
+    label: object = None
 
 
 @dataclass
@@ -136,18 +137,21 @@ class For:
     body: object
     line: int
     col: int
+    label: object = None
 
 
 @dataclass
 class Break:
     line: int
     col: int
+    label: object = None
 
 
 @dataclass
 class Continue:
     line: int
     col: int
+    label: object = None
 
 
 @dataclass

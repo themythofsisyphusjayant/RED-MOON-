@@ -1529,6 +1529,16 @@ class Codegen:
         self.arr_counter = 0
         self.loop_counter = 0
         self.loop_frames = []
+        # Top-500 #62: parallel to loop_frames — the Qasida label of
+        # each active loop (None when unlabeled), and the C `goto`
+        # target names for its end / continue (None when unlabeled).
+        # loop_label_counter is program-wide (never reset): the C
+        # labels must be unique within each emitted C function, and
+        # a monotone counter guarantees that.
+        self.loop_labels = []
+        self.loop_end_labels = []
+        self.loop_cont_labels = []
+        self.loop_label_counter = 0
         self.spawn_counter = 0
         self.current_fn = None
         # Closure state (Top-500 #101): `_cap_stack` holds one
@@ -3336,6 +3346,9 @@ class Codegen:
         self.owned_stack = [{}]
         self.local_types = {}
         self.loop_frames = []
+        self.loop_labels = []
+        self.loop_end_labels = []
+        self.loop_cont_labels = []
         self.defer_stack = [[]]
         self.defer_loop_stack = []
         self._cap_stack = [{name: f"__forge_e->{name}"
@@ -3382,6 +3395,9 @@ class Codegen:
         self.drop_receiver = None
         self.owned_stack = [{}]
         self.loop_frames = []
+        self.loop_labels = []
+        self.loop_end_labels = []
+        self.loop_cont_labels = []
         self.defer_stack = [[]]
         self.defer_loop_stack = []
         self._cap_stack = []
@@ -3500,6 +3516,9 @@ class Codegen:
         self.owned_stack = [{}]
         self.local_types = {}
         self.loop_frames = []
+        self.loop_labels = []
+        self.loop_end_labels = []
+        self.loop_cont_labels = []
         # Deferred calls, one list per enclosing block (innermost
         # last). A block's defers run at its exit, innermost
         # first within the block (LIFO); returns and loop exits
@@ -3575,6 +3594,9 @@ class Codegen:
         self.drop_receiver = None
         self.owned_stack = [{}]
         self.loop_frames = []
+        self.loop_labels = []
+        self.loop_end_labels = []
+        self.loop_cont_labels = []
         self.defer_stack = [[]]
         self.defer_loop_stack = []
 
@@ -3855,6 +3877,45 @@ class Codegen:
         innermost block first, each block LIFO."""
         for frame in reversed(self.defer_stack[depth:]):
             self._emit_defer_frame(frame, ret_type)
+
+    def _loop_target(self, label, stmt):
+        """Index (into loop_frames) of the enclosing loop named
+        `label` — innermost match wins, so an inner loop may shadow
+        an outer label of the same name. The checker guarantees the
+        label names an enclosing labeled loop; this is the
+        codegen-side guard for the same invariant."""
+        for i in range(len(self.loop_labels) - 1, -1, -1):
+            if self.loop_labels[i] == label:
+                return i
+        raise ForgeError(f"break label '{label}' does not name an "
+                         f"enclosing loop", stmt.line, stmt.col)
+
+    def _loop_goto_labels(self, stmt):
+        """(end, cont) C label names for a labeled loop, or
+        (None, None) when the loop carries no label. Only labeled
+        loops get labels — unlabeled loops emit byte-identical C
+        to before this slice."""
+        if getattr(stmt, "label", None) is None:
+            return None, None
+        n = self.loop_label_counter
+        self.loop_label_counter += 1
+        return f"__forge_end{n}", f"__forge_cont{n}"
+
+    def _emit_loop_exit(self, target, ret_type):
+        """Crossed-frame cleanup for a break/continue out of the
+        loop at loop_frames[target] (Top-500 #62): defers downto
+        that loop's defer frame, joins for scopes entered inside it
+        (depth > target — scopes entered outside it survive), frees
+        downto its body frame. The target loop's own for-frame
+        (array for-loops) is NOT freed here: the landing point
+        runs its post-loop free. For target == innermost this is
+        exactly the old unlabeled behaviour (depth > len-1 is
+        depth == len)."""
+        self._emit_defers_downto(self.defer_loop_stack[target], ret_type)
+        for start_var, depth in reversed(self.scope_stack):
+            if depth > target:
+                self.emit(f"forge_join_scope({start_var});")
+        self.emit_free_frames_downto(self.loop_frames[target])
 
     def _emit_all_defers(self, ret_type):
         self._emit_defers_downto(0, ret_type)
@@ -4611,36 +4672,46 @@ class Codegen:
                 raise ForgeError("break outside a loop", stmt.line, stmt.col)
             # Defers first: a deferred call runs while its block's
             # locals are still alive, before joins and frees.
-            self._emit_defers_downto(self.defer_loop_stack[-1], ret_type)
-            # A break leaves every scope entered inside the innermost
-            # loop's body (those scopes' blocks are abandoned, so
-            # their normal-end join never runs). Scopes entered
-            # outside that loop survive the break and are not joined.
-            for start_var, depth in reversed(self.scope_stack):
-                if depth == len(self.loop_frames):
-                    self.emit(f"forge_join_scope({start_var});")
-            # Break lands on the statement after the loop —
-            # the post-loop for-frame free (§4a) — so it frees
-            # downto the body frame only (loop_frames[-1]).
-            # Freeing the for-frame here would double-free.
-            self.emit_free_frames_downto(self.loop_frames[-1])
+            # Top-500 #62: a labeled break exits the named loop, so
+            # the cleanup runs for EVERY crossed frame, then a goto
+            # to that loop's end label — a bare C `break;` cannot
+            # cross frames. The goto lands on the statement after
+            # the loop, on the post-loop for-frame free (§4a).
+            if getattr(stmt, "label", None) is not None:
+                target = self._loop_target(stmt.label, stmt)
+                self._emit_loop_exit(target, ret_type)
+                self.emit(f"goto {self.loop_end_labels[target]};")
+                return
+            # Unlabeled: exit the innermost loop only. A break
+            # leaves every scope entered inside the innermost loop's
+            # body (those scopes' blocks are abandoned, so their
+            # normal-end join never runs). Scopes entered outside
+            # that loop survive the break and are not joined.
+            self._emit_loop_exit(len(self.loop_frames) - 1, ret_type)
             self.emit("break;")
             return
         if isinstance(stmt, A.Continue):
             if not self.loop_frames:
                 raise ForgeError("continue outside a loop", stmt.line, stmt.col)
-            self._emit_defers_downto(self.defer_loop_stack[-1], ret_type)
-            # A continue ends the current iteration exactly like a
-            # break ends the loop: body scopes are abandoned, so the
-            # same joins and frame frees apply, then C's continue
-            # runs the loop's own increment/condition step.
-            for start_var, depth in reversed(self.scope_stack):
-                if depth == len(self.loop_frames):
-                    self.emit(f"forge_join_scope({start_var});")
-            # Continue keeps the loop alive, so it frees downto
-            # the body frame only (loop_frames), NOT the for-frame
-            # — leak follow-ups §4b.
-            self.emit_free_frames_downto(self.loop_frames[-1])
+            # Top-500 #62: a labeled continue jumps to the named
+            # loop's continue label (for: the increment step; while:
+            # the condition re-check) after the same crossed-frame
+            # cleanup as a break. The continue label sits after the
+            # loop's own defer-frame and body-frame free, so the
+            # goto skips both — they already ran inline above.
+            if getattr(stmt, "label", None) is not None:
+                target = self._loop_target(stmt.label, stmt)
+                self._emit_loop_exit(target, ret_type)
+                self.emit(f"goto {self.loop_cont_labels[target]};")
+                return
+            # Unlabeled: end the current iteration exactly like a
+            # break ends the loop — body scopes are abandoned, so
+            # the same joins and frame frees apply, then C's
+            # continue runs the loop's own increment/condition step.
+            # Continue keeps the loop alive, so it frees downto the
+            # body frame only (loop_frames), NOT the for-frame —
+            # leak follow-ups §4b.
+            self._emit_loop_exit(len(self.loop_frames) - 1, ret_type)
             self.emit("continue;")
             return
         if isinstance(stmt, A.While):
@@ -4661,10 +4732,14 @@ class Codegen:
             # loop may be stale by the second iteration, so no facts
             # cross a loop boundary in either direction.
             self._facts = {}
+            end_label, cont_label = self._loop_goto_labels(stmt)
             self.emit(f"while ({self.gen_expr(stmt.cond)}) {{")
             self.indent += 1
             self.owned_stack.append({})
             self.loop_frames.append(len(self.owned_stack) - 1)
+            self.loop_labels.append(getattr(stmt, "label", None))
+            self.loop_end_labels.append(end_label)
+            self.loop_cont_labels.append(cont_label)
             self.defer_loop_stack.append(len(self.defer_stack))
             self.defer_stack.append([])
             self.gen_block(stmt.body, ret_type)
@@ -4672,10 +4747,23 @@ class Codegen:
             self._emit_defer_frame(self.defer_stack[-1], ret_type)
             self.defer_stack.pop()
             self.loop_frames.pop()
+            self.loop_labels.pop()
+            self.loop_end_labels.pop()
+            self.loop_cont_labels.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
+            # Top-500 #62: the continue label sits after the body's
+            # defer-frame and free, inside the braces — a labeled
+            # continue gotos here having already run both inline, so
+            # it skips them and falls through to the condition
+            # re-check. The end label sits after the loop, where a
+            # labeled break lands.
+            if cont_label is not None:
+                self.emit(f"{cont_label}: ;")
             self.indent -= 1
             self.emit("}")
+            if end_label is not None:
+                self.emit(f"{end_label}: ;")
             self._facts = {}
             return
         if isinstance(stmt, A.For):
@@ -4693,6 +4781,7 @@ class Codegen:
                 if self._bounds_on:
                     for _g in self._fix1_guards.get(id(stmt), []):
                         self.emit(_g)
+                end_label, cont_label = self._loop_goto_labels(stmt)
                 self.emit("{")
                 self.indent += 1
                 self.emit(f"ForgeRange {rng_tmp} = {self.gen_expr(stmt.expr)};")
@@ -4701,6 +4790,9 @@ class Codegen:
                 self.indent += 1
                 self.owned_stack.append({})
                 self.loop_frames.append(len(self.owned_stack) - 1)
+                self.loop_labels.append(getattr(stmt, "label", None))
+                self.loop_end_labels.append(end_label)
+                self.loop_cont_labels.append(cont_label)
                 self.defer_loop_stack.append(len(self.defer_stack))
                 self.defer_stack.append([])
                 self.gen_block(stmt.body, ret_type, shadow_names=(stmt.name,))
@@ -4708,12 +4800,22 @@ class Codegen:
                 self._emit_defer_frame(self.defer_stack[-1], ret_type)
                 self.defer_stack.pop()
                 self.loop_frames.pop()
+                self.loop_labels.pop()
+                self.loop_end_labels.pop()
+                self.loop_cont_labels.pop()
                 self.emit_free_frame()
                 self.owned_stack.pop()
+                # Top-500 #62: continue label inside the for braces
+                # (after the body free — see While); end label after
+                # the outer block, where a labeled break lands.
+                if cont_label is not None:
+                    self.emit(f"{cont_label}: ;")
                 self.indent -= 1
                 self.emit("}")
                 self.indent -= 1
                 self.emit("}")
+                if end_label is not None:
+                    self.emit(f"{end_label}: ;")
                 self._facts = {}
                 return
             et = elem_of(arr_type)
@@ -4727,6 +4829,7 @@ class Codegen:
             if self._bounds_on:
                 for _g in self._fix1_guards.get(id(stmt), []):
                     self.emit(_g)
+            end_label, cont_label = self._loop_goto_labels(stmt)
             self.emit("{")
             self.indent += 1
             # For-frame (leak follow-ups §4): the iterable temp
@@ -4747,6 +4850,9 @@ class Codegen:
             self.emit(f"{c_type(et)} {stmt.name} = {arr_tmp}.data[{idx}];")
             self.owned_stack.append({})
             self.loop_frames.append(len(self.owned_stack) - 1)
+            self.loop_labels.append(getattr(stmt, "label", None))
+            self.loop_end_labels.append(end_label)
+            self.loop_cont_labels.append(cont_label)
             self.defer_loop_stack.append(len(self.defer_stack))
             self.defer_stack.append([])
             self.gen_block(stmt.body, ret_type, shadow_names=(stmt.name,))
@@ -4754,8 +4860,15 @@ class Codegen:
             self._emit_defer_frame(self.defer_stack[-1], ret_type)
             self.defer_stack.pop()
             self.loop_frames.pop()
+            self.loop_labels.pop()
+            self.loop_end_labels.pop()
+            self.loop_cont_labels.pop()
             self.emit_free_frame()
             self.owned_stack.pop()
+            # Top-500 #62: continue label inside the for braces
+            # (after the body free — see While).
+            if cont_label is not None:
+                self.emit(f"{cont_label}: ;")
             self.indent -= 1
             self.emit("}")
             # The post-loop array_free_code is REPLACED by the
@@ -4767,6 +4880,10 @@ class Codegen:
             self.owned_stack.pop()
             self.indent -= 1
             self.emit("}")
+            # Top-500 #62: end label after the for-frame free — a
+            # labeled break out of this loop lands here, on the free.
+            if end_label is not None:
+                self.emit(f"{end_label}: ;")
             self._facts = {}
             return
         if isinstance(stmt, A.Scope):

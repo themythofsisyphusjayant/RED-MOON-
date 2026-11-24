@@ -125,6 +125,12 @@ class RVGen:
         self.label_n = 0
         self.loop_ends = []
         self.loop_conts = []
+        # Top-500 #62: parallel to loop_ends/loop_conts — the Qasida
+        # label of each active loop (None when unlabeled). A labeled
+        # break/continue resolves its target by searching this stack
+        # from the top (innermost match wins, so an inner loop may
+        # shadow an outer label).
+        self.loop_labels = []
         self.free = list(TEMPS)
         self.live = []                # temps currently holding values
         self.funcs = {fn.name: fn for fn in program.funcs}
@@ -168,6 +174,17 @@ class RVGen:
     def label(self, prefix):
         self.label_n += 1
         return f"{prefix}_{self.label_n}"
+
+    def _rv_loop_target(self, label, stmt):
+        """Index into loop_ends/loop_conts of the enclosing loop
+        named `label` (Top-500 #62) — innermost match wins. The
+        checker guarantees the label names an enclosing labeled
+        loop; this is the codegen-side guard."""
+        for i in range(len(self.loop_labels) - 1, -1, -1):
+            if self.loop_labels[i] == label:
+                return i
+        raise ForgeError(f"break label '{label}' does not name an "
+                         f"enclosing loop", stmt.line, stmt.col)
 
     def emit(self, text=""):
         self.lines.append(text)
@@ -1733,12 +1750,21 @@ class RVGen:
         if isinstance(stmt, A.Break):
             if not self.loop_ends:
                 raise ForgeError("big32: break outside a loop", stmt.line, stmt.col)
-            self.emit(f"    j {self.loop_ends[-1]}")
+            # Top-500 #62: a labeled break jumps to the named loop's
+            # end label; big32 has no owned-frame cleanup, so the
+            # jump is the whole story.
+            if getattr(stmt, "label", None) is not None:
+                self.emit(f"    j {self.loop_ends[self._rv_loop_target(stmt.label, stmt)]}")
+            else:
+                self.emit(f"    j {self.loop_ends[-1]}")
             return
         if isinstance(stmt, A.Continue):
             if not self.loop_conts:
                 raise ForgeError("big32: continue outside a loop", stmt.line, stmt.col)
-            self.emit(f"    j {self.loop_conts[-1]}")
+            if getattr(stmt, "label", None) is not None:
+                self.emit(f"    j {self.loop_conts[self._rv_loop_target(stmt.label, stmt)]}")
+            else:
+                self.emit(f"    j {self.loop_conts[-1]}")
             return
         if isinstance(stmt, A.While):
             cond_l = self.label("while")
@@ -1749,7 +1775,9 @@ class RVGen:
             self.free_reg(cond)
             self.loop_ends.append(end)
             self.loop_conts.append(cond_l)
+            self.loop_labels.append(getattr(stmt, "label", None))
             self.gen_block(stmt.body)
+            self.loop_labels.pop()
             self.loop_conts.pop()
             self.loop_ends.pop()
             self.emit(f"    j {cond_l}")
@@ -1848,7 +1876,9 @@ class RVGen:
             self.loop_ends.append(end)
             cont = self.label("forcont")
             self.loop_conts.append(cont)
+            self.loop_labels.append(getattr(stmt, "label", None))
             self.gen_block(stmt.body)
+            self.loop_labels.pop()
             self.loop_conts.pop()
             self.loop_ends.pop()
             self.env.pop()
@@ -1903,7 +1933,9 @@ class RVGen:
         self.loop_ends.append(end)
         cont = self.label("forcont")
         self.loop_conts.append(cont)
+        self.loop_labels.append(getattr(stmt, "label", None))
         self.gen_block(stmt.body)
+        self.loop_labels.pop()
         self.loop_conts.pop()
         self.loop_ends.pop()
         self.env.pop()

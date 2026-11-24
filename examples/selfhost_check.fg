@@ -114,6 +114,9 @@ struct HChecker {
     branch_depth: int;
     // Names of enclosing for-loop variables (pin/move restrictions).
     loop_vars: [str];
+    // Top-500 #62: names of enclosing LABELED loops, innermost
+    // last (a labeled break/continue must name one of these).
+    label_names: [str];
     // Pin context: >0 while checking a field/index base (the
     // pinned check is decided by the outermost access), >0 while
     // checking a read-only observation (len, for-iteration).
@@ -171,7 +174,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], label_names: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
 }
 
 // Last index of a one-char string in s, or -1 (Top-500 #48:
@@ -1797,6 +1800,8 @@ fn checker_snapshot(c0: HChecker) -> HChecker {
     c.for_iter_paths = copy_str(c.for_iter_paths);
     c.for_iter_scopes = copy_int(c.for_iter_scopes);
     c.loop_vars = copy_str(c.loop_vars);
+    // Top-500 #62: the label stack is per-function state too.
+    c.label_names = copy_str(c.label_names);
     return c;
 }
 
@@ -4879,13 +4884,25 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         if cond.typ != "bool" {
             fail_at(n.line, n.col, "while condition must be bool, got " + cond.typ);
         }
+        // Top-500 #62: labels shadow (choice 3) — an inner loop may
+        // reuse an outer label name, innermost wins; no
+        // duplicate-label error. The push goes BEFORE the snapshot
+        // so the join below keeps the stack intact, and the pop
+        // after the join drops it.
+        if n.label != "" {
+            push(c.label_names, n.label);
+        }
         let before: HChecker = checker_snapshot(c);
         let mark: int = len(c.var_names);
         c.loop_depth = c.loop_depth + 1;
         c = check_block(c, n.kids[1]);
         c.loop_depth = c.loop_depth - 1;
         let body_c: HChecker = env_restore(c, mark);
-        return join_moved(before, [body_c]);
+        let mut result: HChecker = join_moved(before, [body_c]);
+        if n.label != "" {
+            result.label_names = trunc_str(result.label_names, len(result.label_names) - 1);
+        }
+        return result;
     }
     if n.kind == 16 {
         // For: iterating a pinned array reads its elements without
@@ -4901,6 +4918,11 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         }
         if it_typ != "range" && !is_array(it_typ) {
             fail_at(n.line, n.col, "for needs a range or array, got " + r.typ);
+        }
+        // Top-500 #62: labels shadow (choice 3), pushed before the
+        // snapshot (same shape as the While branch above).
+        if n.label != "" {
+            push(c.label_names, n.label);
         }
         let before: HChecker = checker_snapshot(c);
         let mark: int = len(c.var_names);
@@ -4937,7 +4959,13 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             li = li + 1;
         }
         c.loop_vars = lv;
-        return join_moved(before, [body_c]);
+        // Top-500 #62: the join result keeps the label the snapshot
+        // captured, so pop it here (the loop is out of scope).
+        let mut result: HChecker = join_moved(before, [body_c]);
+        if n.label != "" {
+            result.label_names = trunc_str(result.label_names, len(result.label_names) - 1);
+        }
+        return result;
     }
     if n.kind == 17 {
         // Return: value must match the enclosing function's type.
@@ -4975,12 +5003,42 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         return c;
     }
     if n.kind == 18 {
+        // Top-500 #62: a labeled break must name an enclosing loop.
+        if n.label != "" {
+            let mut found: bool = false;
+            let mut fi: int = 0;
+            while fi < len(c.label_names) {
+                if c.label_names[fi] == n.label {
+                    found = true;
+                }
+                fi = fi + 1;
+            }
+            if !found {
+                fail_at(n.line, n.col, "break label '" + n.label + "' does not name an enclosing loop");
+            }
+            return c;
+        }
         if c.loop_depth == 0 {
             fail_at(n.line, n.col, "break outside a loop; move it inside a 'while' or 'for' loop");
         }
         return c;
     }
     if n.kind == 19 {
+        // Top-500 #62: a labeled continue must name an enclosing loop.
+        if n.label != "" {
+            let mut found: bool = false;
+            let mut fi: int = 0;
+            while fi < len(c.label_names) {
+                if c.label_names[fi] == n.label {
+                    found = true;
+                }
+                fi = fi + 1;
+            }
+            if !found {
+                fail_at(n.line, n.col, "continue label '" + n.label + "' does not name an enclosing loop");
+            }
+            return c;
+        }
         if c.loop_depth == 0 {
             fail_at(n.line, n.col, "continue outside a loop; move it inside a 'while' or 'for' loop");
         }
@@ -5415,6 +5473,9 @@ fn check_lambda(c0: HChecker, n: Node) -> COut {
     c.loop_depth = 0;
     c.branch_depth = 0;
     c.loop_vars = trunc_str(c.loop_vars, 0);
+    // Top-500 #62: a lambda is a fresh function scope — the outer
+    // function's labels are invisible inside it.
+    c.label_names = trunc_str(c.label_names, 0);
     c.for_iter_roots = trunc_str(c.for_iter_roots, 0);
     c.for_iter_paths = trunc_str(c.for_iter_paths, 0);
     c.for_iter_scopes = trunc_int(c.for_iter_scopes, 0);
@@ -5466,6 +5527,7 @@ fn check_lambda(c0: HChecker, n: Node) -> COut {
     c.for_iter_paths = copy_str(saved.for_iter_paths);
     c.for_iter_scopes = copy_int(saved.for_iter_scopes);
     c.loop_vars = copy_str(saved.loop_vars);
+    c.label_names = copy_str(saved.label_names);
     c.ret_type = saved.ret_type;
     c.current_fn = saved.current_fn;
     c.loop_depth = saved.loop_depth;
@@ -5606,6 +5668,8 @@ fn check_func(c0: HChecker, fn_node: Node, file: str) -> HChecker {
     c.loop_depth = 0;
     c.branch_depth = 0;
     c.loop_vars = trunc_str(c.loop_vars, 0);
+    // Top-500 #62: labels are function-scoped, like loop_depth.
+    c.label_names = trunc_str(c.label_names, 0);
     c.lam_boundaries = trunc_int(c.lam_boundaries, 0);
     c.lam_caps = trunc_str(c.lam_caps, 0);
     c = check_block(c, body);

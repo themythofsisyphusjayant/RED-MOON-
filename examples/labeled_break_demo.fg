@@ -1,0 +1,22 @@
+fn main() -> int {
+    let mut total: int = 0;
+    outer: for i in 0..5 {
+        for j in 0..5 {
+            if j == 2 {
+                break outer;
+            }
+            total = total + 1;
+        }
+    }
+    println(total);
+    middle: for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 {
+                continue middle;
+            }
+            total = total + 1;
+        }
+    }
+    println(total);
+    return 0;
+}

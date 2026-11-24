@@ -439,6 +439,21 @@ class Parser:
         return A.Block(stmts)
 
     def parse_stmt(self):
+        # Top-500 #62: a label prefix on a loop (`outer: for ...`,
+        # `outer: while ...`). `ident:` at statement position is
+        # otherwise a parse error, so the prefix is free: claim it
+        # only when a loop keyword follows, else name the misuse.
+        label = None
+        if (self.peek().kind == "IDENT" and self.peek(1).kind == "OP"
+                and self.peek(1).value == ":"):
+            name_tok = self.next()
+            self.next()  # ':'
+            if not (self.at_kw("while") or self.at_kw("for")):
+                raise ForgeError(
+                    f"label '{name_tok.value}' must prefix a 'while' or "
+                    f"'for' loop (labels attach to loops only in v1)",
+                    name_tok.line, name_tok.col)
+            label = name_tok.value
         if self.at_kw("let"):
             kw = self.next()
             mutable = False
@@ -470,14 +485,14 @@ class Parser:
             kw = self.next()
             cond = self.parse_expr()
             body = self.parse_block()
-            return A.While(cond, body, kw.line, kw.col)
+            return A.While(cond, body, kw.line, kw.col, label)
         if self.at_kw("for"):
             kw = self.next()
             name = self.expect_ident()
             self.expect_kw("in")
             expr = self.parse_expr()
             body = self.parse_block()
-            return A.For(name.value, expr, body, kw.line, kw.col)
+            return A.For(name.value, expr, body, kw.line, kw.col, label)
         if self.at_kw("return"):
             tok = self.next()
             expr = None
@@ -487,12 +502,18 @@ class Parser:
             return A.Return(expr, tok.line, tok.col)
         if self.at_kw("break"):
             tok = self.next()
+            blabel = None
+            if self.peek().kind == "IDENT":
+                blabel = self.next().value
             self.expect_op(";")
-            return A.Break(tok.line, tok.col)
+            return A.Break(tok.line, tok.col, blabel)
         if self.at_kw("continue"):
             tok = self.next()
+            clabel = None
+            if self.peek().kind == "IDENT":
+                clabel = self.next().value
             self.expect_op(";")
-            return A.Continue(tok.line, tok.col)
+            return A.Continue(tok.line, tok.col, clabel)
         if self.at_kw("defer"):
             kw = self.next()
             expr = self.parse_expr()
