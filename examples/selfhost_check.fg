@@ -102,6 +102,12 @@ struct HChecker {
     fn_files: [str];
     // File the function being checked lives in (Top-500 #48).
     current_file: str;
+    // Name of the function being checked (Top-500 #60): the
+    // fail()/assert() branches reject a call inside
+    // crash_handler() (it would recurse). Set by check_func,
+    // cleared by check_lambda (Python: current_fn is None in a
+    // lambda body), restored from the snapshot after a lambda.
+    current_fn: str;
     ret_type: str;
     // Branch/loop depth (conditional-move rule + break/continue).
     loop_depth: int;
@@ -165,7 +171,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
 }
 
 // Last index of a one-char string in s, or -1 (Top-500 #48:
@@ -2654,6 +2660,20 @@ fn check_sig_args(c0: HChecker, n: Node, sig: str) -> COut {
     return COut { c: c, typ: ret };
 }
 
+// Top-500 #60 (D1): the fail()/assert() message check. A
+// string literal (kind 27) is exempt from the freestanding
+// heap gate — it lowers to a static C string / static data,
+// never a heap value — so it goes through check_expr_inner,
+// the per-kind check without the gate (Python:
+// _check_expr_inner). Every other str expression goes
+// through check_expr and is still rejected freestanding.
+fn check_msg_expr(c0: HChecker, n: Node) -> COut {
+    if n.kind == 27 {
+        return check_expr_inner(c0, n);
+    }
+    return check_expr(c0, n);
+}
+
 // check_expr (Python checker.py:1922): the heap gate. In
 // freestanding mode any heap-backed expression is rejected
 // here, at first use, with a named error. The inner
@@ -4370,10 +4390,13 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
         if a.typ != "bool" {
             fail_at(n.line, n.col, "assert() condition must be bool");
         }
-        let b: COut = check_expr(c, n.kids[1]);
+        let b: COut = check_msg_expr(c, n.kids[1]);
         c = b.c;
         if b.typ != "str" {
             fail_at(n.line, n.col, "assert() message must be str");
+        }
+        if c.current_fn == "crash_handler" {
+            fail_at(n.line, n.col, "assert() inside crash_handler() would recurse (a failing hook re-enters the hook); the hook must not fail");
         }
         return c;
     }
@@ -4397,10 +4420,13 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
         if len(n.kids) != 1 {
             fail_at(n.line, n.col, "fail() takes exactly one str argument");
         }
-        let a: COut = check_expr(c, n.kids[0]);
+        let a: COut = check_msg_expr(c, n.kids[0]);
         c = a.c;
         if a.typ != "str" {
             fail_at(n.line, n.col, "fail() takes exactly one str argument");
+        }
+        if c.current_fn == "crash_handler" {
+            fail_at(n.line, n.col, "fail() inside crash_handler() would recurse (a failing hook re-enters the hook); the hook must not fail");
         }
         return c;
     }
@@ -5385,6 +5411,7 @@ fn check_lambda(c0: HChecker, n: Node) -> COut {
         pi = pi + 1;
     }
     c.ret_type = ret;
+    c.current_fn = "";
     c.loop_depth = 0;
     c.branch_depth = 0;
     c.loop_vars = trunc_str(c.loop_vars, 0);
@@ -5440,6 +5467,7 @@ fn check_lambda(c0: HChecker, n: Node) -> COut {
     c.for_iter_scopes = copy_int(saved.for_iter_scopes);
     c.loop_vars = copy_str(saved.loop_vars);
     c.ret_type = saved.ret_type;
+    c.current_fn = saved.current_fn;
     c.loop_depth = saved.loop_depth;
     c.branch_depth = saved.branch_depth;
     c.moved_field_target = saved.moved_field_target;
@@ -5470,6 +5498,11 @@ fn check_func(c0: HChecker, fn_node: Node, file: str) -> HChecker {
     // Generic template: the body is checked only on instantiation,
     // when every type parameter is concrete.
     let sp: [str] = split_tparams(fn_node.name);
+    // Top-500 #60: the function being checked (fail()/assert()
+    // inside crash_handler() is rejected by the stmt-builtin
+    // branches below; a lambda clears it, like Python's
+    // current_fn = None).
+    c.current_fn = sp[0];
     // Parameter and return types must name real value types
     // (Python check_func): validated even for externs and
     // generic templates, against the function's own type params.
@@ -5489,6 +5522,42 @@ fn check_func(c0: HChecker, fn_node: Node, file: str) -> HChecker {
     }
     if fn_node.sval != "void" && !hc_valid_type(c, fn_node.sval, ftp) {
         fail_at(fn_node.line, fn_node.col, "unknown return type '" + fn_node.sval + "'" + suggest(fn_node.sval, type_name_cands(c)));
+    }
+    if sp[0] == "crash_handler" {
+        // Top-500 #60 (stage B): the freestanding crash hook. A
+        // top-level fn with this name IS the hook, so its shape
+        // is enforced here, in both compilers: exactly
+        // (code: int, pc: int) -> void, not generic, not extern,
+        // freestanding only.
+        if sp[1] != "" {
+            fail_at(fn_node.line, fn_node.col, "crash_handler() cannot be generic (the hook signature is (int, int) -> void)");
+        }
+        if fn_node.bval {
+            fail_at(fn_node.line, fn_node.col, "crash_handler() must be defined in Qasida (an extern declaration is not a hook)");
+        }
+        if !c.freestanding {
+            fail_at(fn_node.line, fn_node.col, "crash_handler() is a freestanding-only hook (not in hosted mode)");
+        }
+        let mut np: int = 0;
+        let mut p0: str = "";
+        let mut p1: str = "";
+        let mut pi2: int = 0;
+        while pi2 < len(fn_node.kids) {
+            let k2: Node = fn_node.kids[pi2];
+            if k2.kind == 43 {
+                if np == 0 {
+                    p0 = k2.sval;
+                }
+                if np == 1 {
+                    p1 = k2.sval;
+                }
+                np = np + 1;
+            }
+            pi2 = pi2 + 1;
+        }
+        if np != 2 || p0 != "int" || p1 != "int" || fn_node.sval != "void" {
+            fail_at(fn_node.line, fn_node.col, "crash_handler() must take exactly (code: int, pc: int) and return nothing");
+        }
     }
     if sp[1] != "" {
         return c;

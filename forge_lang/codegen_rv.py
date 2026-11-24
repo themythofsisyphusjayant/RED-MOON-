@@ -86,6 +86,21 @@ UART = 0x10000000
 STATIC_BASE = 0x1000
 FRAME_BYTES = 2048
 SP_START = 65532
+# Crash dumps (Top-500 #60): the 30 registers the trap stub saves,
+# in trap-frame order (codegen_rv.py:742-784). The dump area is 32
+# words: word 0 = pc (ra at the fail site), words 1..30 = these
+# registers, word 31 = sp.
+CRASH_REGS = ["ra", "gp", "tp", "t0", "t1", "t2", "s0", "s1",
+              "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+              "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+              "s10", "s11", "t3", "t4", "t5", "t6"]
+# Crash codes (Top-500 #60): the failure kind, threaded through
+# every fail site. Same numbering as the native FORGE_FAIL_*
+# constants (codegen.py). 1 = user fail(), 2 = assert(),
+# 3 = float->int cast out of range.
+CRASH_CODE_USER = 1
+CRASH_CODE_ASSERT = 2
+CRASH_CODE_F2I = 3
 # Temp pool: t0-t6, a1-a7 (a0 is return/arg0, never a temp), s2-s11.
 # Caller spills live temps across calls, so all of these are safe.
 # Expression temps. NOTE: argument registers a0-a7 are deliberately
@@ -132,6 +147,22 @@ class RVGen:
         self.float_f2i = False     # helper forge_f2i used
         self.float_fprint = False  # helper forge_print_float used
         self.f2i_fail_addr = 0     # str_addr of the f2i failure message
+        # Crash dumps (Top-500 #60): the dump area + static strings
+        # are allocated lazily, during gen_func, by
+        # ensure_crash_strings (helpers must not allocate strings:
+        # their init code would never land in _start). Helpers
+        # forge_crash_dump / forge_print_hex are emitted only when
+        # a fail/assert/f2i site exists, so a program (or kernel)
+        # without one grows by 0 words.
+        self.crash_dump_used = False
+        self.crash_dump_addr = 0   # static addr of the 32-word dump area
+        self.crash_prefix_addr = 0  # str_addr of "qasida: crash: "
+        self.crash_nl_addr = 0     # str_addr of "\n"
+        self.crash_labels = []     # str_addrs of "  <reg> 0x", pc/regs/sp
+        # Stage B: a user fn named crash_handler, if present, is
+        # called on fail (validated in generate(), like
+        # trap_handler). Recognised in stage B; False until then.
+        self.has_crash_handler = False
 
     # ---------- utilities ----------
     def label(self, prefix):
@@ -194,6 +225,86 @@ class RVGen:
             self.init_lines.append("    addi t0, t0, 1")
         self.init_lines.append("    sb zero, 0(t0)")
         return addr
+
+    # ---------- crash dumps (Top-500 #60, stage A) ----------
+    def ensure_crash_strings(self):
+        # Allocate the dump area + every static string the crash
+        # dump prints. Idempotent; called from the fail/assert
+        # lowerings and the f2i cast site, i.e. during gen_func,
+        # so the init code lands in _start (helpers must not
+        # allocate strings). Sets crash_dump_used, which gates
+        # the forge_crash_dump / forge_print_hex helpers.
+        if self.crash_dump_used:
+            return
+        self.crash_dump_used = True
+        self.crash_dump_addr = self.static_addr(32 * 4)
+        self.crash_prefix_addr = self.str_addr("qasida: crash: ")
+        self.crash_nl_addr = self.str_addr("\n")
+        self.crash_labels = []
+        for nm in ["pc"] + CRASH_REGS + ["sp"]:
+            self.crash_labels.append(self.str_addr(f"  {nm} 0x"))
+
+    def crash_snapshot_lines(self):
+        # 31 inline sw stores snapshotting the register file into
+        # the static dump area (word 0 = pc, words 1..30 = the
+        # trap-frame-order regs, word 31 = sp). Emitted at the fail
+        # site, BEFORE the message is evaluated or any call runs,
+        # so the snapshot is the register file at the failure, not
+        # after the print helpers clobbered it. sw modifies no
+        # register; the only clobbers are t0 (the dump base — its
+        # original value is saved in the red zone at -4(sp) first
+        # and stored into its slot last) and t1 (its original
+        # value is stored first, then it carries sp briefly).
+        # pc is ra: the instruction after the fail call — the
+        # fault site's return address, off by one call, said so
+        # in the format rather than pretended otherwise.
+        a = self.crash_dump_addr
+        lines = []
+        lines.append("    sw t0, -4(sp)")
+        lines.append(f"    li t0, {a}")
+        lines.append("    sw ra, 0(t0)")
+        for i, r in enumerate(CRASH_REGS):
+            if r in ("t0", "t1"):
+                continue
+            lines.append(f"    sw {r}, {4 * (1 + i)}(t0)")
+        t1_word = 1 + CRASH_REGS.index("t1")
+        t0_word = 1 + CRASH_REGS.index("t0")
+        lines.append(f"    sw t1, {4 * t1_word}(t0)")
+        lines.append("    mv t1, sp")
+        lines.append(f"    sw t1, {4 * 31}(t0)")
+        lines.append("    lw t1, -4(sp)")
+        lines.append(f"    sw t1, {4 * t0_word}(t0)")
+        return lines
+
+    def crash_print_msg_lines(self, msg_load_line):
+        # Print "qasida: crash: <msg>\n" over UART. msg_load_line
+        # is the complete asm line that puts the message address
+        # into a0 (e.g. "    mv a0, <temp>" for a fail/assert
+        # message evaluated into a temp, "    li a0, <addr>" for
+        # the f2i static message). Called AFTER the snapshot (and,
+        # from stage B, after the hook), so no live temp crosses
+        # the print calls.
+        return [f"    li a0, {self.crash_prefix_addr}",
+                "    jal ra, forge_print_str",
+                msg_load_line,
+                "    jal ra, forge_print_str",
+                f"    li a0, {self.crash_nl_addr}",
+                "    jal ra, forge_print_str"]
+
+    def crash_hook_lines(self, code):
+        # Call the user crash_handler(code, pc) hook, if the program
+        # defines one. pc is ra (the fail-site return address),
+        # saved to t1 before the jal (which clobbers ra); a0 = the
+        # failure code, a1 = pc. Runs after the snapshot (so the
+        # dumped registers are the failure's own) and before the
+        # dump print. Returns [] when no hook is defined, so a
+        # hook-less program is byte-identical to stage A+C.
+        if not self.has_crash_handler:
+            return []
+        return ["    mv t1, ra",
+                f"    li a0, {code}",
+                "    mv a1, t1",
+                "    jal ra, crash_handler"]
 
     # ---------- top level ----------
     def generate(self):
@@ -298,6 +409,13 @@ class RVGen:
                                  "or one int (trap frame pointer) "
                                  "and return nothing",
                                  th.line, th.col)
+        # Stage B: a function named crash_handler, if present, is
+        # the freestanding crash hook — called with (code, pc) after
+        # the snapshot and before the dump at every fail site. The
+        # checker already validated its signature (exactly
+        # (code: int, pc: int) -> void, freestanding only), so the
+        # backend only needs to know whether it exists.
+        self.has_crash_handler = "crash_handler" in self.funcs
         for fn in self.program.funcs:
             if getattr(fn, "is_extern", False):
                 raise ForgeError("extern functions are not supported on big32")
@@ -777,6 +895,52 @@ class RVGen:
                 h.append(f"    lw {r}, {4 * i}(sp)")
             h.append(f"    addi sp, sp, {4 * len(regs)}")
             h.append("    mret")
+        if self.crash_dump_used:
+            # Crash dumps (Top-500 #60): forge_print_hex prints
+            # a0 as 8 lowercase hex digits (no 0x, no newline —
+            # the caller prints the "  <reg> 0x" label and the
+            # newline); forge_crash_dump prints the pinned
+            # transcript for all 32 dump words. Emitted only when
+            # a fail/assert/f2i site exists. Both helpers use
+            # t0-t2 freely (caller-saved temps) and preserve ra
+            # and s1 (the dump base) across their own calls.
+            h.append("forge_print_hex:")
+            h.append("    addi sp, sp, -4")
+            h.append("    sw ra, 0(sp)")
+            h.append("    li t2, 28")
+            h.append("forge_print_hex_loop:")
+            h.append("    srl t0, a0, t2")
+            h.append("    andi t0, t0, 15")
+            h.append("    li t1, 10")
+            h.append("    blt t0, t1, forge_print_hex_digit")
+            h.append("    addi t0, t0, 87")
+            h.append("    j forge_print_hex_out")
+            h.append("forge_print_hex_digit:")
+            h.append("    addi t0, t0, 48")
+            h.append("forge_print_hex_out:")
+            h.append(f"    li t1, {UART}")
+            h.append("    sb t0, 0(t1)")
+            h.append("    addi t2, t2, -4")
+            h.append("    bge t2, zero, forge_print_hex_loop")
+            h.append("    lw ra, 0(sp)")
+            h.append("    addi sp, sp, 4")
+            h.append("    ret")
+            h.append("forge_crash_dump:")
+            h.append("    addi sp, sp, -8")
+            h.append("    sw ra, 4(sp)")
+            h.append("    sw s1, 0(sp)")
+            h.append(f"    li s1, {self.crash_dump_addr}")
+            for i, addr in enumerate(self.crash_labels):
+                h.append(f"    li a0, {addr}")
+                h.append("    jal ra, forge_print_str")
+                h.append(f"    lw a0, {4 * i}(s1)")
+                h.append("    jal ra, forge_print_hex")
+                h.append(f"    li a0, {self.crash_nl_addr}")
+                h.append("    jal ra, forge_print_str")
+            h.append("    lw s1, 0(sp)")
+            h.append("    lw ra, 4(sp)")
+            h.append("    addi sp, sp, 8")
+            h.append("    ret")
         return h
 
     def _float_v2_helpers(self, h):
@@ -1112,8 +1276,21 @@ class RVGen:
             h.append("    li a0, 0")
             h.append("    ret")
             h.append("f2_fail:")
-            h.append(f"    li a0, {self.f2i_fail_addr}")
-            h.append("    jal ra, forge_print_str")
+            if self.f2i_fail_addr:
+                # Crash dump (Top-500 #60): a user cast failed.
+                # Snapshot, print the message + dump, halt.
+                # (When forge_f2i is emitted only for the float
+                # printer, f2i_fail_addr is 0 and this path is
+                # unreachable — keep the old print+halt shape so
+                # float-print-only programs pay no dump cost.)
+                h.extend(self.crash_snapshot_lines())
+                h.extend(self.crash_hook_lines(CRASH_CODE_F2I))
+                h.extend(self.crash_print_msg_lines(
+                    f"    li a0, {self.f2i_fail_addr}"))
+                h.append("    jal ra, forge_crash_dump")
+            else:
+                h.append(f"    li a0, {self.f2i_fail_addr}")
+                h.append("    jal ra, forge_print_str")
             h.append("    li a0, 1")
             if self.has_trap_handler:
                 h.append("    csrw 773, zero")
@@ -1601,19 +1778,38 @@ class RVGen:
                 ok = self.label("assert_ok")
                 self.emit(f"    bne {cond}, zero, {ok}")
                 self.free_reg(cond)
+                # Crash dump (Top-500 #60): snapshot the register
+                # file at the failure, then print the message and
+                # the dump, then halt with a0 = 1. The message is
+                # evaluated AFTER the snapshot so no print/helper
+                # call can clobber the registers being dumped.
+                self.ensure_crash_strings()
+                for ln in self.crash_snapshot_lines():
+                    self.emit(ln)
+                for ln in self.crash_hook_lines(CRASH_CODE_ASSERT):
+                    self.emit(ln)
                 msg = self.gen_expr(call.args[1])
-                self.emit(f"    mv a0, {msg}")
+                for ln in self.crash_print_msg_lines(f"    mv a0, {msg}"):
+                    self.emit(ln)
                 self.free_reg(msg)
-                self.emit("    jal ra, forge_print_str")
+                self.emit("    jal ra, forge_crash_dump")
                 self.emit("    li a0, 1")
                 self.emit_halt()
                 self.emit(f"{ok}:")
                 return
             if isinstance(call, A.Call) and call.name == "fail":
+                # Crash dump (Top-500 #60): snapshot first, then
+                # the message, then the dump, then halt with a0 = 1.
+                self.ensure_crash_strings()
+                for ln in self.crash_snapshot_lines():
+                    self.emit(ln)
+                for ln in self.crash_hook_lines(CRASH_CODE_USER):
+                    self.emit(ln)
                 msg = self.gen_expr(call.args[0])
-                self.emit(f"    mv a0, {msg}")
+                for ln in self.crash_print_msg_lines(f"    mv a0, {msg}"):
+                    self.emit(ln)
                 self.free_reg(msg)
-                self.emit("    jal ra, forge_print_str")
+                self.emit("    jal ra, forge_crash_dump")
                 self.emit("    li a0, 1")
                 self.emit_halt()
                 return
@@ -1879,6 +2075,10 @@ class RVGen:
                 if not self.f2i_fail_addr:
                     self.f2i_fail_addr = self.str_addr(
                         "float to int cast out of range")
+                # Crash dump (Top-500 #60): the f2i fail path in
+                # helpers() snapshots + dumps too, so the dump
+                # strings must be allocated here, during gen_func.
+                self.ensure_crash_strings()
                 self.gen_float_call("forge_f2i", r)
                 return r
             if expr.target == "float" or src == "float":

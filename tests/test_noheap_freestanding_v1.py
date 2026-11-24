@@ -20,9 +20,11 @@ Boundaries, stated honestly: declarations that merely *name* a heap
 type (an unused str parameter, a struct field or enum payload of
 type str, never given a value) still declare — they generate no heap
 code, and any value of such a type is rejected at first use. Sized
-arrays stay rejected: their literals malloc in codegen. fail() and
-assert() with a string message stay rejected, as before (the message
-is a string literal).
+arrays stay rejected: their literals malloc in codegen. Since
+Top-500 #60 (D1), fail() and assert() with a STRING LITERAL message
+are EXEMPT from the heap rejection — the literal lowers to a static
+C string / static data, never a heap value. Any other str expression
+(a variable, a concatenation) as the message is still rejected.
 """
 import os
 import subprocess
@@ -121,8 +123,14 @@ REJECT_CASES = [
     ("tuple carrying a str",
      'fn main() { let t: (str, int) = ("a", 2); }\n',
      "string literal allocates on the heap", "freestanding"),
-    ("fail with a string message",
-     'fn main() { fail("boom"); }\n',
+    # NOTE (Top-500 #60, D1): "fail with a string message" used to
+    # be rejected here. A string LITERAL as the fail()/assert()
+    # message is now exempt from the heap rejection (it lowers to a
+    # static C string, never a heap value), so that case moved to
+    # the D1 allow-checks in main() below. A non-literal str
+    # message is still rejected (see "fail with a str variable").
+    ("fail with a str variable",
+     'fn main() { let s: str = "boom"; fail(s); }\n',
      "string literal allocates on the heap", "freestanding"),
 ]
 
@@ -160,6 +168,24 @@ def main():
     print("freestanding rejections (named, at check time)")
     for name, prog, *needles in REJECT_CASES:
         reject(name, prog, *needles)
+
+    print("D1 (Top-500 #60): literal fail()/assert() messages allowed")
+    # A string literal as the fail()/assert() message is exempt
+    # from the heap rejection. The programs are checked and built,
+    # never run (a failing freestanding program halts).
+    d = tempfile.mkdtemp(prefix="noheap-d1-")
+    for name, prog in (
+            ("fail literal", 'fn main() { fail("boom"); }\n'),
+            ("assert literal",
+             'fn main() { let x: int = 5; assert(x == 6, "nope"); }\n')):
+        path = write_prog(d, prog, name.replace(" ", "_") + ".fg")
+        r = run(FORGE + ["check", path, "--freestanding"])
+        check(f"D1 {name} checks freestanding", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]!r}")
+        out = os.path.join(d, name.replace(" ", "_"))
+        r = run(FORGE + ["build", path, "--freestanding", "-o", out])
+        check(f"D1 {name} builds freestanding", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[:200]!r}")
 
     print("freestanding programs that build and run")
     for name, prog, expected in ALLOW_CASES:

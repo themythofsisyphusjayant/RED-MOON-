@@ -8,6 +8,60 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Crash dumps in freestanding mode, Top-500 #60 (24 Nov 2026,
+  sprint, both compilers): on fail, the compiler snapshots
+  registers, calls a user-defined `crash_handler(code: int, pc: int)`
+  hook if defined with exactly that name and signature, prints the
+  pinned dump, then halts. Crash codes: 0 OTHER, 1 USER, 2 ASSERT,
+  3 F2I, 4 OVERFLOW, 5 DIVZERO, 6 BOUNDS, 7 OOM. big32 prints the
+  full 30-register dump over UART; native x86_64 prints the partial
+  dump (rip, rbx, rbp, r12-r15, rsp) to stderr via a raw write
+  syscall. A string literal as the fail()/assert() message is now
+  exempt from the freestanding heap rejection (both compilers).
+  Own test tests/test_crashdump_v1.py 109/109 ALL PASS both
+  compilers; demo examples/crashdump_demo.fg. `-ffreestanding` is
+  now passed for freestanding builds (both compilers). Follow-ups
+  stay open: trap-fault dump, freestanding backtrace.
+
+- Sprint Day 4 control-flow libraries, Top-500 #63, #64, #65, #66,
+  #68, #71, #73, #127, #128, #342, #345 (24 Nov 2026, libs-only):
+  eleven pure-Qasida libraries, no compiler change, no new syntax.
+  #63 iflet.fg: iflet_ok over Result<int, str>, iflet_some over
+  Option<int>, wl_step while-let returning the count consumed (the
+  direct `next: fn(int) -> Option<int>` step is unbuildable — both
+  compilers fail the fn typedef for a generic-struct return — so
+  the step is split into has_next + next_value). #64 guard.fg:
+  guard_true/guard_false/guard_positive/guard_ok returning
+  Result<int, str> so the caller early-returns via `?` (a library
+  cannot early-return from the caller). #65 matchguard.fg:
+  mg_match_int predicate-dispatch over (value, predicate, action)
+  tables (first match wins, fallback otherwise). #66 foreach.fg:
+  fe_each over iter.fg Iter values and fe_each_str over string
+  chars, plus fe_map_iter via hof.fg map. #68 repeatwhile.fg:
+  rw_run/rw_until over fn values with state in a caller-owned
+  shared [int] buffer (closures capture by value; captured scalars
+  are read-only in v1). #71 ifexpr.fg: eager ite_int/ite_str/
+  ite_bool plus lazy ite_lazy_* over fn values (lazy calls only the
+  chosen branch). #73 loopelse.fg: le_run(body, on_else) with body
+  codes 0=continue, 1=break, 2=done-cleanly; on_else runs only on
+  clean completion. #127 dict.fg: string-keyed Dict as parallel
+  key/value arrays (copy-on-write) plus DictStr. #128 comp.fg:
+  comp_range_map / comp_filter_map / comp_range_filter on hof.fg
+  map/filter. #342 multireport.fg: MultiError aggregation with
+  mr_render and mr_json via errors_to_json (#341); library-side
+  only, does not hook the checker. #345 snippet.fg:
+  render_snippet_ctx / render_error_ctx on errrender.fg (#54) with
+  before/after context lines and a "(+N more lines)" note for spans
+  past the line end. Own tests 18/18–26/26 ALL PASS both compilers
+  per item (all re-run by the coordinator); ASan program-side 0
+  leaks except #64 (demo 3B/3, probe 1B/1 — a pre-existing `?`
+  unwrap leak, 1 byte per Ok Result unwrap in both compilers).
+  Full suite hosted 109/115, python 106/116 (6 known big32 in both;
+  never now passes both modes; the 3 standing python extras —
+  move_branch_field, useaftermove, noheap_freestanding — are
+  Python-vs-hosted divergences in concurrent in-flight #60 tree
+  edits, not this slice's).
+
 - Inferred error sets, Top-500 #50 (24 Nov 2026, sprint): for every
   function returning `Result<T, E>` where E is an enum, the checker
   now computes the set of E-variants it can produce (own literal

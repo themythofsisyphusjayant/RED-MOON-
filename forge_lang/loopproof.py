@@ -54,7 +54,7 @@ import re
 
 from . import ast_nodes as A
 
-FAIL_MSG = 'forge_fail("array index out of bounds")'
+FAIL_MSG = 'forge_fail("array index out of bounds", FORGE_FAIL_BOUNDS)'
 
 # Interval magnitudes are capped so the Python analysis and the
 # hosted Qasida mirror agree exactly (Qasida ints are 64-bit).

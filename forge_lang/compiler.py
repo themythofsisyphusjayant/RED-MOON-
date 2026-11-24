@@ -228,7 +228,12 @@ def build(source_path, output_path, mode="safe", keep_c=None, debug=False, frees
                              "(the _start entry uses the Linux exit_group syscall)")
         flags = _cc_flags(mode, portable=portable) + (["-g"] if debug else [])
         if freestanding:
-            flags = [f for f in flags if f != "-pthread"] + ["-nostdlib"]
+            # -ffreestanding: no libc, so GCC must not emit implicit
+            # libc calls (it otherwise rewrites a strlen-shaped loop
+            # in the crash-dump header into a strlen() call, which
+            # cannot link under -nostdlib). -nostdlib is the link
+            # half; -ffreestanding is the compile half.
+            flags = [f for f in flags if f != "-pthread"] + ["-nostdlib", "-ffreestanding"]
         have_ssl = os.environ.get("QASIDA_HAVE_OPENSSL") == "1"
         no_ssl = os.environ.get("QASIDA_NO_OPENSSL") == "1"
         if no_ssl:

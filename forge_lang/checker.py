@@ -1774,6 +1774,30 @@ class Checker:
                 raise ForgeError(f"unknown return type '{fn.ret}'"
                                  f"{suggest(fn.ret, list(SCALARS) + list(self.structs) + list(self.enums))}",
                                  fn.line, fn.col)
+            if fn.name == "crash_handler":
+                # Top-500 #60 (stage B): the freestanding crash
+                # hook. A top-level fn with this name IS the hook,
+                # so its shape is enforced here, in both compilers:
+                # exactly (code: int, pc: int) -> void, not generic,
+                # not extern, freestanding only (hosted fail()
+                # already prints and exits; there is nothing to hook).
+                if getattr(fn, "type_params", None):
+                    raise ForgeError("crash_handler() cannot be generic "
+                                     "(the hook signature is (int, int) -> void)",
+                                     fn.line, fn.col)
+                if getattr(fn, "is_extern", False):
+                    raise ForgeError("crash_handler() must be defined in Qasida "
+                                     "(an extern declaration is not a hook)",
+                                     fn.line, fn.col)
+                if not self.freestanding:
+                    raise ForgeError("crash_handler() is a freestanding-only hook "
+                                     "(not in hosted mode)",
+                                     fn.line, fn.col)
+                if (len(fn.params) != 2 or fn.params[0][1] != "int"
+                        or fn.params[1][1] != "int" or fn.ret != "void"):
+                    raise ForgeError("crash_handler() must take exactly "
+                                     "(code: int, pc: int) and return nothing",
+                                     fn.line, fn.col)
             if getattr(fn, "is_extern", False):
                 # No body to check; the C function must exist at link time.
                 if self.freestanding:
@@ -2571,8 +2595,22 @@ class Checker:
                                  call.line, call.col)
             if self.check_expr(call.args[0]) != "bool":
                 raise ForgeError("assert() condition must be bool", call.line, call.col)
-            if self.check_expr(call.args[1]) != "str":
+            # Top-500 #60 (D1): a string literal as the assert()
+            # message is exempt from the freestanding heap
+            # rejection — it lowers to a static C string (native)
+            # or static data (big32), never a heap value. Any
+            # other str expression is still rejected freestanding.
+            if isinstance(call.args[1], A.StrLit):
+                mt = self._check_expr_inner(call.args[1])
+            else:
+                mt = self.check_expr(call.args[1])
+            if mt != "str":
                 raise ForgeError("assert() message must be str", call.line, call.col)
+            if self.current_fn is not None and self.current_fn.name == "crash_handler":
+                raise ForgeError("assert() inside crash_handler() would recurse "
+                                 "(a failing hook re-enters the hook); "
+                                 "the hook must not fail",
+                                 call.line, call.col)
             return
         if call.name in ("print", "println"):
             if self.freestanding:
@@ -2587,8 +2625,24 @@ class Checker:
                                      f"(type {t})", call.line, call.col)
             return
         if call.name == "fail":
-            if len(call.args) != 1 or self.check_expr(call.args[0]) != "str":
+            # Top-500 #60 (D1): a string literal as the fail()
+            # message is exempt from the freestanding heap
+            # rejection — it lowers to a static C string (native)
+            # or static data (big32), never a heap value. Any
+            # other str expression is still rejected freestanding.
+            if len(call.args) != 1:
                 raise ForgeError("fail() takes exactly one str argument", call.line, call.col)
+            if isinstance(call.args[0], A.StrLit):
+                mt = self._check_expr_inner(call.args[0])
+            else:
+                mt = self.check_expr(call.args[0])
+            if mt != "str":
+                raise ForgeError("fail() takes exactly one str argument", call.line, call.col)
+            if self.current_fn is not None and self.current_fn.name == "crash_handler":
+                raise ForgeError("fail() inside crash_handler() would recurse "
+                                 "(a failing hook re-enters the hook); "
+                                 "the hook must not fail",
+                                 call.line, call.col)
             return
         if call.name == "fail_compile":
             # Slice 5 driver builtin: a compile-time error. Prints

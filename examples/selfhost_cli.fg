@@ -1449,7 +1449,10 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         fail_compile("could not write file: " + c_path);
     }
     // cc flags mirror compiler._cc_flags (fast drops -Wextra);
-    // freestanding drops -pthread, adds -nostdlib, links nothing.
+    // freestanding drops -pthread, adds -nostdlib + -ffreestanding
+    // (no libc, so GCC must not emit implicit libc calls — it
+    // otherwise rewrites a strlen-shaped loop in the crash-dump
+    // header into a strlen() call, which cannot link), links nothing.
     // Fix 3: safe gains -march=native by default; --portable omits
     // it in either mode. (Hosted has no MinGW branch — --portable
     // is the hosted MinGW escape hatch.)
@@ -1464,7 +1467,7 @@ fn cmd_check_emit_build(argv: [str], cmd: str) -> int {
         flags = "cc -O2" + march + " -std=gnu11 -Wall -Wextra -Wno-unused-function";
     }
     if freestanding {
-        flags = flags + " -nostdlib";
+        flags = flags + " -nostdlib -ffreestanding";
     } else {
         flags = flags + " -pthread";
     }

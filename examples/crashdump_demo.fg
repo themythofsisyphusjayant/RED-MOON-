@@ -1,0 +1,9 @@
+fn main() -> int {
+    let x: int = 41;
+    let y: int = 1;
+    let z: int = x + y;
+    if z == 42 {
+        fail("boom");
+    }
+    return 0;
+}

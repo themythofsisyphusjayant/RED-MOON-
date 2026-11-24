@@ -66,7 +66,22 @@ HEADER = r"""#include <stdio.h>
 #endif
 
 static void forge_free_str(char *p);
-static void forge_fail(const char *msg);
+/* Crash codes (Top-500 #60): the failure kind threaded through
+   forge_fail. 0 is every other runtime failure (I/O, mmap,
+   parse, ...); 1/2 are user fail()/assert() (freestanding
+   lowerings only — hosted fail()/assert() print directly);
+   3 is a float->int cast out of range; 4/5/6/7 are the checked-
+   arithmetic and OOM faults. The freestanding hook receives
+   the code; the hosted forge_fail ignores it. */
+#define FORGE_FAIL_OTHER 0
+#define FORGE_FAIL_USER 1
+#define FORGE_FAIL_ASSERT 2
+#define FORGE_FAIL_F2I 3
+#define FORGE_FAIL_OVERFLOW 4
+#define FORGE_FAIL_DIVZERO 5
+#define FORGE_FAIL_BOUNDS 6
+#define FORGE_FAIL_OOM 7
+static void forge_fail(const char *msg, int code);
 /* Socket portability: Winsock sockets are 64-bit SOCKET handles, not
    ints; INVALID_SOCKET is not -1; close() is closesocket(); and
    WSAStartup must run before any socket call. POSIX builds keep the
@@ -78,7 +93,7 @@ static int forge_sock_started = 0;
 static void forge_sock_init(void) {
     if (!forge_sock_started) {
         WSADATA wsa;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) forge_fail("WSAStartup failed");
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) forge_fail("WSAStartup failed", FORGE_FAIL_OTHER);
         forge_sock_started = 1;
     }
 }
@@ -97,7 +112,7 @@ static long long forge_arr_allocs = 0;
 static long long forge_arr_frees = 0;
 static long long *forge_arr_ref_new(void) {
     long long *r = (long long *)malloc(sizeof(long long));
-    if (!r) forge_fail("out of memory");
+    if (!r) forge_fail("out of memory", FORGE_FAIL_OOM);
     *r = 1;
     forge_arr_allocs++;
     return r;
@@ -200,7 +215,7 @@ static ForgeHandler *forge_handler_top(void) {
     return NULL;
 }
 static void forge_handler_push(ForgeHandler *h) {
-    if (forge_handler_depth >= FORGE_HANDLER_CAP) forge_fail("try_call() nesting exceeds 32");
+    if (forge_handler_depth >= FORGE_HANDLER_CAP) forge_fail("try_call() nesting exceeds 32", FORGE_FAIL_OTHER);
     h->msg = NULL;
 #if FORGE_DEBUG
     h->bt_depth = forge_bt_depth;
@@ -223,7 +238,8 @@ static void forge_handler_truncate_bt(ForgeHandler *h) {
 #endif
 }
 
-static void forge_fail(const char *msg) {
+static void forge_fail(const char *msg, int code) {
+    (void)code;
     fprintf(stderr, "qasida: runtime error: %s\n", msg);
 #if FORGE_DEBUG
     forge_bt_print();
@@ -237,7 +253,7 @@ static long long forge_str_frees = 0;
 static char *forge_copy_str(const char *s) {
     size_t n = strlen(s) + 1;
     char *p = (char *)malloc(n);
-    if (!p) forge_fail("out of memory");
+    if (!p) forge_fail("out of memory", FORGE_FAIL_OOM);
     memcpy(p, s, n);
     forge_str_allocs++;
     return p;
@@ -253,9 +269,9 @@ static void forge_free_str(char *p) {
 
 static char *forge_str_at(const char *s, long long i) {
     long long n = (long long)strlen(s);
-    if (i < 0 || i >= n) forge_fail("string index out of bounds");
+    if (i < 0 || i >= n) forge_fail("string index out of bounds", FORGE_FAIL_BOUNDS);
     char *p = (char *)malloc(2);
-    if (!p) forge_fail("out of memory");
+    if (!p) forge_fail("out of memory", FORGE_FAIL_OOM);
     p[0] = s[i];
     p[1] = '\0';
     forge_str_allocs++;
@@ -264,7 +280,7 @@ static char *forge_str_at(const char *s, long long i) {
 
 static char *forge_str_at_fast(const char *s, long long i) {
     char *p = (char *)malloc(2);
-    if (!p) forge_fail("out of memory");
+    if (!p) forge_fail("out of memory", FORGE_FAIL_OOM);
     p[0] = s[i];
     p[1] = '\0';
     forge_str_allocs++;
@@ -274,7 +290,7 @@ static char *forge_str_at_fast(const char *s, long long i) {
 static char *forge_concat(const char *a, const char *b) {
     size_t na = strlen(a), nb = strlen(b);
     char *p = (char *)malloc(na + nb + 1);
-    if (!p) forge_fail("out of memory");
+    if (!p) forge_fail("out of memory", FORGE_FAIL_OOM);
     memcpy(p, a, na);
     memcpy(p + na, b, nb + 1);
     return p;
@@ -282,30 +298,30 @@ static char *forge_concat(const char *a, const char *b) {
 
 static long long forge_add(long long a, long long b) {
     long long r;
-    if (__builtin_add_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_add_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static long long forge_sub(long long a, long long b) {
     long long r;
-    if (__builtin_sub_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_sub_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static long long forge_mul(long long a, long long b) {
     long long r;
-    if (__builtin_mul_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_mul_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static long long forge_neg(long long a) {
-    if (a == (-9223372036854775807LL - 1)) forge_fail("integer overflow");
+    if (a == (-9223372036854775807LL - 1)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return -a;
 }
 static long long forge_div(long long a, long long b) {
-    if (b == 0) forge_fail("division by zero");
-    if (a == (-9223372036854775807LL - 1) && b == -1) forge_fail("integer overflow");
+    if (b == 0) forge_fail("division by zero", FORGE_FAIL_DIVZERO);
+    if (a == (-9223372036854775807LL - 1) && b == -1) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return a / b;
 }
 static long long forge_mod(long long a, long long b) {
-    if (b == 0) forge_fail("division by zero");
+    if (b == 0) forge_fail("division by zero", FORGE_FAIL_DIVZERO);
     if (a == (-9223372036854775807LL - 1) && b == -1) return 0;
     return a % b;
 }
@@ -333,7 +349,7 @@ static long long forge_weak_register(ForgeIntArray a) {
     if (forge_weak_len >= forge_weak_cap) {
         long long nc = forge_weak_cap ? forge_weak_cap * 2 : 8;
         ForgeWeakEntry *nt = (ForgeWeakEntry *)realloc(forge_weak_table, sizeof(ForgeWeakEntry) * (size_t)nc);
-        if (!nt) forge_fail("out of memory");
+        if (!nt) forge_fail("out of memory", FORGE_FAIL_OOM);
         forge_weak_table = nt; forge_weak_cap = nc;
     }
     ForgeWeakEntry *e = &forge_weak_table[forge_weak_len];
@@ -374,7 +390,7 @@ static void FN##_push(ST *a, CT v) { \
            the private copy below. */ \
         long long oc = a->cap ? a->cap : 4; \
         CT *nd = (CT *)malloc(sizeof(CT) * (size_t)oc); \
-        if (!nd) forge_fail("out of memory"); \
+        if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM); \
         for (long long i = 0; i < a->len; i++) nd[i] = COPY; \
         (*a->ref)--; \
         a->data = nd; a->cap = oc; a->ref = forge_arr_ref_new(); \
@@ -382,18 +398,18 @@ static void FN##_push(ST *a, CT v) { \
     if (a->len >= a->cap) { \
         long long nc = a->cap ? a->cap * 2 : 4; \
         CT *nd = (CT *)realloc(a->data, sizeof(CT) * (size_t)nc); \
-        if (!nd) forge_fail("out of memory"); \
+        if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM); \
         a->data = nd; a->cap = nc; \
     } \
     a->data[a->len++] = v; \
     SYNC \
 } \
 static CT FN##_get(ST a, long long i) { \
-    if (i < 0 || i >= a.len) forge_fail("array index out of bounds"); \
+    if (i < 0 || i >= a.len) forge_fail("array index out of bounds", FORGE_FAIL_BOUNDS); \
     return a.data[i]; \
 } \
 static void FN##_set(ST *a, long long i, CT v) { \
-    if (i < 0 || i >= a->len) forge_fail("array index out of bounds"); \
+    if (i < 0 || i >= a->len) forge_fail("array index out of bounds", FORGE_FAIL_BOUNDS); \
     a->data[i] = v; \
 }
 
@@ -407,7 +423,7 @@ static ForgeIntArray forge_range(long long n) {
     a.len = n > 0 ? n : 0;
     a.cap = a.len;
     a.data = a.len ? (long long *)malloc(sizeof(long long) * (size_t)a.len) : NULL;
-    if (a.len && !a.data) forge_fail("out of memory");
+    if (a.len && !a.data) forge_fail("out of memory", FORGE_FAIL_OOM);
     a.ref = forge_arr_ref_new();
     for (long long i = 0; i < a.len; i++) a.data[i] = i;
     return a;
@@ -430,13 +446,13 @@ static bool forge_file_exists(const char *path) {
 
 static char *forge_read_file(const char *path) {
     FILE *f = fopen(path, "rb");
-    if (!f) forge_fail("cannot read file");
+    if (!f) forge_fail("cannot read file", FORGE_FAIL_OTHER);
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
-    if (sz < 0) { fclose(f); forge_fail("cannot read file"); }
+    if (sz < 0) { fclose(f); forge_fail("cannot read file", FORGE_FAIL_OTHER); }
     fseek(f, 0, SEEK_SET);
     char *buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) { fclose(f); forge_fail("out of memory"); }
+    if (!buf) { fclose(f); forge_fail("out of memory", FORGE_FAIL_OOM); }
     size_t got = fread(buf, 1, (size_t)sz, f);
     buf[got] = '\0';
     fclose(f);
@@ -447,14 +463,14 @@ static char *forge_read_line(void) {
     static char buf[8192];
     if (!fgets(buf, sizeof(buf), stdin)) {
         char *empty = (char *)malloc(1);
-        if (!empty) forge_fail("out of memory");
+        if (!empty) forge_fail("out of memory", FORGE_FAIL_OOM);
         empty[0] = '\0';
         return empty;
     }
     size_t n = strlen(buf);
     while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) buf[--n] = '\0';
     char *out = (char *)malloc(n + 1);
-    if (!out) forge_fail("out of memory");
+    if (!out) forge_fail("out of memory", FORGE_FAIL_OOM);
     memcpy(out, buf, n + 1);
     return out;
 }
@@ -488,14 +504,14 @@ static bool forge_write_file(const char *path, const char *content) {
 
 static ForgeIntArray forge_read_bytes(const char *path) {
     FILE *f = fopen(path, "rb");
-    if (!f) forge_fail("cannot read file");
+    if (!f) forge_fail("cannot read file", FORGE_FAIL_OTHER);
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
-    if (sz < 0) { fclose(f); forge_fail("cannot read file"); }
+    if (sz < 0) { fclose(f); forge_fail("cannot read file", FORGE_FAIL_OTHER); }
     fseek(f, 0, SEEK_SET);
     ForgeIntArray out; out.len = sz; out.cap = sz; out.ref = forge_arr_ref_new();
     out.data = sz ? (long long *)malloc(sizeof(long long) * (size_t)sz) : NULL;
-    if (sz && !out.data) { fclose(f); forge_fail("out of memory"); }
+    if (sz && !out.data) { fclose(f); forge_fail("out of memory", FORGE_FAIL_OOM); }
     unsigned char *raw = sz ? (unsigned char *)malloc((size_t)sz) : NULL;
     size_t got = sz ? fread(raw, 1, (size_t)sz, f) : 0;
     fclose(f);
@@ -539,11 +555,11 @@ static bool forge_mkdir(const char *path) {
 }
 static ForgeStrArray forge_readdir(const char *path) {
     DIR *d = opendir(path);
-    if (!d) forge_fail("cannot read directory");
+    if (!d) forge_fail("cannot read directory", FORGE_FAIL_OTHER);
     ForgeStrArray out;
     out.len = 0; out.cap = 8; out.ref = forge_arr_ref_new();
     out.data = (char **)malloc(sizeof(char *) * 8);
-    if (!out.data) { closedir(d); forge_fail("out of memory"); }
+    if (!out.data) { closedir(d); forge_fail("out of memory", FORGE_FAIL_OOM); }
     struct dirent *de;
     while ((de = readdir(d)) != NULL) {
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
@@ -562,12 +578,12 @@ static bool forge_symlink(const char *target, const char *linkpath) {
 }
 static char *forge_readlink(const char *path) {
     struct stat st;
-    if (lstat(path, &st) != 0) forge_fail("cannot read link");
+    if (lstat(path, &st) != 0) forge_fail("cannot read link", FORGE_FAIL_OTHER);
     long long cap = st.st_size > 0 ? (long long)st.st_size + 1 : 4096;
     char *buf = (char *)malloc((size_t)cap);
-    if (!buf) forge_fail("out of memory");
+    if (!buf) forge_fail("out of memory", FORGE_FAIL_OOM);
     long long n = (long long)readlink(path, buf, (size_t)cap - 1);
-    if (n < 0) { free(buf); forge_fail("cannot read link"); }
+    if (n < 0) { free(buf); forge_fail("cannot read link", FORGE_FAIL_OTHER); }
     buf[n] = 0;
     return buf;
 }
@@ -618,16 +634,16 @@ static long long forge_mmap_len = 0;
 static long long forge_mmap_cap = 0;
 static long long forge_mmap_open(const char *path) {
     int fd = open(path, O_RDWR);
-    if (fd < 0) forge_fail("mmap: cannot open file");
+    if (fd < 0) forge_fail("mmap: cannot open file", FORGE_FAIL_OTHER);
     struct stat st;
-    if (fstat(fd, &st) != 0) { close(fd); forge_fail("mmap: cannot stat file"); }
-    if (st.st_size == 0) { close(fd); forge_fail("mmap: cannot map an empty file"); }
+    if (fstat(fd, &st) != 0) { close(fd); forge_fail("mmap: cannot stat file", FORGE_FAIL_OTHER); }
+    if (st.st_size == 0) { close(fd); forge_fail("mmap: cannot map an empty file", FORGE_FAIL_OTHER); }
     void *ptr = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (ptr == MAP_FAILED) { close(fd); forge_fail("mmap: mapping failed"); }
+    if (ptr == MAP_FAILED) { close(fd); forge_fail("mmap: mapping failed", FORGE_FAIL_OTHER); }
     if (forge_mmap_len >= forge_mmap_cap) {
         long long nc = forge_mmap_cap ? forge_mmap_cap * 2 : 8;
         ForgeMmapEntry *nt = (ForgeMmapEntry *)realloc(forge_mmap_table, sizeof(ForgeMmapEntry) * (size_t)nc);
-        if (!nt) { munmap(ptr, (size_t)st.st_size); close(fd); forge_fail("out of memory"); }
+        if (!nt) { munmap(ptr, (size_t)st.st_size); close(fd); forge_fail("out of memory", FORGE_FAIL_OOM); }
         forge_mmap_table = nt; forge_mmap_cap = nc;
     }
     ForgeMmapEntry *e = &forge_mmap_table[forge_mmap_len];
@@ -635,36 +651,36 @@ static long long forge_mmap_open(const char *path) {
     return forge_mmap_len++;
 }
 static long long forge_mmap_get(long long id, long long i) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
-    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds");
+    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds", FORGE_FAIL_BOUNDS);
     return (long long)((unsigned char *)e->ptr)[i];
 }
 static void forge_mmap_set(long long id, long long i, long long v) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
-    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds");
+    if (i < 0 || i >= e->len) forge_fail("mmap index out of bounds", FORGE_FAIL_BOUNDS);
     ((unsigned char *)e->ptr)[i] = (unsigned char)(v & 0xFF);
 }
 static long long forge_mmap_grow(long long id, long long new_len) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
-    if (new_len <= e->len) forge_fail("mmap: new size must be larger than current size");
-    if (ftruncate(e->fd, (off_t)new_len) != 0) forge_fail("mmap: cannot grow file");
+    if (new_len <= e->len) forge_fail("mmap: new size must be larger than current size", FORGE_FAIL_OTHER);
+    if (ftruncate(e->fd, (off_t)new_len) != 0) forge_fail("mmap: cannot grow file", FORGE_FAIL_OTHER);
     /* Map the grown file first: if this fails the old mapping
        is still valid (only the file grew). Then drop the old
        mapping and point the entry at the new one — the id
        stays the same, so holders keep working. */
     void *ptr = mmap(NULL, (size_t)new_len, PROT_READ | PROT_WRITE, MAP_SHARED, e->fd, 0);
-    if (ptr == MAP_FAILED) forge_fail("mmap: remap failed");
+    if (ptr == MAP_FAILED) forge_fail("mmap: remap failed", FORGE_FAIL_OTHER);
     munmap(e->ptr, (size_t)e->len);
     e->ptr = ptr; e->len = new_len;
     return new_len;
 }
 static long long forge_mmap_get32(long long id, long long i) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
-    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds");
+    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds", FORGE_FAIL_BOUNDS);
     /* Little-endian word, assembled byte by byte (no
        alignment assumption, portable across hosts). The
        value is zero-extended, matching forge_peek32. */
@@ -673,42 +689,42 @@ static long long forge_mmap_get32(long long id, long long i) {
                        ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24));
 }
 static void forge_mmap_set32(long long id, long long i, long long v) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: unknown mapping", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
-    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds");
+    if (i < 0 || i > e->len - 4) forge_fail("mmap index out of bounds", FORGE_FAIL_BOUNDS);
     unsigned char *b = (unsigned char *)e->ptr + i;
     uint32_t w = (uint32_t)(v & 0xFFFFFFFFLL);
     b[0] = (unsigned char)(w & 0xFF); b[1] = (unsigned char)((w >> 8) & 0xFF);
     b[2] = (unsigned char)((w >> 16) & 0xFF); b[3] = (unsigned char)((w >> 24) & 0xFF);
 }
 static void forge_mmap_close(long long id) {
-    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: already closed");
+    if (id < 0 || id >= forge_mmap_len || !forge_mmap_table[id].alive) forge_fail("mmap: already closed", FORGE_FAIL_OTHER);
     ForgeMmapEntry *e = &forge_mmap_table[id];
     munmap(e->ptr, (size_t)e->len);
     close(e->fd);
     e->alive = 0;
 }
 #else
-static long long forge_mmap_open(const char *path) { (void)path; forge_fail("mmap is not supported on Windows in v1"); return -1; }
-static long long forge_mmap_get(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1"); return 0; }
-static void forge_mmap_set(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1"); }
-static void forge_mmap_close(long long id) { (void)id; forge_fail("mmap is not supported on Windows in v1"); }
-static long long forge_mmap_grow(long long id, long long new_len) { (void)id; (void)new_len; forge_fail("mmap is not supported on Windows in v1"); return -1; }
-static long long forge_mmap_get32(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1"); return 0; }
-static void forge_mmap_set32(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1"); }
+static long long forge_mmap_open(const char *path) { (void)path; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); return -1; }
+static long long forge_mmap_get(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); return 0; }
+static void forge_mmap_set(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); }
+static void forge_mmap_close(long long id) { (void)id; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); }
+static long long forge_mmap_grow(long long id, long long new_len) { (void)id; (void)new_len; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); return -1; }
+static long long forge_mmap_get32(long long id, long long i) { (void)id; (void)i; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); return 0; }
+static void forge_mmap_set32(long long id, long long i, long long v) { (void)id; (void)i; (void)v; forge_fail("mmap is not supported on Windows in v1", FORGE_FAIL_OTHER); }
 #endif
 
 static double forge_parse_float(const char *s) {
     char *end = NULL;
     double v = strtod(s, &end);
-    if (end == s || *end != '\0') forge_fail("parse_float: not a number");
+    if (end == s || *end != '\0') forge_fail("parse_float: not a number", FORGE_FAIL_OTHER);
     return v;
 }
 
 static long long forge_parse_int(const char *s) {
     char *end = NULL;
     long long v = strtoll(s, &end, 10);
-    if (end == s || *end != '\0') forge_fail("parse_int: not an integer");
+    if (end == s || *end != '\0') forge_fail("parse_int: not an integer", FORGE_FAIL_OTHER);
     return v;
 }
 
@@ -758,8 +774,8 @@ static char *forge_join(ForgeStrArray arr, const char *sep) {
 
 static char *forge_substr(const char *s, long long start, long long len) {
     long long sl = (long long)strlen(s);
-    if (start < 0 || start > sl) forge_fail("substr: start out of range");
-    if (len < 0) forge_fail("substr: negative length");
+    if (start < 0 || start > sl) forge_fail("substr: start out of range", FORGE_FAIL_OTHER);
+    if (len < 0) forge_fail("substr: negative length", FORGE_FAIL_OTHER);
     if (start + len > sl) len = sl - start;
     char *buf = (char *)malloc((size_t)len + 1);
     memcpy(buf, s + start, (size_t)len); buf[len] = '\0';
@@ -930,7 +946,7 @@ static int forge_proxy_for(const char *host, char *phost, char *pport, char *pau
 static char *forge_https_get(const char *url) {
 #if (defined(_WIN32) && !defined(FORGE_HAVE_OPENSSL)) || defined(FORGE_NO_OPENSSL)
     (void)url;
-    forge_fail("https_get: HTTPS is not supported in this build (rebuild with OpenSSL to enable it)");
+    forge_fail("https_get: HTTPS is not supported in this build (rebuild with OpenSSL to enable it)", FORGE_FAIL_OTHER);
     return NULL;
 #else
     forge_sock_init();
@@ -941,11 +957,11 @@ static char *forge_https_get(const char *url) {
     const char *path = "/";
     if (slash) {
         size_t hl = (size_t)(slash - rest);
-        if (hl >= sizeof(hostport)) forge_fail("https_get: host too long");
+        if (hl >= sizeof(hostport)) forge_fail("https_get: host too long", FORGE_FAIL_OTHER);
         memcpy(hostport, rest, hl); hostport[hl] = '\0';
         path = slash;
     } else {
-        if (strlen(rest) >= sizeof(hostport)) forge_fail("https_get: host too long");
+        if (strlen(rest) >= sizeof(hostport)) forge_fail("https_get: host too long", FORGE_FAIL_OTHER);
         strcpy(hostport, rest);
     }
     char host[256]; char portstr[16] = "443";
@@ -955,13 +971,13 @@ static char *forge_https_get(const char *url) {
     /* Proxy: only HTTPS uses CONNECT. Plain http:// stays direct. */
     char phost[256]; char pport[16]; char pauth[512];
     int px = forge_proxy_for(host, phost, pport, pauth);
-    if (px < 0) forge_fail("https_get: cannot parse https_proxy");
+    if (px < 0) forge_fail("https_get: cannot parse https_proxy", FORGE_FAIL_OTHER);
     const char *conn_host = (px == 1) ? phost : host;
     const char *conn_port = (px == 1) ? pport : portstr;
     struct addrinfo hints; memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *res = NULL;
-    if (getaddrinfo(conn_host, conn_port, &hints, &res) != 0) forge_fail("https_get: cannot resolve host");
+    if (getaddrinfo(conn_host, conn_port, &hints, &res) != 0) forge_fail("https_get: cannot resolve host", FORGE_FAIL_OTHER);
     forge_sock_t sock = FORGE_SOCK_INVALID;
     for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
         sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
@@ -970,7 +986,7 @@ static char *forge_https_get(const char *url) {
         forge_sock_close(sock); sock = FORGE_SOCK_INVALID;
     }
     freeaddrinfo(res);
-    if (sock == FORGE_SOCK_INVALID) forge_fail("https_get: cannot connect");
+    if (sock == FORGE_SOCK_INVALID) forge_fail("https_get: cannot connect", FORGE_FAIL_OTHER);
     if (px == 1) {
         /* CONNECT handshake; afterwards the socket carries TLS as usual. */
         char creq[2048];
@@ -979,8 +995,8 @@ static char *forge_https_get(const char *url) {
             cn = snprintf(creq, sizeof(creq), "CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\nProxy-Authorization: Basic %s\r\n\r\n", host, portstr, host, portstr, pauth);
         else
             cn = snprintf(creq, sizeof(creq), "CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\n\r\n", host, portstr, host, portstr);
-        if (cn < 0 || (size_t)cn >= sizeof(creq)) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT request too long"); }
-        if (send(sock, creq, (size_t)cn, 0) < 0) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT failed"); }
+        if (cn < 0 || (size_t)cn >= sizeof(creq)) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT request too long", FORGE_FAIL_OTHER); }
+        if (send(sock, creq, (size_t)cn, 0) < 0) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT failed", FORGE_FAIL_OTHER); }
         char resp[8192]; size_t rlen = 0; int done = 0;
         while (rlen + 1024 < sizeof(resp)) {
             ssize_t got = recv(sock, resp + rlen, sizeof(resp) - rlen - 1, 0);
@@ -988,18 +1004,18 @@ static char *forge_https_get(const char *url) {
             rlen += (size_t)got; resp[rlen] = '\0';
             if (strstr(resp, "\r\n\r\n")) { done = 1; break; }
         }
-        if (!done) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT failed (no response)"); }
+        if (!done) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT failed (no response)", FORGE_FAIL_OTHER); }
         int status = 0;
-        if (sscanf(resp, "HTTP/%*s %d", &status) != 1 || status != 200) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT refused"); }
+        if (sscanf(resp, "HTTP/%*s %d", &status) != 1 || status != 200) { forge_sock_close(sock); forge_fail("https_get: proxy CONNECT refused", FORGE_FAIL_OTHER); }
     }
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) { forge_sock_close(sock); forge_fail("https_get: cannot create SSL context"); }
+    if (!ctx) { forge_sock_close(sock); forge_fail("https_get: cannot create SSL context", FORGE_FAIL_OTHER); }
     SSL_CTX_set_default_verify_paths(ctx);
     SSL *ssl = SSL_new(ctx);
     SSL_set_tlsext_host_name(ssl, host);
     SSL_set_fd(ssl, (int)sock);
-    if (SSL_connect(ssl) != 1) { SSL_free(ssl); SSL_CTX_free(ctx); forge_sock_close(sock); forge_fail("https_get: TLS handshake failed"); }
-    if (SSL_get_verify_result(ssl) != X509_V_OK) { SSL_free(ssl); SSL_CTX_free(ctx); forge_sock_close(sock); forge_fail("https_get: certificate verification failed"); }
+    if (SSL_connect(ssl) != 1) { SSL_free(ssl); SSL_CTX_free(ctx); forge_sock_close(sock); forge_fail("https_get: TLS handshake failed", FORGE_FAIL_OTHER); }
+    if (SSL_get_verify_result(ssl) != X509_V_OK) { SSL_free(ssl); SSL_CTX_free(ctx); forge_sock_close(sock); forge_fail("https_get: certificate verification failed", FORGE_FAIL_OTHER); }
     char req[1024];
     snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
     SSL_write(ssl, req, (int)strlen(req));
@@ -1013,7 +1029,7 @@ static char *forge_https_get(const char *url) {
     SSL_free(ssl); SSL_CTX_free(ctx); forge_sock_close(sock);
     buf[len] = '\0';
     char *sep = strstr(buf, "\r\n\r\n");
-    if (!sep) forge_fail("https_get: bad HTTP response");
+    if (!sep) forge_fail("https_get: bad HTTP response", FORGE_FAIL_OTHER);
     return forge_copy_str(sep + 4);
 #endif
 }
@@ -1021,18 +1037,18 @@ static char *forge_https_get(const char *url) {
 static char *forge_http_get(const char *url) {
     forge_sock_init();
     if (strncmp(url, "https://", 8) == 0) return forge_https_get(url);
-    if (strncmp(url, "http://", 7) != 0) forge_fail("http_get: URL must start with http:// or https://");
+    if (strncmp(url, "http://", 7) != 0) forge_fail("http_get: URL must start with http:// or https://", FORGE_FAIL_OTHER);
     const char *rest = url + 7;
     const char *slash = strchr(rest, '/');
     char hostport[256];
     const char *path = "/";
     if (slash) {
         size_t hl = (size_t)(slash - rest);
-        if (hl >= sizeof(hostport)) forge_fail("http_get: host too long");
+        if (hl >= sizeof(hostport)) forge_fail("http_get: host too long", FORGE_FAIL_OTHER);
         memcpy(hostport, rest, hl); hostport[hl] = '\0';
         path = slash;
     } else {
-        if (strlen(rest) >= sizeof(hostport)) forge_fail("http_get: host too long");
+        if (strlen(rest) >= sizeof(hostport)) forge_fail("http_get: host too long", FORGE_FAIL_OTHER);
         strcpy(hostport, rest);
     }
     char host[256]; char portstr[16] = "80";
@@ -1042,7 +1058,7 @@ static char *forge_http_get(const char *url) {
     struct addrinfo hints; memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *res = NULL;
-    if (getaddrinfo(host, portstr, &hints, &res) != 0) forge_fail("http_get: cannot resolve host");
+    if (getaddrinfo(host, portstr, &hints, &res) != 0) forge_fail("http_get: cannot resolve host", FORGE_FAIL_OTHER);
     forge_sock_t sock = FORGE_SOCK_INVALID;
     for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
         sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
@@ -1051,10 +1067,10 @@ static char *forge_http_get(const char *url) {
         forge_sock_close(sock); sock = FORGE_SOCK_INVALID;
     }
     freeaddrinfo(res);
-    if (sock == FORGE_SOCK_INVALID) forge_fail("http_get: cannot connect");
+    if (sock == FORGE_SOCK_INVALID) forge_fail("http_get: cannot connect", FORGE_FAIL_OTHER);
     char req[1024];
     snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
-    if (send(sock, req, strlen(req), 0) < 0) { forge_sock_close(sock); forge_fail("http_get: send failed"); }
+    if (send(sock, req, strlen(req), 0) < 0) { forge_sock_close(sock); forge_fail("http_get: send failed", FORGE_FAIL_OTHER); }
     size_t cap = 8192, len = 0;
     char *buf = (char *)malloc(cap);
     ssize_t got;
@@ -1065,7 +1081,7 @@ static char *forge_http_get(const char *url) {
     forge_sock_close(sock);
     buf[len] = '\0';
     char *sep = strstr(buf, "\r\n\r\n");
-    if (!sep) forge_fail("http_get: bad HTTP response");
+    if (!sep) forge_fail("http_get: bad HTTP response", FORGE_FAIL_OTHER);
     return forge_copy_str(sep + 4);
 }
 
@@ -1076,7 +1092,7 @@ static char *forge_http_get(const char *url) {
 static long long forge_http_listen(long long port) {
     forge_sock_init();
     forge_sock_t fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == FORGE_SOCK_INVALID) forge_fail("http_listen: socket failed");
+    if (fd == FORGE_SOCK_INVALID) forge_fail("http_listen: socket failed", FORGE_FAIL_OTHER);
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&one, sizeof(one));
     struct sockaddr_in addr;
@@ -1084,28 +1100,28 @@ static long long forge_http_listen(long long port) {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons((unsigned short)port);
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { forge_sock_close(fd); forge_fail("http_listen: bind failed (port in use?)"); }
-    if (listen(fd, 16) != 0) { forge_sock_close(fd); forge_fail("http_listen: listen failed"); }
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { forge_sock_close(fd); forge_fail("http_listen: bind failed (port in use?)", FORGE_FAIL_OTHER); }
+    if (listen(fd, 16) != 0) { forge_sock_close(fd); forge_fail("http_listen: listen failed", FORGE_FAIL_OTHER); }
     return fd;
 }
 static long long forge_http_accept(long long fd) {
     forge_sock_t client = accept((forge_sock_t)fd, NULL, NULL);
-    if (client == FORGE_SOCK_INVALID) forge_fail("http_accept: accept failed");
+    if (client == FORGE_SOCK_INVALID) forge_fail("http_accept: accept failed", FORGE_FAIL_OTHER);
     return client;
 }
 static char *forge_http_read_request(long long client) {
     char *buf = (char *)malloc(8192);
     ssize_t n = recv((forge_sock_t)client, buf, 8191, 0);
-    if (n < 0) { memset(buf, 0, 8192); free(buf); forge_fail("http_read_request: recv failed"); }
+    if (n < 0) { memset(buf, 0, 8192); free(buf); forge_fail("http_read_request: recv failed", FORGE_FAIL_OTHER); }
     buf[n] = '\0';
     return buf;
 }
 static long long forge_http_send_response(long long client, long long status, const char *reason, const char *body) {
     char head[256];
     int hl = snprintf(head, sizeof(head), "HTTP/1.1 %lld %s\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", status, reason, strlen(body));
-    if (hl < 0 || hl >= (int)sizeof(head)) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: header failed"); }
-    if (send((forge_sock_t)client, head, (size_t)hl, 0) < 0) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: send failed"); }
-    if (send((forge_sock_t)client, body, strlen(body), 0) < 0) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: send failed"); }
+    if (hl < 0 || hl >= (int)sizeof(head)) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: header failed", FORGE_FAIL_OTHER); }
+    if (send((forge_sock_t)client, head, (size_t)hl, 0) < 0) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: send failed", FORGE_FAIL_OTHER); }
+    if (send((forge_sock_t)client, body, strlen(body), 0) < 0) { forge_sock_close((forge_sock_t)client); forge_fail("http_respond: send failed", FORGE_FAIL_OTHER); }
     forge_sock_close((forge_sock_t)client);
     return (long long)hl + (long long)strlen(body);
 }
@@ -1141,7 +1157,7 @@ static void *forge_dot_worker(void *arg) {
     return NULL;
 }
 static double forge_parallel_dot(ForgeFloatArray a, ForgeFloatArray b) {
-    if (a.len != b.len) forge_fail("parallel_dot: length mismatch");
+    if (a.len != b.len) forge_fail("parallel_dot: length mismatch", FORGE_FAIL_OTHER);
     if (a.len == 0) return 0.0;
     int nthreads = a.len < 4 ? (int)a.len : 4;
     pthread_t th[4];
@@ -1174,7 +1190,7 @@ static ForgeFloatArray forge_parallel_matmul(ForgeFloatArray a, ForgeFloatArray 
     ForgeFloatArray out;
     out.len = n * n; out.cap = n * n;
     out.data = (double *)malloc(sizeof(double) * (size_t)(n * n > 0 ? n * n : 1));
-    if (!out.data) forge_fail("out of memory");
+    if (!out.data) forge_fail("out of memory", FORGE_FAIL_OOM);
     out.ref = forge_arr_ref_new();
     if (n == 0) return out;
     int nthreads = n < 4 ? (int)n : 4;
@@ -1217,36 +1233,154 @@ typedef struct { int64_t ref; void (*drop)(void *); } ForgeClosureEnv;
 static void forge_closure_inc(void *env) { if (env) ((ForgeClosureEnv *)env)->ref++; }
 static void forge_closure_release(void *env) { if (env) { ForgeClosureEnv *h = (ForgeClosureEnv *)env; if (--(h->ref) == 0 && h->drop) h->drop(env); } }
 
-static void forge_fail(const char *msg) {
-    (void)msg;
+/* Crash codes (Top-500 #60): same numbering as the hosted
+   header (FORGE_FAIL_OTHER 0, USER 1, ASSERT 2, F2I 3,
+   OVERFLOW 4, DIVZERO 5, BOUNDS 6, OOM 7). */
+#define FORGE_FAIL_OTHER 0
+#define FORGE_FAIL_USER 1
+#define FORGE_FAIL_ASSERT 2
+#define FORGE_FAIL_F2I 3
+#define FORGE_FAIL_OVERFLOW 4
+#define FORGE_FAIL_DIVZERO 5
+#define FORGE_FAIL_BOUNDS 6
+#define FORGE_FAIL_OOM 7
+
+/* Top-500 #60 (stage C): native freestanding crash dump. Only
+   the registers that survive a C call can be captured: the
+   callee-saved rbx/rbp/r12-r15, rsp, and the return address as
+   rip (via __builtin_return_address(0)). The caller-saved
+   registers (rax/rcx/rdx/rsi/rdi/r8-r11) are gone before
+   forge_fail runs, so the format carries a `partial` marker
+   line — nobody may mistake this for a full dump. The dump goes
+   to fd 2 via a raw write syscall (nr 1): visible under Linux,
+   invisible on bare metal. Pinned transcript:
+       qasida: crash: <msg>
+       partial
+       rip 0x<16 lowercase hex>
+       rbx 0x<16>  rbp 0x<16>  r12 0x<16>  r13 0x<16>
+       r14 0x<16>  r15 0x<16>  rsp 0x<16>
+   rip is the return address at the fail handler: for a direct
+   fail()/assert() it is the instruction after the fail call
+   (the fail site); for a runtime fault it is inside the helper
+   that detected it (e.g. forge_add). rsp is forge_fail's stack
+   pointer at the snapshot. The formatter lives in every
+   freestanding binary (forge_fail is in this header), failed
+   or not — the .text cost is measured in the #60 slice. */
+/* Top-500 #60 (stage B): the freestanding crash hook. A program
+   may define `fn crash_handler(code: int, pc: int)` (validated
+   by the checker: exactly that signature, freestanding only).
+   The weak declaration resolves to NULL when the program defines
+   no hook, so forge_fail calls it only when present. The hook
+   runs AFTER the snapshot and BEFORE the dump print, so the
+   dumped registers are the failure's own; it receives the
+   failure code (FORGE_FAIL_* above) and the return address at
+   the fail handler as plain ints. The hook must not fail()
+   itself (the checker rejects that — it would recurse). */
+__attribute__((weak)) void crash_handler(long long code, long long pc);
+static void forge_crash_write(const char *buf, unsigned long len) {
+    /* The return value is an "=a" output tied to the "0" input:
+       syscall overwrites rax with its return value, so rax must
+       be an output (not a plain input) or the compiler reuses
+       the stale 1 across repeated writes and the second write
+       executes the wrong syscall number. */
+    long ret;
+    __asm__ volatile ("syscall" : "=a" (ret) : "0" (1L), "D" (2L), "S" (buf), "d" (len) : "rcx", "r11", "memory");
+    (void)ret;
+}
+static void forge_crash_hex(unsigned long v, char *out) {
+    static const char digits[] = "0123456789abcdef";
+    int i;
+    for (i = 0; i < 16; i++) {
+        out[i] = digits[(v >> (60 - 4 * i)) & 0xf];
+    }
+}
+static void forge_crash_line(const char *label, unsigned long v) {
+    char buf[32];
+    int i = 0;
+    buf[i++] = ' ';
+    while (*label) buf[i++] = *label++;
+    buf[i++] = ' ';
+    buf[i++] = '0';
+    buf[i++] = 'x';
+    forge_crash_hex(v, buf + i);
+    i += 16;
+    buf[i++] = '\n';
+    forge_crash_write(buf, (unsigned long)i);
+}
+static void forge_crash_msg(const char *msg) {
+    unsigned long n = 0;
+    forge_crash_write("qasida: crash: ", 15);
+    while (msg[n]) n++;
+    forge_crash_write(msg, n);
+    forge_crash_write("\npartial\n", 9);
+}
+static __attribute__((noinline)) void forge_fail(const char *msg, int code) {
+    /* noinline: rip must be the return address into the *caller*
+       (the fail site for a direct fail(), inside the helper for
+       a runtime fault). If forge_fail were inlined, rip would be
+       the return address of the inlining function instead. */
+    (void)code;
+    unsigned long snap[8];
+    /* Snapshot the surviving registers into memory. Memory
+       outputs (not register outputs) so the compiler cannot
+       assign one output to a register another mov then reads.
+       snap[0]=rbx, [1]=rbp, [2]=r12, [3]=r13, [4]=r14, [5]=r15,
+       [6]=rsp, [7]=rip (return address, filled in below). The
+       movs only read the registers; nothing here clobbers them. */
+    __asm__ volatile (
+        "movq %%rbx, %0\n\t"
+        "movq %%rbp, %1\n\t"
+        "movq %%r12, %2\n\t"
+        "movq %%r13, %3\n\t"
+        "movq %%r14, %4\n\t"
+        "movq %%r15, %5\n\t"
+        "movq %%rsp, %6\n\t"
+        : "=m" (snap[0]), "=m" (snap[1]), "=m" (snap[2]), "=m" (snap[3]),
+          "=m" (snap[4]), "=m" (snap[5]), "=m" (snap[6])
+        :
+        : "memory");
+    snap[7] = (unsigned long)__builtin_return_address(0);
+    /* Stage B: call the user hook (if defined) after the snapshot
+       and before the dump. The weak declaration is NULL when the
+       program defines no hook. */
+    if (crash_handler) crash_handler((long long)code, (long long)snap[7]);
+    forge_crash_msg(msg);
+    forge_crash_line("rip", snap[7]);
+    forge_crash_line("rbx", snap[0]);
+    forge_crash_line("rbp", snap[1]);
+    forge_crash_line("r12", snap[2]);
+    forge_crash_line("r13", snap[3]);
+    forge_crash_line("r14", snap[4]);
+    forge_crash_line("r15", snap[5]);
+    forge_crash_line("rsp", snap[6]);
     for (;;) {}
 }
 static int64_t forge_add(int64_t a, int64_t b) {
     int64_t r;
-    if (__builtin_add_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_add_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static int64_t forge_sub(int64_t a, int64_t b) {
     int64_t r;
-    if (__builtin_sub_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_sub_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static int64_t forge_mul(int64_t a, int64_t b) {
     int64_t r;
-    if (__builtin_mul_overflow(a, b, &r)) forge_fail("integer overflow");
+    if (__builtin_mul_overflow(a, b, &r)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return r;
 }
 static int64_t forge_neg(int64_t a) {
-    if (a == (-9223372036854775807LL - 1)) forge_fail("integer overflow");
+    if (a == (-9223372036854775807LL - 1)) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return -a;
 }
 static int64_t forge_div(int64_t a, int64_t b) {
-    if (b == 0) forge_fail("division by zero");
-    if (a == (-9223372036854775807LL - 1) && b == -1) forge_fail("integer overflow");
+    if (b == 0) forge_fail("division by zero", FORGE_FAIL_DIVZERO);
+    if (a == (-9223372036854775807LL - 1) && b == -1) forge_fail("integer overflow", FORGE_FAIL_OVERFLOW);
     return a / b;
 }
 static int64_t forge_mod(int64_t a, int64_t b) {
-    if (b == 0) forge_fail("division by zero");
+    if (b == 0) forge_fail("division by zero", FORGE_FAIL_DIVZERO);
     if (a == (-9223372036854775807LL - 1) && b == -1) return 0;
     return a % b;
 }
@@ -1771,34 +1905,34 @@ class Codegen:
                 return (f"({{unsigned long long {tmp}; "
                         f"if ({builtin}((unsigned long long)({left_code}), "
                         f"(unsigned long long)({right_code}), &{tmp})) "
-                        f"forge_fail(\"integer overflow\"); {tmp};}})")
+                        f"forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); {tmp};}})")
             w = "long long" if signed else "unsigned long long"
             tmp = self._fx_temp()
             lo, hi = fixed_range(t)
             return (f"({{{w} {tmp} = ({w})({left_code}) {op} ({w})({right_code}); "
                     f"if ({tmp} < {lo} || {tmp} > {hi}) "
-                    f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+                    f"forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); ({ct})({tmp});}})")
         if op == "/":
             if signed:
                 dt = self._fx_temp()
                 nt = self._fx_temp()
                 lo, _hi = fixed_range(t)
                 return (f"({{long long {dt} = (long long)({right_code}); "
-                        f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                        f"if ({dt} == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); "
                         f"long long {nt} = (long long)({left_code}); "
                         f"if ({nt} == {lo} && {dt} == -1) "
-                        f"forge_fail(\"integer overflow\"); "
+                        f"forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); "
                         f"({ct})({nt} / {dt});}})")
             dt = self._fx_temp()
             return (f"({{unsigned long long {dt} = "
                     f"(unsigned long long)({right_code}); "
-                    f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                    f"if ({dt} == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); "
                     f"({ct})((unsigned long long)({left_code}) / {dt});}})")
         if op == "%":
             w = "long long" if signed else "unsigned long long"
             dt = self._fx_temp()
             return (f"({{{w} {dt} = ({w})({right_code}); "
-                    f"if ({dt} == 0) forge_fail(\"division by zero\"); "
+                    f"if ({dt} == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); "
                     f"({left_code} % {right_code});}})")
         if op in ("<<", ">>"):
             width = FIXED_WIDTHS[t]
@@ -1809,11 +1943,11 @@ class Codegen:
                        "u64": "uint64_t"}[t]
                 return (f"({{long long {at} = (long long)({right_code}); "
                         f"if ({at} < 0 || {at} >= {width}) "
-                        f"forge_fail(\"shift count out of range\"); "
+                        f"forge_fail(\"shift count out of range\", FORGE_FAIL_OTHER); "
                         f"({ct})(({uct})({left_code}) << {at});}})")
             return (f"({{long long {at} = (long long)({right_code}); "
                     f"if ({at} < 0 || {at} >= {width}) "
-                    f"forge_fail(\"shift count out of range\"); "
+                    f"forge_fail(\"shift count out of range\", FORGE_FAIL_OTHER); "
                     f"(({left_code}) >> {at});}})")
         raise ForgeError(f"no checked form for '{op}' on {t}")
 
@@ -1843,7 +1977,7 @@ class Codegen:
             cond = f"{tmp} < {tlo} || {tmp} > {thi}"
         return (f"({{{w} {tmp} = ({w})({value_code}); "
                 f"if ({cond}) "
-                f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+                f"forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); ({ct})({tmp});}})")
 
     def float_to_int_cast(self, value_code, to_type):
         """Cast from float to an int type: checked in safe mode,
@@ -1865,7 +1999,7 @@ class Codegen:
         tmp = self._fx_temp()
         return (f"({{ double {tmp} = ({value_code}); "
                 f"if (!({tmp} >= {lo!r} && {tmp} < {hi!r})) "
-                f"forge_fail(\"float to int cast out of range\"); "
+                f"forge_fail(\"float to int cast out of range\", FORGE_FAIL_F2I); "
                 f"({ct})({tmp});}})")
 
     def never_wrap(self, code, expected):
@@ -2978,7 +3112,7 @@ class Codegen:
             for suffix, check in (("", True), ("_fast", False)):
                 self.emit(f"static {name} forge_{name}_get{suffix}({arr_t} a, long long i) {{")
                 if check:
-                    self.emit('    if (i < 0 || i >= a.len) forge_fail("array index out of bounds");')
+                    self.emit('    if (i < 0 || i >= a.len) forge_fail("array index out of bounds", FORGE_FAIL_BOUNDS);')
                 self.emit(f"    {name} v = a.data[i];")
                 own_code = self.struct_own_code("v", name)
                 if own_code:
@@ -2987,7 +3121,7 @@ class Codegen:
                 self.emit("}")
                 self.emit(f"static void forge_{name}_set{suffix}({arr_t} *a, long long i, {name} v) {{")
                 if check:
-                    self.emit('    if (i < 0 || i >= a->len) forge_fail("array index out of bounds");')
+                    self.emit('    if (i < 0 || i >= a->len) forge_fail("array index out of bounds", FORGE_FAIL_BOUNDS);')
                 old_free = self.struct_free_code("a->data[i]", name)
                 if old_free:
                     self.emit(f"    {old_free}")
@@ -3010,7 +3144,7 @@ class Codegen:
             self.emit("           the old buffer without freeing it. */")
             self.emit("        long long oc = a->cap ? a->cap : 4;")
             self.emit(f"        {name} *nd = ({name} *)malloc(sizeof({name}) * (size_t)oc);")
-            self.emit('        if (!nd) forge_fail("out of memory");')
+            self.emit('        if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM);')
             self.emit("        for (long long i = 0; i < a->len; i++) {")
             self.emit(f"            nd[i] = a->data[i];{(' ' + own) if own else ''}")
             self.emit("        }")
@@ -3020,7 +3154,7 @@ class Codegen:
             self.emit("    if (a->len >= a->cap) {")
             self.emit("        long long nc = a->cap ? a->cap * 2 : 4;")
             self.emit(f"        {name} *nd = ({name} *)realloc(a->data, sizeof({name}) * (size_t)nc);")
-            self.emit('        if (!nd) forge_fail("out of memory");')
+            self.emit('        if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM);')
             self.emit("        a->data = nd; a->cap = nc;")
             self.emit("    }")
             self.emit("    a->data[a->len++] = v;")
@@ -3660,7 +3794,7 @@ class Codegen:
                 decls.append(
                     f"long long {tn} = (long long)strlen({ts}); "
                     f"if ({ti} < 0 || {ti} >= {tn}) "
-                    f"forge_fail(\"string index out of bounds\"); ")
+                    f"forge_fail(\"string index out of bounds\", FORGE_FAIL_BOUNDS); ")
             cmps.append(f"{ts}[{ti}]")
         return "({ " + "".join(decls) + f"({cmps[0]} {op} {cmps[1]}); }})"
 
@@ -4170,7 +4304,7 @@ class Codegen:
                 # inline bounds check (direct store below).
                 if self._bounds_on and id(stmt.base) not in self._fix1_covered:
                     self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
-                              f"forge_fail(\"array index out of bounds\");")
+                              f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);")
                 self.emit(self.array_free_code(f"{base_code}.data[{itmp}]", et))
                 self.emit(f"{base_code}.data[{itmp}] = {val};")
             elif is_fn_type(et):
@@ -4189,7 +4323,7 @@ class Codegen:
                 self.emit(f"long long {itmp} = {idx};")
                 if self._bounds_on and id(stmt.base) not in self._fix1_covered:
                     self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
-                              f"forge_fail(\"array index out of bounds\");")
+                              f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);")
                 self.emit(f"forge_closure_release(({base_code}).data[{itmp}].env);")
                 self.emit(f"({base_code}).data[{itmp}] = {val};")
             else:
@@ -4217,7 +4351,7 @@ class Codegen:
                     self.emit(f"long long {itmp} = {idx};")
                     if self._bounds_on and id(stmt.base) not in self._fix1_covered:
                         self.emit(f"if ({itmp} < 0 || {itmp} >= {base_code}.len) "
-                                  f"forge_fail(\"array index out of bounds\");")
+                                  f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);")
                     self.emit(f"forge_free_str(({base_code}).data[{itmp}]);")
                     idx = itmp
                 if self._bounds_on and id(stmt.base) not in self._fix1_covered:
@@ -4755,6 +4889,19 @@ class Codegen:
         if isinstance(stmt, A.ExprStmt):
             call = stmt.expr
             if isinstance(call, A.Call) and call.name == "assert":
+                if self.freestanding:
+                    # Top-500 #60 (D1): the message is a string
+                    # literal (checker-enforced); it lowers to a
+                    # static C string, never a heap value. Route
+                    # through forge_fail (code 2) instead of the
+                    # hosted fprintf/exit, which do not exist here.
+                    if not isinstance(call.args[1], A.StrLit):
+                        raise ForgeError("assert() message must be a string literal "
+                                         "in freestanding mode",
+                                         call.args[1].line, call.args[1].col)
+                    cond = self.gen_expr(call.args[0])
+                    self.emit(f"if (!({cond})) {{ forge_fail({self.c_str_literal(call.args[1].value)}, FORGE_FAIL_ASSERT); }}")
+                    return
                 cond = self.gen_expr(call.args[0])
                 msg = self.gen_expr(call.args[1])
                 if self.is_fresh_str(call.args[1]):
@@ -4826,7 +4973,7 @@ class Codegen:
                     self.emit(f"if ({ptr}->ref && *{ptr}->ref > 1) {{")
                     self.emit(f"    long long {ocap} = {ptr}->cap ? {ptr}->cap : 4;")
                     self.emit(f"    {elem_c} *{nbuf} = ({elem_c} *)malloc(sizeof({elem_c}) * (size_t){ocap});")
-                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\");")
+                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\", FORGE_FAIL_OOM);")
                     self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; forge_arr_inc({nbuf}[{li}].ref); }}")
                     self.emit(f"    (*{ptr}->ref)--;")
                     self.emit(f"    {ptr}->data = {nbuf}; {ptr}->cap = {ocap}; {ptr}->ref = forge_arr_ref_new();")
@@ -4836,7 +4983,7 @@ class Codegen:
                     self.emit(f"if ({ptr}->len >= {ptr}->cap) {{")
                     self.emit(f"    long long {ncap} = {ptr}->cap ? {ptr}->cap * 2 : 4;")
                     self.emit(f"    {elem_c} *nd = ({elem_c} *)realloc({ptr}->data, sizeof({elem_c}) * (size_t){ncap});")
-                    self.emit('    if (!nd) forge_fail("out of memory");')
+                    self.emit('    if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM);')
                     self.emit(f"    {ptr}->data = nd; {ptr}->cap = {ncap};")
                     self.emit("}")
                     self.emit(f"{ptr}->data[{ptr}->len++] = {val};")
@@ -4868,7 +5015,7 @@ class Codegen:
                     self.emit(f"if ({ptr}->ref && *{ptr}->ref > 1) {{")
                     self.emit(f"    long long {ocap} = {ptr}->cap ? {ptr}->cap : 4;")
                     self.emit(f"    {elem_c} *{nbuf} = ({elem_c} *)malloc(sizeof({elem_c}) * (size_t){ocap});")
-                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\");")
+                    self.emit(f"    if (!{nbuf}) forge_fail(\"out of memory\", FORGE_FAIL_OOM);")
                     self.emit(f"    for (long long {li} = 0; {li} < {ptr}->len; {li}++) {{ {nbuf}[{li}] = {ptr}->data[{li}]; forge_closure_inc({nbuf}[{li}].env); }}")
                     self.emit(f"    (*{ptr}->ref)--;")
                     self.emit(f"    {ptr}->data = {nbuf}; {ptr}->cap = {ocap}; {ptr}->ref = forge_arr_ref_new();")
@@ -4876,7 +5023,7 @@ class Codegen:
                     self.emit(f"if ({ptr}->len >= {ptr}->cap) {{")
                     self.emit(f"    long long {ncap} = {ptr}->cap ? {ptr}->cap * 2 : 4;")
                     self.emit(f"    {elem_c} *nd = ({elem_c} *)realloc({ptr}->data, sizeof({elem_c}) * (size_t){ncap});")
-                    self.emit('    if (!nd) forge_fail("out of memory");')
+                    self.emit('    if (!nd) forge_fail("out of memory", FORGE_FAIL_OOM);')
                     self.emit(f"    {ptr}->data = nd; {ptr}->cap = {ncap};")
                     self.emit("}")
                     self.emit(f"{ptr}->data[{ptr}->len++] = {val};")
@@ -4884,6 +5031,20 @@ class Codegen:
                     self.emit(f"{PUSH_FN[et]}(&{var_code}, {val});")
                 return
             if isinstance(call, A.Call) and call.name == "fail":
+                if self.freestanding:
+                    # Top-500 #60 (D1): the message is a string
+                    # literal (checker-enforced); it lowers to a
+                    # static C string. No task panic, no try_call
+                    # handler here — spawn and try_call are both
+                    # rejected freestanding — just forge_fail
+                    # (code 1), which halts (stage A) and dumps
+                    # (stage C).
+                    if not isinstance(call.args[0], A.StrLit):
+                        raise ForgeError("fail() message must be a string literal "
+                                         "in freestanding mode",
+                                         call.args[0].line, call.args[0].col)
+                    self.emit(f"forge_fail({self.c_str_literal(call.args[0].value)}, FORGE_FAIL_USER);")
+                    return
                 # Top-500 #44: fail() stays fatal on the main thread,
                 # but on a spawned task's thread it ends just that
                 # task — the panic is printed and counted, the thread
@@ -5221,7 +5382,7 @@ class Codegen:
         # the array/fn branches) + own step for owned element types.
         if self._bounds_on:
             check = (f"if (__forge_idx{n} < 0 || __forge_idx{n} >= __forge_base{n}.len) "
-                     f"forge_fail(\"array index out of bounds\"); ")
+                     f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); ")
         else:
             check = ""
         elem_c = c_type(et)
@@ -5349,7 +5510,7 @@ class Codegen:
                 return f"({fn_closure_name(ft)}){{ {fn_lambda_name(lid)}, NULL }}"
             env_t = fn_env_name(lid)
             stmts = [f"{env_t} *__forge_env = ({env_t} *)malloc(sizeof({env_t}));",
-                     "if (!__forge_env) forge_fail(\"out of memory\");",
+                     "if (!__forge_env) forge_fail(\"out of memory\", FORGE_FAIL_OOM);",
                      "__forge_env->ref = 1;",
                      f"__forge_env->drop = {fn_env_free_name(lid)};"]
             for name, ct in (expr.captures or []):
@@ -5520,7 +5681,7 @@ class Codegen:
                         self._check_cache[fa_key] = True
                     return (f"({{ {arr_t} {tmp_a} = {arr}; long long {tmp_i} = {idx}; "
                             f"if ({tmp_i} < 0 || {tmp_i} >= {tmp_a}.len) "
-                            f"forge_fail(\"array index out of bounds\"); "
+                            f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); "
                             f"{tmp_a}.data[{tmp_i}].{expr.field}; }})")
                 return f"({arr}).data[{idx}].{expr.field}"
             base = self.gen_expr(expr.base)
@@ -5623,7 +5784,7 @@ class Codegen:
                         self._check_cache[key] = True
                     return (f"({{ {arr_t} {tmp_a} = {base}; long long {tmp_i} = {idx}; "
                             f"if ({tmp_i} < 0 || {tmp_i} >= {tmp_a}.len) "
-                            f"forge_fail(\"array index out of bounds\"); "
+                            f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); "
                             f"{tmp_a}.data[{tmp_i}]; }})")
                 return f"({base}).data[{idx}]"
             from .fntypes import is_fn_type
@@ -5645,7 +5806,7 @@ class Codegen:
                         self._check_cache[key] = True
                     return (f"({{ {arr_t} {tmp_a} = {base}; long long {tmp_i} = {idx}; "
                             f"if ({tmp_i} < 0 || {tmp_i} >= {tmp_a}.len) "
-                            f"forge_fail(\"array index out of bounds\"); "
+                            f"forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); "
                             f"{tmp_a}.data[{tmp_i}]; }})")
                 return f"({base}).data[{idx}]"
             if self._bounds_on:
@@ -5735,11 +5896,11 @@ class Codegen:
                     lo, hi = fixed_range(t)
                     return (f"({{long long {tmp} = -(long long)({code}); "
                             f"if ({tmp} < {lo} || {tmp} > {hi}) "
-                            f"forge_fail(\"integer overflow\"); ({ct})({tmp});}})")
+                            f"forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); ({ct})({tmp});}})")
                 tmp = self._fx_temp()
                 return (f"({{unsigned long long {tmp} = "
                         f"(unsigned long long)({code}); "
-                        f"if ({tmp} != 0) forge_fail(\"integer overflow\"); "
+                        f"if ({tmp} != 0) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); "
                         f"({ct})(0);}})")
             return f"({expr.op}{self.gen_expr(expr.expr)})"
         if isinstance(expr, A.BinOp):
@@ -5873,7 +6034,7 @@ class Codegen:
                         return (f"({{ ForgeRange {recv} = {recv_code}; long long __forge_l{n} = 0; "
                                 f"if ({recv}.end > {recv}.start) {{ "
                                 f"unsigned long long __forge_d{n} = (unsigned long long){recv}.end - (unsigned long long){recv}.start; "
-                                f"if (__forge_d{n} > 9223372036854775807ULL) forge_fail(\"integer overflow\"); "
+                                f"if (__forge_d{n} > 9223372036854775807ULL) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); "
                                 f"__forge_l{n} = (long long)__forge_d{n}; }} __forge_l{n}; }})")
                     return (f"({{ ForgeRange {recv} = {recv_code}; "
                             f"({recv}.end > {recv}.start ? (long long)((unsigned long long){recv}.end - (unsigned long long){recv}.start) : 0); }})")
@@ -5887,7 +6048,7 @@ class Codegen:
                                 f"if ({recv}.end > {recv}.start) {{ "
                                 f"__int128 __forge_n{n} = (__int128)((unsigned long long){recv}.end - (unsigned long long){recv}.start); "
                                 f"__forge_s{n} = __forge_n{n} * ((__int128){recv}.start + (__int128){recv}.end - 1) / 2; "
-                                f"if (__forge_s{n} > 9223372036854775807 || __forge_s{n} < (-9223372036854775807 - 1)) forge_fail(\"integer overflow\"); }} "
+                                f"if (__forge_s{n} > 9223372036854775807 || __forge_s{n} < (-9223372036854775807 - 1)) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); }} "
                                 f"(long long)__forge_s{n}; }})")
                     return (f"({{ ForgeRange {recv} = {recv_code}; "
                             f"({recv}.end > {recv}.start ? (long long)(((__int128)((unsigned long long){recv}.end - (unsigned long long){recv}.start)) * ((__int128){recv}.start + (__int128){recv}.end - 1) / 2) : 0); }})")
@@ -6145,7 +6306,7 @@ class Codegen:
                     f"else {{ "
                     f"fseek(__forge_f{n}, 0, SEEK_SET); "
                     f"char *__forge_buf{n} = (char *)malloc((size_t)__forge_sz{n} + 1); "
-                    f"if (!__forge_buf{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"if (!__forge_buf{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\", FORGE_FAIL_OOM); }} "
                     f"size_t __forge_got{n} = fread(__forge_buf{n}, 1, (size_t)__forge_sz{n}, __forge_f{n}); "
                     f"__forge_buf{n}[__forge_got{n}] = 0; "
                     f"fclose(__forge_f{n}); "
@@ -6187,9 +6348,9 @@ class Codegen:
                     f"__forge_arr{n}.len = __forge_sz{n}; __forge_arr{n}.cap = __forge_sz{n}; "
                     f"__forge_arr{n}.ref = forge_arr_ref_new(); "
                     f"__forge_arr{n}.data = __forge_sz{n} ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz{n}) : NULL; "
-                    f"if (__forge_sz{n} && !__forge_arr{n}.data) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"if (__forge_sz{n} && !__forge_arr{n}.data) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\", FORGE_FAIL_OOM); }} "
                     f"unsigned char *__forge_raw{n} = __forge_sz{n} ? (unsigned char *)malloc((size_t)__forge_sz{n}) : NULL; "
-                    f"if (__forge_sz{n} && !__forge_raw{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\"); }} "
+                    f"if (__forge_sz{n} && !__forge_raw{n}) {{ fclose(__forge_f{n}); forge_fail(\"out of memory\", FORGE_FAIL_OOM); }} "
                     f"size_t __forge_got{n} = __forge_sz{n} ? fread(__forge_raw{n}, 1, (size_t)__forge_sz{n}, __forge_f{n}) : 0; "
                     f"fclose(__forge_f{n}); "
                     f"for (long __forge_i{n} = 0; __forge_i{n} < (long)__forge_got{n}; __forge_i{n}++) __forge_arr{n}.data[__forge_i{n}] = __forge_raw{n}[__forge_i{n}]; "
@@ -6292,7 +6453,7 @@ class Codegen:
                     f"__forge_arr{n}.len = 0; __forge_arr{n}.cap = 8; "
                     f"__forge_arr{n}.ref = forge_arr_ref_new(); "
                     f"__forge_arr{n}.data = (char **)malloc(sizeof(char *) * 8); "
-                    f"if (!__forge_arr{n}.data) {{ closedir(__forge_d{n}); forge_fail(\"out of memory\"); }} "
+                    f"if (!__forge_arr{n}.data) {{ closedir(__forge_d{n}); forge_fail(\"out of memory\", FORGE_FAIL_OOM); }} "
                     f"struct dirent *__forge_de{n}; "
                     f"while ((__forge_de{n} = readdir(__forge_d{n})) != NULL) {{ "
                     f"if (strcmp(__forge_de{n}->d_name, \".\") == 0 || strcmp(__forge_de{n}->d_name, \"..\") == 0) continue; "
@@ -6344,7 +6505,7 @@ class Codegen:
                     f"else {{ "
                     f"long long __forge_cap{n} = __forge_st{n}.st_size > 0 ? (long long)__forge_st{n}.st_size + 1 : 4096; "
                     f"char *__forge_buf{n} = (char *)malloc((size_t)__forge_cap{n}); "
-                    f"if (!__forge_buf{n}) {{ forge_fail(\"out of memory\"); }} "
+                    f"if (!__forge_buf{n}) {{ forge_fail(\"out of memory\", FORGE_FAIL_OOM); }} "
                     f"long long __forge_n{n} = (long long)readlink(__forge_p{n}, __forge_buf{n}, (size_t)__forge_cap{n} - 1); "
                     f"if (__forge_n{n} < 0) {{ int __forge_e{n} = errno; free(__forge_buf{n}); "
                     f"__forge_tryrl{n} = ({rt}){{ .ok = false, .value = forge_copy_str(\"\"), .error = __forge_e{n} }}; }} "
@@ -6523,7 +6684,7 @@ class Codegen:
                 if getattr(expr, "in_conditional", False):
                     flag = self.moved_flag(arg.name)
                     return (f"({{ if ({flag}) forge_fail(\"use of moved value "
-                            f"'{arg.name}'\"); {flag} = 1; "
+                            f"'{arg.name}'\", FORGE_FAIL_OTHER); {flag} = 1; "
                             f"{self.gen_expr(arg)}; }})")
                 self.owned_forget(arg.name)
                 return self.gen_expr(arg)

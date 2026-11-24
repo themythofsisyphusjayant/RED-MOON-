@@ -1405,7 +1405,7 @@ fn fix1_guard_bound(arr: str, bound_kind: int, bound_val: int, bound_name: str, 
         if entry_has && entry_lit >= bound_val {
             return "NEVER";
         }
-        return "if (" + itoa(bound_val) + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+        return "if (" + itoa(bound_val) + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     }
     if sized >= 0 {
         let iv: [int] = fix1_env_interval(env, bound_name);
@@ -1417,9 +1417,9 @@ fn fix1_guard_bound(arr: str, bound_kind: int, bound_val: int, bound_name: str, 
         }
     }
     if entry_has {
-        return "if (" + itoa(entry_lit) + " < " + bound_name + " && " + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+        return "if (" + itoa(entry_lit) + " < " + bound_name + " && " + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     }
-    return "if (" + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    return "if (" + bound_name + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
 }
 
 // Nearest preceding write of `name` before stmts[pos] in the same
@@ -1627,9 +1627,9 @@ fn fix1_try_h1d(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1Res
                 }
                 let mut guard: str = "";
                 if singleton {
-                    guard = "if (" + e_val + " > (" + l_code + ") && " + e_val + " " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+                    guard = "if (" + e_val + " > (" + l_code + ") && " + e_val + " " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
                 } else {
-                    guard = "if ((" + e_val + ") > (" + l_code + ") && (" + e_val + ") " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+                    guard = "if ((" + e_val + ") > (" + l_code + ") && (" + e_val + ") " + cmp + " (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
                 }
                 let mut skip: bool = false;
                 if singleton && lexpr.kind == 25 && eiv[1] <= lexpr.ival {
@@ -2316,7 +2316,7 @@ fn fix1_try_r1_var(stmt: Node, stmts: [Node], pos: int, env: Fix1Env, res0: Fix1
             ui = ui + 1;
         }
         if len(cover_lines) > 0 {
-            let guard: str = "if (" + wcode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+            let guard: str = "if (" + wcode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
             res = fix1_res_add_guard(res, stmt.line, stmt.col, guard);
             let mut ci: int = 0;
             while ci < len(cover_lines) {
@@ -2593,7 +2593,7 @@ fn fix1_try_r2(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
         return res;
     }
     let ncode: str = fix1_c_expr(idx.kids[1]);
-    let guard: str = "if (" + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    let guard: str = "if (" + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     // Fix 2 (b): record the guard on the move target (outermost
     // provably-running, invariant ancestor), not unconditionally
     // on the innermost loop.
@@ -2700,9 +2700,9 @@ fn fix1_try_r3(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
             nhi_known = true;
         }
     }
-    let mut guard: str = "if (" + ncode + " * " + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    let mut guard: str = "if (" + ncode + " * " + ncode + " > (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     if nhi_known && iiv[0] == 1 && iiv[1] >= 0 && iiv[2] == 1 && kiv[0] == 1 && kiv[1] >= 0 && kiv[2] == 1 && iiv[3] < nhi2 && kiv[3] < nhi2 {
-        guard = "if (" + itoa(iiv[3]) + " * " + ncode + " + " + itoa(kiv[3]) + " >= (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+        guard = "if (" + itoa(iiv[3]) + " * " + ncode + " + " + itoa(kiv[3]) + " >= (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     }
     // Fix 2 (b): record the guard on the move target.
     let mut free_vars: [str] = [];
@@ -2730,7 +2730,7 @@ fn fix1_try_r5(ix: Node, env: Fix1Env, loops: [Node], res0: Fix1Res) -> Fix1Res 
     if !fix1_is_array_type(fix1_env_type(env, arr)) {
         return res;
     }
-    let guard: str = "if (" + itoa(iv[3]) + " >= (" + arr + ").len) forge_fail(\"array index out of bounds\");";
+    let guard: str = "if (" + itoa(iv[3]) + " >= (" + arr + ").len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);";
     if len(loops) > 0 {
         let loopn: Node = loops[len(loops) - 1];
         let body: Node = loopn.kids[1];

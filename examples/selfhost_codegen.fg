@@ -3662,7 +3662,7 @@ fn cg_int_cast_code(g0: HCodegen, code: str, from_t: str, to_t: str) -> CGExpr {
     if w == "unsigned long long" && (starts_with(tlo, "-") || tlo == "0") {
         cond = tn + " > " + thi;
     }
-    return CGExpr { g: g, code: "({" + w + " " + tn + " = (" + w + ")(" + code + "); if (" + cond + ") forge_fail(\"integer overflow\"); (" + ct + ")(" + tn + ");})" };
+    return CGExpr { g: g, code: "({" + w + " " + tn + " = (" + w + ")(" + code + "); if (" + cond + ") forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); (" + ct + ")(" + tn + ");})" };
 }
 
 // float_to_int_cast (codegen.py:1374), safe mode only.
@@ -3673,7 +3673,7 @@ fn cg_float_to_int_cast(g0: HCodegen, code: str, to_t: str) -> CGExpr {
     let tmp: CGExpr = cg_fx_temp(g);
     g = tmp.g;
     let tn: str = tmp.code;
-    return CGExpr { g: g, code: "({ double " + tn + " = (" + code + "); if (!(" + tn + " >= " + b[0] + " && " + tn + " < " + b[1] + ")) forge_fail(\"float to int cast out of range\"); (" + ct + ")(" + tn + ");})" };
+    return CGExpr { g: g, code: "({ double " + tn + " = (" + code + "); if (!(" + tn + " >= " + b[0] + " && " + tn + " < " + b[1] + ")) forge_fail(\"float to int cast out of range\", FORGE_FAIL_F2I); (" + ct + ")(" + tn + ");})" };
 }
 
 // Shared TupleLit / StructLit / Call-arg conversion (codegen.py
@@ -5042,7 +5042,7 @@ fn cg_index_fresh_wrap(g0: HCodegen, e: Node) -> CGExpr {
     // array/fn branches) + own step for owned element types.
     let mut check: str = "";
     if !g.no_bounds_checks {
-        check = "if (__forge_idx" + itoa(n) + " < 0 || __forge_idx" + itoa(n) + " >= __forge_base" + itoa(n) + ".len) forge_fail(\"array index out of bounds\"); ";
+        check = "if (__forge_idx" + itoa(n) + " < 0 || __forge_idx" + itoa(n) + " >= __forge_base" + itoa(n) + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); ";
     }
     let elem_c: str = cg_c_type(g, et);
     let mut read: str = "";
@@ -5229,7 +5229,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             return CGExpr { g: g, code: "(" + cg_fn_closure_name(ft) + "){ __forge_lambda_" + itoa(lid) + ", NULL }" };
         }
         let env_t: str = "ForgeEnv_" + itoa(lid);
-        let mut stmts: str = env_t + " *__forge_env = (" + env_t + " *)malloc(sizeof(" + env_t + ")); if (!__forge_env) forge_fail(\"out of memory\"); __forge_env->ref = 1; __forge_env->drop = __forge_env_free_" + itoa(lid) + ";";
+        let mut stmts: str = env_t + " *__forge_env = (" + env_t + " *)malloc(sizeof(" + env_t + ")); if (!__forge_env) forge_fail(\"out of memory\", FORGE_FAIL_OOM); __forge_env->ref = 1; __forge_env->drop = __forge_env_free_" + itoa(lid) + ";";
         let parts: [str] = split(caps, ";");
         let mut i: int = 0;
         while i < len(parts) {
@@ -5288,9 +5288,9 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             let tn: str = tmp.code;
             if starts_with(t, "i") {
                 let tr: [str] = cg_fixed_range_str(t);
-                return CGExpr { g: g, code: "({long long " + tn + " = -(long long)(" + inner.code + "); if (" + tn + " < " + tr[0] + " || " + tn + " > " + tr[1] + ") forge_fail(\"integer overflow\"); (" + cg_c_type(g, t) + ")(" + tn + ");})" };
+                return CGExpr { g: g, code: "({long long " + tn + " = -(long long)(" + inner.code + "); if (" + tn + " < " + tr[0] + " || " + tn + " > " + tr[1] + ") forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); (" + cg_c_type(g, t) + ")(" + tn + ");})" };
             }
-            return CGExpr { g: g, code: "({unsigned long long " + tn + " = (unsigned long long)(" + inner.code + "); if (" + tn + " != 0) forge_fail(\"integer overflow\"); (" + cg_c_type(g, t) + ")(0);})" };
+            return CGExpr { g: g, code: "({unsigned long long " + tn + " = (unsigned long long)(" + inner.code + "); if (" + tn + " != 0) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); (" + cg_c_type(g, t) + ")(0);})" };
         }
         let inner: CGExpr = cg_gen_expr(g, e.kids[0]);
         g = inner.g;
@@ -5343,7 +5343,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
                 let ta: str = "__forge_fa" + itoa(n);
                 let ti: str = "__forge_fi" + itoa(n);
                 let at: str = cg_c_type(g, arr_t);
-                let code: str = "({ " + at + " " + ta + " = " + aout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\"); " + ta + ".data[" + ti + "]." + e.name + "; })";
+                let code: str = "({ " + at + " " + ta + " = " + aout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); " + ta + ".data[" + ti + "]." + e.name + "; })";
                 return CGExpr { g: g, code: code };
             }
         }
@@ -5442,7 +5442,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             if idx_pure {
                 g = cg_cache_add(g, key);
             }
-            let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\"); " + ta + ".data[" + ti + "]; })";
+            let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); " + ta + ".data[" + ti + "]; })";
             return CGExpr { g: g, code: code };
         }
         if is_fn_type(et) {
@@ -5466,7 +5466,7 @@ fn cg_gen_expr(g0: HCodegen, e: Node) -> CGExpr {
             if idx_pure {
                 g = cg_cache_add(g, key);
             }
-            let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\"); " + ta + ".data[" + ti + "]; })";
+            let code: str = "({ " + arr_t + " " + ta + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; if (" + ti + " < 0 || " + ti + " >= " + ta + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS); " + ta + ".data[" + ti + "]; })";
             return CGExpr { g: g, code: code };
         }
         // Scalar element (codegen.py:3800): a pure repeat in this
@@ -5766,7 +5766,7 @@ fn cg_fixed_checked_binop(g0: HCodegen, op: str, left_code: str, right_code: str
             let tmp: CGExpr = cg_fx_temp(g);
             g = tmp.g;
             let tn: str = tmp.code;
-            return CGExpr { g: g, code: "({unsigned long long " + tn + "; if (" + builtin + "((unsigned long long)(" + left_code + "), (unsigned long long)(" + right_code + "), &" + tn + ")) forge_fail(\"integer overflow\"); " + tn + ";})" };
+            return CGExpr { g: g, code: "({unsigned long long " + tn + "; if (" + builtin + "((unsigned long long)(" + left_code + "), (unsigned long long)(" + right_code + "), &" + tn + ")) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); " + tn + ";})" };
         }
         let mut w: str = "unsigned long long";
         if is_signed {
@@ -5776,7 +5776,7 @@ fn cg_fixed_checked_binop(g0: HCodegen, op: str, left_code: str, right_code: str
         g = tmp.g;
         let tn: str = tmp.code;
         let tr: [str] = cg_fixed_range_str(t);
-        return CGExpr { g: g, code: "({" + w + " " + tn + " = (" + w + ")(" + left_code + ") " + op + " (" + w + ")(" + right_code + "); if (" + tn + " < " + tr[0] + " || " + tn + " > " + tr[1] + ") forge_fail(\"integer overflow\"); (" + ct + ")(" + tn + ");})" };
+        return CGExpr { g: g, code: "({" + w + " " + tn + " = (" + w + ")(" + left_code + ") " + op + " (" + w + ")(" + right_code + "); if (" + tn + " < " + tr[0] + " || " + tn + " > " + tr[1] + ") forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); (" + ct + ")(" + tn + ");})" };
     }
     if op == "/" {
         if is_signed {
@@ -5785,11 +5785,11 @@ fn cg_fixed_checked_binop(g0: HCodegen, op: str, left_code: str, right_code: str
             let nt: CGExpr = cg_fx_temp(g);
             g = nt.g;
             let tr: [str] = cg_fixed_range_str(t);
-            return CGExpr { g: g, code: "({long long " + dt.code + " = (long long)(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\"); long long " + nt.code + " = (long long)(" + left_code + "); if (" + nt.code + " == " + tr[0] + " && " + dt.code + " == -1) forge_fail(\"integer overflow\"); (" + ct + ")(" + nt.code + " / " + dt.code + ");})" };
+            return CGExpr { g: g, code: "({long long " + dt.code + " = (long long)(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); long long " + nt.code + " = (long long)(" + left_code + "); if (" + nt.code + " == " + tr[0] + " && " + dt.code + " == -1) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); (" + ct + ")(" + nt.code + " / " + dt.code + ");})" };
         }
         let dt: CGExpr = cg_fx_temp(g);
         g = dt.g;
-        return CGExpr { g: g, code: "({unsigned long long " + dt.code + " = (unsigned long long)(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\"); (" + ct + ")((unsigned long long)(" + left_code + ") / " + dt.code + ");})" };
+        return CGExpr { g: g, code: "({unsigned long long " + dt.code + " = (unsigned long long)(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); (" + ct + ")((unsigned long long)(" + left_code + ") / " + dt.code + ");})" };
     }
     if op == "%" {
         let mut w: str = "unsigned long long";
@@ -5798,7 +5798,7 @@ fn cg_fixed_checked_binop(g0: HCodegen, op: str, left_code: str, right_code: str
         }
         let dt: CGExpr = cg_fx_temp(g);
         g = dt.g;
-        return CGExpr { g: g, code: "({" + w + " " + dt.code + " = (" + w + ")(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\"); (" + left_code + " % " + right_code + ");})" };
+        return CGExpr { g: g, code: "({" + w + " " + dt.code + " = (" + w + ")(" + right_code + "); if (" + dt.code + " == 0) forge_fail(\"division by zero\", FORGE_FAIL_DIVZERO); (" + left_code + " % " + right_code + ");})" };
     }
     if op == "<<" || op == ">>" {
         let width: int = cg_fixed_width(t);
@@ -5807,9 +5807,9 @@ fn cg_fixed_checked_binop(g0: HCodegen, op: str, left_code: str, right_code: str
         let an: str = at.code;
         if op == "<<" {
             let uct: str = cg_fixed_unsigned_c_type(t);
-            return CGExpr { g: g, code: "({long long " + an + " = (long long)(" + right_code + "); if (" + an + " < 0 || " + an + " >= " + itoa(width) + ") forge_fail(\"shift count out of range\"); (" + ct + ")((" + uct + ")(" + left_code + ") << " + an + ");})" };
+            return CGExpr { g: g, code: "({long long " + an + " = (long long)(" + right_code + "); if (" + an + " < 0 || " + an + " >= " + itoa(width) + ") forge_fail(\"shift count out of range\", FORGE_FAIL_OTHER); (" + ct + ")((" + uct + ")(" + left_code + ") << " + an + ");})" };
         }
-        return CGExpr { g: g, code: "({long long " + an + " = (long long)(" + right_code + "); if (" + an + " < 0 || " + an + " >= " + itoa(width) + ") forge_fail(\"shift count out of range\"); ((" + left_code + ") >> " + an + ");})" };
+        return CGExpr { g: g, code: "({long long " + an + " = (long long)(" + right_code + "); if (" + an + " < 0 || " + an + " >= " + itoa(width) + ") forge_fail(\"shift count out of range\", FORGE_FAIL_OTHER); ((" + left_code + ") >> " + an + ");})" };
     }
     fail("no checked form for '" + op + "' on " + t);
     return CGExpr { g: g, code: "" };
@@ -5874,7 +5874,7 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
         decls = decls + "const char *" + ts + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; ";
         // Fix 1 B0: --no-bounds-checks skips the inline check.
         if !g.no_bounds_checks {
-            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\", FORGE_FAIL_BOUNDS); ";
         }
         cmp0 = ts + "[" + ti + "]";
     }
@@ -5891,7 +5891,7 @@ fn cg_str_index_cmp(g0: HCodegen, e: Node) -> CGExpr {
         decls = decls + "const char *" + ts + " = " + bout.code + "; long long " + ti + " = " + iout.code + "; ";
         // Fix 1 B0: --no-bounds-checks skips the inline check.
         if !g.no_bounds_checks {
-            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\"); ";
+            decls = decls + "long long " + tn + " = (long long)strlen(" + ts + "); if (" + ti + " < 0 || " + ti + " >= " + tn + ") forge_fail(\"string index out of bounds\", FORGE_FAIL_BOUNDS); ";
         }
         cmp1 = ts + "[" + ti + "]";
     }
@@ -5921,10 +5921,10 @@ fn cg_gen_method_call(g0: HCodegen, e: Node) -> CGExpr {
             return CGExpr { g: g, code: "({ ForgeRange " + recv + " = " + rout.code + "; long long __forge_x" + itoa(n) + " = " + aout.code + "; (" + recv + ".start <= __forge_x" + itoa(n) + " && __forge_x" + itoa(n) + " < " + recv + ".end); })" };
         }
         if e.name == "len" {
-            return CGExpr { g: g, code: "({ ForgeRange " + recv + " = " + rout.code + "; long long __forge_l" + itoa(n) + " = 0; if (" + recv + ".end > " + recv + ".start) { unsigned long long __forge_d" + itoa(n) + " = (unsigned long long)" + recv + ".end - (unsigned long long)" + recv + ".start; if (__forge_d" + itoa(n) + " > 9223372036854775807ULL) forge_fail(\"integer overflow\"); __forge_l" + itoa(n) + " = (long long)__forge_d" + itoa(n) + "; } __forge_l" + itoa(n) + "; })" };
+            return CGExpr { g: g, code: "({ ForgeRange " + recv + " = " + rout.code + "; long long __forge_l" + itoa(n) + " = 0; if (" + recv + ".end > " + recv + ".start) { unsigned long long __forge_d" + itoa(n) + " = (unsigned long long)" + recv + ".end - (unsigned long long)" + recv + ".start; if (__forge_d" + itoa(n) + " > 9223372036854775807ULL) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); __forge_l" + itoa(n) + " = (long long)__forge_d" + itoa(n) + "; } __forge_l" + itoa(n) + "; })" };
         }
         if e.name == "sum" {
-            return CGExpr { g: g, code: "({ ForgeRange " + recv + " = " + rout.code + "; __int128 __forge_s" + itoa(n) + " = 0; if (" + recv + ".end > " + recv + ".start) { __int128 __forge_n" + itoa(n) + " = (__int128)((unsigned long long)" + recv + ".end - (unsigned long long)" + recv + ".start); __forge_s" + itoa(n) + " = __forge_n" + itoa(n) + " * ((__int128)" + recv + ".start + (__int128)" + recv + ".end - 1) / 2; if (__forge_s" + itoa(n) + " > 9223372036854775807 || __forge_s" + itoa(n) + " < (-9223372036854775807 - 1)) forge_fail(\"integer overflow\"); } (long long)__forge_s" + itoa(n) + "; })" };
+            return CGExpr { g: g, code: "({ ForgeRange " + recv + " = " + rout.code + "; __int128 __forge_s" + itoa(n) + " = 0; if (" + recv + ".end > " + recv + ".start) { __int128 __forge_n" + itoa(n) + " = (__int128)((unsigned long long)" + recv + ".end - (unsigned long long)" + recv + ".start); __forge_s" + itoa(n) + " = __forge_n" + itoa(n) + " * ((__int128)" + recv + ".start + (__int128)" + recv + ".end - 1) / 2; if (__forge_s" + itoa(n) + " > 9223372036854775807 || __forge_s" + itoa(n) + " < (-9223372036854775807 - 1)) forge_fail(\"integer overflow\", FORGE_FAIL_OVERFLOW); } (long long)__forge_s" + itoa(n) + "; })" };
         }
         fail("range has no method '" + e.name + "'");
         return CGExpr { g: g, code: "" };
@@ -6465,7 +6465,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         if cg_is_fresh_str(g, e.kids[0]) {
             pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
         }
-        let code: str = "({ " + rt + " __forge_tryread" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_sz" + itoa(n) + " + 1); if (!__forge_buf" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = fread(__forge_buf" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + "); __forge_buf" + itoa(n) + "[__forge_got" + itoa(n) + "] = 0; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryread" + itoa(n) + "; })";
+        let code: str = "({ " + rt + " __forge_tryread" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_sz" + itoa(n) + " + 1); if (!__forge_buf" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\", FORGE_FAIL_OOM); } size_t __forge_got" + itoa(n) + " = fread(__forge_buf" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + "); __forge_buf" + itoa(n) + "[__forge_got" + itoa(n) + "] = 0; fclose(__forge_f" + itoa(n) + "); __forge_tryread" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryread" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "try_read_bytes" {
@@ -6485,7 +6485,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         if cg_is_fresh_str(g, e.kids[0]) {
             pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
         }
-        let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\"); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryreadb" + itoa(n) + "; })";
+        let code: str = "({ " + rt + " __forge_tryreadb" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; FILE *__forge_f" + itoa(n) + " = fopen(__forge_p" + itoa(n) + ", \"rb\"); if (!__forge_f" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_END); long __forge_sz" + itoa(n) + " = ftell(__forge_f" + itoa(n) + "); if (__forge_sz" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; fclose(__forge_f" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { fseek(__forge_f" + itoa(n) + ", 0, SEEK_SET); ForgeIntArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".cap = __forge_sz" + itoa(n) + "; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = __forge_sz" + itoa(n) + " ? (long long *)malloc(sizeof(long long) * (size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_arr" + itoa(n) + ".data) { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\", FORGE_FAIL_OOM); } unsigned char *__forge_raw" + itoa(n) + " = __forge_sz" + itoa(n) + " ? (unsigned char *)malloc((size_t)__forge_sz" + itoa(n) + ") : NULL; if (__forge_sz" + itoa(n) + " && !__forge_raw" + itoa(n) + ") { fclose(__forge_f" + itoa(n) + "); forge_fail(\"out of memory\", FORGE_FAIL_OOM); } size_t __forge_got" + itoa(n) + " = __forge_sz" + itoa(n) + " ? fread(__forge_raw" + itoa(n) + ", 1, (size_t)__forge_sz" + itoa(n) + ", __forge_f" + itoa(n) + ") : 0; fclose(__forge_f" + itoa(n) + "); for (long __forge_i" + itoa(n) + " = 0; __forge_i" + itoa(n) + " < (long)__forge_got" + itoa(n) + "; __forge_i" + itoa(n) + "++) __forge_arr" + itoa(n) + ".data[__forge_i" + itoa(n) + "] = __forge_raw" + itoa(n) + "[__forge_i" + itoa(n) + "]; if (__forge_raw" + itoa(n) + ") free(__forge_raw" + itoa(n) + "); __forge_tryreadb" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryreadb" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "try_call" {
@@ -6554,7 +6554,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         if cg_is_fresh_str(g, e.kids[0]) {
             pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
         }
-        let code: str = "({ " + rt + " __forge_tryrd" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; DIR *__forge_d" + itoa(n) + " = opendir(__forge_p" + itoa(n) + "); if (!__forge_d" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { ForgeStrArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = 0; __forge_arr" + itoa(n) + ".cap = 8; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = (char **)malloc(sizeof(char *) * 8); if (!__forge_arr" + itoa(n) + ".data) { closedir(__forge_d" + itoa(n) + "); forge_fail(\"out of memory\"); } struct dirent *__forge_de" + itoa(n) + "; while ((__forge_de" + itoa(n) + " = readdir(__forge_d" + itoa(n) + ")) != NULL) { if (strcmp(__forge_de" + itoa(n) + "->d_name, \".\") == 0 || strcmp(__forge_de" + itoa(n) + "->d_name, \"..\") == 0) continue; forge_str_push(&__forge_arr" + itoa(n) + ", forge_copy_str(__forge_de" + itoa(n) + "->d_name)); } closedir(__forge_d" + itoa(n) + "); __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } " + pfree + "__forge_tryrd" + itoa(n) + "; })";
+        let code: str = "({ " + rt + " __forge_tryrd" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; DIR *__forge_d" + itoa(n) + " = opendir(__forge_p" + itoa(n) + "); if (!__forge_d" + itoa(n) + ") { int __forge_e" + itoa(n) + " = errno; __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = false, .value = " + empty + ", .error = __forge_e" + itoa(n) + " }; } else { ForgeStrArray __forge_arr" + itoa(n) + "; __forge_arr" + itoa(n) + ".len = 0; __forge_arr" + itoa(n) + ".cap = 8; __forge_arr" + itoa(n) + ".ref = forge_arr_ref_new(); __forge_arr" + itoa(n) + ".data = (char **)malloc(sizeof(char *) * 8); if (!__forge_arr" + itoa(n) + ".data) { closedir(__forge_d" + itoa(n) + "); forge_fail(\"out of memory\", FORGE_FAIL_OOM); } struct dirent *__forge_de" + itoa(n) + "; while ((__forge_de" + itoa(n) + " = readdir(__forge_d" + itoa(n) + ")) != NULL) { if (strcmp(__forge_de" + itoa(n) + "->d_name, \".\") == 0 || strcmp(__forge_de" + itoa(n) + "->d_name, \"..\") == 0) continue; forge_str_push(&__forge_arr" + itoa(n) + ", forge_copy_str(__forge_de" + itoa(n) + "->d_name)); } closedir(__forge_d" + itoa(n) + "); __forge_tryrd" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_arr" + itoa(n) + ", .error = 0 }; } " + pfree + "__forge_tryrd" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "rename" {
@@ -6598,7 +6598,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
         if cg_is_fresh_str(g, e.kids[0]) {
             pfree = "forge_free_str(__forge_p" + itoa(n) + "); ";
         }
-        let code: str = "({ " + rt + " __forge_tryrl" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; struct stat __forge_st" + itoa(n) + "; if (lstat(__forge_p" + itoa(n) + ", &__forge_st" + itoa(n) + ") != 0) { int __forge_e" + itoa(n) + " = errno; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { long long __forge_cap" + itoa(n) + " = __forge_st" + itoa(n) + ".st_size > 0 ? (long long)__forge_st" + itoa(n) + ".st_size + 1 : 4096; char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_cap" + itoa(n) + "); if (!__forge_buf" + itoa(n) + ") { forge_fail(\"out of memory\"); } long long __forge_n" + itoa(n) + " = (long long)readlink(__forge_p" + itoa(n) + ", __forge_buf" + itoa(n) + ", (size_t)__forge_cap" + itoa(n) + " - 1); if (__forge_n" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; free(__forge_buf" + itoa(n) + "); __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { __forge_buf" + itoa(n) + "[__forge_n" + itoa(n) + "] = 0; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryrl" + itoa(n) + "; })";
+        let code: str = "({ " + rt + " __forge_tryrl" + itoa(n) + "; const char *__forge_p" + itoa(n) + " = " + pout.code + "; struct stat __forge_st" + itoa(n) + "; if (lstat(__forge_p" + itoa(n) + ", &__forge_st" + itoa(n) + ") != 0) { int __forge_e" + itoa(n) + " = errno; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { long long __forge_cap" + itoa(n) + " = __forge_st" + itoa(n) + ".st_size > 0 ? (long long)__forge_st" + itoa(n) + ".st_size + 1 : 4096; char *__forge_buf" + itoa(n) + " = (char *)malloc((size_t)__forge_cap" + itoa(n) + "); if (!__forge_buf" + itoa(n) + ") { forge_fail(\"out of memory\", FORGE_FAIL_OOM); } long long __forge_n" + itoa(n) + " = (long long)readlink(__forge_p" + itoa(n) + ", __forge_buf" + itoa(n) + ", (size_t)__forge_cap" + itoa(n) + " - 1); if (__forge_n" + itoa(n) + " < 0) { int __forge_e" + itoa(n) + " = errno; free(__forge_buf" + itoa(n) + "); __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = false, .value = forge_copy_str(\"\")" + ", .error = __forge_e" + itoa(n) + " }; } else { __forge_buf" + itoa(n) + "[__forge_n" + itoa(n) + "] = 0; __forge_tryrl" + itoa(n) + " = (" + rt + "){ .ok = true, .value = __forge_buf" + itoa(n) + ", .error = 0 }; } } " + pfree + "__forge_tryrl" + itoa(n) + "; })";
         return CGExpr { g: g, code: code };
     }
     if e.name == "chmod" {
@@ -6823,7 +6823,7 @@ fn cg_gen_call(g0: HCodegen, e: Node) -> CGExpr {
             let flag: str = cg_moved_flag(arg.name);
             let aout: CGExpr = cg_gen_expr(g, arg);
             g = aout.g;
-            return CGExpr { g: g, code: "({ if (" + flag + ") forge_fail(\"use of moved value '" + arg.name + "'\"); " + flag + " = 1; " + aout.code + "; })" };
+            return CGExpr { g: g, code: "({ if (" + flag + ") forge_fail(\"use of moved value '" + arg.name + "'\", FORGE_FAIL_OTHER); " + flag + " = 1; " + aout.code + "; })" };
         }
         g = cg_owned_forget(g, arg.name);
         return cg_gen_expr(g, arg);
@@ -7833,7 +7833,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             // Fix 1 B0: --no-bounds-checks skips the inline check.
             // Fix 1 B1: a loop-proof-covered write skips it too.
             if !g.no_bounds_checks && !target.has_nul {  // Fix 1 B1: covered tag (see above).
-                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);");
             }
             let fc: CGExpr = cg_array_free_code(g, base_code + ".data[" + itmp + "]", et);
             g = fc.g;
@@ -7855,7 +7855,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             g.assign_counter = g.assign_counter + 1;
             g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
             if !g.no_bounds_checks && !target.has_nul {
-                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+                g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);");
             }
             g = cg_emit(g, "forge_closure_release((" + base_code + ").data[" + itmp + "].env);");
             g = cg_emit(g, "(" + base_code + ").data[" + itmp + "] = " + val + ";");
@@ -7883,7 +7883,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g.assign_counter = g.assign_counter + 1;
                 g = cg_emit(g, "long long " + itmp + " = " + idx.code + ";");
                 if !g.no_bounds_checks && !target.has_nul {
-                    g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\");");
+                    g = cg_emit(g, "if (" + itmp + " < 0 || " + itmp + " >= " + base_code + ".len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);");
                 }
                 g = cg_emit(g, "forge_free_str((" + base_code + ").data[" + itmp + "]);");
                 idxs = itmp;
@@ -8513,6 +8513,20 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         // ExprStmt: kids = [expr].
         let call: Node = st.kids[0];
         if call.kind == 35 && call.name == "assert" {
+            if g.freestanding {
+                // Top-500 #60 (D1): the message is a string
+                // literal (checker-enforced); it lowers to a
+                // static C string, never a heap value. Route
+                // through forge_fail (code 2) instead of the
+                // hosted fprintf/exit, which do not exist here.
+                if call.kids[1].kind != 27 {
+                    fail("assert() message must be a string literal in freestanding mode");
+                }
+                let cout: CGExpr = cg_gen_expr(g, call.kids[0]);
+                g = cout.g;
+                g = cg_emit(g, "if (!(" + cout.code + ")) { forge_fail(" + cg_c_str_literal(call.kids[1].sval, call.kids[1].has_nul) + ", FORGE_FAIL_ASSERT); }");
+                return g;
+            }
             let cout: CGExpr = cg_gen_expr(g, call.kids[0]);
             g = cout.g;
             let mout: CGExpr = cg_gen_expr(g, call.kids[1]);
@@ -8590,7 +8604,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "if (" + ptr + "->ref && *" + ptr + "->ref > 1) {");
                 g = cg_emit(g, "    long long " + ocap + " = " + ptr + "->cap ? " + ptr + "->cap : 4;");
                 g = cg_emit(g, "    " + elem_c + " *" + nbuf + " = (" + elem_c + " *)malloc(sizeof(" + elem_c + ") * (size_t)" + ocap + ");");
-                g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
                 g = cg_emit(g, "    for (long long " + li + " = 0; " + li + " < " + ptr + "->len; " + li + "++) { " + nbuf + "[" + li + "] = " + ptr + "->data[" + li + "]; forge_arr_inc(" + nbuf + "[" + li + "].ref); }");
                 g = cg_emit(g, "    (*" + ptr + "->ref)--;");
                 g = cg_emit(g, "    " + ptr + "->data = " + nbuf + "; " + ptr + "->cap = " + ocap + "; " + ptr + "->ref = forge_arr_ref_new();");
@@ -8600,7 +8614,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "if (" + ptr + "->len >= " + ptr + "->cap) {");
                 g = cg_emit(g, "    long long " + ncap + " = " + ptr + "->cap ? " + ptr + "->cap * 2 : 4;");
                 g = cg_emit(g, "    " + elem_c + " *nd = (" + elem_c + " *)realloc(" + ptr + "->data, sizeof(" + elem_c + ") * (size_t)" + ncap + ");");
-                g = cg_emit(g, "    if (!nd) forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    if (!nd) forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
                 g = cg_emit(g, "    " + ptr + "->data = nd; " + ptr + "->cap = " + ncap + ";");
                 g = cg_emit(g, "}");
                 g = cg_emit(g, ptr + "->data[" + ptr + "->len++] = " + val + ";");
@@ -8635,7 +8649,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "if (" + ptr + "->ref && *" + ptr + "->ref > 1) {");
                 g = cg_emit(g, "    long long " + ocap + " = " + ptr + "->cap ? " + ptr + "->cap : 4;");
                 g = cg_emit(g, "    " + elem_c + " *" + nbuf + " = (" + elem_c + " *)malloc(sizeof(" + elem_c + ") * (size_t)" + ocap + ");");
-                g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    if (!" + nbuf + ") forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
                 g = cg_emit(g, "    for (long long " + li + " = 0; " + li + " < " + ptr + "->len; " + li + "++) { " + nbuf + "[" + li + "] = " + ptr + "->data[" + li + "]; forge_closure_inc(" + nbuf + "[" + li + "].env); }");
                 g = cg_emit(g, "    (*" + ptr + "->ref)--;");
                 g = cg_emit(g, "    " + ptr + "->data = " + nbuf + "; " + ptr + "->cap = " + ocap + "; " + ptr + "->ref = forge_arr_ref_new();");
@@ -8643,7 +8657,7 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 g = cg_emit(g, "if (" + ptr + "->len >= " + ptr + "->cap) {");
                 g = cg_emit(g, "    long long " + ncap + " = " + ptr + "->cap ? " + ptr + "->cap * 2 : 4;");
                 g = cg_emit(g, "    " + elem_c + " *nd = (" + elem_c + " *)realloc(" + ptr + "->data, sizeof(" + elem_c + ") * (size_t)" + ncap + ");");
-                g = cg_emit(g, "    if (!nd) forge_fail(\"out of memory\");");
+                g = cg_emit(g, "    if (!nd) forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
                 g = cg_emit(g, "    " + ptr + "->data = nd; " + ptr + "->cap = " + ncap + ";");
                 g = cg_emit(g, "}");
                 g = cg_emit(g, ptr + "->data[" + ptr + "->len++] = " + val + ";");
@@ -8665,6 +8679,20 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             return g;
         }
         if call.kind == 35 && call.name == "fail" {
+            if g.freestanding {
+                // Top-500 #60 (D1): the message is a string
+                // literal (checker-enforced); it lowers to a
+                // static C string. No task panic, no try_call
+                // handler here — spawn and try_call are both
+                // rejected freestanding — just forge_fail
+                // (code 1), which halts (stage A) and dumps
+                // (stage C).
+                if call.kids[0].kind != 27 {
+                    fail("fail() message must be a string literal in freestanding mode");
+                }
+                g = cg_emit(g, "forge_fail(" + cg_c_str_literal(call.kids[0].sval, call.kids[0].has_nul) + ", FORGE_FAIL_USER);");
+                return g;
+            }
             // Top-500 #44: fail() stays fatal on the main thread,
             // but on a spawned task's thread it ends just that
             // task -- the panic is printed and counted, the thread
@@ -9657,7 +9685,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
                 }
                 g = cg_emit(g, "static " + name + " forge_" + name + "_get" + suffix + "(" + arr_t + " a, long long i) {");
                 if check {
-                    g = cg_emit(g, "    if (i < 0 || i >= a.len) forge_fail(\"array index out of bounds\");");
+                    g = cg_emit(g, "    if (i < 0 || i >= a.len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);");
                 }
                 g = cg_emit(g, "    " + name + " v = a.data[i];");
                 let own: str = cg_struct_own_code(g, "v", name);
@@ -9668,7 +9696,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
                 g = cg_emit(g, "}");
                 g = cg_emit(g, "static void forge_" + name + "_set" + suffix + "(" + arr_t + " *a, long long i, " + name + " v) {");
                 if check {
-                    g = cg_emit(g, "    if (i < 0 || i >= a->len) forge_fail(\"array index out of bounds\");");
+                    g = cg_emit(g, "    if (i < 0 || i >= a->len) forge_fail(\"array index out of bounds\", FORGE_FAIL_BOUNDS);");
                 }
                 let ofc: CGExpr = cg_struct_free_code(g, "a->data[i]", name, "");
                 g = ofc.g;
@@ -9695,7 +9723,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
             g = cg_emit(g, "           the old buffer without freeing it. */");
             g = cg_emit(g, "        long long oc = a->cap ? a->cap : 4;");
             g = cg_emit(g, "        " + name + " *nd = (" + name + " *)malloc(sizeof(" + name + ") * (size_t)oc);");
-            g = cg_emit(g, "        if (!nd) forge_fail(\"out of memory\");");
+            g = cg_emit(g, "        if (!nd) forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
             g = cg_emit(g, "        for (long long i = 0; i < a->len; i++) {");
             let pown: str = cg_struct_own_code(g, "nd[i]", name);
             let mut ndline: str = "            nd[i] = a->data[i];";
@@ -9710,7 +9738,7 @@ fn cg_generate(g0: HCodegen, prog: Node) -> str {
             g = cg_emit(g, "    if (a->len >= a->cap) {");
             g = cg_emit(g, "        long long nc = a->cap ? a->cap * 2 : 4;");
             g = cg_emit(g, "        " + name + " *nd = (" + name + " *)realloc(a->data, sizeof(" + name + ") * (size_t)nc);");
-            g = cg_emit(g, "        if (!nd) forge_fail(\"out of memory\");");
+            g = cg_emit(g, "        if (!nd) forge_fail(\"out of memory\", FORGE_FAIL_OOM);");
             g = cg_emit(g, "        a->data = nd; a->cap = nc;");
             g = cg_emit(g, "    }");
             g = cg_emit(g, "    a->data[a->len++] = v;");

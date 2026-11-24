@@ -1730,3 +1730,124 @@ Arithmetic from the #48 entry (HAVE 372, PARTIAL 12, GAP 116, to
 build 128): 1 GAP-to-HAVE (#50); 372 + 1 = 373; 116 - 1 = 115;
 128 - 1 = 127 (373 + 12 + 115 = 500). HAVE 373 of 500 = 74.6%.
 Next: #60 / #62 in catalog order.
+
+- Sprint Day 4 (24 Nov 2026, libs-only, 11 items): #63 if-let /
+  while-let, #64 guard statements, #65 match guards (PARTIAL→HAVE),
+  #66 for-each over any iterable (PARTIAL→HAVE), #68 repeat-while
+  loops, #71 if as an expression, #73 loop-else, #127 dict
+  literals, #128 array comprehensions, #342 multi-error reporting,
+  #345 source snippets in errors. All pure .fg libraries (stdlib +
+  demo + own test each, 33 new files), no compiler edits, no new
+  syntax, OS track paused. Own tests, all re-run by the coordinator:
+  #63 26/26, #64 26/26, #65 20/20, #66 22/22, #68 18/18, #71 26/26,
+  #73 18/18, #127 24/24, #128 24/24, #342 20/20, #345 24/24 — ALL
+  PASS both compilers; fmt idempotent on all 11 demos. ASan
+  program-side 0 leaks on all except #64 (demo 3B/3, probe 1B/1 —
+  proven pre-existing `?`-unwrap leak, 1 byte per Ok unwrap in both
+  compilers; minimal result.fg-only probe leaks 1B/1, shipped
+  try_demo.fg leaks 1B/1). Design doc for the §4 compiler items
+  blackmoon-iso/ctrlflow-slice/DESIGN-62-67-76.md: #62 labeled
+  break/continue is a real compiler slice (Go-style `label:`
+  recommended, Jayant picks); #67 range syntax and #76 wildcard
+  arm probe-verified ALREADY WORKING under both compilers (stale
+  catalog entries — verification slices, not builds). Full suite
+  (per-file runner): hosted 109/115 (6 known big32 — never now
+  PASSES, verified stable standalone both modes); python 106/116
+  (same 6 + 4 extra). The 4 python extras are NOT Day 4's: the
+  suite ran while another process landed in-flight #60 (freestanding
+  crash hook) edits in the same tree (checker.py/codegen.py changed
+  04:10–04:14 UTC, binaries rebuilt 04:49 UTC, test_crashdump_v1.py
+  created mid-run — hence 116 python files vs 115 hosted).
+  Crashdump re-runs ALL PASS (mid-edit contamination); the other
+  three still fail standalone with a cleared cache (move_branch_field
+  8 runtime cases, useaftermove 4, noheap_freestanding 1) — Python-vs-
+  hosted divergences in the in-flight #60 tree state, for the #60
+  owner. Day 4 changed no compiler code and no existing test file
+  (diffed vs remote main 9034bd51). Honest pace: 11 landed vs the
+  20/day sprint target — the pure-library pool is nearly exhausted
+  and the remaining §4 items are mostly compiler features.
+  NOT pushed (parent verifies and pushes).
+
+Counts after the flips: HAVE 384, PARTIAL 10, GAP 106, to build 116.
+Arithmetic from the #50 entry (HAVE 373, PARTIAL 12, GAP 115, to
+build 127): 9 GAP-to-HAVE (#63, #64, #68, #71, #73, #127, #128,
+#342, #345) + 2 PARTIAL-to-HAVE (#65, #66); 373 + 11 = 384;
+12 - 2 = 10; 115 - 9 = 106; 127 - 11 = 116
+(384 + 10 + 106 = 500). HAVE 384 of 500 = 76.8%.
+Next: #62 (needs Jayant's syntax pick), #67/#76 verification slices,
+then #69/#70/#72/#74.
+
+## #60 Crash dumps in freestanding mode — HAVE (24 Nov 2026, sprint, both compilers)
+
+Jayant's pick 24 Nov ~09:32 IST: "Build A B C" — all three design
+options, defaults as presented (D1 literal-message exemption YES,
+D2 both targets, D3 full 30-register format, D4 always-on).
+Built in order A, then C's native half, then B, gating each stage.
+Design: blackmoon-iso/crashdump-slice/DESIGN.md; records in
+blackmoon-iso/crashdump-slice/ (SUMMARY.md, probes/, logs/, after/).
+
+Stage A (big32 register dump): 31 inline `sw` snapshot stores at
+the fail site, then `forge_crash_dump` prints `qasida: crash: <msg>`
++ pc + 30 trap-frame-order registers + sp (0x + 8 lowercase hex)
+over UART, then the existing `li a0, 1; ecall` halt. Helpers emitted
+only when a fail/assert/f2i site exists. Stage C (native x86_64):
+freestanding `forge_fail` snapshots the surviving registers (rip,
+rbx, rbp, r12–r15, rsp) and prints the pinned partial transcript to
+fd 2 via a raw write syscall (nr 1) — visible under Linux, invisible
+on bare metal. Stage B (hook): on fail the compiler snapshots,
+calls user-defined `crash_handler(code: int, pc: int)` if defined
+with exactly that name and signature, prints the pinned dump, then
+halts. Crash codes pinned: 0 OTHER, 1 USER, 2 ASSERT, 3 F2I,
+4 OVERFLOW, 5 DIVZERO, 6 BOUNDS, 7 OOM. D1 reverses the documented
+#39 decision narrowly: a string literal as the fail()/assert()
+message is exempt from the freestanding heap rejection (both
+compilers); any other str expression is still rejected.
+
+Bugs found by the gates (fixed in-slice): (1) the threading script
+mis-threaded a move-site `forge_fail` (inserted the code before the
+closing quote); fixed by hand, full audit clean. (2) Stale hosted
+binary caused 13 hosted failures on the first own-test run; rebuilt
+and synced to all 3 tree locations. (3) Syscall return-value clobber
+in `forge_crash_write` (rax as plain input, reused stale across
+writes — second write ran syscall nr 15 and segfaulted); fixed with
+a `"=a"` output tied to the input. (4) Wrong-file noinline edit
+(matched the hosted header's `forge_fail`, not the freestanding
+one); caught by grep, reverted and re-applied. (5) `int64_t` vs
+`long long` conflict on the native hook declaration (codegen emits
+`long long` for int); header now uses `long long`. (6) GCC rewrote
+the strlen-shaped loop in `forge_crash_msg` into a `strlen()` call,
+which cannot link under `-nostdlib`; fixed with `-ffreestanding`
+on freestanding builds (both compilers). (7) Native hook segfault:
+`poke32(0x8000)` is unmapped under Linux (RAM only on big32); the
+native hook does a safe local computation instead, and the native
+test asserts the transcript + halt + the call in the disassembly.
+
+Own test tests/test_crashdump_v1.py 109/109 ALL PASS both
+compilers (live binary rebuild B, md5 7043a4f83152d2006c2f00c9618bcad7,
+synced to all 3 locations). Gates 24 Nov: bootstrap 7/7
+byte-identical (lex 90709, parse 722646, check 7278338, infer
+8321745, codegen 26029484, header 113790, cli 26263686); parity
+124/124 agree + byte-identical; corpus 99/99; regression 62/62;
+fuzz existing 102/102 both modes, fv 56/56, closure 66/66, fs
+56/56, tc/lf/es ALL PASS; full suite hosted 109/116 + python
+110/116 (the 6 fails are exactly the #50-known big32 set; hosted
+run_tests.py failed once on a spawn_demo println-interleaving
+flake, re-run passed, so hosted is effectively 110/116); ASan
+program-side 8/8 clean; ASan compiler-side new == old on cold cache
+(selfhost_check 3966/147, codegen 9820/351, cli 9918/357,
+dump-flag 612/36 — the check-path leak is pre-existing exit-path
+heap state, #60 adds nothing); fmt 0 failures; benchmarks tick
+q_safe 2332 us vs c_o3 2322 (1.00x), matmul q_safe 12913 us vs
+c_o3 59300 (0.22x) — no regression. Size deltas: kernel 3825
+words, 0 crash code (0-word delta); native no-fail .text 273 → 273
+(delta 0); native fail .text 881 → 1099 (+218 for the hook check).
+Follow-ups stay open: F1 trap-fault dump, F2 freestanding
+backtrace. F3 native-dump completion is done via stage C.
+NOT pushed (parent verifies and pushes).
+
+Counts after the flip: HAVE 385, PARTIAL 10, GAP 105, to build 115.
+Arithmetic from the Day 4 entry (HAVE 384, PARTIAL 10, GAP 106, to
+build 116): 1 GAP-to-HAVE (#60); 384 + 1 = 385; 106 - 1 = 105;
+116 - 1 = 115 (385 + 10 + 105 = 500). HAVE 385 of 500 = 77.0%.
+Next: #62 (needs Jayant's syntax pick), #67/#76 verification slices,
+then #69/#70/#72/#74.
