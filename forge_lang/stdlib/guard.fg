@@ -1,0 +1,52 @@
+// Qasida — guard statements (Top-500 #64).
+// Import with: import "guard.fg";
+// Precondition helpers returning Result<int, str> so the CALLER
+// can early-return with `?`:
+//   guard_true(c, msg)     -> Ok(0) if c else Err(msg)
+//   guard_false(c, msg)    -> Ok(0) if not c else Err(msg)
+//   guard_positive(n, msg) -> Ok(n) if n > 0 else Err(msg)
+//   guard_ok(r)            -> r unchanged (named checkpoint in a chain)
+// PLAIN LIMIT: a library CANNOT early-return from the caller —
+// the `?` at the call site does the early return; the helper only
+// produces the Err value. Write `let _g: int = guard_true(...)?;`
+// (a bare `guard_true(...)?;` statement is rejected by the Python
+// compiler: "an expression statement must be a function call").
+// v1 limits: int results only; messages are plain strings.
+// KNOWN ASAN NOTE: every `?` unwrap of an Ok Result<int, str>
+// leaks the 1-byte "" error copy — a pre-existing `?` codegen
+// issue in BOTH compilers (the generated `__forge_try0` temporary
+// is discarded without freeing its error field; the Err path
+// returns the struct intact). Proven independent of this lib: a
+// minimal result.fg-only `?` probe leaks 1B/1, and the shipped
+// try_demo.fg leaks 1B/1 the same way. So guard_demo.fg leaks
+// 3B/3 (three Ok-`?` unwraps) and any one-guard probe leaks 1B/1
+// under ASan; fixing it needs a compiler change, out of scope
+// for this pure-library slice.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+import "result.fg";
+
+fn guard_true(cond: bool, msg: str) -> Result<int, str> {
+    if cond {
+        return Result { ok: true, value: 0, error: "" };
+    }
+    return Result { ok: false, value: 0, error: msg };
+}
+
+fn guard_false(cond: bool, msg: str) -> Result<int, str> {
+    if cond == false {
+        return Result { ok: true, value: 0, error: "" };
+    }
+    return Result { ok: false, value: 0, error: msg };
+}
+
+fn guard_positive(n: int, msg: str) -> Result<int, str> {
+    if n > 0 {
+        return Result { ok: true, value: n, error: "" };
+    }
+    return Result { ok: false, value: 0, error: msg };
+}
+
+fn guard_ok(r: Result<int, str>) -> Result<int, str> {
+    return r;
+}

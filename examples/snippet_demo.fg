@@ -1,0 +1,9 @@
+import "snippet.fg";
+
+fn main() -> int {
+    let src: str = "let x = 1;\nlet y = foo(;\nlet z = 3;\nlet w = 4;";
+    println(render_error_ctx("E001", "unexpected token", "src/main.fg", src, 2, 9, 3, "expected ')'", 1, 1));
+    println(render_snippet_ctx(src, 3, 5, 1, "", 0, 0));
+    println(render_snippet_ctx(src, 2, 9, 99, "tail", 0, 0));
+    return 0;
+}

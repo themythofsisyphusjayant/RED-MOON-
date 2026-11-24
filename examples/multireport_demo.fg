@@ -1,0 +1,11 @@
+import "multireport.fg";
+
+fn main() -> int {
+    let mut m: MultiError = mr_new();
+    m = mr_add(m, "E001", "unexpected token", "src/main.fg", 1, 9);
+    m = mr_add(m, "E002", "name not found", "lib/util.fg", 2, 5);
+    println(mr_render(m));
+    println(mr_json(m));
+    println(mr_render(mr_new()));
+    return 0;
+}

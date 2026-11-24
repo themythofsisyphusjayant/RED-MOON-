@@ -1,0 +1,32 @@
+import "comp.fg";
+
+fn sq(x: int) -> int {
+    return x * x;
+}
+
+fn is_even(x: int) -> bool {
+    return x % 2 == 0;
+}
+
+fn dbl(x: int) -> int {
+    return x * 2;
+}
+
+fn main() -> int {
+    let sqs: [int] = comp_range_map(5, sq);
+    println(len(sqs));
+    println(sqs[0]);
+    println(sqs[1]);
+    println(sqs[4]);
+    let xs: [int] = [1, 2, 3, 4, 5, 6];
+    let ev2: [int] = comp_filter_map(xs, is_even, dbl);
+    println(len(ev2));
+    println(ev2[0]);
+    println(ev2[1]);
+    println(ev2[2]);
+    let evs: [int] = comp_range_filter(10, is_even);
+    println(len(evs));
+    println(evs[0]);
+    println(evs[4]);
+    return 0;
+}

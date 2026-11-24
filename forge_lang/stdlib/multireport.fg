@@ -1,0 +1,66 @@
+// Qasida — multi-error reporting (Top-500 #342).
+// Import with: import "multireport.fg";
+// Aggregate checker-style errors into one report: MultiError holds
+// parallel arrays (codes, messages, files, lines, cols); mr_add is
+// the only writer, so the arrays stay in sync. mr_render prints a
+// "N errors:" header plus numbered "[E001] message (file:line:col)"
+// lines; mr_json renders the same report as JSON via errors_to_json
+// from errjson.fg (#341). mr_add returns a new value — the input is
+// unchanged — so reports accumulate by rebinding.
+// v1 limits: library-side ONLY — it does NOT hook the checker (the
+// checker still emits plain text, first error only); parallel arrays
+// must stay in sync (mr_add is the only writer).
+// Verified 24 Nov 2026 (Sprint Day 4).
+import "errjson.fg";
+
+struct MultiError {
+    codes: [str];
+    messages: [str];
+    files: [str];
+    lines: [int];
+    cols: [int];
+}
+
+fn mr_new() -> MultiError {
+    let m: MultiError = MultiError { codes: [], messages: [], files: [], lines: [], cols: [] };
+    return m;
+}
+
+fn mr_add(m: MultiError, code: str, message: str, file: str, line: int, col: int) -> MultiError {
+    let mut r: MultiError = m;
+    let mut codes = r.codes;
+    push(codes, code);
+    r.codes = codes;
+    let mut messages = r.messages;
+    push(messages, message);
+    r.messages = messages;
+    let mut files = r.files;
+    push(files, file);
+    r.files = files;
+    let mut lines = r.lines;
+    push(lines, line);
+    r.lines = lines;
+    let mut cols = r.cols;
+    push(cols, col);
+    r.cols = cols;
+    return r;
+}
+
+fn mr_count(m: MultiError) -> int {
+    return len(m.codes);
+}
+
+fn mr_render(m: MultiError) -> str {
+    let n: int = len(m.codes);
+    let mut out: str = ej_int_str(n) + " errors:";
+    let mut i: int = 0;
+    while i < n {
+        out = out + "\n" + ej_int_str(i + 1) + ". [" + m.codes[i] + "] " + m.messages[i] + " (" + m.files[i] + ":" + ej_int_str(m.lines[i]) + ":" + ej_int_str(m.cols[i]) + ")";
+        i = i + 1;
+    }
+    return out;
+}
+
+fn mr_json(m: MultiError) -> str {
+    return errors_to_json(m.codes, m.messages, m.files, m.lines, m.cols);
+}

@@ -1,0 +1,25 @@
+// Qasida — match guards (Top-500 #65).
+// Import with: import "matchguard.fg";
+// Predicate-dispatch over (value, predicate, action) tables:
+// mg_match_int walks the predicate table in order and returns
+// the first matching action's result; the fallback is returned
+// when no predicate matches. This is conditions on match arms
+// for int values, expressed as tables instead of syntax.
+// v1 limits: no exhaustiveness checking (the fallback is the
+// catch-all, unchecked); no pattern bindings (predicates see
+// only the value); no enum/adt dispatch; int values only; a
+// predicate with no paired action is skipped.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+fn mg_match_int(x: int, preds: [fn(int) -> bool], actions: [fn(int) -> str], fallback: str) -> str {
+    let mut i: int = 0;
+    while i < len(preds) {
+        if i < len(actions) {
+            if preds[i](x) {
+                return actions[i](x);
+            }
+        }
+        i = i + 1;
+    }
+    return fallback;
+}

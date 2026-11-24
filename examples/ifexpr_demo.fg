@@ -1,0 +1,54 @@
+import "ifexpr.fg";
+
+fn ten() -> int {
+    return 10;
+}
+
+fn twenty() -> int {
+    return 20;
+}
+
+fn yes() -> str {
+    return "yes";
+}
+
+fn no() -> str {
+    return "no";
+}
+
+fn tru() -> bool {
+    return true;
+}
+
+fn fls() -> bool {
+    return false;
+}
+
+fn main() -> int {
+    println(ite_int(true, 1, 2));
+    println(ite_int(false, 1, 2));
+    println(ite_str(true, "yes", "no"));
+    println(ite_str(false, "yes", "no"));
+    println(ite_bool(true, true, false));
+    println(ite_bool(false, true, false));
+    println(ite_lazy_int(true, ten, twenty));
+    println(ite_lazy_int(false, ten, twenty));
+    println(ite_lazy_str(false, yes, no));
+    println(ite_lazy_bool(true, tru, fls));
+    let hits: [int] = [0, 0];
+    let t = fn() -> int {
+        hits[0] = hits[0] + 1;
+        return 10;
+    };
+    let e = fn() -> int {
+        hits[1] = hits[1] + 1;
+        return 20;
+    };
+    println(ite_lazy_int(false, t, e));
+    println(hits[0]);
+    println(hits[1]);
+    println(ite_int(false, t(), e()));
+    println(hits[0]);
+    println(hits[1]);
+    return 0;
+}

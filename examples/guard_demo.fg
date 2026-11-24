@@ -1,0 +1,34 @@
+import "guard.fg";
+
+fn checked(x: int) -> Result<int, str> {
+    let _g: int = guard_true(x > 0, "x must be positive")?;
+    let _h: int = guard_positive(x, "x must be positive")?;
+    return Result { ok: true, value: x * 2, error: "" };
+}
+
+fn checked2(x: int) -> Result<int, str> {
+    let _g: int = guard_false(x == 0, "x must not be zero")?;
+    return Result { ok: true, value: x + 1, error: "" };
+}
+
+fn main() -> int {
+    let r1: Result<int, str> = checked(5);
+    println(r1.value);
+    let r2: Result<int, str> = checked(0);
+    println(r2.ok);
+    println(r2.error);
+    let r3: Result<int, str> = checked(0 - 3);
+    println(r3.error);
+    let r4: Result<int, str> = checked2(0);
+    println(r4.ok);
+    println(r4.error);
+    let r5: Result<int, str> = checked2(9);
+    println(r5.value);
+    let ok: Result<int, str> = Result { ok: true, value: 7, error: "" };
+    let g: Result<int, str> = guard_ok(ok);
+    println(g.value);
+    let err: Result<int, str> = Result { ok: false, value: 0, error: "bad" };
+    let g2: Result<int, str> = guard_ok(err);
+    println(g2.error);
+    return 0;
+}

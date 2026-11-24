@@ -1,0 +1,37 @@
+import "dict.fg";
+
+fn main() -> int {
+    let mut d: Dict = dict_new();
+    d = dict_set(d, "alpha", 10);
+    d = dict_set(d, "beta", 20);
+    d = dict_set(d, "gamma", 30);
+    println(dict_len(d));
+    println(opt_value_or(dict_get(d, "beta"), -1));
+    println(opt_value_or(dict_get(d, "delta"), -1));
+    println(dict_has(d, "alpha"));
+    println(dict_has(d, "delta"));
+    d = dict_set(d, "beta", 99);
+    println(opt_value_or(dict_get(d, "beta"), -1));
+    println(dict_len(d));
+    d = dict_remove(d, "alpha");
+    println(dict_len(d));
+    println(dict_has(d, "alpha"));
+    let ks: [str] = dict_keys(d);
+    println(ks[0]);
+    println(ks[1]);
+    let vs: [int] = dict_values(d);
+    println(vs[0]);
+    println(vs[1]);
+    d = dict_remove(d, "delta");
+    println(dict_len(d));
+    let mut ds: DictStr = dictstr_new();
+    ds = dictstr_set(ds, "name", "jayant");
+    ds = dictstr_set(ds, "city", "gorakhpur");
+    println(opt_value_or(dictstr_get(ds, "name"), "?"));
+    println(opt_value_or(dictstr_get(ds, "nope"), "?"));
+    println(dictstr_len(ds));
+    println(dictstr_has(ds, "city"));
+    ds = dictstr_set(ds, "name", "bunny");
+    println(opt_value_or(dictstr_get(ds, "name"), "?"));
+    return 0;
+}

@@ -1,0 +1,46 @@
+// Qasida — loop else (Top-500 #73).
+// Import with: import "loopelse.fg";
+// A Python-style loop-else as a library helper over function
+// values, with state threaded through a shared [int] buffer
+// the caller owns:
+//   le_run(body, on_else) -> int
+// Body returns a code each iteration: 0 = continue, 1 = break,
+// 2 = done-cleanly. on_else runs ONLY on clean completion
+// (code 2); on break it is skipped. le_run returns 0 if the
+// else-branch ran (clean completion) and 1 if the loop broke
+// out. The else-branch's own result is observed via shared
+// state or its own println — it is NOT returned, because a
+// return value of -1 or any other sentinel could collide with
+// a legitimate else value.
+// A body closure CANNOT mutate an outer scalar counter
+// (checker error: closures capture by value; captured
+// variables are read-only in v1) — shared-buffer state
+// threading is the v1 pattern. Arrays are shared by handle,
+// so buf[0] = buf[0] + 1 inside a closure is visible outside.
+// v1 limits: no loop-else syntax — helper over fn values
+// only; state must live in a caller-owned [int] buffer (no
+// captured-scalar mutation); the else-branch result flows
+// through shared state or side effects, not the return
+// value; body codes other than 0/1/2 are treated as continue
+// (0); no break/continue out of the helper itself. Known
+// compiler bug (Python compiler only, NOT a lib limit): a
+// closure that only WRITES a captured array element, e.g.
+// buf[0] = 7 with no read of buf, fails to compile ("'buf'
+// undeclared") — the capture analysis misses write-only
+// captures. Workaround: read the element too, e.g.
+// buf[0] = buf[0] + 7. Hosted compiler is unaffected.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+fn le_run(body: fn() -> int, on_else: fn() -> int) -> int {
+    while true {
+        let code: int = body();
+        if code == 1 {
+            return 1;
+        }
+        if code == 2 {
+            on_else();
+            return 0;
+        }
+    }
+    return 1;
+}

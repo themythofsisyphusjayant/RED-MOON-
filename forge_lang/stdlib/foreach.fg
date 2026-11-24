@@ -1,0 +1,41 @@
+// Qasida — for-each over iterators and string chars (Top-500 #66).
+// Import with: import "foreach.fg";
+// fe_each applies body to each element of an Iter in order and
+// returns the count; fe_each_str applies body to each character
+// of a string (as a 1-char str) and returns the count;
+// fe_map_iter maps f over an Iter and returns the [int] results
+// (via hof.fg map over the remaining elements).
+// v1 limits: no maps/sets/generators (no such types exist yet in
+// the language); int elements + str chars only; `for` already
+// covers [int] directly, so these helpers exist for Iter values
+// and string chars, which `for` does not provide.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+import "iter.fg";
+import "hof.fg";
+
+fn fe_each(it: Iter, body: fn(int) -> int) -> int {
+    let mut count: int = 0;
+    let mut cur: Iter = it;
+    while it_has_next(cur) {
+        body(it_current(cur));
+        count = count + 1;
+        cur = it_next(cur);
+    }
+    return count;
+}
+
+fn fe_each_str(s: str, body: fn(str) -> int) -> int {
+    let mut count: int = 0;
+    let mut i: int = 0;
+    while i < len(s) {
+        body(substr(s, i, 1));
+        count = count + 1;
+        i = i + 1;
+    }
+    return count;
+}
+
+fn fe_map_iter(it: Iter, f: fn(int) -> int) -> [int] {
+    return map(it_take(it, it_count(it)), f);
+}

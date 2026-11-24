@@ -1,0 +1,57 @@
+// Qasida — if-as-expression helpers (Top-500 #71).
+// Import with: import "ifexpr.fg";
+// Eager ternary helpers (ite_int / ite_str / ite_bool) pick one of
+// two values by a bool condition, and lazy variants (ite_lazy_*)
+// pick one of two zero-argument functions and call only that one.
+//   ite_int(c, a, b)      -> a if c else b
+//   ite_lazy_int(c, t, e) -> t() if c else e()
+// PLAIN WARNING: the eager ite_* evaluate BOTH branches before the
+// call (they are values, not expressions) — use the lazy variants
+// when a branch has side effects or cost.
+// v1 limits: int / str / bool only (concrete variants; no generic
+// helper — generic helpers returning structs with array fields leak
+// under the hosted codegen, #51); no short-circuit in the eager
+// forms by design.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+fn ite_int(cond: bool, a: int, b: int) -> int {
+    if cond {
+        return a;
+    }
+    return b;
+}
+
+fn ite_str(cond: bool, a: str, b: str) -> str {
+    if cond {
+        return a;
+    }
+    return b;
+}
+
+fn ite_bool(cond: bool, a: bool, b: bool) -> bool {
+    if cond {
+        return a;
+    }
+    return b;
+}
+
+fn ite_lazy_int(cond: bool, then_fn: fn() -> int, else_fn: fn() -> int) -> int {
+    if cond {
+        return then_fn();
+    }
+    return else_fn();
+}
+
+fn ite_lazy_str(cond: bool, then_fn: fn() -> str, else_fn: fn() -> str) -> str {
+    if cond {
+        return then_fn();
+    }
+    return else_fn();
+}
+
+fn ite_lazy_bool(cond: bool, then_fn: fn() -> bool, else_fn: fn() -> bool) -> bool {
+    if cond {
+        return then_fn();
+    }
+    return else_fn();
+}

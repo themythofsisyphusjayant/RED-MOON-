@@ -1,0 +1,126 @@
+// Qasida — source snippets with context lines (Top-500 #345).
+// Import with: import "snippet.fg";
+// Builds on errrender.fg (#54): render_snippet_ctx renders the error
+// line exactly as render_snippet does (gutter-aligned line number,
+// caret underline and label) plus up to `before` context lines above
+// and `after` below (same gutter width, no carets); render_error_ctx
+// composes the full block (code, message, file:line:col header plus
+// the context snippet), mirroring render_error. Line numbers are
+// right-aligned to the width of the largest line number shown. A
+// span that runs past the end of the error line is clamped to the
+// line end (as in #54) and the caret line gains a "(+N more lines)"
+// note counting how many following lines the span would have
+// reached. Out-of-range line/col/span and context counts are
+// clamped, never fatal.
+// v1 limits: single-line caret underline only (the span never
+// underlines across lines — the "(+N more lines)" note is the only
+// multi-line signal); pure string functions over caller-supplied
+// source; no file reading; no colour/ANSI.
+// Verified 24 Nov 2026 (Sprint Day 4).
+import "errrender.fg";
+
+fn sn_pad_num(n: int, width: int) -> str {
+    let s: str = er_int_str(n);
+    return er_spaces(width - len(s)) + s;
+}
+
+fn sn_more_lines(lines: [str], ln: int, c: int, sp: int) -> int {
+    let text: str = lines[ln - 1];
+    let mut rem: int = c + sp - 1 - len(text);
+    if rem <= 0 {
+        return 0;
+    }
+    let mut extra: int = 0;
+    let mut j: int = ln;
+    while rem > 0 && j < len(lines) {
+        j = j + 1;
+        extra = extra + 1;
+        rem = rem - len(lines[j - 1]) - 1;
+    }
+    return extra;
+}
+
+fn render_snippet_ctx(source: str, line: int, col: int, span: int, label: str, before: int, after: int) -> str {
+    let lines: [str] = split(source, "\n");
+    if len(lines) == 0 {
+        return "";
+    }
+    let mut ln: int = line;
+    if ln < 1 {
+        ln = 1;
+    }
+    if ln > len(lines) {
+        ln = len(lines);
+    }
+    let text: str = lines[ln - 1];
+    let mut c: int = col;
+    if c < 1 {
+        c = 1;
+    }
+    if c > len(text) + 1 {
+        c = len(text) + 1;
+    }
+    let mut sp: int = span;
+    if sp < 1 {
+        sp = 1;
+    }
+    let more: int = sn_more_lines(lines, ln, c, sp);
+    if c + sp - 1 > len(text) {
+        sp = len(text) - c + 1;
+    }
+    if sp < 1 {
+        sp = 1;
+    }
+    let mut b: int = before;
+    if b < 0 {
+        b = 0;
+    }
+    let mut a: int = after;
+    if a < 0 {
+        a = 0;
+    }
+    let mut first: int = ln - b;
+    if first < 1 {
+        first = 1;
+    }
+    let mut last: int = ln + a;
+    if last > len(lines) {
+        last = len(lines);
+    }
+    let width: int = len(er_int_str(last));
+    let mut out: str = "";
+    let mut i: int = first;
+    while i <= last {
+        if i > first {
+            out = out + "\n";
+        }
+        out = out + sn_pad_num(i, width) + " | " + lines[i - 1];
+        if i == ln {
+            let gutter: str = er_spaces(width);
+            let mut caret: str = gutter + " | " + er_spaces(c - 1) + er_carets(sp) + er_label_suffix(label);
+            if more > 0 {
+                caret = caret + " (+" + er_int_str(more) + " more lines)";
+            }
+            out = out + "\n" + caret;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn render_error_ctx(code: str, message: str, file: str, source: str, line: int, col: int, span: int, label: str, before: int, after: int) -> str {
+    let lines: [str] = split(source, "\n");
+    let mut ln: int = line;
+    if ln < 1 {
+        ln = 1;
+    }
+    if len(lines) > 0 && ln > len(lines) {
+        ln = len(lines);
+    }
+    let mut c: int = col;
+    if c < 1 {
+        c = 1;
+    }
+    let head: str = code + ": " + message + "\n  --> " + file + ":" + er_int_str(ln) + ":" + er_int_str(c);
+    return head + "\n" + render_snippet_ctx(source, ln, c, span, label, before, after);
+}

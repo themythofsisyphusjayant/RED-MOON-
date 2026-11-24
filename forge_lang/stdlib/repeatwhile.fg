@@ -1,0 +1,51 @@
+// Qasida — repeat-while loops (Top-500 #68).
+// Import with: import "repeatwhile.fg";
+// Run-once-then-check loops over function values, with state
+// threaded through a shared [int] buffer the caller owns:
+//   rw_run(body, cond)   -> run body once, then while cond()
+//                           run body again; return the total
+//                           iteration count.
+//   rw_until(body, cond) -> same loop, repeat until cond() is
+//                           true; return the total iteration
+//                           count.
+// Body and cond close over the same shared buffer. A body
+// closure CANNOT mutate an outer scalar counter (checker error:
+// closures capture by value; captured variables are read-only
+// in v1) — shared-buffer state threading is the v1 pattern.
+// Arrays are shared by handle, so buf[0] = buf[0] + 1 inside
+// a closure is visible outside.
+// v1 limits: no repeat-while syntax — helpers over fn values
+// only; state must live in a caller-owned [int] buffer (no
+// captured-scalar mutation); the body's int return value is
+// ignored by the loop (use the buffer to observe state); no
+// break/continue out of the helpers; cond is evaluated after
+// every body call, including the first. Known compiler bug
+// (Python compiler only, NOT a lib limit): a closure that
+// only WRITES a captured array element, e.g. buf[0] = 7 with
+// no read of buf, fails to compile ("'buf' undeclared") —
+// the capture analysis misses write-only captures.
+// Workaround: read the element too, e.g. buf[0] = buf[0] + 7.
+// Hosted compiler is unaffected.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+fn rw_run(body: fn() -> int, cond: fn() -> bool) -> int {
+    let mut n: int = 0;
+    n = n + 1;
+    body();
+    while cond() {
+        body();
+        n = n + 1;
+    }
+    return n;
+}
+
+fn rw_until(body: fn() -> int, cond: fn() -> bool) -> int {
+    let mut n: int = 0;
+    n = n + 1;
+    body();
+    while !cond() {
+        body();
+        n = n + 1;
+    }
+    return n;
+}

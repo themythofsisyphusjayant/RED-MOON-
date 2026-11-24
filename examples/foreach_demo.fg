@@ -1,0 +1,26 @@
+import "foreach.fg";
+import "iter.fg";
+
+fn show_num(x: int) -> int {
+    println(x);
+    return x;
+}
+
+fn show_ch(c: str) -> int {
+    println(c);
+    return 1;
+}
+
+fn triple(x: int) -> int {
+    return x * 3;
+}
+
+fn main() -> int {
+    println(fe_each(it_new([10, 20, 30]), show_num));
+    println(fe_each_str("hi", show_ch));
+    let mapped: [int] = fe_map_iter(it_new([1, 2, 3]), triple);
+    for x in mapped {
+        println(x);
+    }
+    return 0;
+}

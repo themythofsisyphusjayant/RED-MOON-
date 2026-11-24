@@ -1,0 +1,42 @@
+import "matchguard.fg";
+import "fmtstr.fg";
+
+fn is_neg(x: int) -> bool {
+    return x < 0;
+}
+
+fn is_zero(x: int) -> bool {
+    return x == 0;
+}
+
+fn is_big(x: int) -> bool {
+    return x > 100;
+}
+
+fn say_neg(x: int) -> str {
+    return "neg " + fs_int_str(x);
+}
+
+fn say_zero(x: int) -> str {
+    return "zero";
+}
+
+fn say_big(x: int) -> str {
+    return "big " + fs_int_str(x);
+}
+
+fn main() -> int {
+    let mut preds: [fn(int) -> bool] = [];
+    push(preds, is_neg);
+    push(preds, is_zero);
+    push(preds, is_big);
+    let mut actions: [fn(int) -> str] = [];
+    push(actions, say_neg);
+    push(actions, say_zero);
+    push(actions, say_big);
+    println(mg_match_int(-5, preds, actions, "other"));
+    println(mg_match_int(0, preds, actions, "other"));
+    println(mg_match_int(200, preds, actions, "other"));
+    println(mg_match_int(7, preds, actions, "other"));
+    return 0;
+}

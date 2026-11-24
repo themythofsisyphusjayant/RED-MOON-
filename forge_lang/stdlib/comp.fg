@@ -1,0 +1,36 @@
+// Qasida — comprehension-style helpers (Top-500 #128).
+// Import with: import "comp.fg";
+// Range / filter / map helpers over [int], built on the
+// higher-order map/filter of hof.fg (item 102) and driven by
+// function values (item 103) — named functions or lambdas.
+//   comp_range_map(n, f) -> [f(i) for i in 0..n)
+//   comp_filter_map(xs, pred, f) -> [f(x) for x in xs if pred(x)]
+//   comp_range_filter(n, pred) -> [i for i in 0..n if pred(i)]
+// v1 limits: NO comprehension syntax (that is a parser feature —
+// these helpers are the library spelling); int arrays only.
+// Verified 24 Nov 2026 (Sprint Day 4).
+import "hof.fg";
+
+fn comp_range_map(n: int, f: fn(int) -> int) -> [int] {
+    let mut xs: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(xs, i);
+        i = i + 1;
+    }
+    return map(xs, f);
+}
+
+fn comp_filter_map(xs: [int], pred: fn(int) -> bool, f: fn(int) -> int) -> [int] {
+    return map(filter(xs, pred), f);
+}
+
+fn comp_range_filter(n: int, pred: fn(int) -> bool) -> [int] {
+    let mut xs: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(xs, i);
+        i = i + 1;
+    }
+    return filter(xs, pred);
+}

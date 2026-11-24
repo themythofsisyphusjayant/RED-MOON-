@@ -1,0 +1,29 @@
+import "loopelse.fg";
+
+fn main() -> int {
+    let buf: [int] = [0];
+    let body = fn() -> int {
+        buf[0] = buf[0] + 1;
+        println(buf[0]);
+        if buf[0] >= 2 {
+            return 1;
+        }
+        return 0;
+    };
+    let els = fn() -> int {
+        println(99);
+        return 0;
+    };
+    println(le_run(body, els));
+    let buf2: [int] = [0];
+    let body2 = fn() -> int {
+        buf2[0] = buf2[0] + 1;
+        println(buf2[0]);
+        if buf2[0] >= 3 {
+            return 2;
+        }
+        return 0;
+    };
+    println(le_run(body2, els));
+    return 0;
+}

@@ -1,0 +1,53 @@
+// Qasida — if-let / while-let helpers (Top-500 #63).
+// Import with: import "iflet.fg";
+// Branch on a Result or an Option by value instead of nesting
+// ifs, and loop while a step keeps producing values:
+//   iflet_ok(r, on_ok, on_err)       -> on_ok(r.value) or on_err(r.error)
+//   iflet_some(o, on_some, on_none)  -> on_some(o.value) or on_none()
+//   wl_step(first, has_next, next, body) -> count of values consumed
+// wl_step is the while-let loop: while has_next(cur) { body(cur);
+// cur = next(cur); }. It returns the COUNT of values consumed.
+// v1 limits: concrete over Result<int, str> and Option<int> only.
+// The direct step form next: fn(int) -> Option<int> is NOT
+// buildable (both compilers fail to emit the fn typedef for a
+// generic-struct return), so the step is split into has_next +
+// next_value. Body results are discarded; collect them through a
+// shared array buffer (index assignment into a captured array is
+// visible to the caller; push is not).
+// PYTHON-COMPILER CAVEAT: the Python compiler only emits the C
+// typedef for a generic-struct instantiation (Option<int>,
+// Result<int, str>) when the MAIN program mentions that type —
+// a program that imports this lib but only uses one side (e.g.
+// only iflet_ok) fails to compile under Python with "unknown
+// type name Option_int". Workaround: declare a dummy of the
+// other type in main, e.g. let _o: Option<int> = Option {
+// present: false, value: 0 };. The hosted compiler is unaffected.
+// Verified 24 Nov 2026 (Sprint Day 4).
+
+import "option.fg";
+import "result.fg";
+
+fn iflet_ok(r: Result<int, str>, on_ok: fn(int) -> int, on_err: fn(str) -> int) -> int {
+    if r.ok {
+        return on_ok(r.value);
+    }
+    return on_err(r.error);
+}
+
+fn iflet_some(o: Option<int>, on_some: fn(int) -> int, on_none: fn() -> int) -> int {
+    if o.present {
+        return on_some(o.value);
+    }
+    return on_none();
+}
+
+fn wl_step(first: int, has_next: fn(int) -> bool, next: fn(int) -> int, body: fn(int) -> int) -> int {
+    let mut count: int = 0;
+    let mut cur: int = first;
+    while has_next(cur) {
+        let _b: int = body(cur);
+        count = count + 1;
+        cur = next(cur);
+    }
+    return count;
+}

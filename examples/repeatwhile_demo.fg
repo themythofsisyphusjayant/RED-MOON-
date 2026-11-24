@@ -1,0 +1,25 @@
+import "repeatwhile.fg";
+
+fn main() -> int {
+    let buf: [int] = [3];
+    let body = fn() -> int {
+        println(buf[0]);
+        buf[0] = buf[0] - 1;
+        return buf[0];
+    };
+    let cond = fn() -> bool {
+        return buf[0] > 0;
+    };
+    println(rw_run(body, cond));
+    let buf2: [int] = [0];
+    let body2 = fn() -> int {
+        buf2[0] = buf2[0] + 1;
+        println(buf2[0]);
+        return buf2[0];
+    };
+    let cond2 = fn() -> bool {
+        return buf2[0] >= 3;
+    };
+    println(rw_until(body2, cond2));
+    return 0;
+}

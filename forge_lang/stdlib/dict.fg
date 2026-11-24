@@ -1,0 +1,181 @@
+// Qasida — string-keyed dictionary (Top-500 #127).
+// Import with: import "dict.fg";
+// A Dict is parallel key/value arrays, rebuilt on every
+// update (same copy-on-write shape as counter.fg): dict_set
+// and dict_remove return a new Dict; the input is untouched.
+//   dict_new() -> Dict
+//   dict_set(d, k, v) -> Dict   (insert, or overwrite the value)
+//   dict_get(d, k) -> Option<int> (opt_some(v) if present, else absent)
+//   dict_has(d, k) -> bool
+//   dict_remove(d, k) -> Dict   (no-op when the key is absent)
+//   dict_keys(d) -> [str], dict_values(d) -> [int], dict_len(d) -> int
+// DictStr is the same shape with str values: dictstr_new /
+// dictstr_set / dictstr_get / dictstr_has / dictstr_remove /
+// dictstr_keys / dictstr_values / dictstr_len.
+// v1 limits: NO literal syntax (that is a parser feature — build
+// with dict_set calls); string keys only; int values only in Dict,
+// str values only in DictStr; linear lookup (no hashing).
+// Verified 24 Nov 2026 (Sprint Day 4).
+import "option.fg";
+
+struct Dict {
+    keys: [str];
+    values: [int];
+}
+
+fn dict_new() -> Dict {
+    return Dict { keys: [], values: [] };
+}
+
+fn dict_set(d: Dict, k: str, v: int) -> Dict {
+    let mut keys: [str] = [];
+    let mut values: [int] = [];
+    let mut found: bool = false;
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        push(keys, d.keys[i]);
+        if d.keys[i] == k {
+            push(values, v);
+            found = true;
+        } else {
+            push(values, d.values[i]);
+        }
+        i = i + 1;
+    }
+    if found == false {
+        push(keys, k);
+        push(values, v);
+    }
+    return Dict { keys: keys, values: values };
+}
+
+fn dict_get(d: Dict, k: str) -> Option<int> {
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            return opt_some(d.values[i]);
+        }
+        i = i + 1;
+    }
+    return Option { present: false, value: 0 };
+}
+
+fn dict_has(d: Dict, k: str) -> bool {
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn dict_remove(d: Dict, k: str) -> Dict {
+    let mut keys: [str] = [];
+    let mut values: [int] = [];
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            i = i + 1;
+        } else {
+            push(keys, d.keys[i]);
+            push(values, d.values[i]);
+            i = i + 1;
+        }
+    }
+    return Dict { keys: keys, values: values };
+}
+
+fn dict_keys(d: Dict) -> [str] {
+    return d.keys;
+}
+
+fn dict_values(d: Dict) -> [int] {
+    return d.values;
+}
+
+fn dict_len(d: Dict) -> int {
+    return len(d.keys);
+}
+
+struct DictStr {
+    keys: [str];
+    values: [str];
+}
+
+fn dictstr_new() -> DictStr {
+    return DictStr { keys: [], values: [] };
+}
+
+fn dictstr_set(d: DictStr, k: str, v: str) -> DictStr {
+    let mut keys: [str] = [];
+    let mut values: [str] = [];
+    let mut found: bool = false;
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        push(keys, d.keys[i]);
+        if d.keys[i] == k {
+            push(values, v);
+            found = true;
+        } else {
+            push(values, d.values[i]);
+        }
+        i = i + 1;
+    }
+    if found == false {
+        push(keys, k);
+        push(values, v);
+    }
+    return DictStr { keys: keys, values: values };
+}
+
+fn dictstr_get(d: DictStr, k: str) -> Option<str> {
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            return opt_some(d.values[i]);
+        }
+        i = i + 1;
+    }
+    return Option { present: false, value: "" };
+}
+
+fn dictstr_has(d: DictStr, k: str) -> bool {
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn dictstr_remove(d: DictStr, k: str) -> DictStr {
+    let mut keys: [str] = [];
+    let mut values: [str] = [];
+    let mut i: int = 0;
+    while i < len(d.keys) {
+        if d.keys[i] == k {
+            i = i + 1;
+        } else {
+            push(keys, d.keys[i]);
+            push(values, d.values[i]);
+            i = i + 1;
+        }
+    }
+    return DictStr { keys: keys, values: values };
+}
+
+fn dictstr_keys(d: DictStr) -> [str] {
+    return d.keys;
+}
+
+fn dictstr_values(d: DictStr) -> [str] {
+    return d.values;
+}
+
+fn dictstr_len(d: DictStr) -> int {
+    return len(d.keys);
+}
