@@ -1,0 +1,9 @@
+fn main() -> int {
+    let x: int = 1;
+    let x: int = x + 1;
+    println(x);
+    let s: str = "a";
+    let s: str = s + "b";
+    println(s);
+    return 0;
+}

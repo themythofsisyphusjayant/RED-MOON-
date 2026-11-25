@@ -1978,3 +1978,109 @@ build 114): 1 PARTIAL-to-HAVE (#67) + 1 GAP-to-HAVE (#76);
 386 + 2 = 388; 10 - 1 = 9; 104 - 1 = 103; 112 = 9 + 103
 (388 + 9 + 103 = 500). HAVE 388 of 500 = 77.6%.
 Next: #69/#70/#72/#74.
+## #490 Trailing commas (GAP → HAVE), #494 Shadowing (GAP → HAVE), #496 Underscore for unused bindings (GAP → HAVE) — Sprint Day 5 (25 Nov 2026)
+
+Three ergonomics items, all in both compilers.
+
+#490 Trailing commas: the parser now accepts a trailing comma in
+array literals, call args, struct literals, tuple literals, fn
+params, fn types, generic type args, method-call args, enum/struct
+declarations and match arms (the last two already accepted them).
+Python parser (forge_lang/parser.py, 12 comma loops + the tuple
+loop); hosted parser (examples/selfhost_parse.fg, 10 comma loops +
+the tuple loop). Double and leading commas still error. A
+1-tuple literal `(1,)` now fails with a clear error in both
+compilers ("tuple literals need at least two elements") — found
+while implementing: it previously parsed as a 1-tuple and fell
+through to a confusing checker error. Own test
+tests/test_trailing_commas_v1.py 30/30 ALL PASS both compilers
+(10 OK x2 incl. nested trailing commas and enum/struct-decl
+regression; 4 error x2 incl. double comma, leading comma,
+1-tuple); demo examples/trailing_commas_demo.fg.
+
+#494 Shadowing: same-scope `let x = x + 1` now rebinds — the RHS
+reads the OLD binding and the new binding takes over from here.
+Same type only in v1 (a type change is a named error: "cannot
+shadow '<name>' with a different type in v1 (was <old>, now
+<new>)"); shadowing a pinned variable is an error; an
+empty-array-literal rebind needs an annotation (same rule as a
+fresh empty let — the infer pass only propagates annotations).
+Lowering: a rebind emits the Assign path (temp-first, free the
+old value, take the new one) instead of a second C declaration.
+Python side: checker sets A.Let.rebind (forge_lang/ast_nodes.py,
+checker.py, codegen.py). Hosted side: checker computes the rebind
+from a per-block scope mark (scope_marks in selfhost_check.fg)
+and the codegen detects it from its own per-block let set
+(blk_let_names/blk_let_marks in selfhost_codegen.fg, truncated
+at block exit so sibling blocks' lets never leak into the scan).
+Loop-variable shadowing stays an error in the Python checker
+(the C initializer would read the new variable, not the loop
+var); the hosted checker still accepts it (pre-existing
+divergence, documented not fixed). big32 and WASM need no change
+(their Let handlers re-allocate and overwrite the env entry, so
+re-lets already work). Own test tests/test_shadowing_v1.py 34/34
+ALL PASS both compilers (12 OK x2 incl. int/str/array/struct
+rebinds, chained rebinds, loop-body and if-branch rebinds,
+nested-block shadow, let-mut rebind, annotated empty-array
+rebind, moved-then-revived str; 4 error x2 incl. type change
+both ways, pinned shadow, unannotated empty-literal rebind;
+loop-var duplicate error Python-only); demo
+examples/shadowing_demo.fg.
+
+#496 Underscore for unused bindings: VERIFICATION slice — already
+HAVE. `_`-prefixed bindings compile and run in both compilers,
+and there is NO unused-variable warning mechanism at all (zero
+occurrences of "warning" in the checkers), so the silencing half
+holds vacuously. Own test tests/test_underscore_unused_v1.py 15/15
+ALL PASS both compilers (7 OK cases x2 + fmt check); demo
+examples/underscore_demo.fg.
+
+Gates 25 Nov (live binary md5 49bcf8ea35d358e68da5731da9d10de3,
+19,258,112 bytes, installed to bin/ + forge_lang/bin/ — a fresh
+link of the same sources as the coordinator's final2 build
+ddcb8304; the parent's v69 build 88ad6504 was the intermediate):
+own tests 34/34 + 30/30 + 15/15 = 79/79 ALL PASS both compilers;
+bootstrap 7/7 byte-identical under ulimit -s 65536 (lex 90709,
+parse 857078, check 7838465, infer 8921499, codegen 28306488,
+header 113790, cli 28549785 — codegen/cli larger than #62/#67
+because the hosted sources grew); parity 124/124 agree +
+byte-identical; corpus 99/99; regression 62/62; fuzz existing
+102/102 both modes (67 safe, 35 trap cases); full suite
+run_tests.py hosted: only the known scope_demo println-
+interleaving flake (2 failures in the logged re-run, 3 in the
+first run; direct 4x reruns show the worker order swapping in
+BOTH compilers — a race in the test's strict ordering, not a
+regression), python: ALL PASS; run_big32_tests.py ALL PASS;
+test-file battery hosted 117/123 + python 117/123 (the 6 fails in
+both are exactly the known big32-sub-case files: checked_casts,
+opaques, readonly, sizedarrays, sizedunif_fix, top500_batch1); ASan program-side 64/64 clean (32 programs x 2
+modes, leak detection on); fmt: the 3 new demos idempotent
+(the selfhost sources are not fmt-formatted in-tree — fmt strips
+// comments and re-indents them wholesale, pre-existing);
+benchmarks tick q_safe 2352 us vs c_o3 2482 (0.95x), matmul
+q_safe 13318 us vs c_o3 66050 (0.20x) — no regression (c_o3's
+matmul median is noisy across runs: 33363 in the #67 run, 66050
+here; q_safe is stable ~13300-13700). Honest notes: (1) the
+first bootstrap run against the intermediate binary failed 5/7
+byte-compare — the hosted codegen's rebind scan leaked sibling
+blocks' lets (blk_let_names was never truncated); fixed by
+truncating at gen_block exit and re-verified 7/7 on the final
+binary. (2) A nested-block shadow whose RHS reads the shadowed
+name (`{ let x = x + 1; }`) miscompiles in BOTH compilers today
+(C scoping: the initializer reads the new variable itself) —
+pre-existing, needs its own slice (temp-first evaluation for
+shadowing lets). (3) A `let s: str` inside a non-payload enum
+match arm fails in both compilers (scope-end free of an
+undeclared __forge_moved_s — the plain-enum match path doesn't
+push an owned frame per arm) — pre-existing, not fixed here.
+(4) Type-changing shadowing is rejected in v1; use a nested
+block instead.
+
+Counts after the flips: HAVE 391, PARTIAL 9, GAP 100, to build 109.
+Arithmetic from the #67/#76 entry (HAVE 388, PARTIAL 9, GAP 103, to
+build 112): 3 GAP-to-HAVE (#490, #494, #496); 388 + 3 = 391;
+103 - 3 = 100; 112 - 3 = 109 (391 + 9 + 100 = 500). HAVE 391 of
+500 = 78.2%.
+Next: #69 value patterns (Jayant approved 25 Nov: "Build as
+recommended — structs in, guards out"; design doc not in the
+tree — parent to supply), then #72 walrus, #77/#78/#80.

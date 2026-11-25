@@ -195,6 +195,13 @@ struct HCodegen {
     check_keys: [str];
     let_names: [str];
     let_starts: [int];
+    // Top-500 #494: per-block let names for same-scope rebind
+    // detection (blk_let_names flat, blk_let_marks marking each
+    // open block's start). A Let whose name already appears at
+    // or after the top mark is a rebind: the codegen lowers it
+    // to the Assign path instead of declaring twice.
+    blk_let_names: [str];
+    blk_let_marks: [int];
     // 4b frame stacks. owned_names / owned_types stay flat in
     // declaration order; owned_frame_starts records each frame's
     // start index (frame 0 = function frame). defer_calls is the
@@ -622,7 +629,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], loop_labels: [], loop_end_labels: [], loop_cont_labels: [], loop_label_counter: 0, defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], blk_let_names: [], blk_let_marks: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], loop_labels: [], loop_end_labels: [], loop_cont_labels: [], loop_label_counter: 0, defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -7157,6 +7164,87 @@ fn cg_gen_arm_block(g0: HCodegen, body: Node, ret_type: str, seed: str) -> HCode
     return g;
 }
 
+// True if the expression subtree contains a call that may have
+// side effects (Top-500 #69, p10 hoist): Call, MethodCall,
+// IndirectCall, or Try (a `?` propagates a call's error, so the
+// inner call runs when evaluated).
+fn cg_expr_has_call(n: Node) -> bool {
+    if n.kind == 35 || n.kind == 33 || n.kind == 46 || n.kind == 42 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if cg_expr_has_call(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// C literal for an int value (Top-500 #69): i64-min needs the
+// (-9223372036854775807LL - 1LL) form — the bare
+// -9223372036854775808LL literal is murky C.
+fn cg_int_lit_c(v: int) -> str {
+    if v == -9223372036854775807 - 1 {
+        return "(-9223372036854775807LL - 1LL)";
+    }
+    return itoa(v) + "LL";
+}
+
+// C condition for one value pattern against the match temp
+// (Top-500 #69). String equality reuses the existing `==` path
+// (strcmp); struct patterns are a conjunction of per-field
+// comparisons; binding/wildcard fields match anything and
+// contribute no condition.
+fn cg_value_pattern_cond(g0: HCodegen, pat: Node, temp: str, et: str) -> CGExpr {
+    let mut g: HCodegen = g0;
+    if pat.label == "lit_int" {
+        return CGExpr { g: g, code: "(" + temp + " == " + cg_int_lit_c(pat.ival) + ")" };
+    }
+    if pat.label == "lit_bool" {
+        if pat.bval {
+            return CGExpr { g: g, code: "(" + temp + " == true)" };
+        }
+        return CGExpr { g: g, code: "(" + temp + " == false)" };
+    }
+    if pat.label == "lit_str" {
+        let mut v: str = pat.name;
+        if pat.kind == 48 {
+            v = pat.sval;
+        }
+        let lit: str = cg_c_str_literal(v, pat.has_nul);
+        return CGExpr { g: g, code: "(strcmp(" + temp + ", " + lit + ") == 0)" };
+    }
+    if pat.label == "struct" {
+        let enc: str = cg_struct_fields_concrete(g, et);
+        let mut parts: [str] = [];
+        let mut fi: int = 1;
+        while fi < len(pat.kids) {
+            let fp: Node = pat.kids[fi];
+            if fp.label != "binding" && fp.label != "wildcard" {
+                let ft: str = infer_field_type(enc, fp.name);
+                let sub: CGExpr = cg_value_pattern_cond(g, fp, temp + "." + fp.name, ft);
+                g = sub.g;
+                push(parts, sub.code);
+            }
+            fi = fi + 1;
+        }
+        if len(parts) == 0 {
+            return CGExpr { g: g, code: "1" };
+        }
+        let mut s: str = "(" + parts[0];
+        let mut i: int = 1;
+        while i < len(parts) {
+            s = s + " && " + parts[i];
+            i = i + 1;
+        }
+        return CGExpr { g: g, code: s + ")" };
+    }
+    fail("unsupported pattern in a value match");
+    return CGExpr { g: g, code: "0" };
+}
+
 // Match (codegen.py:3027): three shapes — union, non-payload enum,
 // payload enum. Exhaustiveness is the checker's job.
 fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
@@ -7181,7 +7269,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         while a < len(st.kids) {
             let arm: Node = st.kids[a];
             g = cg_facts_restore(g, match_pre);
-            if arm.name == "_" {
+            if arm.label == "wildcard" {
                 if a == 1 {
                     g = cg_emit(g, "{");
                 } else {
@@ -7250,6 +7338,109 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         g = cg_facts_clear(g);
         return g;
     }
+    // Top-500 #69: value patterns — temp-based if/else chain; the
+    // scrutinee is evaluated exactly once. Struct field bindings
+    // mirror the union shape: a str field is copied (owned_add,
+    // freed at arm end); other fields are borrowed views of the
+    // temp (moved flag only, never registered).
+    if et == "int" || et == "bool" || et == "str" || cg_is_struct_type(g, et) {
+        let n: int = g.loop_counter;
+        g.loop_counter = g.loop_counter + 1;
+        let temp: str = "__forge_match" + itoa(n);
+        let sout: CGExpr = cg_gen_expr(g, st.kids[0]);
+        g = sout.g;
+        g = cg_emit(g, "{");
+        g.indent = g.indent + 1;
+        g = cg_emit(g, cg_c_type(g, et) + " " + temp + " = " + sout.code + ";");
+        let scrutinee_fresh: bool = (et == "str" && cg_is_fresh_str(g, st.kids[0])) || (cg_is_struct_type(g, et) && cg_is_fresh_struct(g, st.kids[0]));
+        let enc: str = cg_struct_fields_concrete(g, et);
+        let match_pre: FactSnap = cg_facts_snap(g);
+        let mut a: int = 1;
+        while a < len(st.kids) {
+            let arm: Node = st.kids[a];
+            g = cg_facts_restore(g, match_pre);
+            if arm.label == "wildcard" {
+                if a == 1 {
+                    g = cg_emit(g, "{");
+                } else {
+                    g = cg_emit(g, "} else {");
+                }
+                g.indent = g.indent + 1;
+                g = cg_push_owned_frame(g);
+                g = cg_gen_arm_block(g, arm.kids[0], ret_type, arm.sval);
+                g = cg_emit_free_frame(g);
+                g = cg_pop_owned_frame(g);
+                g.indent = g.indent - 1;
+                g = cg_emit(g, "}");
+            } else {
+                let cond: CGExpr = cg_value_pattern_cond(g, arm, temp, et);
+                g = cond.g;
+                let mut kw: str = "if";
+                if a != 1 {
+                    kw = "} else if";
+                }
+                g = cg_emit(g, kw + " (" + cond.code + ") {");
+                g.indent = g.indent + 1;
+                g = cg_push_owned_frame(g);
+                if arm.label == "struct" {
+                    let mut seed: str = "";
+                    let mut fi: int = 1;
+                    while fi < len(arm.kids) {
+                        let fp: Node = arm.kids[fi];
+                        if fp.label == "binding" {
+                            let ft: str = infer_field_type(enc, fp.name);
+                            let mut fcode: str = temp + "." + fp.name;
+                            if ft == "str" {
+                                fcode = "forge_copy_str(" + fcode + ")";
+                            }
+                            g = cg_emit(g, cg_c_type(g, ft) + " " + fp.sval + " = " + fcode + ";");
+                            if ft == "str" || cg_is_array_type(g, ft) || cg_is_struct_type(g, ft) || infer_is_tuple_type(ft) || is_union_type(ft) || cg_is_opaque_type(ft) {
+                                g = cg_emit(g, "int " + cg_moved_flag(fp.sval) + " = 0;");
+                            }
+                            if ft == "str" {
+                                g = cg_owned_add(g, fp.sval, "str");
+                            }
+                            g = cg_facts_pop(g, fp.sval);
+                            if seed == "" {
+                                seed = fp.sval;
+                            } else {
+                                seed = seed + "~" + fp.sval;
+                            }
+                        }
+                        fi = fi + 1;
+                    }
+                    g = cg_gen_arm_block(g, arm.kids[0], ret_type, seed);
+                } else {
+                    // Literal arms bind nothing: the seed is empty
+                    // (a lit_int arm's sval is its magnitude text,
+                    // not a binding).
+                    g = cg_gen_arm_block(g, arm.kids[0], ret_type, "");
+                }
+                g = cg_emit_free_frame(g);
+                g = cg_pop_owned_frame(g);
+                g.indent = g.indent - 1;
+                if a == len(st.kids) - 1 {
+                    g = cg_emit(g, "}");
+                }
+            }
+            a = a + 1;
+        }
+        if scrutinee_fresh {
+            if et == "str" {
+                g = cg_emit(g, "forge_free_str(" + temp + ");");
+            } else {
+                let sf: CGExpr = cg_struct_free_code(g, temp, et, "");
+                g = sf.g;
+                if sf.code != "" {
+                    g = cg_emit(g, sf.code);
+                }
+            }
+        }
+        g.indent = g.indent - 1;
+        g = cg_emit(g, "}");
+        g = cg_facts_clear(g);
+        return g;
+    }
     // Enum: payload or not, from the concrete variant info.
     let variants: str = cg_enum_concrete_variants(g, et);
     let parts: [str] = split(variants, "~");
@@ -7263,15 +7454,33 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         j = j + 1;
     }
     if !is_payload {
-        let tout: CGExpr = cg_gen_expr(g, st.kids[0]);
-        g = tout.g;
-        let target: str = tout.code;
         let match_pre: FactSnap = cg_facts_snap(g);
+        // Top-500 #69 (p10): a call scrutinee is evaluated once
+        // into a temp — the old shape re-emitted it per arm, so a
+        // side-effecting scrutinee ran once per tried arm. Variable
+        // scrutinees keep the old direct form, byte-identical.
+        let hoist: bool = cg_expr_has_call(st.kids[0]);
+        let mut target: str = "";
+        if hoist {
+            let n: int = g.loop_counter;
+            g.loop_counter = g.loop_counter + 1;
+            let temp: str = "__forge_match" + itoa(n);
+            let sout: CGExpr = cg_gen_expr(g, st.kids[0]);
+            g = sout.g;
+            g = cg_emit(g, "{");
+            g.indent = g.indent + 1;
+            g = cg_emit(g, cg_c_type(g, et) + " " + temp + " = " + sout.code + ";");
+            target = temp;
+        } else {
+            let tout: CGExpr = cg_gen_expr(g, st.kids[0]);
+            g = tout.g;
+            target = tout.code;
+        }
         let mut a: int = 1;
         while a < len(st.kids) {
             let arm: Node = st.kids[a];
             g = cg_facts_restore(g, match_pre);
-            if arm.name == "_" {
+            if arm.label == "wildcard" {
                 if a == 1 {
                     g = cg_emit(g, "{");
                 } else {
@@ -7297,6 +7506,10 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             a = a + 1;
         }
         g = cg_facts_clear(g);
+        if hoist {
+            g.indent = g.indent - 1;
+            g = cg_emit(g, "}");
+        }
         return g;
     }
     // Payload enum: evaluate once into a temp, match on .tag, bind
@@ -7318,7 +7531,7 @@ fn cg_gen_match(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     while a < len(st.kids) {
         let arm: Node = st.kids[a];
         g = cg_facts_restore(g, match_pre);
-        if arm.name == "_" {
+        if arm.label == "wildcard" {
             if a == 1 {
                 g = cg_emit(g, "{");
             } else {
@@ -8430,6 +8643,31 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
         return g;
     }
     if st.kind == 10 {
+        // Top-500 #494: same-scope rebind — the name was already
+        // declared directly in this block (at or after the top
+        // block mark). Lower to the Assign path (temp-first, free
+        // the old value, take the new one) instead of emitting a
+        // second C declaration. The checker proved the types are
+        // equal, so the Assign path's type lookups agree.
+        let mut blk_mark: int = 0;
+        if len(g.blk_let_marks) > 0 {
+            blk_mark = g.blk_let_marks[len(g.blk_let_marks) - 1];
+        }
+        let mut bi: int = blk_mark;
+        let mut is_rebind: bool = false;
+        while bi < len(g.blk_let_names) {
+            if g.blk_let_names[bi] == st.name {
+                is_rebind = true;
+            }
+            bi = bi + 1;
+        }
+        if is_rebind {
+            let mut asn: Node = new_node(11, st.line, st.col);
+            asn.name = st.name;
+            asn.kids = st.kids;
+            return cg_gen_stmt(g, asn, ret_type);
+        }
+        push(g.blk_let_names, st.name);
         // Let: name, bval = mutable, sval = annotation, kids = [init].
         let init: Node = st.kids[0];
         let t: str = cg_let_type(g, st);
@@ -8947,6 +9185,14 @@ fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
     // trampoline parameters) are pushed as a frame of their own
     // by the enclosing construct before calling here.
     g = cg_shadow_push(g, "");
+    // Top-500 #494: block mark for same-scope rebind detection
+    // (the Let handler reads the top mark; balanced here).
+    push(g.blk_let_marks, len(g.blk_let_names));
+    // Remember the names-list length at entry: the exit trunc
+    // restores it, so a sibling block's lets never leak into this
+    // block's rebind scan (the flat list is only a window over
+    // currently-open blocks).
+    let blk_names_start: int = len(g.blk_let_names);
     let mut i: int = 0;
     while i < len(blk.kids) {
         // #47 backtraces: in debug builds, emit a #line for this
@@ -8966,6 +9212,8 @@ fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
         i = i + 1;
     }
     g = cg_shadow_pop(g);
+    g.blk_let_names = cg_trunc_str(g.blk_let_names, blk_names_start);
+    g.blk_let_marks = cg_trunc_int(g.blk_let_marks, len(g.blk_let_marks) - 1);
     return g;
 }
 

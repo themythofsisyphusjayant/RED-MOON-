@@ -1,0 +1,10 @@
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() -> int {
+    let xs: [int] = [1, 2, 3];
+    println(add(xs[0], xs[2]));
+    println(xs[1]);
+    return 0;
+}

@@ -117,6 +117,12 @@ struct HChecker {
     // Top-500 #62: names of enclosing LABELED loops, innermost
     // last (a labeled break/continue must name one of these).
     label_names: [str];
+    // Top-500 #494: scope marks for same-scope rebind detection
+    // (check_block pushes len(var_names) at each block's entry;
+    // the Let handler reads the top mark). Balanced inside
+    // check_block, so snapshots (taken at branch boundaries)
+    // never need to copy it.
+    scope_marks: [int];
     // Pin context: >0 while checking a field/index base (the
     // pinned check is decided by the outermost access), >0 while
     // checking a read-only observation (len, for-iteration).
@@ -174,7 +180,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], label_names: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], label_names: [], scope_marks: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
 }
 
 // Last index of a one-char string in s, or -1 (Top-500 #48:
@@ -389,6 +395,241 @@ fn literal_fits_fixed(expr: Node, want: str) -> bool {
         return x >= 0 && x <= 4294967295;
     }
     return x >= 0;
+}
+
+// True when the digit text (a raw int-literal magnitude as
+// written, possibly with a 0x/0b/0o prefix and _ separators)
+// fits in i64 for a value pattern (Top-500 #69). Positive
+// patterns must be <= 2^63-1; negative patterns (the magnitude
+// of i64-min) <= 2^63. dec_le is base-agnostic (shorter is
+// smaller, else lexicographic by digit value via digit_val,
+// which handles hex letters in either case), so one helper
+// covers every base.
+fn pat_int_fits(text: str, neg: bool) -> bool {
+    let mut digits: str = "";
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c != "_" {
+            digits = digits + c;
+        }
+        i = i + 1;
+    }
+    let mut base: int = 10;
+    if len(digits) >= 2 && substr(digits, 0, 1) == "0" {
+        let p: str = substr(digits, 1, 1);
+        if p == "x" || p == "X" {
+            base = 16;
+            digits = substr(digits, 2, len(digits) - 2);
+        } else if p == "b" || p == "B" {
+            base = 2;
+            digits = substr(digits, 2, len(digits) - 2);
+        } else if p == "o" || p == "O" {
+            base = 8;
+            digits = substr(digits, 2, len(digits) - 2);
+        }
+    }
+    let mut j: int = 0;
+    while j + 1 < len(digits) && substr(digits, j, 1) == "0" {
+        j = j + 1;
+    }
+    digits = substr(digits, j, len(digits) - j);
+    if base == 10 {
+        if neg {
+            return dec_le(digits, "9223372036854775808");
+        }
+        return dec_le(digits, "9223372036854775807");
+    }
+    if base == 16 {
+        if neg {
+            return dec_le(digits, "8000000000000000");
+        }
+        return dec_le(digits, "7fffffffffffffff");
+    }
+    if base == 2 {
+        if neg {
+            return dec_le(digits, "1000000000000000000000000000000000000000000000000000000000000000");
+        }
+        return dec_le(digits, "111111111111111111111111111111111111111111111111111111111111111");
+    }
+    if neg {
+        return dec_le(digits, "1000000000000000000000");
+    }
+    return dec_le(digits, "777777777777777777777");
+}
+
+// itoa for a pattern int value (Top-500 #69): itoa overflows on
+// i64-min (0 - v wraps), so the minimum gets its literal text.
+fn pat_int_str(v: int) -> str {
+    if v == -9223372036854775807 - 1 {
+        return "-9223372036854775808";
+    }
+    return itoa(v);
+}
+
+// Validate one value pattern (Top-500 #69, VP-C1..C6) and return
+// its duplicate-detection key. `et` is the scrutinee type (for an
+// Arm) or the field type (for a kind-48 field Pattern). Binding /
+// wildcard field patterns contribute the same key component
+// ("any") — two struct patterns differing only in binding names
+// match the same values and are duplicates.
+fn value_pattern_key(c: HChecker, pat: Node, et: str) -> str {
+    if pat.label == "lit_int" {
+        if et != "int" {
+            fail_at(pat.line, pat.col, "int pattern '" + pat_int_str(pat.ival) + "' does not match scrutinee of type " + et);
+        }
+        let neg: bool = pat.ival < 0;
+        if !pat_int_fits(pat.sval, neg) {
+            fail_at(pat.line, pat.col, "int pattern " + pat_int_str(pat.ival) + " does not fit in i64");
+        }
+        return "int:" + pat_int_str(pat.ival);
+    }
+    if pat.label == "lit_bool" {
+        if et != "bool" {
+            fail_at(pat.line, pat.col, "bool pattern does not match scrutinee of type " + et);
+        }
+        if pat.bval {
+            return "bool:true";
+        }
+        return "bool:false";
+    }
+    if pat.label == "lit_str" {
+        if et != "str" {
+            fail_at(pat.line, pat.col, "string pattern does not match scrutinee of type " + et);
+        }
+        if pat.kind == 48 {
+            return "str:" + pat.sval;
+        }
+        return "str:" + pat.name;
+    }
+    if pat.label == "struct" {
+        let base: str = generic_base(et);
+        if pat.name != base {
+            fail_at(pat.line, pat.col, "struct pattern '" + pat.name + "' does not match scrutinee of type " + et);
+        }
+        let names: [str] = struct_field_names(c, base);
+        let mut mi: int = 0;
+        while mi < len(names) {
+            let mut found: bool = false;
+            let mut fi: int = 1;
+            while fi < len(pat.kids) {
+                if pat.kids[fi].name == names[mi] {
+                    found = true;
+                }
+                fi = fi + 1;
+            }
+            if !found {
+                fail_at(pat.line, pat.col, "struct pattern '" + pat.name + "' is missing field '" + names[mi] + "'");
+            }
+            mi = mi + 1;
+        }
+        let mut key: str = "struct";
+        let mut fi: int = 1;
+        while fi < len(pat.kids) {
+            let fp: Node = pat.kids[fi];
+            if !struct_has_field(c, base, fp.name) {
+                fail_at(pat.line, pat.col, "struct '" + pat.name + "' has no field '" + fp.name + "'");
+            }
+            let ft0: str = struct_field_type(c, base, fp.name, pat.line, pat.col);
+            let mut ft: str = ft0;
+            let tps: str = struct_tparams(c, base);
+            if tps != "" {
+                let args: [str] = generic_args(et);
+                let tnames: [str] = split(tps, "~");
+                ft = substitute_type(ft0, tnames, args);
+            }
+            if fp.label == "binding" || fp.label == "wildcard" {
+                key = key + "|" + fp.name + ":any";
+            } else {
+                key = key + "|" + fp.name + ":" + value_pattern_key(c, fp, ft);
+            }
+            fi = fi + 1;
+        }
+        return key;
+    }
+    fail_at(pat.line, pat.col, "unsupported pattern in a value match");
+    return "";
+}
+
+// True when the type names a struct (plain or a generic
+// instantiation, Top-500 #69).
+fn is_struct_type(c: HChecker, t: str) -> bool {
+    let base: str = generic_base(t);
+    let mut i: int = 0;
+    while i < len(c.struct_names) {
+        if c.struct_names[i] == base {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Render one value-pattern Arm for an error message (Top-500
+// #69), mirroring the Python checker's pattern_text.
+fn arm_pat_text(arm: Node) -> str {
+    if arm.label == "lit_int" {
+        return pat_int_str(arm.ival);
+    }
+    if arm.label == "lit_bool" {
+        if arm.bval {
+            return "true";
+        }
+        return "false";
+    }
+    if arm.label == "lit_str" {
+        return "\"" + arm.name + "\"";
+    }
+    if arm.label == "struct" {
+        let mut s: str = arm.name + " { ";
+        let mut i: int = 1;
+        while i < len(arm.kids) {
+            let f: Node = arm.kids[i];
+            s = s + f.name + ": ";
+            if f.label == "lit_int" {
+                s = s + pat_int_str(f.ival);
+            } else if f.label == "lit_bool" {
+                if f.bval {
+                    s = s + "true";
+                } else {
+                    s = s + "false";
+                }
+            } else if f.label == "lit_str" {
+                s = s + "\"" + f.sval + "\"";
+            } else if f.label == "binding" {
+                s = s + f.sval;
+            } else {
+                s = s + "_";
+            }
+            if i + 1 < len(arm.kids) {
+                s = s + ", ";
+            }
+            i = i + 1;
+        }
+        return s + " }";
+    }
+    if arm.label == "wildcard" {
+        return "_";
+    }
+    return arm.name;
+}
+
+// True when the seen duplicate-keys contain both bool literals
+// (Top-500 #69: a bool match with {true, false} is exhaustive).
+fn value_seen_both_bool(seen: [str]) -> bool {
+    let mut t: bool = false;
+    let mut f: bool = false;
+    let mut i: int = 0;
+    while i < len(seen) {
+        if seen[i] == "bool:true" {
+            t = true;
+        }
+        if seen[i] == "bool:false" {
+            f = true;
+        }
+        i = i + 1;
+    }
+    return t && f;
 }
 
 // True for a "[T; N]" spelling (a top-level ";" inside
@@ -4602,6 +4843,18 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         }
         let init: COut = check_expr(c, n.kids[0]);
         c = init.c;
+        // Top-500 #494: same-scope rebind? The top scope mark is
+        // the length of var_names at the innermost block's entry;
+        // a name declared at or after it is a rebind, not a fresh
+        // binding (a loop var is declared BEFORE the body's mark,
+        // so shadowing one stays a fresh binding here — the
+        // Python checker rejects that shape instead; pre-existing
+        // divergence, documented in the #494 entry).
+        let mut scope_mark: int = 0;
+        if len(c.scope_marks) > 0 {
+            scope_mark = c.scope_marks[len(c.scope_marks) - 1];
+        }
+        let is_rebind: bool = env_has_since(c, n.name, scope_mark);
         if init.typ == "void" {
             // Python checker's void-let messages (checker.py:1260):
             // a call or method call names the function; any other
@@ -4621,10 +4874,12 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             // bound either (Python checker.py:1272).
             fail_at(n.line, n.col, "type '" + t + "' contains void, which has no value");
         }
-        if n.sval == "" && n.kids[0].kind == 29 && len(n.kids[0].kids) == 0 {
+        if n.sval == "" && n.kids[0].kind == 29 && len(n.kids[0].kids) == 0 && !is_rebind {
             // Empty literal, no annotation: its element type is
             // unresolved until a constraining use resolves it
             // (or check_func reports it at the end of the body).
+            // A rebind takes the old type instead (below), so it
+            // never registers as unresolved.
             push(c.unres_names, n.name);
             push(c.unres_lines, n.line);
             push(c.unres_cols, n.col);
@@ -4666,6 +4921,25 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 fail_at(n.line, n.col, "variable '" + n.name + "' is declared " + n.sval + " but initialised with " + t + cast_hint(t, n.sval));
             }
             t = n.sval;
+        }
+        if is_rebind {
+            // Top-500 #494: same-scope shadowing. The RHS above
+            // still read the OLD binding. Same type only in v1
+            // (the C variable keeps its declared type); a
+            // different type, or a pinned binding, is rejected.
+            if is_pinned(c, n.name) {
+                fail_at(n.line, n.col, "cannot shadow pinned variable '" + n.name + "' (pin forbids replacing the value; change it in place through its fields or indexes)");
+            }
+            let old_t: str = env_type_raw(c, n.name);
+            if n.sval == "" && n.kids[0].kind == 29 && len(n.kids[0].kids) == 0 {
+                // An empty literal carries no element type for
+                // the codegen (the infer pass only propagates
+                // annotations), so a rebind needs one too — the
+                // same error as a fresh empty let.
+                fail_at(n.line, n.col, "cannot infer the element type of an empty array literal; add an annotation, e.g. let x: [int] = []");
+            } else if t != old_t {
+                fail_at(n.line, n.col, "cannot shadow '" + n.name + "' with a different type in v1 (was " + old_t + ", now " + t + "); declare it in a nested block or use a new name");
+            }
         }
         c = env_revive(c, n.name);
         return env_declare_mut(c, n.name, t, n.bval);
@@ -5062,13 +5336,10 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             let mut a: int = 1;
             while a < len(n.kids) {
                 let arm: Node = n.kids[a];
-                if arm.name == "_" {
+                if arm.label == "wildcard" {
                     has_wildcard = true;
                     if a != len(n.kids) - 1 {
                         fail_at(n.line, n.col, "match wildcard '_' must be the last arm");
-                    }
-                    if arm.sval != "" {
-                        fail_at(n.line, n.col, "wildcard arm cannot bind a value");
                     }
                     let mark: int = len(c.var_names);
                     c.branch_depth = c.branch_depth + 1;
@@ -5079,6 +5350,9 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                     c = checker_snapshot(before);
                     a = a + 1;
                     continue;
+                }
+                if arm.label != "" {
+                    fail_at(n.line, n.col, "'" + arm.name + "' is not a member of union '" + et.typ + "'");
                 }
                 let mut is_member: bool = false;
                 let mut mi: int = 0;
@@ -5139,9 +5413,88 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
             }
             return join_moved(before, results);
         }
+        // Top-500 #69: value patterns — int/bool/str literals and
+        // struct patterns. First-match-wins; `_` is required for
+        // int/str/struct (no finite missing list), and for bool
+        // unless both literals appear. Value matches skip the #50
+        // ES verdict entirely (no pending-match record; the
+        // verdict walk only fires for enum scrutinees).
+        let base0: str = generic_base(et.typ);
+        if et.typ == "int" || et.typ == "bool" || et.typ == "str" || is_struct_type(c, et.typ) {
+            let before: HChecker = checker_snapshot(c);
+            let mut seen: [str] = [];
+            let mut has_wildcard: bool = false;
+            let mut results: [HChecker] = [];
+            let mut a: int = 1;
+            while a < len(n.kids) {
+                let arm: Node = n.kids[a];
+                if arm.label == "wildcard" {
+                    has_wildcard = true;
+                    if a != len(n.kids) - 1 {
+                        fail_at(n.line, n.col, "match wildcard '_' must be the last arm");
+                    }
+                    let mark: int = len(c.var_names);
+                    c.branch_depth = c.branch_depth + 1;
+                    c = check_block(c, arm.kids[0]);
+                    c.branch_depth = c.branch_depth - 1;
+                    let ac: HChecker = env_restore(c, mark);
+                    push(results, ac);
+                    c = checker_snapshot(before);
+                    a = a + 1;
+                    continue;
+                }
+                let key: str = value_pattern_key(c, arm, et.typ);
+                let mut dup: bool = false;
+                let mut di: int = 0;
+                while di < len(seen) {
+                    if seen[di] == key {
+                        dup = true;
+                    }
+                    di = di + 1;
+                }
+                if dup {
+                    fail_at(n.line, n.col, "duplicate match arm '" + arm_pat_text(arm) + "'");
+                }
+                push(seen, key);
+                let mark: int = len(c.var_names);
+                if arm.label == "struct" {
+                    // Field bindings in scope for the arm body,
+                    // with the fields' (substituted) types.
+                    let mut fi: int = 1;
+                    while fi < len(arm.kids) {
+                        let fp: Node = arm.kids[fi];
+                        if fp.label == "binding" {
+                            let ft0: str = struct_field_type(c, base0, fp.name, arm.line, arm.col);
+                            let mut ft: str = ft0;
+                            let tps: str = struct_tparams(c, base0);
+                            if tps != "" {
+                                let args: [str] = generic_args(et.typ);
+                                let tnames: [str] = split(tps, "~");
+                                ft = substitute_type(ft0, tnames, args);
+                            }
+                            c = env_declare(c, fp.sval, ft);
+                        }
+                        fi = fi + 1;
+                    }
+                }
+                c.branch_depth = c.branch_depth + 1;
+                c = check_block(c, arm.kids[0]);
+                c.branch_depth = c.branch_depth - 1;
+                let ac: HChecker = env_restore(c, mark);
+                push(results, ac);
+                c = checker_snapshot(before);
+                a = a + 1;
+            }
+            if !has_wildcard {
+                if et.typ != "bool" || !value_seen_both_bool(seen) {
+                    fail_at(n.line, n.col, "match on " + et.typ + " is not exhaustive; a '_' arm is required");
+                }
+            }
+            return join_moved(before, results);
+        }
         let base: str = generic_base(et.typ);
         if !is_enum(c, base) {
-            fail_at(n.line, n.col, "match needs an enum value, got " + et.typ);
+            fail_at(n.line, n.col, "match needs an enum, union, int, bool, str, or struct value, got " + et.typ);
         }
         // Top-500 #50: the exhaustiveness verdict moved to
         // the second pass (es_infer's verdict walk), where
@@ -5155,13 +5508,10 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         let mut a: int = 1;
         while a < len(n.kids) {
             let arm: Node = n.kids[a];
-            if arm.name == "_" {
+            if arm.label == "wildcard" {
                 has_wildcard = true;
                 if a != len(n.kids) - 1 {
                     fail_at(n.line, n.col, "match wildcard '_' must be the last arm");
-                }
-                if arm.sval != "" {
-                    fail_at(n.line, n.col, "wildcard arm cannot bind a value");
                 }
                 let mark: int = len(c.var_names);
                 c.branch_depth = c.branch_depth + 1;
@@ -5173,8 +5523,8 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
                 a = a + 1;
                 continue;
             }
-            if !enum_has_variant(c, base, arm.name) {
-                fail_at(n.line, n.col, "'" + arm.name + "' is not a variant of enum '" + base + "'");
+            if arm.label != "" || !enum_has_variant(c, base, arm.name) {
+                fail_at(n.line, n.col, "'" + arm_pat_text(arm) + "' is not a variant of enum '" + base + "'");
             }
             let mut dup: bool = false;
             let mut di: int = 0;
@@ -5299,11 +5649,16 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
 
 fn check_block(c0: HChecker, n: Node) -> HChecker {
     let mut c: HChecker = c0;
+    // Top-500 #494: scope mark for same-scope rebind detection
+    // (the Let handler reads the top mark; balanced here, so
+    // branch snapshots never need to copy it).
+    push(c.scope_marks, len(c.var_names));
     let mut i: int = 0;
     while i < len(n.kids) {
         c = check_stmt(c, n.kids[i]);
         i = i + 1;
     }
+    c.scope_marks = trunc_int(c.scope_marks, len(c.scope_marks) - 1);
     return c;
 }
 
@@ -7260,7 +7615,7 @@ fn es_walk_stmt(c0: HChecker, n: Node) -> HChecker {
                 let mut a: int = 1;
                 while a < len(n.kids) {
                     let arm: Node = n.kids[a];
-                    if arm.name == "_" {
+                    if arm.label == "wildcard" {
                         has_wildcard = true;
                     } else {
                         push(seen, arm.name);
@@ -7315,7 +7670,28 @@ fn es_walk_stmt(c0: HChecker, n: Node) -> HChecker {
             let arm: Node = n.kids[a2];
             let mut arm_c: HChecker = es_arm_start(c);
             arm_c = es_push_scope(arm_c);
-            if arm.sval != "" {
+            if arm.label == "struct" {
+                // Struct-pattern field bindings (#69): in scope
+                // with the fields' (substituted) types.
+                let gbase: str = generic_base(s.e.typ);
+                let mut fi: int = 1;
+                while fi < len(arm.kids) {
+                    let fp: Node = arm.kids[fi];
+                    if fp.label == "binding" {
+                        let ft0: str = struct_field_type(c, gbase, fp.name, arm.line, arm.col);
+                        let mut ft: str = ft0;
+                        let tps: str = struct_tparams(c, gbase);
+                        if tps != "" {
+                            let args: [str] = generic_args(s.e.typ);
+                            let tnames: [str] = split(tps, "~");
+                            ft = substitute_type(ft0, tnames, args);
+                        }
+                        let bind_e: ESExpr = ESExpr { typ: ft, kind: es_kind_of(c, ft), enm: es_enum_of(c, ft), set: "TOP" };
+                        arm_c = es_loc_bind(arm_c, fp.sval, bind_e);
+                    }
+                    fi = fi + 1;
+                }
+            } else if arm.sval != "" {
                 let mbase: str = es_enum_base(c, s.e.typ);
                 let mut bpt: str = "?";
                 if mbase != "" {

@@ -180,6 +180,10 @@ class Checker:
         self._pinned_observe = 0
         self._moved_field_target = None
         self.loop_vars = []
+        # Top-500 #494: (scope-dict id, name) of loop-variable
+        # scope entries, so a `let` with a loop var's name keeps
+        # the duplicate error instead of becoming a rebind.
+        self._loop_var_entries = set()
         # For-iterable stack (Top-500 #40): (root name, field path or
         # None) for each enclosing for loop's iterable, so a move of
         # the iterable inside the body is rejected — the loop reads
@@ -355,6 +359,55 @@ class Checker:
             return {f: substitute_type(ft, bindings)
                     for f, ft in self.structs[base].items()}
         return None
+
+    def _value_pattern_key(self, pat, et, fields):
+        """Validate one value pattern (Top-500 #69, VP-C1..C6) and
+        return its duplicate-detection key. `et` is the scrutinee
+        type; `fields` is the scrutinee struct's concrete field
+        dict ({} for non-structs). Raises ForgeError on any rule
+        violation. Binding/wildcard field patterns contribute the
+        same key component ("any") — two struct patterns that
+        differ only in binding names match the same values and
+        are duplicates."""
+        if pat.kind == "lit_int":
+            if et != "int":
+                raise ForgeError(f"int pattern '{pat.value}' does not match "
+                                 f"scrutinee of type {et}", pat.line, pat.col)
+            if pat.value < -(2 ** 63) or pat.value > 2 ** 63 - 1:
+                raise ForgeError(f"int pattern {pat.value} does not fit in i64",
+                                 pat.line, pat.col)
+            return ("lit_int", pat.value)
+        if pat.kind == "lit_bool":
+            if et != "bool":
+                raise ForgeError(f"bool pattern '{pat.value}' does not match "
+                                 f"scrutinee of type {et}", pat.line, pat.col)
+            return ("lit_bool", pat.value)
+        if pat.kind == "lit_str":
+            if et != "str":
+                raise ForgeError(f"string pattern does not match "
+                                 f"scrutinee of type {et}", pat.line, pat.col)
+            return ("lit_str", pat.value)
+        if pat.kind == "struct":
+            base = parse_generic(et)[0] if parse_generic(et) else et
+            if pat.value != base:
+                raise ForgeError(f"struct pattern '{pat.value}' does not match "
+                                 f"scrutinee of type {et}", pat.line, pat.col)
+            have = {fn for fn, _fp in (pat.fields or [])}
+            missing = [fn for fn in fields if fn not in have]
+            if missing:
+                raise ForgeError(f"struct pattern '{pat.value}' is missing "
+                                 f"fields: {', '.join(missing)}", pat.line, pat.col)
+            parts = []
+            for fname, fp in (pat.fields or []):
+                if fname not in fields:
+                    raise ForgeError(f"struct '{pat.value}' has no field '{fname}'",
+                                     pat.line, pat.col)
+                if fp.kind in ("binding", "wildcard"):
+                    parts.append((fname, "any"))
+                else:
+                    parts.append((fname, self._value_pattern_key(fp, fields[fname], {})))
+            return ("struct", tuple(parts))
+        raise ForgeError("unsupported pattern in a value match", pat.line, pat.col)
 
     def check_structs(self):
         structs = getattr(self.program, "structs", None) or []
@@ -1509,16 +1562,16 @@ class Checker:
                             stmt.line, stmt.col)
             before = [dict(d) for d in self._es_scopes]
             afters = []
-            for (pat, binding, body) in stmt.arms:
+            for (pat, body) in stmt.arms:
                 self._es_scopes = [dict(d) for d in before]
-                if binding is not None:
+                if pat.kind == "variant" and pat.binding:
                     # The binding is the payload of the matched variant;
                     # its set is untracked (TOP) — the scrutinee's set
                     # says which VARIANTS occur, not what payloads they
                     # carry. Its type comes from the enum payload table
                     # (generic enums: substitute the scrutinee's type
                     # args when known).
-                    pt = self._es_match_payload_type(se or (rec[1] if rec else ""), pat)
+                    pt = self._es_match_payload_type(se or (rec[1] if rec else ""), pat.value)
                     if pt is not None and st:
                         g = parse_generic(st)
                         base = self._es_enum_base(st)
@@ -1527,9 +1580,24 @@ class Checker:
                             if len(params) == len(g[1]):
                                 pt = substitute_type(pt, dict(zip(params, g[1])))
                     kind, enum = self._es_kind_of_type(pt) if pt else ("other", "")
-                    self._es_scopes.append({binding: (pt or "?", kind, enum, None)})
+                    self._es_scopes.append({pat.binding: (pt or "?", kind, enum, None)})
                     self._es_walk_block(body)
                     self._es_scopes.pop()
+                elif pat.kind == "struct":
+                    # Struct-pattern field bindings (#69): in scope
+                    # with the fields' (substituted) types.
+                    fields = self.struct_fields_for(st) or {}
+                    scope = {}
+                    for fname, fp in (pat.fields or []):
+                        if fp.kind == "binding" and fname in fields:
+                            ft = fields[fname]
+                            kind, enum = self._es_kind_of_type(ft)
+                            scope[fp.value] = (ft, kind, enum, None)
+                    if scope:
+                        self._es_scopes.append(scope)
+                    self._es_walk_block(body)
+                    if scope:
+                        self._es_scopes.pop()
                 else:
                     self._es_walk_block(body)
                 afters.append(self._es_scopes)
@@ -1725,7 +1793,7 @@ class Checker:
             elif isinstance(stmt, A.For):
                 self._substitute_let_ann(stmt.body, bindings)
             elif isinstance(stmt, A.Match):
-                for _pat, _bind, body in stmt.arms:
+                for _pat, body in stmt.arms:
                     self._substitute_let_ann(body, bindings)
         # Lambda param/return types (Top-500 #101, CL-C7): a lambda
         # inside a generic function may mention type parameters;
@@ -1756,7 +1824,8 @@ class Checker:
         saved = (self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params,
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
                  self.moved_fields, self.loop_vars, self.pinned,
-                 self._for_iterables, self._lambda_frames, self.label_stack)
+                 self._for_iterables, self._lambda_frames, self.label_stack,
+                 self._loop_var_entries)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1769,6 +1838,7 @@ class Checker:
             self.moved_fields = set()
             self.pinned = set()
             self.loop_vars = []
+            self._loop_var_entries = set()
             self._for_iterables = []
             self._lambda_frames = []
             for pn, pt in fn.params:
@@ -1851,7 +1921,8 @@ class Checker:
             self.scopes, self.current_ret, self.current_fn, self.current_file, self.current_type_params, \
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
                 self.moved_fields, self.loop_vars, self.pinned, \
-                self._for_iterables, self._lambda_frames, self.label_stack = saved
+                self._for_iterables, self._lambda_frames, self.label_stack, \
+                self._loop_var_entries = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -2040,7 +2111,21 @@ class Checker:
             if stmt.name in C_KEYWORDS:
                 raise ForgeError(f"'{stmt.name}' is a C keyword and cannot be used as a "
                                  f"variable name; rename it", stmt.line, stmt.col)
-            if stmt.name in self.scopes[-1]:
+            # Top-500 #494: a name already in this scope is a
+            # rebind, not a duplicate — decided after the RHS is
+            # checked (it still reads the OLD binding). EXCEPT a
+            # loop variable: the For handler checks the body in
+            # the loop-var scope, and `let i = i + 1` inside a
+            # `for i` body would miscompile in C (the initializer
+            # reads the new variable, not the loop var — the same
+            # pre-existing trap as nested-block shadows that read
+            # the shadowed name). Loop-var shadowing keeps the
+            # old duplicate error; the hosted checker still
+            # accepts it (pre-existing divergence, documented
+            # in the #494 entry).
+            old_entry = self.scopes[-1].get(stmt.name)
+            if (old_entry is not None
+                    and (id(self.scopes[-1]), stmt.name) in self._loop_var_entries):
                 raise ForgeError(f"variable '{stmt.name}' is already defined in this scope",
                                  stmt.line, stmt.col)
             t = self.check_expr(stmt.expr)
@@ -2093,6 +2178,33 @@ class Checker:
                                          f"but initialised with {t}{cast_hint(t, stmt.ann)}",
                                          stmt.line, stmt.col)
                     t = stmt.ann
+            if old_entry is not None:
+                # Top-500 #494: same-scope shadowing. The RHS above
+                # still read the OLD binding; the new binding takes
+                # over from here. Same type only in v1 (the C
+                # variable keeps its declared type); a different
+                # type is rejected plainly, as is shadowing a
+                # pinned binding (pin forbids replacing the value).
+                if stmt.name in self.pinned:
+                    raise ForgeError(f"cannot shadow pinned variable '{stmt.name}' "
+                                     f"(pin forbids replacing the value; change it "
+                                     f"in place through its fields or indexes)",
+                                     stmt.line, stmt.col)
+                if (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
+                        and stmt.ann is None):
+                    # An empty literal carries no element type for
+                    # the codegen (the infer pass only propagates
+                    # annotations), so a rebind needs one too —
+                    # the same error as a fresh empty let.
+                    raise ForgeError("cannot infer the element type of an empty array "
+                                     "literal; add an annotation, e.g. let x: [int] = []",
+                                     stmt.line, stmt.col)
+                elif t != old_entry[0]:
+                    raise ForgeError(f"cannot shadow '{stmt.name}' with a different type "
+                                     f"in v1 (was {old_entry[0]}, now {t}); declare it in "
+                                     f"a nested block or use a new name",
+                                     stmt.line, stmt.col)
+                stmt.rebind = True
             self.scopes[-1][stmt.name] = (t, stmt.mutable)
             # A fresh binding is never moved, even when it shadows
             # an outer variable that was moved (move v2).
@@ -2103,7 +2215,7 @@ class Checker:
             self.moved_fields = {p for p in self.moved_fields
                                  if not p.startswith(stmt.name + ".")}
             if (isinstance(stmt.expr, A.ArrayLit) and not stmt.expr.elems
-                    and stmt.ann is None):
+                    and stmt.ann is None and not stmt.rebind):
                 # Empty literal, no annotation: its element type is
                 # unresolved until a constraining use resolves it
                 # (or check_func reports it at the end of the body).
@@ -2267,14 +2379,11 @@ class Checker:
                 member_set = set(members)
                 seen = set()
                 has_wildcard = False
-                for idx, (pat, binding, body) in enumerate(stmt.arms):
-                    if pat == "_":
+                for idx, (pat, body) in enumerate(stmt.arms):
+                    if pat.kind == "wildcard":
                         has_wildcard = True
                         if idx != len(stmt.arms) - 1:
                             raise ForgeError("match wildcard '_' must be the last arm",
-                                             stmt.line, stmt.col)
-                        if binding is not None:
-                            raise ForgeError("wildcard arm cannot bind a value",
                                              stmt.line, stmt.col)
                         self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                         self.branch_depth += 1
@@ -2284,19 +2393,19 @@ class Checker:
                             self.branch_depth -= 1
                         match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
                         continue
-                    if pat not in member_set:
-                        raise ForgeError(f"'{pat}' is not a member of union '{et}'",
+                    if pat.kind != "variant" or pat.value not in member_set:
+                        raise ForgeError(f"'{A.pattern_text(pat)}' is not a member of union '{et}'",
                                          stmt.line, stmt.col)
-                    if pat in seen:
-                        raise ForgeError(f"duplicate match arm '{pat}'",
+                    if pat.value in seen:
+                        raise ForgeError(f"duplicate match arm '{pat.value}'",
                                          stmt.line, stmt.col)
-                    seen.add(pat)
-                    if binding is None:
-                        raise ForgeError(f"member '{pat}' has a value; "
-                                         f"write {pat}(name) => ...",
+                    seen.add(pat.value)
+                    if pat.binding is None:
+                        raise ForgeError(f"member '{pat.value}' has a value; "
+                                         f"write {pat.value}(name) => ...",
                                          stmt.line, stmt.col)
                     self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
-                    self.scopes.append({binding: (pat, False)})
+                    self.scopes.append({pat.binding: (pat.value, False)})
                     try:
                         self.branch_depth += 1
                         try:
@@ -2313,22 +2422,81 @@ class Checker:
                 self.moved, self.moved_fields, self.pinned = self._join_moved(
                     match_before_moved, match_before_fields, match_before_pinned, match_results)
                 return
+            if et in ("int", "bool", "str") or self.struct_fields_for(et) is not None:
+                # Top-500 #69: value patterns — int/bool/str literals
+                # and struct patterns. First-match-wins; `_` is
+                # required for int/str/struct (no finite missing
+                # list to name), and for bool unless both literals
+                # appear. Value matches skip the #50 ES verdict
+                # entirely (no _pending_matches entry).
+                fields = self.struct_fields_for(et) or {}
+                seen = set()
+                has_wildcard = False
+                for idx, (pat, body) in enumerate(stmt.arms):
+                    if pat.kind == "wildcard":
+                        has_wildcard = True
+                        if idx != len(stmt.arms) - 1:
+                            raise ForgeError("match wildcard '_' must be the last arm",
+                                             stmt.line, stmt.col)
+                        self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
+                        self.branch_depth += 1
+                        try:
+                            self.check_block(body)
+                        finally:
+                            self.branch_depth -= 1
+                        match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
+                        continue
+                    key = self._value_pattern_key(pat, et, fields)
+                    if key in seen:
+                        raise ForgeError(f"duplicate match arm '{A.pattern_text(pat)}'",
+                                         pat.line, pat.col)
+                    seen.add(key)
+                    if pat.kind == "struct":
+                        scope = {fp.value: (fields[fname], False)
+                                 for fname, fp in (pat.fields or [])
+                                 if fp.kind == "binding"}
+                        self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
+                        self.scopes.append(scope)
+                        try:
+                            self.branch_depth += 1
+                            try:
+                                self.check_block(body)
+                            finally:
+                                self.branch_depth -= 1
+                        finally:
+                            self.scopes.pop()
+                    else:
+                        self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
+                        self.branch_depth += 1
+                        try:
+                            self.check_block(body)
+                        finally:
+                            self.branch_depth -= 1
+                    match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
+                if not has_wildcard:
+                    if not (et == "bool"
+                            and seen == {("lit_bool", True), ("lit_bool", False)}):
+                        raise ForgeError(
+                            f"match on {et} is not exhaustive; a '_' arm is required",
+                            stmt.line, stmt.col)
+                self.moved, self.moved_fields, self.pinned = self._join_moved(
+                    match_before_moved, match_before_fields, match_before_pinned, match_results)
+                return
             info = self.enum_info_for(et)
             if info is None:
-                raise ForgeError(f"match needs an enum value, got {et}",
+                raise ForgeError(f"match needs an enum, union, int, bool, str, "
+                                 f"or struct value, got {et}",
                                  stmt.line, stmt.col)
             _base, variant_info = info
             variants = set(variant_info.keys())
             seen = set()
             has_wildcard = False
-            for idx, (pat, binding, body) in enumerate(stmt.arms):
-                if pat == "_":
+            for idx, (pat, body) in enumerate(stmt.arms):
+                if pat.kind == "wildcard":
                     has_wildcard = True
                     if idx != len(stmt.arms) - 1:
                         raise ForgeError("match wildcard '_' must be the last arm",
                                          stmt.line, stmt.col)
-                    if binding is not None:
-                        raise ForgeError("wildcard arm cannot bind a value", stmt.line, stmt.col)
                     self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
                     self.branch_depth += 1
                     try:
@@ -2337,24 +2505,24 @@ class Checker:
                         self.branch_depth -= 1
                     match_results.append((set(self.moved), set(self.moved_fields), set(self.pinned)))
                     continue
-                if pat not in variants:
-                    raise ForgeError(f"'{pat}' is not a variant of enum '{et}'"
-                                     f"{suggest(pat, variants)}",
+                if pat.kind != "variant" or pat.value not in variants:
+                    raise ForgeError(f"'{A.pattern_text(pat)}' is not a variant of enum '{et}'"
+                                     f"{suggest(A.pattern_text(pat), variants)}",
                                      stmt.line, stmt.col)
-                if pat in seen:
-                    raise ForgeError(f"duplicate match arm '{pat}'", stmt.line, stmt.col)
-                seen.add(pat)
-                _tag, payload_type = variant_info[pat]
-                if payload_type is None and binding is not None:
-                    raise ForgeError(f"variant '{pat}' has no payload to bind",
+                if pat.value in seen:
+                    raise ForgeError(f"duplicate match arm '{pat.value}'", stmt.line, stmt.col)
+                seen.add(pat.value)
+                _tag, payload_type = variant_info[pat.value]
+                if payload_type is None and pat.binding is not None:
+                    raise ForgeError(f"variant '{pat.value}' has no payload to bind",
                                      stmt.line, stmt.col)
-                if payload_type is not None and binding is None:
-                    raise ForgeError(f"variant '{pat}' has a payload; write {pat}(name) => ...",
+                if payload_type is not None and pat.binding is None:
+                    raise ForgeError(f"variant '{pat.value}' has a payload; write {pat.value}(name) => ...",
                                      stmt.line, stmt.col)
-                if binding is not None:
+                if pat.binding is not None:
                     # Check the arm body with the binding in scope.
                     self.moved, self.moved_fields, self.pinned = set(match_before_moved), set(match_before_fields), set(match_before_pinned)
-                    self.scopes.append({binding: (payload_type, False)})
+                    self.scopes.append({pat.binding: (payload_type, False)})
                     try:
                         self.branch_depth += 1
                         try:
@@ -2499,6 +2667,12 @@ class Checker:
             before_moved, before_fields = set(self.moved), set(self.moved_fields)
             before_pinned = set(self.pinned)
             self.scopes.append({stmt.name: (et, False)})
+            # Top-500 #494: mark this scope entry as a loop variable
+            # (by scope-dict id + name), so a `let` with the loop
+            # var's name in the body keeps the old duplicate error
+            # instead of becoming a rebind (which would miscompile:
+            # the C initializer would read the new variable).
+            self._loop_var_entries.add((id(self.scopes[-1]), stmt.name))
             # Top-500 #62: label stack alongside loop_depth (see
             # While above — labels shadow, no duplicate error).
             pushed_label = False
@@ -2533,6 +2707,7 @@ class Checker:
                 self.loop_vars.pop()
                 if iter_root is not None:
                     self._for_iterables.pop()
+            self._loop_var_entries.discard((id(self.scopes[-1]), stmt.name))
             self.scopes.pop()
             self.moved, self.moved_fields, self.pinned = self._join_moved(
                 before_moved, before_fields, before_pinned,

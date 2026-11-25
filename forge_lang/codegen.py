@@ -2738,7 +2738,7 @@ class Codegen:
             elif isinstance(stmt, A.For):
                 self.collect_spawns(stmt.body, out)
             elif isinstance(stmt, A.Match):
-                for _pat, _bind, body in stmt.arms:
+                for _pat, body in stmt.arms:
                     self.collect_spawns(body, out)
 
     def _enum_variant_map(self):
@@ -2823,7 +2823,7 @@ class Codegen:
                     b = getattr(s, attr, None)
                     if b is not None:
                         walk_block(b)
-                for _pat, _bind, arm_body in getattr(s, "arms", []) or []:
+                for _pat, arm_body in getattr(s, "arms", []) or []:
                     walk_block(arm_body)
 
         for fn in self.program.funcs:
@@ -3920,6 +3920,53 @@ class Codegen:
     def _emit_all_defers(self, ret_type):
         self._emit_defers_downto(0, ret_type)
 
+    def _expr_has_call(self, node):
+        """True if the expression subtree contains a call that may
+        have side effects (Top-500 #69, p10 hoist): Call,
+        MethodCall, IndirectCall, or Try (a `?` propagates a
+        call's error, so the inner call runs when evaluated)."""
+        if isinstance(node, (A.Call, A.MethodCall, A.IndirectCall, A.Try)):
+            return True
+        if isinstance(node, (list, tuple)):
+            return any(self._expr_has_call(x) for x in node)
+        if isinstance(node, dict):
+            return any(self._expr_has_call(v) for v in node.values())
+        if hasattr(node, "__dict__"):
+            return any(self._expr_has_call(v) for v in vars(node).values())
+        return False
+
+    def _int_lit_c(self, v):
+        """C literal for an int value (Top-500 #69): i64-min needs
+        the (-9223372036854775807LL - 1LL) form — the bare
+        -9223372036854775808LL literal is murky C."""
+        if v == -(2 ** 63):
+            return "(-9223372036854775807LL - 1LL)"
+        return f"{v}LL"
+
+    def _value_pattern_cond(self, pat, temp, et, fields):
+        """C condition for one value pattern against the match temp
+        (Top-500 #69). String equality reuses the existing `==`
+        path (strcmp); struct patterns are a conjunction of
+        per-field comparisons; binding/wildcard fields match
+        anything and contribute no condition."""
+        if pat.kind == "lit_int":
+            return f"({temp} == {self._int_lit_c(pat.value)})"
+        if pat.kind == "lit_bool":
+            return f"({temp} == {'true' if pat.value else 'false'})"
+        if pat.kind == "lit_str":
+            return f"(strcmp({temp}, {self.c_str_literal(pat.value)}) == 0)"
+        if pat.kind == "struct":
+            parts = []
+            for fname, fp in (pat.fields or []):
+                if fp.kind in ("binding", "wildcard"):
+                    continue
+                parts.append(self._value_pattern_cond(
+                    fp, f"{temp}.{fname}", fields.get(fname, "int"), {}))
+            if not parts:
+                return "1"
+            return "(" + " && ".join(parts) + ")"
+        raise ForgeError("unsupported pattern in a value match", pat.line, pat.col)
+
     def gen_arm_block(self, body, ret_type, shadow_names=()):
         """A match arm's block: its own defer frame, run at arm
         exit (arms have no owned frame of their own). `shadow_names`
@@ -3951,6 +3998,15 @@ class Codegen:
             self.emit("}")
             return
         if isinstance(stmt, A.Let):
+            if getattr(stmt, "rebind", False):
+                # Top-500 #494: same-scope shadowing — the checker
+                # proved the name is already declared in this block
+                # with the same type, so lower to the Assign path
+                # (temp-first, free the old value, take the new
+                # one) instead of emitting a second C declaration.
+                self.gen_stmt(A.Assign(stmt.name, stmt.expr, stmt.line, stmt.col),
+                              ret_type)
+                return
             from .fntypes import is_fn_type
             t = stmt.ann if (stmt.ann and (is_opaque_type(stmt.ann)
                              or is_union_type(stmt.ann)
@@ -4438,8 +4494,8 @@ class Codegen:
                 # A shared scrutinee's temp is a borrowed view.
                 scrutinee_fresh = self.is_fresh_union(stmt.expr)
                 match_pre = dict(self._facts)
-                for idx, (pat, binding, body) in enumerate(stmt.arms):
-                    if pat == "_":
+                for idx, (pat, body) in enumerate(stmt.arms):
+                    if pat.kind == "wildcard":
                         if idx == 0:
                             self.emit("{")
                         else:
@@ -4456,28 +4512,28 @@ class Codegen:
                         self.indent -= 1
                         self.emit("}")
                     else:
-                        midx = members.index(pat)
+                        midx = members.index(pat.value)
                         kw = "if" if idx == 0 else "} else if"
                         self.emit(f"{kw} ({temp}.tag == {midx}) {{")
                         self.indent += 1
                         self._facts = dict(match_pre)
                         self.owned_stack.append({})
                         payload_code = f"{temp}.payload._{midx}"
-                        if pat == "str":
+                        if pat.value == "str":
                             payload_code = f"forge_copy_str({payload_code})"
-                        self.emit(f"{c_type(pat)} {binding} = {payload_code};")
-                        if pat == "str" or self.is_array_type(pat) or self.is_struct_type(pat) \
-                                or is_tuple_type(pat) or is_union_type(pat) or is_opaque_type(pat):
-                            self.emit(f"int {self.moved_flag(binding)} = 0;")
-                        if pat == "str":
+                        self.emit(f"{c_type(pat.value)} {pat.binding} = {payload_code};")
+                        if pat.value == "str" or self.is_array_type(pat.value) or self.is_struct_type(pat.value) \
+                                or is_tuple_type(pat.value) or is_union_type(pat.value) or is_opaque_type(pat.value):
+                            self.emit(f"int {self.moved_flag(pat.binding)} = 0;")
+                        if pat.value == "str":
                             # The str binding is an independent copy
                             # (forge_copy_str above): register it so
                             # the arm frame frees it at arm end.
                             # Other payload bindings are borrowed
                             # views of the temp — never registered.
-                            self.owned_add(binding, "str")
-                        self._facts.pop(binding, None)
-                        self.gen_arm_block(body, ret_type, shadow_names=(binding,))
+                            self.owned_add(pat.binding, "str")
+                        self._facts.pop(pat.binding, None)
+                        self.gen_arm_block(body, ret_type, shadow_names=(pat.binding,))
                         self.emit_free_frame()
                         self.owned_stack.pop()
                         self.indent -= 1
@@ -4491,19 +4547,108 @@ class Codegen:
                 self.emit("}")
                 self._facts = {}
                 return
+            if et in ("int", "bool", "str") or self.is_struct_type(et):
+                # Top-500 #69: value patterns — temp-based if/else
+                # chain; the scrutinee is evaluated exactly once.
+                # Struct field bindings mirror the union shape: a
+                # str field is copied (owned_add, freed at arm
+                # end); other fields are borrowed views of the
+                # temp (moved flag only, never registered).
+                n = self.loop_counter
+                self.loop_counter += 1
+                temp = f"__forge_match{n}"
+                self.emit("{")
+                self.indent += 1
+                self.emit(f"{c_type(et)} {temp} = {self.gen_expr(stmt.expr)};")
+                scrutinee_fresh = (et == "str" and self.is_fresh_str(stmt.expr)) or \
+                    (self.is_struct_type(et) and self.is_fresh_struct(stmt.expr))
+                fields = self.structs.get(self.struct_type_name(et), {}) \
+                    if self.is_struct_type(et) else {}
+                match_pre = dict(self._facts)
+                for idx, (pat, body) in enumerate(stmt.arms):
+                    if pat.kind == "wildcard":
+                        if idx == 0:
+                            self.emit("{")
+                        else:
+                            self.emit("} else {")
+                        self.indent += 1
+                        self._facts = dict(match_pre)
+                        self.owned_stack.append({})
+                        self.gen_arm_block(body, ret_type)
+                        self.emit_free_frame()
+                        self.owned_stack.pop()
+                        self.indent -= 1
+                        self.emit("}")
+                    else:
+                        cond = self._value_pattern_cond(pat, temp, et, fields)
+                        kw = "if" if idx == 0 else "} else if"
+                        self.emit(f"{kw} ({cond}) {{")
+                        self.indent += 1
+                        self._facts = dict(match_pre)
+                        self.owned_stack.append({})
+                        if pat.kind == "struct":
+                            shadow = []
+                            for fname, fp in (pat.fields or []):
+                                if fp.kind == "binding":
+                                    ft = fields.get(fname, "int")
+                                    fcode = f"{temp}.{fname}"
+                                    if ft == "str":
+                                        fcode = f"forge_copy_str({fcode})"
+                                    self.emit(f"{c_type(ft)} {fp.value} = {fcode};")
+                                    if ft == "str" or self.is_array_type(ft) or self.is_struct_type(ft) \
+                                            or is_tuple_type(ft) or is_union_type(ft) or is_opaque_type(ft):
+                                        self.emit(f"int {self.moved_flag(fp.value)} = 0;")
+                                    if ft == "str":
+                                        self.owned_add(fp.value, "str")
+                                    self._facts.pop(fp.value, None)
+                                    shadow.append(fp.value)
+                            self.gen_arm_block(body, ret_type, shadow_names=tuple(shadow))
+                        else:
+                            self.gen_arm_block(body, ret_type)
+                        self.emit_free_frame()
+                        self.owned_stack.pop()
+                        self.indent -= 1
+                        if idx == len(stmt.arms) - 1:
+                            self.emit("}")
+                if scrutinee_fresh:
+                    if et == "str":
+                        self.emit(f"forge_free_str({temp});")
+                    else:
+                        sfree = self.struct_free_code(temp, et)
+                        if sfree:
+                            self.emit(sfree)
+                self.indent -= 1
+                self.emit("}")
+                self._facts = {}
+                return
             info = self.enum_concrete_info(et)
             is_payload = False
             if info is not None:
                 _base, variant_info = info
                 is_payload = any(pt is not None for _tag, pt in variant_info.values())
             if not is_payload:
-                target = self.gen_expr(stmt.expr)
                 # Match arms are alternatives, not sequential code:
                 # each arm starts from the pre-match facts, and no
                 # arm's facts propagate past the match.
                 match_pre = dict(self._facts)
-                for idx, (pat, _binding, body) in enumerate(stmt.arms):
-                    if pat == "_":
+                # Top-500 #69 (p10): a call scrutinee is evaluated
+                # once into a temp — the old shape re-emitted it per
+                # arm, so a side-effecting scrutinee ran once per
+                # tried arm. Variable scrutinees keep the old
+                # direct form, byte-identical.
+                hoist = self._expr_has_call(stmt.expr)
+                if hoist:
+                    n = self.loop_counter
+                    self.loop_counter += 1
+                    temp = f"__forge_match{n}"
+                    self.emit("{")
+                    self.indent += 1
+                    self.emit(f"{c_type(et)} {temp} = {self.gen_expr(stmt.expr)};")
+                    target = temp
+                else:
+                    target = self.gen_expr(stmt.expr)
+                for idx, (pat, body) in enumerate(stmt.arms):
+                    if pat.kind == "wildcard":
                         if idx == 0:
                             self.emit("{")
                         else:
@@ -4515,7 +4660,7 @@ class Codegen:
                         self.emit("}")
                     else:
                         kw = "if" if idx == 0 else "} else if"
-                        self.emit(f"{kw} ({target} == {pat}) {{")
+                        self.emit(f"{kw} ({target} == {pat.value}) {{")
                         self.indent += 1
                         self._facts = dict(match_pre)
                         self.gen_arm_block(body, ret_type)
@@ -4523,6 +4668,9 @@ class Codegen:
                         if idx == len(stmt.arms) - 1:
                             self.emit("}")
                 self._facts = {}
+                if hoist:
+                    self.indent -= 1
+                    self.emit("}")
                 return
             # Payload enum: evaluate once into a temp, match on .tag,
             # bind the payload into a local for arms that bind it.
@@ -4537,8 +4685,8 @@ class Codegen:
             # A shared scrutinee's temp is a borrowed view.
             scrutinee_fresh = self.is_fresh_enum(stmt.expr)
             match_pre = dict(self._facts)
-            for idx, (pat, binding, body) in enumerate(stmt.arms):
-                if pat == "_":
+            for idx, (pat, body) in enumerate(stmt.arms):
+                if pat.kind == "wildcard":
                     if idx == 0:
                         self.emit("{")
                     else:
@@ -4552,32 +4700,32 @@ class Codegen:
                     self.indent -= 1
                     self.emit("}")
                 else:
-                    tag, pt = variant_info[pat]
+                    tag, pt = variant_info[pat.value]
                     kw = "if" if idx == 0 else "} else if"
                     self.emit(f"{kw} ({temp}.tag == {tag}) {{")
                     self.indent += 1
                     self._facts = dict(match_pre)
                     self.owned_stack.append({})
-                    if binding is not None:
-                        payload_code = f"{temp}.payload.payload_{pat}"
+                    if pat.binding is not None:
+                        payload_code = f"{temp}.payload.payload_{pat.value}"
                         if pt == "str":
                             payload_code = f"forge_copy_str({payload_code})"
-                        self.emit(f"{c_type(pt)} {binding} = {payload_code};")
+                        self.emit(f"{c_type(pt)} {pat.binding} = {payload_code};")
                         if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
                                 or is_tuple_type(pt) or is_union_type(pt) or is_opaque_type(pt):
-                            self.emit(f"int {self.moved_flag(binding)} = 0;")
+                            self.emit(f"int {self.moved_flag(pat.binding)} = 0;")
                         if pt == "str":
                             # The str binding is an independent copy
                             # (forge_copy_str above): register it so
                             # the arm frame frees it at arm end.
                             # Other payload bindings are borrowed
                             # views of the temp — never registered.
-                            self.owned_add(binding, "str")
+                            self.owned_add(pat.binding, "str")
                         # The payload binding shadows any outer variable
                         # of the same name for this arm: its value is
                         # unknown, so drop the outer variable's facts.
-                        self._facts.pop(binding, None)
-                    self.gen_arm_block(body, ret_type, shadow_names=(binding,) if binding is not None else ())
+                        self._facts.pop(pat.binding, None)
+                    self.gen_arm_block(body, ret_type, shadow_names=(pat.binding,) if pat.binding is not None else ())
                     self.emit_free_frame()
                     self.owned_stack.pop()
                     self.indent -= 1

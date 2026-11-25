@@ -1,0 +1,7 @@
+fn main() -> int {
+    let _unused: int = 5;
+    let _name: str = "kept";
+    println(_name);
+    println(1);
+    return 0;
+}

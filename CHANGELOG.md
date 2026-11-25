@@ -8,6 +8,18 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Trailing commas, shadowing, underscore for unused bindings,
+  Top-500 #490, #494 and #496 (25 Nov 2026, Sprint Day 5, both
+  compilers): trailing commas in array/call/struct/tuple literals,
+  fn params, fn types, generic args and method calls (own test
+  30/30); same-scope `let x = x + 1` rebinds, RHS reads the old
+  binding, same type in v1 (own test 34/34); `_`-prefixed bindings
+  verified already working — there is no unused-variable warning
+  mechanism at all (own test 15/15). v1 limits: type-changing
+  shadowing rejected; a nested-block shadow whose RHS reads the
+  shadowed name miscompiles in both compilers (pre-existing);
+  1-tuple literals rejected with a clear error.
+
 - Range syntax in for loops + wildcard match arm, Top-500 #67 and
   #76 (25 Nov 2026, Sprint Day 5, verification, both compilers):
   `for i in 0..n` (half-open `..` literal) and `match c { Red => {

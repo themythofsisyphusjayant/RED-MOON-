@@ -125,6 +125,7 @@ fn node_kind_name(k: int) -> str {
     if k == 45 { return "Arm"; }
     if k == 46 { return "IndirectCall"; }
     if k == 47 { return "Lambda"; }
+    if k == 48 { return "Pattern"; }
     return "?";
 }
 
@@ -233,6 +234,9 @@ fn parse_type_params(p0: HParser) -> TOut {
         if at_op(p, ",") {
             let c: TOut = expect_op(p, ",");
             p = c.p;
+            if at_op(p, ">") {
+                break;
+            }
             continue;
         }
         break;
@@ -283,6 +287,9 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
                 if at_op(p, ",") {
                     let c: TOut = expect_op(p, ",");
                     p = c.p;
+                    if at_op(p, ")") {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -323,6 +330,9 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
                 if at_op(p, ",") {
                     let c: TOut = expect_op(p, ",");
                     p = c.p;
+                    if at_op(p, ")") {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -373,6 +383,9 @@ fn parse_type(p0: HParser, allow_union: bool) -> TOut {
                 if at_op(p, ",") {
                     let c: TOut = expect_op(p, ",");
                     p = c.p;
+                    if at_op(p, ">") {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -616,6 +629,9 @@ fn parse_postfix(p0: HParser) -> POut {
                     if at_op(p, ",") {
                         let c: TOut = expect_op(p, ",");
                         p = c.p;
+                        if at_op(p, ")") {
+                            break;
+                        }
                         continue;
                     }
                     break;
@@ -651,6 +667,9 @@ fn parse_postfix(p0: HParser) -> POut {
                     if at_op(p, ",") {
                         let c: TOut = expect_op(p, ",");
                         p = c.p;
+                        if at_op(p, ")") {
+                            break;
+                        }
                         continue;
                     }
                     break;
@@ -788,6 +807,61 @@ fn parse_int_lit(text: str) -> int {
     return v;
 }
 
+// True iff the digit text is exactly 2^63 — the magnitude of
+// i64-min (Top-500 #69). parse_int_lit saturates at i64 max, so
+// a `-` + INT pattern for i64-min would otherwise compute as
+// -9223372036854775807; the pattern parser special-cases this
+// text and stores -9223372036854775807 - 1 instead. Underscores
+// and base prefixes are stripped first; the comparisons are
+// case-insensitive-safe (the bound digits use only 0/1/7/8).
+fn int_text_is_min_mag(text: str) -> bool {
+    let mut digits: str = "";
+    let mut i: int = 0;
+    while i < len(text) {
+        let c: str = substr(text, i, 1);
+        if c != "_" {
+            digits = digits + c;
+        }
+        i = i + 1;
+    }
+    if len(digits) >= 2 && substr(digits, 0, 1) == "0" {
+        let p: str = substr(digits, 1, 1);
+        if p == "x" || p == "X" {
+            let rest: str = substr(digits, 2, len(digits) - 2);
+            return rest == "8000000000000000";
+        }
+        if p == "b" || p == "B" {
+            let rest: str = substr(digits, 2, len(digits) - 2);
+            if len(rest) != 64 || substr(rest, 0, 1) != "1" {
+                return false;
+            }
+            let mut j: int = 1;
+            while j < len(rest) {
+                if substr(rest, j, 1) != "0" {
+                    return false;
+                }
+                j = j + 1;
+            }
+            return true;
+        }
+        if p == "o" || p == "O" {
+            let rest: str = substr(digits, 2, len(digits) - 2);
+            if len(rest) != 22 || substr(rest, 0, 1) != "1" {
+                return false;
+            }
+            let mut j: int = 1;
+            while j < len(rest) {
+                if substr(rest, j, 1) != "0" {
+                    return false;
+                }
+                j = j + 1;
+            }
+            return true;
+        }
+    }
+    return digits == "9223372036854775808";
+}
+
 fn parse_primary(p0: HParser) -> POut {
     let mut p: HParser = p0;
     if peek_kind(p) == 0 {
@@ -848,6 +922,9 @@ fn parse_primary(p0: HParser) -> POut {
                     if at_op(p, ",") {
                         let c: TOut = expect_op(p, ",");
                         p = c.p;
+                        if at_op(p, ")") {
+                            break;
+                        }
                         continue;
                     }
                     break;
@@ -879,6 +956,9 @@ fn parse_primary(p0: HParser) -> POut {
                     if at_op(p, ",") {
                         let cc: TOut = expect_op(p, ",");
                         p = cc.p;
+                        if at_op(p, "}") {
+                            break;
+                        }
                         continue;
                     }
                     break;
@@ -905,9 +985,15 @@ fn parse_primary(p0: HParser) -> POut {
             while at_op(p, ",") {
                 let c: TOut = expect_op(p, ",");
                 p = c.p;
+                if at_op(p, ")") {
+                    break;
+                }
                 let e: POut = parse_expr(p);
                 p = e.p;
                 push(elems, e.n);
+            }
+            if len(elems) < 2 {
+                fail_at(tok.line, tok.col, "tuple literals need at least two elements");
             }
             let c: TOut = expect_op(p, ")");
             p = c.p;
@@ -974,6 +1060,9 @@ fn parse_primary(p0: HParser) -> POut {
                 if at_op(p, ",") {
                     let c: TOut = expect_op(p, ",");
                     p = c.p;
+                    if at_op(p, "]") {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -1006,6 +1095,237 @@ fn parse_block(p0: HParser) -> POut {
     p = c.p;
     let mut n: Node = new_node(9, o.line, o.col);
     n.kids = stmts;
+    return POut { p: p, n: n };
+}
+
+// Parse one match-arm pattern (Top-500 #69: value patterns).
+// Returns the Arm node (kind 45) with the pattern encoded in
+// label/ival/bval/name/sval: label "" = variant (name = member,
+// sval = binding), "lit_int" (ival = value, sval = raw magnitude
+// text), "lit_bool" (bval), "lit_str" (name = string value),
+// "struct" (name = struct name, kids[1..] = kind-48 Pattern
+// nodes for the fields), "wildcard" (name = ""). The arm body is
+// kids[0]. v1 shapes only: float, range, tuple/array and type
+// patterns, `|` alternation and guards fail here with a named
+// error, mirroring the Python parser.
+fn parse_pattern(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    if peek_kind(p) == 0 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut arm: Node = new_node(45, ln, cl);
+        arm.label = "lit_int";
+        arm.ival = parse_int_lit(t);
+        arm.sval = t;
+        return POut { p: p, n: arm };
+    }
+    if peek_kind(p) == 2 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        let hn: bool = p.has_nul[p.pos];
+        p = advance(p);
+        let mut arm: Node = new_node(45, ln, cl);
+        arm.label = "lit_str";
+        arm.name = t;
+        arm.has_nul = hn;
+        return POut { p: p, n: arm };
+    }
+    if peek_kind(p) == 1 {
+        fail_at(peek_line(p), peek_col(p), "float literal patterns are not supported in v1");
+    }
+    if at_op(p, "-") {
+        let op: TOut = expect_op(p, "-");
+        p = op.p;
+        if peek_kind(p) != 0 {
+            fail_at(peek_line(p), peek_col(p), "expected an integer literal after '-', got '" + peek(p) + "'");
+        }
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut arm: Node = new_node(45, op.line, op.col);
+        arm.label = "lit_int";
+        if int_text_is_min_mag(t) {
+            arm.ival = -9223372036854775807 - 1;
+        } else {
+            arm.ival = -parse_int_lit(t);
+        }
+        arm.sval = t;
+        return POut { p: p, n: arm };
+    }
+    if peek_kind(p) == 4 && (peek(p) == "true" || peek(p) == "false") {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut arm: Node = new_node(45, ln, cl);
+        arm.label = "lit_bool";
+        arm.bval = t == "true";
+        return POut { p: p, n: arm };
+    }
+    if peek_kind(p) != 3 {
+        fail_at(peek_line(p), peek_col(p), "expected a pattern, got '" + peek(p) + "'");
+    }
+    let idt: TOut = expect_ident(p);
+    p = idt.p;
+    if idt.text == "_" {
+        let mut arm: Node = new_node(45, idt.line, idt.col);
+        arm.label = "wildcard";
+        return POut { p: p, n: arm };
+    }
+    if at_op(p, "{") {
+        let sp: POut = parse_struct_pattern(p, idt);
+        return sp;
+    }
+    let mut arm: Node = new_node(45, idt.line, idt.col);
+    arm.name = idt.text;
+    return POut { p: p, n: arm };
+}
+
+// Parse the `{ field: <pattern>, ... }` tail of a struct pattern
+// after its name (Top-500 #69). The returned Arm node (kind 45,
+// label "struct") carries the field patterns as kind-48 Pattern
+// kids: name = field name, label = field-pat kind ("lit_int" /
+// "lit_bool" / "lit_str" / "binding" / "wildcard"), ival/bval/
+// sval as for the arm encoding (sval = raw magnitude text for
+// lit_int, string value for lit_str, binding name for binding).
+fn parse_struct_pattern(p0: HParser, name_tok: TOut) -> POut {
+    let mut p: HParser = p0;
+    let o: TOut = expect_op(p, "{");
+    p = o.p;
+    let mut arm: Node = new_node(45, name_tok.line, name_tok.col);
+    arm.label = "struct";
+    arm.name = name_tok.text;
+    let mut fields: [Node] = [];
+    if at_op(p, "}") {
+        let c: TOut = expect_op(p, "}");
+        p = c.p;
+        arm.kids = fields;
+        return POut { p: p, n: arm };
+    }
+    let mut seen: [str] = [];
+    while true {
+        if peek_kind(p) != 3 || peek(p) == "_" {
+            fail_at(peek_line(p), peek_col(p), "expected a field name in a struct pattern, got '" + peek(p) + "'");
+        }
+        let ft: TOut = expect_ident(p);
+        p = ft.p;
+        let mut dup: bool = false;
+        let mut si: int = 0;
+        while si < len(seen) {
+            if seen[si] == ft.text {
+                dup = true;
+            }
+            si = si + 1;
+        }
+        if dup {
+            fail_at(ft.line, ft.col, "duplicate field '" + ft.text + "' in a struct pattern");
+        }
+        push(seen, ft.text);
+        let colon: TOut = expect_op(p, ":");
+        p = colon.p;
+        let fp: POut = parse_field_pattern(p, ft.text);
+        p = fp.p;
+        push(fields, fp.n);
+        if at_op(p, ",") {
+            let c: TOut = expect_op(p, ",");
+            p = c.p;
+            continue;
+        }
+        let c: TOut = expect_op(p, "}");
+        p = c.p;
+        break;
+    }
+    arm.kids = fields;
+    return POut { p: p, n: arm };
+}
+
+// Parse one field pattern inside a struct pattern (Top-500 #69):
+// an int/bool/string literal, a binding identifier, or `_`.
+// Nested struct patterns are not in v1.
+fn parse_field_pattern(p0: HParser, field_name: str) -> POut {
+    let mut p: HParser = p0;
+    if peek_kind(p) == 0 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(48, ln, cl);
+        n.name = field_name;
+        n.label = "lit_int";
+        n.ival = parse_int_lit(t);
+        n.sval = t;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 2 {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        let hn: bool = p.has_nul[p.pos];
+        p = advance(p);
+        let mut n: Node = new_node(48, ln, cl);
+        n.name = field_name;
+        n.label = "lit_str";
+        n.sval = t;
+        n.has_nul = hn;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 1 {
+        fail_at(peek_line(p), peek_col(p), "float literal patterns are not supported in v1");
+    }
+    if at_op(p, "-") {
+        let op: TOut = expect_op(p, "-");
+        p = op.p;
+        if peek_kind(p) != 0 {
+            fail_at(peek_line(p), peek_col(p), "expected an integer literal after '-', got '" + peek(p) + "'");
+        }
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(48, op.line, op.col);
+        n.name = field_name;
+        n.label = "lit_int";
+        if int_text_is_min_mag(t) {
+            n.ival = -9223372036854775807 - 1;
+        } else {
+            n.ival = -parse_int_lit(t);
+        }
+        n.sval = t;
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 4 && (peek(p) == "true" || peek(p) == "false") {
+        let t: str = peek(p);
+        let ln: int = peek_line(p);
+        let cl: int = peek_col(p);
+        p = advance(p);
+        let mut n: Node = new_node(48, ln, cl);
+        n.name = field_name;
+        n.label = "lit_bool";
+        n.bval = t == "true";
+        return POut { p: p, n: n };
+    }
+    if peek_kind(p) == 3 {
+        let idt: TOut = expect_ident(p);
+        p = idt.p;
+        let mut n: Node = new_node(48, idt.line, idt.col);
+        n.name = field_name;
+        if idt.text == "_" {
+            n.label = "wildcard";
+        } else {
+            if at_op(p, "{") {
+                fail_at(idt.line, idt.col, "nested struct patterns are not supported in v1");
+            }
+            n.label = "binding";
+            n.sval = idt.text;
+        }
+        return POut { p: p, n: n };
+    }
+    fail_at(peek_line(p), peek_col(p), "expected a pattern, got '" + peek(p) + "'");
+    let mut n: Node = new_node(48, 0, 0);
     return POut { p: p, n: n };
 }
 
@@ -1181,15 +1501,24 @@ fn parse_stmt(p0: HParser) -> POut {
             if at_eof(p) {
                 fail_at(peek_line(p), peek_col(p), "unterminated match");
             }
-            let pat: TOut = expect_ident(p);
+            let pat: POut = parse_pattern(p);
             p = pat.p;
-            let mut binding: str = "";
-            if at_op(p, "(") {
+            let mut arm: Node = pat.n;
+            if arm.label == "wildcard" && at_op(p, "(") {
+                fail_at(arm.line, arm.col, "wildcard arm cannot bind a value");
+            }
+            if arm.label == "struct" && at_op(p, "(") {
+                fail_at(arm.line, arm.col, "only variant patterns can bind a value");
+            }
+            if arm.label == "" && at_op(p, "(") {
                 let op: TOut = expect_op(p, "(");
                 p = op.p;
                 let b: TOut = expect_ident(p);
                 p = b.p;
-                binding = b.text;
+                if b.text == "_" {
+                    fail_at(b.line, b.col, "wildcard arm cannot bind a value");
+                }
+                arm.sval = b.text;
                 let c: TOut = expect_op(p, ")");
                 p = c.p;
             }
@@ -1197,10 +1526,15 @@ fn parse_stmt(p0: HParser) -> POut {
             p = a.p;
             let body: POut = parse_block(p);
             p = body.p;
-            let mut arm: Node = new_node(45, pat.line, pat.col);
-            arm.name = pat.text;
-            arm.sval = binding;
-            arm.kids = [body.n];
+            // The body is kids[0]; a struct pattern's field
+            // patterns (kind 48) follow as kids[1..].
+            let mut all: [Node] = [body.n];
+            let mut fi: int = 0;
+            while fi < len(arm.kids) {
+                push(all, arm.kids[fi]);
+                fi = fi + 1;
+            }
+            arm.kids = all;
             push(kids, arm);
             if at_op(p, ",") {
                 let c: TOut = expect_op(p, ",");
@@ -1298,6 +1632,9 @@ fn parse_params(p0: HParser) -> TOut {
             if at_op(p, ",") {
                 let cc: TOut = expect_op(p, ",");
                 p = cc.p;
+                if at_op(p, ")") {
+                    break;
+                }
                 continue;
             }
             break;
@@ -1595,6 +1932,58 @@ fn dump_escape(s: str, has_nul: bool) -> str {
     return out;
 }
 
+// Render one match pattern (an Arm node, kind 45, or a struct-field
+// Pattern node, kind 48) for the AST dump (Top-500 #69).
+fn dump_pat_text(n: Node) -> str {
+    if n.kind == 48 {
+        if n.label == "lit_int" {
+            return i2s(n.ival);
+        }
+        if n.label == "lit_bool" {
+            if n.bval {
+                return "true";
+            }
+            return "false";
+        }
+        if n.label == "lit_str" {
+            return "\"" + dump_escape(n.sval, n.has_nul) + "\"";
+        }
+        if n.label == "binding" {
+            return n.sval;
+        }
+        return "_";
+    }
+    if n.label == "lit_int" {
+        return i2s(n.ival);
+    }
+    if n.label == "lit_bool" {
+        if n.bval {
+            return "true";
+        }
+        return "false";
+    }
+    if n.label == "lit_str" {
+        return "\"" + dump_escape(n.name, n.has_nul) + "\"";
+    }
+    if n.label == "struct" {
+        let mut s: str = n.name + " { ";
+        let mut i: int = 1;
+        while i < len(n.kids) {
+            let f: Node = n.kids[i];
+            s = s + f.name + ": " + dump_pat_text(f);
+            if i + 1 < len(n.kids) {
+                s = s + ", ";
+            }
+            i = i + 1;
+        }
+        return s + " }";
+    }
+    if n.label == "wildcard" {
+        return "_";
+    }
+    return n.name;
+}
+
 fn dump(n: Node) -> str {
     let k: int = n.kind;
     if k == 0 {
@@ -1860,13 +2249,14 @@ fn dump(n: Node) -> str {
         return "(Field " + n.name + " " + dump(n.kids[0]) + ")";
     }
     if k == 45 {
-        let mut s: str = "(Arm " + n.name;
-        if n.sval == "" {
-            s = s + " -";
-        } else {
-            s = s + " " + n.sval;
+        let mut s: str = "(Arm " + dump_pat_text(n);
+        if n.label == "" && n.sval != "" {
+            s = s + "(" + n.sval + ")";
         }
         return s + " " + dump(n.kids[0]) + ")";
+    }
+    if k == 48 {
+        return "(Pattern " + n.name + ": " + dump_pat_text(n) + ")";
     }
     return "(?" + i2s(k) + ")";
 }

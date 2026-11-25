@@ -49,11 +49,51 @@ class FuncDef:
 
 
 @dataclass
+class Pattern:
+    """One match-arm pattern (Top-500 #69: value patterns).
+
+    kind: "variant" (enum variant or union member name), "lit_int",
+    "lit_bool", "lit_str", "struct", "wildcard", "binding" (a
+    struct-field binding, field patterns only). value: the int for
+    lit_int, the bool for lit_bool, the string for lit_str, the
+    struct name for struct, the member name for variant, the
+    binding name for binding, "" for wildcard. fields: for kind
+    "struct", the (field_name, Pattern) list in written order.
+    binding: the payload binding for variant patterns, ""
+    otherwise.
+    """
+    kind: str
+    value: object = None
+    fields: list = None
+    binding: str = None  # payload binding for variant patterns, None when absent
+    line: int = 0
+    col: int = 0
+
+
+@dataclass
 class Match:
     expr: object
-    arms: list  # [(pattern, Block)]; pattern is a variant name or "_"
+    arms: list  # [(Pattern, Block)]; pattern is a Pattern node (#69)
     line: int
     col: int
+
+
+def pattern_text(pat):
+    """Render a Pattern for error messages and fmt (Top-500 #69)."""
+    if pat.kind == "lit_int":
+        return str(pat.value)
+    if pat.kind == "lit_bool":
+        return "true" if pat.value else "false"
+    if pat.kind == "lit_str":
+        return f'"{pat.value}"'
+    if pat.kind == "struct":
+        inner = ", ".join(f"{fn}: {pattern_text(fp)}" for fn, fp in (pat.fields or []))
+        return f"{pat.value} {{ {inner} }}"
+    if pat.kind == "binding":
+        return str(pat.value)
+    if pat.kind == "wildcard":
+        return "_"
+    return str(pat.value or "")
 
 
 @dataclass
@@ -94,6 +134,11 @@ class Let:
     expr: object
     line: int
     col: int
+    # Top-500 #494: True when the checker proved this let rebinds
+    # a name already declared in the same scope (same-type only
+    # in v1); codegen then lowers it to the Assign path instead
+    # of emitting a second C declaration.
+    rebind: bool = False
 
 
 @dataclass

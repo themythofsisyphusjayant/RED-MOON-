@@ -61,6 +61,115 @@ class Parser:
             raise ForgeError(f"expected a name, got {self._d(t)}", t.line, t.col)
         return self.next()
 
+    def parse_pattern(self):
+        """Parse one match-arm pattern (Top-500 #69: value patterns).
+
+        v1 shapes: `_` (wildcard), an identifier (enum variant or
+        union member name), an int literal (optionally `-` + INT),
+        a bool literal, a string literal, or a struct pattern
+        `Name { field: <pattern>, ... }` where each field pattern
+        is a literal, a binding, or `_`. Float, range, tuple/array
+        and type patterns, `|` alternation and guards are not in
+        v1 and fail here with a named error.
+        """
+        t = self.peek()
+        if t.kind == "INT":
+            self.next()
+            return A.Pattern("lit_int", t.value, None, None, t.line, t.col)
+        if t.kind == "STR":
+            self.next()
+            return A.Pattern("lit_str", t.value, None, None, t.line, t.col)
+        if t.kind == "FLOAT":
+            raise ForgeError("float literal patterns are not supported in v1",
+                             t.line, t.col)
+        if t.kind == "OP" and t.value == "-":
+            self.next()
+            n = self.peek()
+            if n.kind != "INT":
+                raise ForgeError(f"expected an integer literal after '-', got {self._d(n)}",
+                                 n.line, n.col)
+            self.next()
+            return A.Pattern("lit_int", -n.value, None, None, t.line, t.col)
+        if t.kind == "KEYWORD" and t.value in ("true", "false"):
+            self.next()
+            return A.Pattern("lit_bool", t.value == "true", None, None, t.line, t.col)
+        if t.kind != "IDENT":
+            raise ForgeError(f"expected a pattern, got {self._d(t)}", t.line, t.col)
+        self.next()
+        if t.value == "_":
+            return A.Pattern("wildcard", "", None, None, t.line, t.col)
+        if self.at_op("{"):
+            return self.parse_struct_pattern(t)
+        return A.Pattern("variant", t.value, None, None, t.line, t.col)
+
+    def parse_struct_pattern(self, name_tok):
+        """Parse the `{ field: <pattern>, ... }` tail of a struct
+        pattern after its name (Top-500 #69). Field patterns are
+        literals, bindings, or `_`; nested struct patterns are not
+        in v1."""
+        self.next()  # consume "{"
+        fields = []
+        seen = set()
+        if self.at_op("}"):
+            self.next()
+            return A.Pattern("struct", name_tok.value, fields, None,
+                             name_tok.line, name_tok.col)
+        while True:
+            ft = self.peek()
+            if ft.kind != "IDENT" or ft.value == "_":
+                raise ForgeError(f"expected a field name in a struct pattern, got {self._d(ft)}",
+                                 ft.line, ft.col)
+            self.next()
+            if ft.value in seen:
+                raise ForgeError(f"duplicate field '{ft.value}' in a struct pattern",
+                                 ft.line, ft.col)
+            seen.add(ft.value)
+            self.expect_op(":")
+            fp = self.parse_field_pattern()
+            fields.append((ft.value, fp))
+            if self.at_op(","):
+                self.next()
+                continue
+            self.expect_op("}")
+            break
+        return A.Pattern("struct", name_tok.value, fields, None,
+                         name_tok.line, name_tok.col)
+
+    def parse_field_pattern(self):
+        """Parse one field pattern inside a struct pattern (Top-500
+        #69): an int/bool/string literal, a binding identifier, or
+        `_`. Nested struct patterns are not in v1."""
+        t = self.peek()
+        if t.kind == "INT":
+            self.next()
+            return A.Pattern("lit_int", t.value, None, None, t.line, t.col)
+        if t.kind == "STR":
+            self.next()
+            return A.Pattern("lit_str", t.value, None, None, t.line, t.col)
+        if t.kind == "FLOAT":
+            raise ForgeError("float literal patterns are not supported in v1",
+                             t.line, t.col)
+        if t.kind == "OP" and t.value == "-":
+            self.next()
+            n = self.peek()
+            if n.kind != "INT":
+                raise ForgeError(f"expected an integer literal after '-', got {self._d(n)}",
+                                 n.line, n.col)
+            self.next()
+            return A.Pattern("lit_int", -n.value, None, None, t.line, t.col)
+        if t.kind == "KEYWORD" and t.value in ("true", "false"):
+            self.next()
+            return A.Pattern("lit_bool", t.value == "true", None, None, t.line, t.col)
+        if t.kind == "IDENT":
+            self.next()
+            if t.value == "_":
+                return A.Pattern("wildcard", "", None, None, t.line, t.col)
+            if self.at_op("{"):
+                raise ForgeError("nested struct patterns are not supported in v1",
+                                 t.line, t.col)
+            return A.Pattern("binding", t.value, None, None, t.line, t.col)
+        raise ForgeError(f"expected a pattern, got {self._d(t)}", t.line, t.col)
+
     @staticmethod
     def _d(tok):
         return "end of file" if tok.kind == "EOF" else repr(tok.value)
@@ -151,6 +260,8 @@ class Parser:
                 params.append((pname.value, ptype))
                 if self.at_op(","):
                     self.next()
+                    if self.at_op(")"):
+                        break
                     continue
                 break
         self.expect_op(")")
@@ -172,6 +283,8 @@ class Parser:
             params.append(self.expect_ident().value)
             if self.at_op(","):
                 self.next()
+                if self.at_op(">"):
+                    break
                 continue
             break
         self.expect_op(">")
@@ -233,6 +346,8 @@ class Parser:
                     elems.append(self.parse_type())
                     if self.at_op(","):
                         self.next()
+                        if self.at_op(")"):
+                            break
                         continue
                     break
             tok = self.peek()
@@ -260,6 +375,8 @@ class Parser:
                     params.append(self.parse_type())
                     if self.at_op(","):
                         self.next()
+                        if self.at_op(")"):
+                            break
                         continue
                     break
             self.expect_op(")")
@@ -298,6 +415,8 @@ class Parser:
                     args.append(self.parse_type())
                     if self.at_op(","):
                         self.next()
+                        if self.at_op(">"):
+                            break
                         continue
                     break
                 self.expect_op(">")
@@ -337,6 +456,8 @@ class Parser:
                     params.append((pname.value, ptype))
                     if self.at_op(","):
                         self.next()
+                        if self.at_op(")"):
+                            break
                         continue
                     break
             self.expect_op(")")
@@ -410,6 +531,8 @@ class Parser:
                 params.append((pname.value, ptype))
                 if self.at_op(","):
                     self.next()
+                    if self.at_op(")"):
+                        break
                     continue
                 break
         self.expect_op(")")
@@ -529,15 +652,24 @@ class Parser:
             while not self.at_op("}"):
                 if self.peek().kind == "EOF":
                     raise ForgeError("unterminated match", self.peek().line, self.peek().col)
-                pat = self.expect_ident()
-                binding = None
-                if self.at_op("("):
+                pat = self.parse_pattern()
+                if pat.kind == "wildcard" and self.at_op("("):
+                    raise ForgeError("wildcard arm cannot bind a value",
+                                     pat.line, pat.col)
+                if pat.kind == "struct" and self.at_op("("):
+                    raise ForgeError("only variant patterns can bind a value",
+                                     pat.line, pat.col)
+                if pat.kind == "variant" and self.at_op("("):
                     self.next()
-                    binding = self.expect_ident().value
+                    b = self.expect_ident()
+                    if b.value == "_":
+                        raise ForgeError("wildcard arm cannot bind a value",
+                                         b.line, b.col)
                     self.expect_op(")")
+                    pat.binding = b.value
                 self.expect_op("=>")
                 body = self.parse_block()
-                arms.append((pat.value, binding, body))
+                arms.append((pat, body))
                 if self.at_op(","):
                     self.next()
             self.expect_op("}")
@@ -653,6 +785,8 @@ class Parser:
                         args.append(self.parse_expr())
                         if self.at_op(","):
                             self.next()
+                            if self.at_op(")"):
+                                break
                             continue
                         break
                 self.expect_op(")")
@@ -672,6 +806,8 @@ class Parser:
                         args.append(self.parse_expr())
                         if self.at_op(","):
                             self.next()
+                            if self.at_op(")"):
+                                break
                             continue
                         break
                 self.expect_op(")")
@@ -745,6 +881,8 @@ class Parser:
                         args.append(self.parse_expr())
                         if self.at_op(","):
                             self.next()
+                            if self.at_op(")"):
+                                break
                             continue
                         break
                 self.expect_op(")")
@@ -761,6 +899,8 @@ class Parser:
                         fields.append((fname.value, fexpr))
                         if self.at_op(","):
                             self.next()
+                            if self.at_op("}"):
+                                break
                             continue
                         break
                 self.expect_op("}")
@@ -774,7 +914,12 @@ class Parser:
                 elems = [first]
                 while self.at_op(","):
                     self.next()
+                    if self.at_op(")"):
+                        break
                     elems.append(self.parse_expr())
+                if len(elems) < 2:
+                    raise ForgeError("tuple literals need at least two elements",
+                                     tok.line, tok.col)
                 self.expect_op(")")
                 return A.TupleLit(elems, tok.line, tok.col)
             self.expect_op(")")
@@ -787,6 +932,8 @@ class Parser:
                     elems.append(self.parse_expr())
                     if self.at_op(","):
                         self.next()
+                        if self.at_op("]"):
+                            break
                         continue
                     break
             self.expect_op("]")
