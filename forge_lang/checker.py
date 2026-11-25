@@ -11,6 +11,7 @@ non-void function must end with a return.
 
 import copy
 import difflib
+from dataclasses import dataclass
 
 from .errors import ForgeError
 from . import ast_nodes as A
@@ -131,11 +132,50 @@ def elem_type(arr_type):
     return arr_type[1:-1] if arr_type.startswith("[") else None
 
 
+# ------------------------------------------------------------------
+# Top-500 #70 (comptime if): the build target record — the one place
+# that knows what the program is being compiled for. arch/os derive
+# 1:1 from target; mode/debug/freestanding come from the CLI flags.
+# The checker resolves `comptime if` against this record and splices
+# the taken branch in place, so infer and all three codegens see
+# resolved code and need no change.
+# ------------------------------------------------------------------
+
+@dataclass
+class Target:
+    target: str  # "native" | "big32" | "wasm"
+    arch: str  # "x86_64" | "riscv32" | "wasm32"
+    os: str  # "linux" | "none" | "wasm"
+    mode: str  # "safe" | "fast"
+    debug: bool
+    freestanding: bool
+
+
+_TARGET_DERIVED = {
+    "native": ("x86_64", "linux"),
+    "big32": ("riscv32", "none"),
+    "wasm": ("wasm32", "wasm"),
+}
+
+
+def make_target(target, mode="safe", debug=False, freestanding=False):
+    if target not in _TARGET_DERIVED:
+        raise ForgeError(
+            f"unknown target '{target}'; allowed: native, big32, wasm")
+    arch, os_name = _TARGET_DERIVED[target]
+    return Target(target, arch, os_name, mode, debug, freestanding)
+
+
 class Checker:
-    def __init__(self, program, freestanding=False, dump_error_sets=False):
+    def __init__(self, program, freestanding=False, dump_error_sets=False,
+                 target=None):
         self.program = program
         self.freestanding = freestanding
         self.dump_error_sets = dump_error_sets  # Top-500 #50: print
+        # Top-500 #70: the build target this check resolves
+        # `comptime if` against (default: native, from the flags).
+        self.target = (target if target is not None
+                       else make_target("native", freestanding=freestanding))
         # inferred error sets to stderr after checking (qasida check
         # --dump-error-sets).
         # Top-500 #50 (inferred error sets, ES-C1–ES-C9): per-function
@@ -1955,10 +1995,65 @@ class Checker:
                              line, col)
         return fn_type_string(fn.params, fn.ret)
 
+    def _eval_pred(self, pred):
+        """Evaluate a comptime-if predicate against this check's
+        Target (Top-500 #70). The parser admits only the fixed
+        set, so every kind here is known; an undecidable condition
+        is impossible by construction (F6)."""
+        k = pred.kind
+        if k == "and":
+            return self._eval_pred(pred.kids[0]) and self._eval_pred(pred.kids[1])
+        if k == "or":
+            return self._eval_pred(pred.kids[0]) or self._eval_pred(pred.kids[1])
+        if k == "not":
+            return not self._eval_pred(pred.kids[0])
+        if k == "debug":
+            return self.target.debug
+        if k == "freestanding":
+            return self.target.freestanding
+        actual = {"target": self.target.target, "arch": self.target.arch,
+                  "os": self.target.os, "mode": self.target.mode}[k]
+        if pred.op == "==":
+            return actual == pred.value
+        return actual != pred.value
+
+    def _resolve_comptime_if(self, stmt):
+        """The taken branch's statements for a ComptimeIf (Top-500
+        #70): the `else comptime if` chain is a one-statement Block
+        wrapping a nested ComptimeIf, so it resolves recursively.
+        The discarded branch is never returned — it is parsed only,
+        never checked or compiled (F1)."""
+        if self._eval_pred(stmt.pred):
+            return list(stmt.then.stmts)
+        if stmt.els is None:
+            return []
+        if (len(stmt.els.stmts) == 1
+                and isinstance(stmt.els.stmts[0], A.ComptimeIf)):
+            return self._resolve_comptime_if(stmt.els.stmts[0])
+        return list(stmt.els.stmts)
+
+    def _check_stmts(self, stmts):
+        """Check a statement list, splicing each ComptimeIf in place
+        (Top-500 #70): the statement is replaced by the taken
+        branch's statements, which are then checked in the SAME
+        enclosing context — the same scope, the same label stack,
+        the same defer frames — so a `let` in the taken branch is
+        visible after the if and a spliced-in `return`/`break`
+        satisfies the enclosing checks. The splice mutates the
+        list object, so infer/codegen (which walk the same
+        program) see resolved code and never meet a ComptimeIf."""
+        i = 0
+        while i < len(stmts):
+            stmt = stmts[i]
+            if isinstance(stmt, A.ComptimeIf):
+                stmts[i:i + 1] = self._resolve_comptime_if(stmt)
+                continue
+            self.check_stmt(stmt)
+            i += 1
+
     def check_block(self, block):
         self.scopes.append({})
-        for stmt in block.stmts:
-            self.check_stmt(stmt)
+        self._check_stmts(block.stmts)
         self.scopes.pop()
 
     def _field_path(self, expr):
@@ -2104,6 +2199,13 @@ class Checker:
         return self.check_expr(expr)
 
     def check_stmt(self, stmt):
+        if isinstance(stmt, A.ComptimeIf):
+            # Top-500 #70: unreachable — _check_stmts splices
+            # every ComptimeIf before check_stmt sees it. A
+            # ComptimeIf here means a new statement-list walker
+            # was added without going through _check_stmts.
+            raise ForgeError("internal error: unresolved comptime if",
+                             stmt.line, stmt.col)
         if isinstance(stmt, A.Block):
             self.check_block(stmt)
             return
@@ -2696,8 +2798,11 @@ class Checker:
             if iter_root is not None:
                 self._for_iterables.append((iter_scope, iter_root, iter_path))
             try:
-                for s in stmt.body.stmts:
-                    self.check_stmt(s)
+                # Top-500 #70: splice ComptimeIfs in the body in
+                # place (the for-var scope above is already pushed,
+                # so a spliced-in `let` lands in it, as in
+                # check_block).
+                self._check_stmts(stmt.body.stmts)
                 body_moved, body_fields = set(self.moved), set(self.moved_fields)
                 body_pinned = set(self.pinned)
             finally:
@@ -4409,6 +4514,8 @@ class Checker:
         raise ForgeError(f"unknown operator '{op}'", node.line, node.col)
 
 
-def check(program, require_main=True, freestanding=False, dump_error_sets=False):
+def check(program, require_main=True, freestanding=False, dump_error_sets=False,
+          target=None):
     Checker(program, freestanding,
-            dump_error_sets=dump_error_sets).check(require_main=require_main)
+            dump_error_sets=dump_error_sets,
+            target=target).check(require_main=require_main)

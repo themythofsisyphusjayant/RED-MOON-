@@ -147,6 +147,15 @@ struct HChecker {
     // no hosted runtime — the checker rejects heap-backed
     // values and hosted-only features at first use.
     freestanding: bool;
+    // Top-500 #70 (comptime if): the build target this check
+    // resolves `comptime if` against. arch/os derive 1:1 from
+    // target; mode/debug come from the CLI flags (mirrors
+    // forge_lang/checker.py Target).
+    target: str;
+    arch: str;
+    os: str;
+    mode: str;
+    debug: bool;
     // Top-500 #50 inferred error sets: summaries (name,
     // kind "S"/"V", enum, "~"-joined set / "TOP" / ""),
     // the reverse call graph ("caller~callee"), the walk
@@ -180,7 +189,7 @@ struct COut {
 }
 
 fn new_checker() -> HChecker {
-    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], label_names: [], scope_marks: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
+    return HChecker { var_names: [], var_types: [], var_moved: [], var_mut: [], var_pinned: [], moved_fields: [], moved_field_target: "", unres_names: [], unres_lines: [], unres_cols: [], for_iter_roots: [], for_iter_paths: [], for_iter_scopes: [], struct_names: [], struct_fields: [], struct_tparams: [], enum_names: [], enum_variants: [], enum_tparams: [], variant_names: [], variant_enums: [], method_structs: [], method_sigs: [], impl_structs: [], impl_traits: [], trait_names: [], trait_sigs: [], nt_names: [], nt_targets: [], func_names: [], func_sigs: [], func_pnames: [], func_tparams: [], func_extern: [], fn_files: [], current_file: "", current_fn: "", ret_type: "void", loop_depth: 0, branch_depth: 0, loop_vars: [], label_names: [], scope_marks: [], pinned_base_depth: 0, pinned_observe: 0, field_base_depth: 0, pinned_write_root: "", lam_boundaries: [], lam_caps: [], freestanding: false, target: "native", arch: "x86_64", os: "linux", mode: "safe", debug: false, es_names: [], es_kinds: [], es_enums: [], es_sets: [], es_edges: [], es_loc_names: [], es_loc_typs: [], es_loc_kinds: [], es_loc_enums: [], es_loc_sets: [], es_marks: [], es_acc_err_enum: "", es_acc_err_set: "", es_acc_val_enum: "", es_acc_val_set: "", es_callees: [], es_verdicts: false, es_bound_hit: false };
 }
 
 // Last index of a one-char string in s, or -1 (Top-500 #48:
@@ -8038,10 +8047,182 @@ fn es_dump(c0: HChecker, prog: Node) -> HChecker {
 // ---------- program entry ----------
 // Returns true if the program checks clean; fails otherwise.
 
-fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_sets: bool) -> bool {
+// ---------- comptime if resolution (Top-500 #70) ----------
+// The hosted checker cannot rewrite the AST in place (nodes are
+// values — see the alias-expansion note above), so `comptime if`
+// resolution is a deterministic tree-rebuilding pass, mirroring
+// expand_aliases_prog: resolve_comptime_prog rebuilds the program
+// with every ComptimeIf replaced by its taken branch's statements
+// (the discarded branch is parsed only, never checked/compiled).
+// check_program calls it at entry (so the checker always sees
+// resolved code) and compile_to_c calls it on the merged program
+// (so run_infer and codegen_program see the SAME resolved program
+// the checker saw — the hosted driver's one-mutated-program rule,
+// matching Python's in-place splice). With no ComptimeIf in the
+// tree the original node is returned untouched, so the bootstrap
+// emit stays byte-identical.
+
+// Rebuild a node with a different kids array (the alias expander's
+// shape: copy the struct, replace kids, return the new node).
+fn ct_with_kids(n: Node, kids: [Node]) -> Node {
+    let mut out: Node = n;
+    out.kids = kids;
+    return out;
+}
+
+// True when the tree contains a ComptimeIf (kind 49) anywhere,
+// including inside a lambda nested in an expression.
+fn ct_has_comptime_if(n: Node) -> bool {
+    if n.kind == 49 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if ct_has_comptime_if(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Evaluate a Pred node (kind 50) against this check's Target.
+// The parser admits only the fixed set, so every kind here is
+// known; an undecidable condition is impossible by construction.
+fn ct_eval_pred(c: HChecker, pred: Node) -> bool {
+    if pred.name == "and" {
+        return ct_eval_pred(c, pred.kids[0]) && ct_eval_pred(c, pred.kids[1]);
+    }
+    if pred.name == "or" {
+        return ct_eval_pred(c, pred.kids[0]) || ct_eval_pred(c, pred.kids[1]);
+    }
+    if pred.name == "not" {
+        return !ct_eval_pred(c, pred.kids[0]);
+    }
+    if pred.name == "debug" {
+        return c.debug;
+    }
+    if pred.name == "freestanding" {
+        return c.freestanding;
+    }
+    let mut actual: str = "";
+    if pred.name == "target" {
+        actual = c.target;
+    } else if pred.name == "arch" {
+        actual = c.arch;
+    } else if pred.name == "os" {
+        actual = c.os;
+    } else {
+        actual = c.mode;
+    }
+    if pred.label == "==" {
+        return actual == pred.sval;
+    }
+    return actual != pred.sval;
+}
+
+// The taken branch's statements for a ComptimeIf (kind 49):
+// kids[0] = Pred, kids[1] = then Block, kids[2] = else Block when
+// present. An `else comptime if` is a one-statement Block wrapping
+// a nested ComptimeIf, so it resolves recursively.
+fn ct_taken_stmts(c: HChecker, n: Node) -> [Node] {
+    if ct_eval_pred(c, n.kids[0]) {
+        return n.kids[1].kids;
+    }
+    if len(n.kids) < 3 {
+        return [];
+    }
+    let els: Node = n.kids[2];
+    if len(els.kids) == 1 && els.kids[0].kind == 49 {
+        return ct_taken_stmts(c, els.kids[0]);
+    }
+    return els.kids;
+}
+
+// Resolve a statement list: each ComptimeIf is replaced by its
+// taken branch's statements (recursively resolved); every other
+// statement is rebuilt with its nested blocks resolved.
+fn ct_resolve_stmts(c: HChecker, stmts: [Node]) -> [Node] {
+    let mut out: [Node] = [];
+    let mut i: int = 0;
+    while i < len(stmts) {
+        let n: Node = stmts[i];
+        if n.kind == 49 {
+            let taken: [Node] = ct_taken_stmts(c, n);
+            let resolved: [Node] = ct_resolve_stmts(c, taken);
+            let mut j: int = 0;
+            while j < len(resolved) {
+                push(out, resolved[j]);
+                j = j + 1;
+            }
+        } else {
+            push(out, ct_resolve_node(c, n));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Rebuild one node with its nested statement lists resolved. A
+// Block's kids are statements (resolve_stmts); every other node
+// rebuilds with each kid resolved, which walks expressions to
+// find lambdas (kind 47) whose bodies are Blocks.
+fn ct_resolve_node(c: HChecker, n: Node) -> Node {
+    if n.kind == 9 {
+        return ct_with_kids(n, ct_resolve_stmts(c, n.kids));
+    }
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        push(kids, ct_resolve_node(c, n.kids[i]));
+        i = i + 1;
+    }
+    return ct_with_kids(n, kids);
+}
+
+// The entry point: the program with every ComptimeIf resolved,
+// or the original node untouched when there is nothing to do.
+fn resolve_comptime_prog(c: HChecker, prog: Node) -> Node {
+    if !ct_has_comptime_if(prog) {
+        return prog;
+    }
+    return ct_resolve_node(c, prog);
+}
+
+// Set a checker's Target fields from the CLI facts, validating
+// the target name (mirrors forge_lang/checker.py make_target).
+fn ct_set_target(c0: HChecker, target: str, mode: str, debug: bool) -> HChecker {
+    let mut c: HChecker = c0;
+    c.target = target;
+    if target == "native" {
+        c.arch = "x86_64";
+        c.os = "linux";
+    } else if target == "big32" {
+        c.arch = "riscv32";
+        c.os = "none";
+    } else if target == "wasm" {
+        c.arch = "wasm32";
+        c.os = "wasm";
+    } else {
+        fail_at(1, 1, "unknown target '" + target + "'; allowed: native, big32, wasm");
+    }
+    c.mode = mode;
+    c.debug = debug;
+    return c;
+}
+
+fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_sets: bool, target: str, mode: str, debug: bool) -> bool {
     let mut p: Node = expand_aliases_prog(prog);
     let mut c: HChecker = new_checker();
     c.freestanding = freestanding;
+    // Top-500 #70: the build target this check resolves
+    // `comptime if` against (the hosted driver evaluates native
+    // only; non-native targets are Python-only).
+    c = ct_set_target(c, target, mode, debug);
+    // Top-500 #70: resolve `comptime if` before checking, so the
+    // checker sees resolved code (the same resolved program is
+    // what compile_to_c hands to run_infer/codegen_program).
+    p = resolve_comptime_prog(c, p);
     // Top-500 #48: (name, file) pairs for try_call's module
     // boundary (load_merged records them; test harnesses pass []).
     c.fn_files = fn_files;

@@ -32,7 +32,7 @@ forge.py vs the hosted binary; probe script at
       "check --version", "stack --limit --help"); --mode fast for
       emit/run/build (the hosted codegen is SAFE-ONLY — fast under
       hosted would silently change checked-arithmetic semantics;
-      check --mode fast stays hosted); build --target big32|wasm,
+      check --mode fast stays hosted); build/check --target big32|wasm,
       --debug, --shared, --wit; the deferred subcommands fmt/doc/lsp/
       repl/pkg/test/stack/emit-big32/emit-cuda/emit-wasm (except their
       bare --help forms, which are parity-proven).
@@ -103,8 +103,11 @@ def _decide_core(argv):
             if val == "fast" and cmd != "check":
                 return "python", "--mode fast (%s is safe-only in hosted)" % cmd
             continue
-        if cmd == "build" and (tok == "--target" or
-                               tok.startswith("--target=")):
+        # Top-500 #70: `check --target` resolves comptime ifs
+        # against that target; non-native targets are Python-only
+        # (the hosted driver evaluates native only).
+        if cmd in ("build", "check") and (tok == "--target" or
+                                          tok.startswith("--target=")):
             if tok.startswith("--target="):
                 val, i = tok[len("--target="):], i + 1
             else:

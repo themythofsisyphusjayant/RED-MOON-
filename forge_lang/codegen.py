@@ -1554,6 +1554,16 @@ class Codegen:
         # maps it to its enclosing function (for #line file info).
         self._cap_stack = []
         self._shadow_stack = []
+        # Top-500 #70: one bool per block scope currently being
+        # generated (pushed by gen_block, alongside _shadow_stack):
+        # True once this block has declared `__forge_ret` (a
+        # Return with a value). A second Return in the SAME block
+        # assigns to it instead of redeclaring it — two plain
+        # top-level returns otherwise redefine it and cc rejects
+        # the program (pre-existing; a spliced-in comptime-if
+        # return newly exposes it in a reachable way). A single
+        # return per block emits byte-identical C to before.
+        self._ret_declared_stack = []
         self._lambda_ids = {}
         self._lambda_enclosing = {}
         self._types = {}
@@ -3354,6 +3364,7 @@ class Codegen:
         self._cap_stack = [{name: f"__forge_e->{name}"
                             for name, _ct in (lam.captures or [])}]
         self._shadow_stack = []
+        self._ret_declared_stack = []
         for pn, pt in lam.params:
             self.local_types[pn] = pt
             if pt == "str" or self.is_array_type(pt) or self.is_struct_type(pt) \
@@ -3402,6 +3413,7 @@ class Codegen:
         self.defer_loop_stack = []
         self._cap_stack = []
         self._shadow_stack = []
+        self._ret_declared_stack = []
 
     def emit_lambda_support(self):
         """Emit the closure support block (Top-500 #101): one env
@@ -3844,6 +3856,7 @@ class Codegen:
         binding, a trampoline's parameters) — such a name shadows a
         capture of the same name inside the block (Top-500 #101)."""
         self._shadow_stack.append(set(shadow_names))
+        self._ret_declared_stack.append(False)
         try:
             for stmt in block.stmts:
                 if self.debug and self.current_file:
@@ -3864,6 +3877,7 @@ class Codegen:
                 self.gen_stmt(stmt, ret_type)
         finally:
             self._shadow_stack.pop()
+            self._ret_declared_stack.pop()
 
     def _emit_defer_frame(self, frame, ret_type):
         """Emit one block's deferred calls, LIFO, as statements
@@ -5103,7 +5117,16 @@ class Codegen:
                         copy_str = rt == "str" and not self.is_fresh_str(stmt.expr)
                         ret_code = self.union_wrap(ret_code, rt, ret_type,
                                                    copy_str=copy_str)
-                self.emit(f"{c_type(ret_type)} __forge_ret = {ret_code};")
+                # Top-500 #70: a second Return in this block reuses
+                # the declaration above (assigns); the first one
+                # declares it. A nested block has its own frame, so
+                # its returns still declare (byte-identical emit).
+                if self._ret_declared_stack and self._ret_declared_stack[-1]:
+                    self.emit(f"__forge_ret = {ret_code};")
+                else:
+                    self.emit(f"{c_type(ret_type)} __forge_ret = {ret_code};")
+                    if self._ret_declared_stack:
+                        self._ret_declared_stack[-1] = True
                 if self.is_array_type(ret_type) and not self.is_fresh_array(stmt.expr):
                     # Shared array return: gain a reference before
                     # freeing owned locals, so the returned array survives.

@@ -9,7 +9,7 @@ that calls this module's main(). Also runnable directly:
 Usage:
     qasida run examples/qasida_demo.fg
     qasida --version
-    qasida check <file.fg> [--mode safe|fast]
+    qasida check <file.fg> [--mode safe|fast] [--target native|big32|wasm]
     qasida build <file.fg> [-o out] [--mode safe|fast] [--keep-c out.c]
     qasida run   <file.fg> [--mode safe|fast] [-- program args...]
     qasida emit  <file.fg> [--mode safe|fast]
@@ -64,6 +64,12 @@ def main(argv=None):
             # Top-500 #50: print inferred error sets to stderr.
             p.add_argument("--dump-error-sets", action="store_true",
                            help="print inferred error sets to stderr after checking")
+            # Top-500 #70: the target `comptime if` resolves
+            # against (default native, like `build`).
+            p.add_argument("--target", choices=["native", "big32", "wasm"],
+                           default="native",
+                           help="check against this target's facts "
+                                "(comptime if resolution)")
         if name == "emit":
             # Fix 1 B0 measurement toggles: hidden (help=SUPPRESS),
             # NOT on `check` (DESIGN.md §5).
@@ -173,7 +179,8 @@ def main(argv=None):
             return dispatch(list(args.pkg_args), os.path.abspath(__file__), os.getcwd())
         if args.cmd == "check":
             compile_file(args.file, mode=args.mode, freestanding=args.freestanding,
-                         dump_error_sets=args.dump_error_sets)
+                         dump_error_sets=args.dump_error_sets,
+                         target=args.target)
             print("ok: no errors")
             return 0
         if args.cmd == "emit":

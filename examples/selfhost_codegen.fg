@@ -278,6 +278,15 @@ struct HCodegen {
     capmap_marks: [int];
     shadow_names: [str];
     shadow_marks: [int];
+    // Top-500 #70: one 0/1 per open block (pushed by cg_gen_block,
+    // alongside the shadow frame): 1 once this block has declared
+    // `__forge_ret` (a Return with a value). A second Return in the
+    // SAME block assigns to it instead of redeclaring it — two
+    // plain top-level returns otherwise redefine it and cc rejects
+    // the program (pre-existing; a spliced-in comptime-if return
+    // newly exposes it in a reachable way). Mirrors
+    // forge_lang/codegen.py _ret_declared_stack.
+    ret_declared: [int];
     lam_fn: str;
     // Index of current_fn in func_names (speed step 2; -2 = unset
     // or a mangled instantiation name: lookups miss, exactly like
@@ -629,7 +638,7 @@ fn cg_map_put_first(m0: CGStrMap, key: str, val: int) -> CGStrMap {
 }
 
 fn cg_new(inf: HInfer) -> HCodegen {
-    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], blk_let_names: [], blk_let_marks: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], loop_labels: [], loop_end_labels: [], loop_cont_labels: [], loop_label_counter: 0, defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
+    let mut g: HCodegen = HCodegen { lines: [], lines_len: 0, indent: 0, current_fn: "", current_ret: "void", func_names: [], func_rets: [], func_params: [], func_extern: [], struct_names: [], struct_fields: [], struct_tparams: [], newtype_names: [], newtype_targets: [], enum_names: [], enum_variants: [], enum_payloads: [], enum_tparams: [], enum_concrete: [], trait_names: [], trait_sigs: [], impl_structs: [], impl_traits: [], tuple_types: [], union_types: [], fn_types: [], nested_arrays: [], weak_found: false, spawn_names: [], spawn_argc: [], moved_fields: [], drop_receiver: "", branch_depth: 0, loop_depth: 0, defer_conds: [], move_cond: -1, map_keys: inf.map_keys, map_vals: inf.map_vals, map_seq: inf.map_seq, map_cap: inf.map_cap, map_len: inf.map_len, cap_keys: inf.cap_keys, cap_vals: inf.cap_vals, fn_uses: inf.fn_uses, lam_keys: [], lam_fn_names: [], lam_fn_idx: [], lam_nodes: [], capmap_names: [], capmap_types: [], capmap_marks: [], shadow_names: [], shadow_marks: [], ret_declared: [], lam_fn: "", owned_names: [], owned_types: [], owned_marks: [], fact_names: [], fact_los: [], fact_his: [], check_keys: [], let_names: [], let_starts: [], blk_let_names: [], blk_let_marks: [], owned_frame_starts: [0], defer_calls: [], defer_frame_starts: [0], loop_frames: [], loop_labels: [], loop_end_labels: [], loop_cont_labels: [], loop_label_counter: 0, defer_loop_stack: [], scope_vars: [], scope_depths: [], scope_counter: 0, local_names: [], local_types: [], assign_counter: 0, arr_counter: 0, loop_counter: 0, try_counter: 0, subst_names: [], subst_types: [], inst_tmpl: [], inst_mangled: [], inst_bnames: [], inst_btypes: [], inst_busy: [], spawn_counter: 0, debug: false, current_file: "", fn_files: [], freestanding: false, no_bounds_checks: false, no_overflow_checks: false, current_fn_idx: -2, maps: [] };
     // Speed step 4: pre-sized buckets (funcs ~419 in the
     // codegen wrap; structs gain concrete mangled names during
     // generation, so the struct map starts at 2048). The array
@@ -8829,7 +8838,19 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
                 ret_code = cg_union_wrap(ret_code, rt, ret_type, cs, g);
             }
         }
-        g = cg_emit(g, cg_c_type(g, ret_type) + " __forge_ret = " + ret_code + ";");
+        // Top-500 #70: a second Return in this block reuses the
+        // declaration above (assigns); the first one declares it.
+        // A nested block has its own frame, so its returns still
+        // declare (byte-identical emit). Mirrors
+        // forge_lang/codegen.py _ret_declared_stack.
+        if len(g.ret_declared) > 0 && g.ret_declared[len(g.ret_declared) - 1] == 1 {
+            g = cg_emit(g, "__forge_ret = " + ret_code + ";");
+        } else {
+            g = cg_emit(g, cg_c_type(g, ret_type) + " __forge_ret = " + ret_code + ";");
+            if len(g.ret_declared) > 0 {
+                g.ret_declared[len(g.ret_declared) - 1] = 1;
+            }
+        }
         if cg_is_array_type(g, ret_type) && !cg_is_fresh_array(g, e) {
             g = cg_emit(g, "forge_arr_inc(__forge_ret.ref);");
         }
@@ -9185,6 +9206,9 @@ fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
     // trampoline parameters) are pushed as a frame of their own
     // by the enclosing construct before calling here.
     g = cg_shadow_push(g, "");
+    // Top-500 #70: this block has not declared `__forge_ret` yet
+    // (mirrors forge_lang/codegen.py _ret_declared_stack).
+    push(g.ret_declared, 0);
     // Top-500 #494: block mark for same-scope rebind detection
     // (the Let handler reads the top mark; balanced here).
     push(g.blk_let_marks, len(g.blk_let_names));
@@ -9212,6 +9236,7 @@ fn cg_gen_block(g0: HCodegen, blk: Node, ret_type: str) -> HCodegen {
         i = i + 1;
     }
     g = cg_shadow_pop(g);
+    g.ret_declared = cg_trunc_int(g.ret_declared, len(g.ret_declared) - 1);
     g.blk_let_names = cg_trunc_str(g.blk_let_names, blk_names_start);
     g.blk_let_marks = cg_trunc_int(g.blk_let_marks, len(g.blk_let_marks) - 1);
     return g;

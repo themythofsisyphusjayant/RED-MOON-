@@ -158,6 +158,61 @@ class IndexAssign:
 
 
 @dataclass
+class Pred:
+    """One comptime-if predicate (Top-500 #70). A tiny dedicated
+    tree — NOT the general expression AST: only the fixed predicate
+    set is decidable at compile time.
+
+    kind: "target"/"arch"/"os"/"mode" for valued atoms, "debug"/
+    "freestanding" for bare bool atoms, "and"/"or"/"not" for
+    combinators. op: "==" / "!=" for valued atoms, "" otherwise.
+    value: the string value for valued atoms, None otherwise.
+    kids: operand Preds for combinators, None otherwise.
+    """
+    kind: str
+    op: str = ""
+    value: object = None
+    kids: list = None
+    line: int = 0
+    col: int = 0
+
+
+def pred_text(pred, parent_prec=0):
+    """Render a Pred for error messages and fmt (Top-500 #70).
+    Precedence: or=1, and=2, not=3, atom=4; parentheses only
+    where the parent would otherwise rebind the operand."""
+    if pred.kind == "or":
+        s = (f"{pred_text(pred.kids[0], 1)} || "
+             f"{pred_text(pred.kids[1], 2)}")
+        return f"({s})" if 1 < parent_prec else s
+    if pred.kind == "and":
+        s = (f"{pred_text(pred.kids[0], 2)} && "
+             f"{pred_text(pred.kids[1], 3)}")
+        return f"({s})" if 2 < parent_prec else s
+    if pred.kind == "not":
+        s = f"!{pred_text(pred.kids[0], 3)}"
+        return f"({s})" if 3 < parent_prec else s
+    if pred.kind in ("debug", "freestanding"):
+        return pred.kind
+    return f'{pred.kind} {pred.op} "{pred.value}"'
+
+
+@dataclass
+class ComptimeIf:
+    """`comptime if <pred> { } else { }` (Top-500 #70). The checker
+    resolves it by splicing the taken branch's statements in place
+    (the discarded branch is parsed only, never checked/compiled).
+    els is a Block, or a one-statement Block wrapping a nested
+    ComptimeIf for `else comptime if`, or None when else-less.
+    """
+    pred: object  # Pred
+    then: object  # Block
+    els: object  # Block or None
+    line: int
+    col: int
+
+
+@dataclass
 class If:
     cond: object
     then: object

@@ -8,6 +8,23 @@ from .errors import ForgeError
 from .lexer import tokenize
 from . import ast_nodes as A
 
+# Top-500 #70 (comptime if): the fixed predicate set. Valued atoms
+# compare a compile-time fact against one of the listed values;
+# bare atoms are booleans. Anything else is a named error (§4.5).
+PRED_VALUES = {
+    "target": ("native", "big32", "wasm"),
+    "arch": ("x86_64", "riscv32", "wasm32"),
+    "os": ("linux", "none", "wasm"),
+    "mode": ("safe", "fast"),
+}
+PRED_NOUNS = {
+    "target": "a target",
+    "arch": "an architecture",
+    "os": "an OS",
+    "mode": "a mode",
+}
+PRED_NAMES = ("target", "arch", "os", "mode", "debug", "freestanding")
+
 
 class Parser:
     def __init__(self, tokens):
@@ -60,6 +77,85 @@ class Parser:
         if t.kind != "IDENT":
             raise ForgeError(f"expected a name, got {self._d(t)}", t.line, t.col)
         return self.next()
+
+    def parse_comptime_pred(self):
+        """Parse a comptime-if predicate (Top-500 #70): `||` -> `&&`
+        -> `!` -> atom. Atoms are the fixed set only — a call, a
+        variable, or any other expression fails here with a named
+        error (arbitrary comptime expressions need #462)."""
+        return self._parse_comptime_or()
+
+    def _parse_comptime_or(self):
+        left = self._parse_comptime_and()
+        while self.at_op("||"):
+            op = self.next()
+            right = self._parse_comptime_and()
+            left = A.Pred("or", "", None, [left, right], op.line, op.col)
+        return left
+
+    def _parse_comptime_and(self):
+        left = self._parse_comptime_not()
+        while self.at_op("&&"):
+            op = self.next()
+            right = self._parse_comptime_not()
+            left = A.Pred("and", "", None, [left, right], op.line, op.col)
+        return left
+
+    def _parse_comptime_not(self):
+        if self.at_op("!"):
+            op = self.next()
+            operand = self._parse_comptime_not()
+            return A.Pred("not", "", None, [operand], op.line, op.col)
+        return self._parse_comptime_atom()
+
+    def _parse_comptime_atom(self):
+        t = self.peek()
+        if self.at_op("("):
+            self.next()
+            pred = self.parse_comptime_pred()
+            self.expect_op(")")
+            return pred
+        if t.kind != "IDENT":
+            raise ForgeError(
+                "comptime if needs a target predicate; arbitrary "
+                "expressions need comptime evaluation (#462)",
+                t.line, t.col)
+        self.next()
+        name = t.value
+        if name in ("debug", "freestanding"):
+            if self.at_op("==") or self.at_op("!="):
+                raise ForgeError(
+                    f"comptime predicate '{name}' takes no value; "
+                    f"write '{name}' or '!{name}'",
+                    t.line, t.col)
+            return A.Pred(name, "", None, None, t.line, t.col)
+        if name not in PRED_VALUES:
+            raise ForgeError(
+                f"comptime condition uses unknown predicate '{name}'; "
+                f"allowed: {', '.join(PRED_NAMES)}",
+                t.line, t.col)
+        if not (self.at_op("==") or self.at_op("!=")):
+            first = PRED_VALUES[name][0]
+            raise ForgeError(
+                f"comptime predicate '{name}' needs a comparison, "
+                f"e.g. {name} == \"{first}\"",
+                t.line, t.col)
+        op = self.next()
+        v = self.peek()
+        if v.kind != "STR":
+            first = PRED_VALUES[name][0]
+            raise ForgeError(
+                f"comptime predicate '{name}' needs a string value, "
+                f"e.g. {name} == \"{first}\"",
+                v.line, v.col)
+        self.next()
+        allowed = PRED_VALUES[name]
+        if v.value not in allowed:
+            raise ForgeError(
+                f"comptime {name} \"{v.value}\" is not "
+                f"{PRED_NOUNS[name]}; allowed: {', '.join(allowed)}",
+                v.line, v.col)
+        return A.Pred(name, op.value, v.value, None, t.line, t.col)
 
     def parse_pattern(self):
         """Parse one match-arm pattern (Top-500 #69: value patterns).
@@ -206,6 +302,14 @@ class Parser:
                 newtypes.append(self.parse_newtype())
             elif self.at_kw("extern"):
                 funcs.append(self.parse_extern())
+            elif (self.peek().kind == "IDENT" and self.peek().value == "comptime"
+                    and self.peek(1).kind == "KEYWORD" and self.peek(1).value == "if"):
+                # Top-500 #70: comptime if is function-body only in
+                # v1; top-level (incl. gated imports) is v2.
+                t = self.peek()
+                raise ForgeError(
+                    "comptime if is only allowed inside functions in v1",
+                    t.line, t.col)
             else:
                 funcs.append(self.parse_func())
         return A.Program(imports, funcs, structs, enums, traits, impls,
@@ -577,6 +681,27 @@ class Parser:
                     f"'for' loop (labels attach to loops only in v1)",
                     name_tok.line, name_tok.col)
             label = name_tok.value
+        # Top-500 #70: `comptime if <pred> { } else { }`. `comptime`
+        # stays an ordinary identifier everywhere else: only
+        # `comptime` immediately followed by `if` at statement
+        # position takes this branch, so `let comptime = 3;`,
+        # `comptime = 5;`, and `comptime();` all still parse as
+        # before (p12). `else comptime if` chains like `else if`.
+        if (self.peek().kind == "IDENT" and self.peek().value == "comptime"
+                and self.peek(1).kind == "KEYWORD" and self.peek(1).value == "if"):
+            kw = self.next()
+            self.next()  # 'if'
+            pred = self.parse_comptime_pred()
+            then = self.parse_block()
+            els = None
+            if self.at_kw("else"):
+                self.next()
+                if (self.peek().kind == "IDENT" and self.peek().value == "comptime"
+                        and self.peek(1).kind == "KEYWORD" and self.peek(1).value == "if"):
+                    els = A.Block([self.parse_stmt()])
+                else:
+                    els = self.parse_block()
+            return A.ComptimeIf(pred, then, els, kw.line, kw.col)
         if self.at_kw("let"):
             kw = self.next()
             mutable = False

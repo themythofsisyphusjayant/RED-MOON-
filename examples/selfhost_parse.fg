@@ -126,6 +126,9 @@ fn node_kind_name(k: int) -> str {
     if k == 46 { return "IndirectCall"; }
     if k == 47 { return "Lambda"; }
     if k == 48 { return "Pattern"; }
+    // Top-500 #70: comptime if (conditional compilation).
+    if k == 49 { return "ComptimeIf"; }
+    if k == 50 { return "Pred"; }
     return "?";
 }
 
@@ -1098,6 +1101,159 @@ fn parse_block(p0: HParser) -> POut {
     return POut { p: p, n: n };
 }
 
+// Parse a comptime-if predicate (Top-500 #70): `||` -> `&&` ->
+// `!` -> atom. Atoms are the fixed set only — a call, a variable,
+// or any other expression fails here with a named error
+// (arbitrary comptime expressions need #462). Returns the Pred
+// node (kind 50): name = predicate kind, label = "==" / "!=" for
+// valued atoms, sval = the string value, kids = operands.
+fn ct_first_value(name: str) -> str {
+    if name == "target" { return "native"; }
+    if name == "arch" { return "x86_64"; }
+    if name == "os" { return "linux"; }
+    return "safe";
+}
+
+fn ct_noun(name: str) -> str {
+    if name == "target" { return "a target"; }
+    if name == "arch" { return "an architecture"; }
+    if name == "os" { return "an OS"; }
+    return "a mode";
+}
+
+fn ct_allowed_list(name: str) -> str {
+    if name == "target" { return "native, big32, wasm"; }
+    if name == "arch" { return "x86_64, riscv32, wasm32"; }
+    if name == "os" { return "linux, none, wasm"; }
+    return "safe, fast";
+}
+
+fn ct_value_allowed(name: str, v: str) -> bool {
+    if name == "target" {
+        return v == "native" || v == "big32" || v == "wasm";
+    }
+    if name == "arch" {
+        return v == "x86_64" || v == "riscv32" || v == "wasm32";
+    }
+    if name == "os" {
+        return v == "linux" || v == "none" || v == "wasm";
+    }
+    return v == "safe" || v == "fast";
+}
+
+fn parse_comptime_pred(p0: HParser) -> POut {
+    return parse_comptime_or(p0);
+}
+
+fn parse_comptime_or(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    let left: POut = parse_comptime_and(p);
+    p = left.p;
+    let mut l: Node = left.n;
+    while at_op(p, "||") {
+        let op: TOut = expect_op(p, "||");
+        p = op.p;
+        let right: POut = parse_comptime_and(p);
+        p = right.p;
+        let mut n: Node = new_node(50, op.line, op.col);
+        n.name = "or";
+        n.kids = [l, right.n];
+        l = n;
+    }
+    return POut { p: p, n: l };
+}
+
+fn parse_comptime_and(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    let left: POut = parse_comptime_not(p);
+    p = left.p;
+    let mut l: Node = left.n;
+    while at_op(p, "&&") {
+        let op: TOut = expect_op(p, "&&");
+        p = op.p;
+        let right: POut = parse_comptime_not(p);
+        p = right.p;
+        let mut n: Node = new_node(50, op.line, op.col);
+        n.name = "and";
+        n.kids = [l, right.n];
+        l = n;
+    }
+    return POut { p: p, n: l };
+}
+
+fn parse_comptime_not(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    if at_op(p, "!") {
+        let op: TOut = expect_op(p, "!");
+        p = op.p;
+        let operand: POut = parse_comptime_not(p);
+        p = operand.p;
+        let mut n: Node = new_node(50, op.line, op.col);
+        n.name = "not";
+        n.kids = [operand.n];
+        return POut { p: p, n: n };
+    }
+    return parse_comptime_atom(p);
+}
+
+fn parse_comptime_atom(p0: HParser) -> POut {
+    let mut p: HParser = p0;
+    if at_op(p, "(") {
+        let o: TOut = expect_op(p, "(");
+        p = o.p;
+        let pred: POut = parse_comptime_pred(p);
+        p = pred.p;
+        let c: TOut = expect_op(p, ")");
+        p = c.p;
+        return POut { p: p, n: pred.n };
+    }
+    if peek_kind(p) != 3 {
+        fail_at(peek_line(p), peek_col(p), "comptime if needs a target predicate; arbitrary expressions need comptime evaluation (#462)");
+    }
+    let nm: TOut = expect_ident(p);
+    p = nm.p;
+    let name: str = nm.text;
+    if name == "debug" || name == "freestanding" {
+        if at_op(p, "==") || at_op(p, "!=") {
+            fail_at(peek_line(p), peek_col(p), "comptime predicate '" + name + "' takes no value; write '" + name + "' or '!" + name + "'");
+        }
+        let mut n: Node = new_node(50, nm.line, nm.col);
+        n.name = name;
+        return POut { p: p, n: n };
+    }
+    if name != "target" && name != "arch" && name != "os" && name != "mode" {
+        fail_at(nm.line, nm.col, "comptime condition uses unknown predicate '" + name + "'; allowed: target, arch, os, mode, debug, freestanding");
+    }
+    if !at_op(p, "==") && !at_op(p, "!=") {
+        fail_at(peek_line(p), peek_col(p), "comptime predicate '" + name + "' needs a comparison, e.g. " + name + " == \"" + ct_first_value(name) + "\"");
+    }
+    let mut op_text: str = "";
+    if at_op(p, "==") {
+        let t: TOut = expect_op(p, "==");
+        p = t.p;
+        op_text = "==";
+    } else {
+        let t: TOut = expect_op(p, "!=");
+        p = t.p;
+        op_text = "!=";
+    }
+    if peek_kind(p) != 2 {
+        fail_at(peek_line(p), peek_col(p), "comptime predicate '" + name + "' needs a string value, e.g. " + name + " == \"" + ct_first_value(name) + "\"");
+    }
+    let v: str = peek(p);
+    let vl: int = peek_line(p);
+    let vc: int = peek_col(p);
+    p = advance(p);
+    if !ct_value_allowed(name, v) {
+        fail_at(vl, vc, "comptime " + name + " \"" + v + "\" is not " + ct_noun(name) + "; allowed: " + ct_allowed_list(name));
+    }
+    let mut n: Node = new_node(50, nm.line, nm.col);
+    n.name = name;
+    n.label = op_text;
+    n.sval = v;
+    return POut { p: p, n: n };
+}
+
 // Parse one match-arm pattern (Top-500 #69: value patterns).
 // Returns the Arm node (kind 45) with the pattern encoded in
 // label/ival/bval/name/sval: label "" = variant (name = member,
@@ -1345,6 +1501,41 @@ fn parse_stmt(p0: HParser) -> POut {
             fail_at(nm.line, nm.col, "label '" + nm.text + "' must prefix a 'while' or 'for' loop (labels attach to loops only in v1)");
         }
         label = nm.text;
+    }
+    // Top-500 #70: `comptime if <pred> { } else { }`. `comptime`
+    // stays an ordinary identifier everywhere else: only
+    // `comptime` immediately followed by `if` at statement
+    // position takes this branch, so `let comptime = 3;`,
+    // `comptime = 5;`, and `comptime();` all still parse as
+    // before (p12). `else comptime if` chains like `else if`.
+    if peek_kind(p) == 3 && peek(p) == "comptime" && peek_kind_at(p, 1) == 4 && peek_at(p, 1) == "if" {
+        let kw: TOut = expect_ident(p);
+        p = kw.p;
+        let iw: TOut = expect_kw(p, "if");
+        p = iw.p;
+        let pred: POut = parse_comptime_pred(p);
+        p = pred.p;
+        let then: POut = parse_block(p);
+        p = then.p;
+        let mut kids: [Node] = [pred.n, then.n];
+        if at_kw(p, "else") {
+            let e: TOut = expect_kw(p, "else");
+            p = e.p;
+            if peek_kind(p) == 3 && peek(p) == "comptime" && peek_kind_at(p, 1) == 4 && peek_at(p, 1) == "if" {
+                let elif: POut = parse_stmt(p);
+                p = elif.p;
+                let mut eb: Node = new_node(9, e.line, e.col);
+                eb.kids = [elif.n];
+                push(kids, eb);
+            } else {
+                let els: POut = parse_block(p);
+                p = els.p;
+                push(kids, els.n);
+            }
+        }
+        let mut n: Node = new_node(49, kw.line, kw.col);
+        n.kids = kids;
+        return POut { p: p, n: n };
     }
     if at_kw(p, "let") {
         let kw: TOut = expect_kw(p, "let");
@@ -1854,6 +2045,11 @@ fn parse_program(p0: HParser) -> POut {
             push(funcs, e.n);
             continue;
         }
+        // Top-500 #70: comptime if is function-body only in
+        // v1; top-level (incl. gated imports) is v2.
+        if peek_kind(p) == 3 && peek(p) == "comptime" && peek_kind_at(p, 1) == 4 && peek_at(p, 1) == "if" {
+            fail_at(peek_line(p), peek_col(p), "comptime if is only allowed inside functions in v1");
+        }
         let f: POut = parse_func(p);
         p = f.p;
         push(funcs, f.n);
@@ -2257,6 +2453,32 @@ fn dump(n: Node) -> str {
     }
     if k == 48 {
         return "(Pattern " + n.name + ": " + dump_pat_text(n) + ")";
+    }
+    // Top-500 #70: comptime if. The Pred S-expression spells the
+    // predicate out (valued atoms carry their operator and value).
+    if k == 49 {
+        let mut s: str = "(ComptimeIf " + dump(n.kids[0]) + " " + dump(n.kids[1]);
+        if len(n.kids) > 2 {
+            s = s + " " + dump(n.kids[2]);
+        } else {
+            s = s + " -";
+        }
+        return s + ")";
+    }
+    if k == 50 {
+        if n.name == "and" {
+            return "(Pred && " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+        }
+        if n.name == "or" {
+            return "(Pred || " + dump(n.kids[0]) + " " + dump(n.kids[1]) + ")";
+        }
+        if n.name == "not" {
+            return "(Pred ! " + dump(n.kids[0]) + ")";
+        }
+        if n.name == "debug" || n.name == "freestanding" {
+            return "(Pred " + n.name + ")";
+        }
+        return "(Pred " + n.name + " " + n.label + " \"" + dump_escape(n.sval, false) + "\")";
     }
     return "(?" + i2s(k) + ")";
 }

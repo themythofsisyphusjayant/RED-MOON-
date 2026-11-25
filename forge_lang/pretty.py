@@ -232,6 +232,27 @@ class Formatter:
             self.fmt_block(stmt.body, indent + 1)
             self.emit(indent, "}")
             return
+        if isinstance(stmt, A.ComptimeIf):
+            # Top-500 #70: canonical `comptime if <pred> {` with
+            # the predicate printed precedence-aware (no redundant
+            # parentheses); `else comptime if` chains like `else if`.
+            self.emit(indent, f"comptime if {A.pred_text(stmt.pred)} {{")
+            self.fmt_block(stmt.then, indent + 1)
+            if stmt.els is None:
+                self.emit(indent, "}")
+            elif len(stmt.els.stmts) == 1 and isinstance(stmt.els.stmts[0], A.ComptimeIf):
+                inner = stmt.els.stmts[0]
+                self.emit(indent, f"}} else comptime if {A.pred_text(inner.pred)} {{")
+                self.fmt_block(inner.then, indent + 1)
+                if inner.els is not None:
+                    self.fmt_comptime_else(inner.els, indent)
+                else:
+                    self.emit(indent, "}")
+            else:
+                self.emit(indent, "} else {")
+                self.fmt_block(stmt.els, indent + 1)
+                self.emit(indent, "}")
+            return
         if isinstance(stmt, A.If):
             self.emit(indent, f"if {fmt_expr(stmt.cond)} {{")
             self.fmt_block(stmt.then, indent + 1)
@@ -284,6 +305,21 @@ class Formatter:
             self.emit(indent, f"{fmt_expr(stmt.expr)};")
             return
         raise ForgeError(f"formatter: unsupported statement {type(stmt).__name__}")
+
+    def fmt_comptime_else(self, els, indent):
+        # Top-500 #70: the tail of an `else comptime if` chain.
+        if len(els.stmts) == 1 and isinstance(els.stmts[0], A.ComptimeIf):
+            inner = els.stmts[0]
+            self.emit(indent, f"}} else comptime if {A.pred_text(inner.pred)} {{")
+            self.fmt_block(inner.then, indent + 1)
+            if inner.els is not None:
+                self.fmt_comptime_else(inner.els, indent)
+            else:
+                self.emit(indent, "}")
+        else:
+            self.emit(indent, "} else {")
+            self.fmt_block(els, indent + 1)
+            self.emit(indent, "}")
 
     def fmt_else(self, els, indent):
         # Used for the tail of an else-if chain.

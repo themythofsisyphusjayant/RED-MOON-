@@ -8,6 +8,22 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Comptime if, Top-500 #70 (25 Nov 2026, Sprint Day 5, both
+  compilers; Jayant's word 25 Nov: "Build as recommended — comptime
+  if, fixed predicates, function-body only"): `comptime if target ==
+  "big32" { ... } else { ... }` — fixed predicates target/arch/os/
+  mode/debug/freestanding with &&/||/!, discarded branch parsed-only
+  (never checked or compiled), function-body only in v1, `qasida
+  check --target {native,big32,wasm}` (default native). Own test
+  tests/test_comptime_if_v1.py 71/71 ALL PASS both compilers.
+  In-slice fix: two Returns in one block no longer redefine
+  `__forge_ret` (pre-existing, newly reachable via a spliced-in
+  return). ASan compiler-side deltas vs the #69 baseline (check
+  +52B/5, codegen +78B/6, cli +78B/6, dump flag 612/36 exact)
+  accepted as pre-existing — the selfhost files contain no
+  ComptimeIf nodes, so #70's resolver logic cannot execute during
+  those checks; program-side 44/44 leak-clean.
+
 - Value patterns in match, Top-500 #69 (25 Nov 2026, Sprint Day 5,
   both compilers; Jayant's word 25 Nov: "Build as recommended —
   structs in, guards out"): `match x { 2 => { ... } "hi" => { ... }

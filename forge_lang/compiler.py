@@ -93,8 +93,10 @@ def load_program(path, seen=None):
 
 def compile_source(source, mode="safe", freestanding=False,
                    no_bounds_checks=False, no_overflow_checks=False):
+    from .checker import make_target
     program = parse(source)
-    check(program, freestanding=freestanding)
+    check(program, freestanding=freestanding,
+          target=make_target("native", mode=mode, freestanding=freestanding))
     types = infer_types(program)
     return generate(program, types, mode=mode, freestanding=freestanding,
                     no_bounds_checks=no_bounds_checks,
@@ -102,14 +104,18 @@ def compile_source(source, mode="safe", freestanding=False,
 
 
 def compile_file(path, mode="safe", require_main=True, debug=False, freestanding=False,
-                 no_bounds_checks=False, no_overflow_checks=False, dump_error_sets=False):
+                 no_bounds_checks=False, no_overflow_checks=False, dump_error_sets=False,
+                 target="native"):
     # #47 backtraces: debug builds need the native preamble
     # (stderr + the shadow stack), which freestanding has not got.
     if debug and freestanding:
         raise ForgeError("--debug is not supported with --freestanding")
+    from .checker import make_target
     program = load_program(path)
     check(program, require_main=require_main, freestanding=freestanding,
-          dump_error_sets=dump_error_sets)
+          dump_error_sets=dump_error_sets,
+          target=make_target(target, mode=mode, debug=debug,
+                             freestanding=freestanding))
     types = infer_types(program)
     return generate(program, types, mode=mode, debug=debug, freestanding=freestanding,
                     no_bounds_checks=no_bounds_checks,
@@ -154,8 +160,10 @@ def build_shared(source_path, output_path, mode="safe", portable=False):
 def compile_file_rv(path, freestanding=False, stack_top=None):
     """Forge source -> big32 RISC-V assembly (no C, no x86)."""
     from .codegen_rv import generate_rv
+    from .checker import make_target
     program = load_program(path)
-    check(program, freestanding=freestanding)
+    check(program, freestanding=freestanding,
+          target=make_target("big32", freestanding=freestanding))
     types = infer_types(program)
     return generate_rv(program, types, stack_top=stack_top), program
 
@@ -168,8 +176,9 @@ def compile_file_wasm(path, wit_path=None):
     contract, and any mismatch fails the build.
     """
     from .codegen_wasm import generate_wasm
+    from .checker import make_target
     program = load_program(path)
-    check(program)
+    check(program, target=make_target("wasm"))
     types = infer_types(program)
     if wit_path is not None:
         from .wit import parse_wit, check_world
