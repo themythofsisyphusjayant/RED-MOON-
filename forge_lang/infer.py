@@ -32,6 +32,14 @@ class Infer:
         self.scopes = []
         self.current_ret = "void"
 
+    def _is_struct(self, t):
+        """True if t names a struct (plain or a generic
+        instantiation, Top-500 #69)."""
+        if t in ("int", "float", "bool", "str", "void"):
+            return False
+        mangled = self._mangle(t) if self._parse_generic(t) else t
+        return mangled in self.structs or t in self.structs
+
     def run(self, program):
         for fn in program.funcs:
             if getattr(fn, "is_extern", False):
@@ -133,13 +141,37 @@ class Infer:
                 # A union arm binds the narrowed member value: the
                 # arm pattern IS the member type.
                 members = set(union_members(et))
-                for pat, binding, body in stmt.arms:
-                    if binding is not None and pat in members:
-                        self.scopes.append({binding: pat})
+                for pat, body in stmt.arms:
+                    if pat.kind == "variant" and pat.binding and pat.value in members:
+                        self.scopes.append({pat.binding: pat.value})
                         try:
                             self.walk_block(body)
                         finally:
                             self.scopes.pop()
+                    else:
+                        self.walk_block(body)
+                return
+            if et in ("int", "bool", "str") or self._is_struct(et):
+                # Value patterns (#69): literal arms bind nothing;
+                # a struct arm binds its field bindings with the
+                # fields' (substituted) types.
+                fields = {}
+                if self._is_struct(et):
+                    mangled = self._mangle(et) if self._parse_generic(et) else et
+                    fields = self.structs.get(mangled, self.structs.get(et, {}))
+                for pat, body in stmt.arms:
+                    if pat.kind == "struct":
+                        scope = {b.value: fields.get(fn, "int")
+                                 for fn, b in (pat.fields or [])
+                                 if b.kind == "binding"}
+                        if scope:
+                            self.scopes.append(scope)
+                            try:
+                                self.walk_block(body)
+                            finally:
+                                self.scopes.pop()
+                        else:
+                            self.walk_block(body)
                     else:
                         self.walk_block(body)
                 return
@@ -150,11 +182,11 @@ class Infer:
                 params = self.enum_params.get(base, [])
                 if len(params) == len(g[1]):
                     bindings = dict(zip(params, g[1]))
-            for pat, binding, body in stmt.arms:
-                if binding is not None:
-                    pt = self.enum_payloads.get(base, {}).get(pat)
+            for pat, body in stmt.arms:
+                if pat.kind == "variant" and pat.binding:
+                    pt = self.enum_payloads.get(base, {}).get(pat.value)
                     concrete_pt = substitute_type(pt, bindings) if pt is not None else "int"
-                    self.scopes.append({binding: concrete_pt})
+                    self.scopes.append({pat.binding: concrete_pt})
                     try:
                         self.walk_block(body)
                     finally:

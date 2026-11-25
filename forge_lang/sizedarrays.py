@@ -136,7 +136,7 @@ def find_sized(program):
                 b = getattr(s, attr, None)
                 if b is not None:
                     walk_block(b)
-            for _pat, _bind, arm_body in getattr(s, "arms", []) or []:
+            for _pat, arm_body in getattr(s, "arms", []) or []:
                 walk_block(arm_body)
             walk_expr(getattr(s, "expr", None))
 

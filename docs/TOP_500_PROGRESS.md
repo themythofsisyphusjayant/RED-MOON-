@@ -2084,3 +2084,103 @@ build 112): 3 GAP-to-HAVE (#490, #494, #496); 388 + 3 = 391;
 Next: #69 value patterns (Jayant approved 25 Nov: "Build as
 recommended — structs in, guards out"; design doc not in the
 tree — parent to supply), then #72 walrus, #77/#78/#80.
+#69 value patterns in match (GAP → HAVE). Landed 25 Nov 2026 (Sprint
+Day 5, both compilers; Jayant's word 25 Nov 09:33 IST: "Build as
+recommended — structs in, guards out"). Design:
+~/workspace/blackmoon-iso/ctrlflow-slice/value-patterns/DESIGN.md
+(probes p1–p14); implementation record + gate table:
+.../value-patterns/SUMMARY.md. `match x { 2 => { ... } "hi" => { ... }
+Point { x: 0, y: n } => { ... } _ => { ... } }` — int literals (incl.
+negative, i64 range checked incl. i64-min and hex), bool literals,
+string literals (content equality incl. escapes), struct patterns
+(field-wise literal / binding / `_`; all fields present, any order
+like struct literals; field bindings scoped to the arm with the
+field's type). Exhaustiveness is a compile error (`_` required for
+int/string/struct; bool exhaustive iff {true, false} seen or `_`
+present); first-match-wins; exact duplicate literal / duplicate struct
+pattern is a compile error; subsumption NOT analysed in v1. Value
+matches skip the #50 ES verdict entirely (the ES walk still walks arm
+bodies). Scrutinee evaluated once into a temp (p10: also folded into
+the plain-enum shape for call scrutinees; variable scrutinees stay
+byte-identical). Pattern is a new AST node: Match.arms are now
+[(Pattern, Block)] pairs (was triples) — the 11 small forge_lang
+modules (defers, fixedints, fntypes, never, opaques, ranges, readonly,
+sizedarrays, tuples, unions) each took the one-line arm-shape update.
+OUT of v1: float literals, range patterns, tuple/array patterns, type
+patterns, `|` alternation, guards (`pat if cond =>` is a parse error),
+bare-variable catch-all (a bare identifier still means an enum
+variant). big32 lowers int/bool value patterns only (string/struct
+rejected with a named error); WASM has no match support (unchanged).
+fmt prints literal and struct patterns, idempotent on the new shapes.
+Own test tests/test_value_patterns_v1.py 75/75 ALL PASS both compilers
+(17 OK x2, 18 ERR x2, 5 backend cases: 2 big32 runs + string/struct
+rejections + WASM rejection), re-run independently by the parent in
+this run. The scrutinee error was reworded to `match needs an enum,
+union, int, bool, str, or struct value, got {et}`; the one existing
+test asserting the old fragment (tests/test_opaques_v1.py) was updated
+to the new fragment — it still fails only on its pre-existing big32
+sub-failure. Gates (live binary md5 49bcf8ea35d358e68da5731da9d10de3,
+19,258,112 bytes — the #69 track's verified v69c build, installed at
+bin/qasida-hosted): bootstrap 7/7 byte-identical, re-run independently
+by the parent in this run (lex 90709, parse 857078, check 7838465,
+infer 8921499, codegen 28306488, header 113790, cli 28549785; the 6
+library stages need a trivial `fn main() -> int { return 0; }` shim
+appended to a copy in examples/ — Python emit requires main, hosted
+emit does not; the shim emits exactly 604 bytes of C); parity 124/124
+agree + byte-identical; corpus 99/99; regression 62/62; fuzz existing
+102/102 both modes + fv 56/56, closure 66/66, fs 56/56, tc 38/38, lf
+20/20, es 40/40, crashdump 109/109, labeled 58/58, range 29/29,
+wildcard 24/24; full suite run_tests.py PASS both modes (re-run by the
+parent in this run, ulimit -s 65536) and test-file battery hosted
+117/123 + python 117/123 (the 6 fails in both are exactly the known
+big32 set); emit compare ALL PASS (17 value cases byte-identical; p10
+hoist confirmed); benchmarks tick q_safe 2466 us vs c_o3 2437 (1.01x),
+matmul q_safe 13127 us vs c_o3 80793 (0.16x) — no regression. ASan
+program-side 34/34 clean (17 value-pattern programs x 2 modes, leak
+detection on). ASan compiler-side (logs/asan.log + parent-measured
+codegen case, all cold cache, raised stack): errsets_demo dump=True
+matches the #62 table exactly (612, 36); selfhost_check 4026/150 vs
+4002/149 (+24B/1 alloc), selfhost_codegen 10064/360 vs 9984/357
+(+80B/3), selfhost_cli 10162/366 vs 10082/363 (+80B/3). Accepted as
+pre-existing/documented, not a #69 regression (parent decision 25 Nov
+2026): the 5 selfhost files + transitive imports contain 0 Match AST
+nodes (counted with forge_lang.parser.parse by the parent), so #69's
+match-handling code cannot execute during these checks; the #62
+baseline predates the already-pushed #490/#494/#496 slice — same
+treatment as #50's documented 612B/36. Honest notes: (1) the own-test count is 75/75, NOT 76/76
+— the first report miscounted by one (same class as the #50 122/122
+correction); the case lists are 17x2 + 18x2 + 5 = 75. (2) Remote main
+was HALF-LANDED for #69 before this push: the Day 5 ergonomics push
+(c16b650e) already carried #69's changes to parser/checker/codegen/
+ast_nodes/selfhost_parse/selfhost_check/selfhost_codegen (same files,
+same window); this push completes it with infer/codegen_rv/
+selfhost_infer + the 11 small-module updates + the own test + the
+opaques fragment update. (3) The parent's first bootstrap attempt
+failed 1/7 and the second 3/7 — both procedure errors, not tree
+problems: round 1 omitted the main shim (Python emit requires main),
+round 2 copied stages to /tmp (relative imports broke), round 3 hit
+/tmp full (512M tmpfs, 100% — 2526 stale qasida_run_*.c files plus the
+three bootstrap output dirs); /tmp was cleaned to 293M free and the
+outputs moved to the workspace, after which the bootstrap passed 7/7.
+(4) The checked-in binary predates the #494 scope-marks edit to
+selfhost_check.fg (07:34 UTC, already on remote from c16b650e); the
+binary rebuild to pick it up is a follow-up, not part of this push.
+(5) Hosted checker stack-depth regression on nested loops (found by
+the #69 track): 3-deep while loops with an array index segfault at
+the default 8MB stack, pass at 16MB — the checker was already at the
+edge; fuzz must run under ulimit -s 65536 (as the bootstrap does).
+Not a #69 blocker; flattening the checker's recursion is a separate
+slice. (6) Hosted i64-fit errors report the saturated ival, not the
+raw text (cosmetic). (7) Struct-pattern fields accepted in any order
+(design recommended declaration order; implementation settled on any
+order, like struct literals). Pushed 25 Nov 2026 as the #69 completion
+push (19-file selective push, parent c16b650e; script
+~/workspace/scripts/push_selective_day5_value_patterns69.py).
+
+Counts after the flip: HAVE 392, PARTIAL 9, GAP 99, to build 108.
+Arithmetic from the Day 5 entry (HAVE 391, PARTIAL 9, GAP 100, to
+build 109): 1 GAP-to-HAVE (#69); 391 + 1 = 392; 100 - 1 = 99;
+109 - 1 = 108 (392 + 9 + 99 = 500). HAVE 392 of 500 = 78.4%.
+Next: #72 walrus, #77 nested functions, #78 tail-call, #80 event
+loops, then ergonomics #481–#489/#495. #70 comptime-if still needs a
+design decision (Jayant's word).

@@ -1734,7 +1734,49 @@ class RVGen:
             self.free_reg(r)
             return
         if isinstance(stmt, A.Match):
-            raise ForgeError("match/enums are not supported on big32 (v1)")
+            et = self.expr_type(stmt.expr)
+            # Top-500 #69: int/bool value patterns lower on big32
+            # (integer compares already exist). String/struct
+            # patterns and enum/union matches stay rejected — no
+            # strcmp helper and no enum support in v1.
+            if et not in ("int", "bool"):
+                if et == "str" or et in self.struct_layout:
+                    raise ForgeError(f"match on {et} is not supported on big32 (v1)",
+                                     stmt.line, stmt.col)
+                raise ForgeError("match/enums are not supported on big32 (v1)")
+            for pat, _body in stmt.arms:
+                if pat.kind == "lit_int":
+                    if pat.value < -(2 ** 31) or pat.value > 2 ** 31 - 1:
+                        raise ForgeError(f"int pattern {pat.value} does not fit in "
+                                         f"32 bits on big32", pat.line, pat.col)
+                elif pat.kind not in ("lit_bool", "wildcard"):
+                    raise ForgeError(f"match on {et} is not supported on big32 (v1)",
+                                     pat.line, pat.col)
+            # Evaluate the scrutinee once into a register, held
+            # across the arms (the allocator never reuses a live
+            # register, so arm bodies cannot clobber it).
+            scrut = self.gen_expr(stmt.expr)
+            end = self.label("matchend")
+            for pat, body in stmt.arms:
+                if pat.kind == "wildcard":
+                    self.gen_block(body)
+                else:
+                    nxt = self.label("matcharm")
+                    if pat.kind == "lit_int":
+                        lit = self.gen_expr(A.IntLit(pat.value, pat.line, pat.col))
+                    else:
+                        lit = self.gen_expr(A.BoolLit(pat.value, pat.line, pat.col))
+                    tmp = self.alloc()
+                    self.emit(f"    xor {tmp}, {scrut}, {lit}")
+                    self.free_reg(lit)
+                    self.emit(f"    bne {tmp}, zero, {nxt}")
+                    self.free_reg(tmp)
+                    self.gen_block(body)
+                    self.emit(f"    j {end}")
+                    self.emit(f"{nxt}:")
+            self.free_reg(scrut)
+            self.emit(f"{end}:")
+            return
         if isinstance(stmt, A.Spawn):
             raise ForgeError("spawn/threads are not supported on big32 (v1)")
         if isinstance(stmt, A.If):

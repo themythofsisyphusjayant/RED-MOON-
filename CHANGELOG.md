@@ -8,6 +8,23 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Value patterns in match, Top-500 #69 (25 Nov 2026, Sprint Day 5,
+  both compilers; Jayant's word 25 Nov: "Build as recommended —
+  structs in, guards out"): `match x { 2 => { ... } "hi" => { ... }
+  Point { x: 0, y: n } => { ... } _ => { ... } }` — int, bool and
+  string literals plus struct patterns (field literals, bindings
+  and `_`; all fields present). Exhaustiveness is a compile error;
+  first-match-wins; the scrutinee is evaluated once (also folded
+  into the plain-enum shape). Own test
+  tests/test_value_patterns_v1.py 75/75 ALL PASS both compilers.
+  OUT of v1: float/range/tuple/array/type patterns, `|`
+  alternation, guards, bare-variable catch-all. big32 lowers
+  int/bool patterns only; WASM has no match support (unchanged).
+  ASan compiler-side deltas vs the #62 baseline (check +24B/1,
+  codegen +80B/3, cli +80B/3) accepted as pre-existing — the selfhost
+  files contain no match statements, so #69's new code cannot execute
+  during those checks; program-side 34/34 leak-clean.
+
 - Trailing commas, shadowing, underscore for unused bindings,
   Top-500 #490, #494 and #496 (25 Nov 2026, Sprint Day 5, both
   compilers): trailing commas in array/call/struct/tuple literals,

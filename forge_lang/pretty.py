@@ -212,8 +212,10 @@ class Formatter:
             return
         if isinstance(stmt, A.Match):
             self.emit(indent, f"match {fmt_expr(stmt.expr)} {{")
-            for pat, binding, body in stmt.arms:
-                pat_text = f"{pat}({binding})" if binding else pat
+            for pat, body in stmt.arms:
+                pat_text = A.pattern_text(pat)
+                if pat.kind == "variant" and pat.binding:
+                    pat_text = f"{pat_text}({pat.binding})"
                 self.emit(indent + 1, f"{pat_text} => {{")
                 self.fmt_block(body, indent + 2)
                 self.emit(indent + 1, "}")

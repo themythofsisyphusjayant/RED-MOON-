@@ -101,7 +101,7 @@ CASES = [
      TRAIT + "fn make() -> opaque Shape {\n  return Rect { w: 3, h: 4 };\n}\n"
      "fn main() {\n  let a: opaque Shape = make();\n"
      "  match a {\n    _ => { println(1); }\n  }\n}\n",
-     "needs an enum value"),
+     "needs an enum, union, int, bool, str, or struct value"),
     ("print opaque",
      TRAIT + "fn make() -> opaque Shape {\n  return Rect { w: 3, h: 4 };\n}\n"
      "fn main() {\n  let a: opaque Shape = make();\n  println(a);\n}\n",

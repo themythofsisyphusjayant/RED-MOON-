@@ -22,7 +22,7 @@ def find_defers(program):
                 b = getattr(s, attr, None)
                 if b is not None and walk_block(b):
                     return True
-            for _pat, _bind, arm_body in getattr(s, "arms", []) or []:
+            for _pat, arm_body in getattr(s, "arms", []) or []:
                 if walk_block(arm_body):
                     return True
         return False

@@ -43,7 +43,7 @@ def find_ranges(program, allow_for_source=False):
                 b = getattr(s, attr, None)
                 if b is not None:
                     walk_block(b)
-            for _pat, _bind, arm_body in getattr(s, "arms", []) or []:
+            for _pat, arm_body in getattr(s, "arms", []) or []:
                 walk_block(arm_body)
             if (allow_for_source and isinstance(s, A.For)
                     and isinstance(getattr(s, "expr", None), A.RangeLit)):

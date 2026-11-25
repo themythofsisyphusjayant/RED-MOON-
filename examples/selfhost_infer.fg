@@ -1191,6 +1191,50 @@ fn infer_walk_stmt(h0: HInfer, st: Node) -> HInfer {
             }
             return h;
         }
+        // Value patterns (#69): literal arms bind nothing; a
+        // struct arm binds its field bindings with the fields'
+        // (substituted) types.
+        if et == "int" || et == "bool" || et == "str" || infer_struct_fields(h, et) != "" {
+            let fields: str = infer_struct_fields(h, et);
+            let mut a: int = 1;
+            while a < len(st.kids) {
+                let arm: Node = st.kids[a];
+                if arm.label == "struct" {
+                    let mut has_bind: bool = false;
+                    let mut fi: int = 1;
+                    while fi < len(arm.kids) {
+                        if arm.kids[fi].label == "binding" {
+                            has_bind = true;
+                        }
+                        fi = fi + 1;
+                    }
+                    if has_bind {
+                        h = infer_push_scope(h);
+                        let mut fi2: int = 1;
+                        while fi2 < len(arm.kids) {
+                            let fp: Node = arm.kids[fi2];
+                            if fp.label == "binding" {
+                                let ft: str = infer_field_type(fields, fp.name);
+                                if ft == "" {
+                                    h = infer_declare(h, fp.sval, "int");
+                                } else {
+                                    h = infer_declare(h, fp.sval, ft);
+                                }
+                            }
+                            fi2 = fi2 + 1;
+                        }
+                        h = infer_walk_block(h, arm.kids[0]);
+                        h = infer_pop_scope(h);
+                    } else {
+                        h = infer_walk_block(h, arm.kids[0]);
+                    }
+                } else {
+                    h = infer_walk_block(h, arm.kids[0]);
+                }
+                a = a + 1;
+            }
+            return h;
+        }
         // Enum path: substitute payload types through generic
         // bindings only when arities match.
         let base: str = generic_base(et);
