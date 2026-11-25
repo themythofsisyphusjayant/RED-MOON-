@@ -6,13 +6,25 @@ A program uses ranges when any type position spells `range`
 target) or when any expression is a range literal (`a..b`).
 The native backend lowers ranges to a start/end struct;
 big32 and WASM reject them in v1 with a named error.
+
+Exception (#67, 25 Nov 2026): with `allow_for_source=True`, a
+range literal that is the DIRECT iterable of a `for` loop is
+not a range use — big32 lowers `for i in lo..hi` to the same
+counted loop as `for i in range(n)`. Only the literal itself
+is exempt: a range literal nested inside the endpoints is
+still flagged, and a range VALUE (`let r = a..b`, `for i in r`)
+still counts. WASM keeps the default (no exemption).
 """
 
 import forge_lang.ast_nodes as A
 
 
-def find_ranges(program):
-    """Sorted list of range uses: ['range'] when used, else []."""
+def find_ranges(program, allow_for_source=False):
+    """Sorted list of range uses: ['range'] when used, else [].
+
+    With allow_for_source=True, a range literal that is the
+    direct iterable of a `for` loop is exempt (see module docstring).
+    """
     found = set()
 
     def add(t):
@@ -33,7 +45,15 @@ def find_ranges(program):
                     walk_block(b)
             for _pat, _bind, arm_body in getattr(s, "arms", []) or []:
                 walk_block(arm_body)
-            walk_expr(getattr(s, "expr", None))
+            if (allow_for_source and isinstance(s, A.For)
+                    and isinstance(getattr(s, "expr", None), A.RangeLit)):
+                # #67: a range literal as the for-loop source is
+                # exempt — but walk its endpoints, so a range
+                # literal nested inside them is still flagged.
+                walk_expr(s.expr.start)
+                walk_expr(s.expr.end)
+            else:
+                walk_expr(getattr(s, "expr", None))
 
     def walk_expr(e):
         if e is None:

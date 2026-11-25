@@ -364,7 +364,10 @@ class RVGen:
             raise ForgeError(f"big32: tuples are not supported in v1 "
                              f"(found {tuples[0]})")
         from .ranges import find_ranges
-        ranges = find_ranges(self.program)
+        # #67: a range literal as a for-loop source is allowed
+        # on big32 (gen_for lowers it to a counted loop); every
+        # other range use is still rejected.
+        ranges = find_ranges(self.program, allow_for_source=True)
         if ranges:
             raise ForgeError("big32: ranges are not supported in v1 "
                              "(found range)")
@@ -1889,6 +1892,58 @@ class RVGen:
             self.emit(f"    sw {inc}, {self.slot_off(cnt_slot)}(s0)")
             self.free_reg(inc)
             self.free_reg(n)
+            self.emit(f"    j {top}")
+            self.emit(f"{end}:")
+            return
+        # for v in lo..hi { ... } — #67: a range literal as the
+        # for-loop source lowers to the same counted loop as
+        # range(n), with the counter starting at lo and stopping
+        # before hi (half-open, like native). Empty (5..5) and
+        # reversed (5..0) ranges run zero iterations, as on
+        # native. Range *values* (let r = a..b, for i in r) are
+        # still rejected by the find_ranges gate above.
+        if isinstance(stmt.expr, A.RangeLit):
+            lo = self.gen_expr(stmt.expr.start)
+            hi = self.gen_expr(stmt.expr.end)
+            cnt_slot = self.alloc_slot()
+            hi_slot = self.alloc_slot()
+            var_slot = self.alloc_slot()
+            self.emit(f"    sw {lo}, {self.slot_off(cnt_slot)}(s0)")
+            self.free_reg(lo)
+            self.emit(f"    sw {hi}, {self.slot_off(hi_slot)}(s0)")
+            self.free_reg(hi)
+            top = self.label("for")
+            end = self.label("forend")
+            self.emit(f"{top}:")
+            cnt = self.alloc()
+            h = self.alloc()
+            self.emit(f"    lw {cnt}, {self.slot_off(cnt_slot)}(s0)")
+            self.emit(f"    lw {h}, {self.slot_off(hi_slot)}(s0)")
+            self.emit(f"    slt {cnt}, {cnt}, {h}")
+            self.emit(f"    beq {cnt}, zero, {end}")
+            self.free_reg(cnt)
+            self.free_reg(h)
+            # loop var = counter value
+            val = self.alloc()
+            self.emit(f"    lw {val}, {self.slot_off(cnt_slot)}(s0)")
+            self.emit(f"    sw {val}, {self.slot_off(var_slot)}(s0)")
+            self.free_reg(val)
+            self.env.append({stmt.name: (var_slot, "int")})
+            self.loop_ends.append(end)
+            cont = self.label("forcont")
+            self.loop_conts.append(cont)
+            self.loop_labels.append(getattr(stmt, "label", None))
+            self.gen_block(stmt.body)
+            self.loop_labels.pop()
+            self.loop_conts.pop()
+            self.loop_ends.pop()
+            self.env.pop()
+            self.emit(f"{cont}:")
+            inc = self.alloc()
+            self.emit(f"    lw {inc}, {self.slot_off(cnt_slot)}(s0)")
+            self.emit(f"    addi {inc}, {inc}, 1")
+            self.emit(f"    sw {inc}, {self.slot_off(cnt_slot)}(s0)")
+            self.free_reg(inc)
             self.emit(f"    j {top}")
             self.emit(f"{end}:")
             return

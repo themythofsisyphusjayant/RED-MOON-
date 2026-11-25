@@ -1915,3 +1915,66 @@ Arithmetic from the #60 entry (HAVE 385, PARTIAL 10, GAP 105, to
 build 115): 1 GAP-to-HAVE (#62); 385 + 1 = 386; 105 - 1 = 104;
 115 - 1 = 114 (386 + 10 + 104 = 500). HAVE 386 of 500 = 77.2%.
 Next: #67/#76 verification slices, then #69/#70/#72/#74.
+
+## Sprint Day 5 — #67 + #76 verification slices (25 Nov 2026)
+
+#67 range syntax (PARTIAL → HAVE) and #76 wildcard match arm
+(GAP → HAVE). Both were verification slices per
+DESIGN-62-67-76.md — the 24 Nov probes said each was already
+implemented and the catalog entries stale. The verification proved
+it for native, with ONE real gap found: `0..n` in a for loop was
+REJECTED on big32 while `range()` worked as a for-loop source, so
+#67 became a small build slice in-slice — big32 now lowers a range
+literal as a for-loop source to the same counted loop as `range(n)`
+(forge_lang/codegen_rv.py gen_for RangeLit branch +
+forge_lang/ranges.py find_ranges allow_for_source; only the direct
+for-source literal is exempt). Own tests: tests/test_range_syntax_v1.py
+29/29 ALL PASS both compilers (10 OK x2 incl. empty 5..5 → 0 and
+reversed 5..0 → 0 VERIFIED, negative -3..3, expr 0..n+1, nested,
+param endpoint, fn returning total, range value len/sum/iterate;
+7 big32 model runs UART-exact + halted + a0=0; big32 range-value
+rejection + WASM range rejection); tests/test_wildcard_match_v1.py
+24/24 ALL PASS both compilers (6 OK x2 incl. enum hit/miss, union
+hit/miss, wildcard over an inferred error set; 5 error x2 incl.
+wildcard-must-be-last, wildcard-cannot-bind, non-exhaustive enum /
+union / narrowed error set missing only TimedOut; big32 + WASM
+match rejections). Gates 25 Nov: bootstrap 7/7 byte-identical
+under ulimit -s 65536 (lex 90709, parse 754147, check 7456886,
+infer 8511923, codegen 27040059, header 113790, cli 27279078 —
+exactly the #62 sizes); parity 124/124 agree + byte-identical;
+corpus 99/99; regression 62/62; fuzz existing 102/102 both modes
+(manifest holds 102 — NOT 122), fv 56/56, closure 66/66, fs 56/56
+(from repo root), tc 38/38, lf 20/20, es 40/40, crashdump own test
+109/109, labeled own test 58/58; full suite hosted 113/119 +
+python 113/119 (the 6 fails are exactly the known big32 set in
+both; run_tests.py passed in both modes, no flake this run — the
+python-mode first run was killed by a VM restart mid-run_tests.py
+and re-run clean; the hosted-mode run finished first try);
+ASan program-side 32/32 clean (16 OK programs x 2 modes);
+ASan compiler-side == the #62 table on cold cache (dump-flag
+612/36, selfhost_check 4002/149, selfhost_codegen 9984/357,
+selfhost_cli 10082/363 — the #62 ASan binary IS the current
+tree's, since no hosted .fg changed; the codegen check alone took
+~40 min under ASan); emit compare 22/22 (19 byte-identical + 3
+Result-heavy programs via the documented pre-existing #50
+divergence: hosted vs Python differ by struct-typedef/helper
+ORDER only, ~285 diff lines, sorted-diff 0 in all three, and
+old-hosted (pre-#62) == new-hosted byte-identical on all three —
+this slice changed nothing in the emit); benchmarks tick q_safe
+2335 us vs c_o3 2469 (0.95x), matmul q_safe 13652 us vs c_o3 33363
+(0.41x) — no regression; fmt N/A — this slice created or modified
+NO .fg file (remote-tree diff: changed = exactly
+forge_lang/codegen_rv.py + forge_lang/ranges.py). Honest notes:
+(1) hosted union-path exhaustiveness message is bare vs Python's
+missing list (pre-existing divergence class, not a #76 gap);
+(2) WASM's match rejection surfaces as "undefined variable
+'Green'"; (3) range values on big32 and all ranges on WASM stay
+v1 limits; (4) inclusive `..=` is NOT part of #67. NOT pushed
+(parent verifies and pushes).
+
+Counts after the flips: HAVE 388, PARTIAL 9, GAP 103, to build 112.
+Arithmetic from the #62 entry (HAVE 386, PARTIAL 10, GAP 104, to
+build 114): 1 PARTIAL-to-HAVE (#67) + 1 GAP-to-HAVE (#76);
+386 + 2 = 388; 10 - 1 = 9; 104 - 1 = 103; 112 = 9 + 103
+(388 + 9 + 103 = 500). HAVE 388 of 500 = 77.6%.
+Next: #69/#70/#72/#74.

@@ -8,6 +8,19 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Range syntax in for loops + wildcard match arm, Top-500 #67 and
+  #76 (25 Nov 2026, Sprint Day 5, verification, both compilers):
+  `for i in 0..n` (half-open `..` literal) and `match c { Red => {
+  ... } _ => { ... } }` were already implemented — the catalog
+  entries were stale ([PARTIAL] and [GAP]) — and are now proven by
+  own tests: tests/test_range_syntax_v1.py 29/29 and
+  tests/test_wildcard_match_v1.py 24/24, ALL PASS both compilers.
+  One real gap found and fixed in-slice: `0..n` in a for loop was
+  rejected on big32 while `range()` worked — big32 now lowers a
+  range literal as a for-loop source to the same counted loop as
+  `range(n)`. Range values on big32 and all ranges on WASM stay
+  v1 limits; inclusive `..=` is not part of #67.
+
 - Labeled break/continue, Top-500 #62 (24 Nov 2026, sprint, both
   compilers): Go-style `outer: for ... { break outer; }` /
   `continue outer;` — a label prefix on the loop, no new lexer token.
