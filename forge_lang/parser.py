@@ -748,6 +748,14 @@ class Parser:
                 expr = self.parse_expr()
             self.expect_op(";")
             return A.Return(expr, tok.line, tok.col)
+        if self.at_kw("yield"):
+            # Top-500 #74: `yield expr;` — a statement in a
+            # generator fn; the checker desugars it (§3.3) before
+            # infer/codegen ever see it.
+            tok = self.next()
+            expr = self.parse_expr()
+            self.expect_op(";")
+            return A.Yield(expr, tok.line, tok.col)
         if self.at_kw("break"):
             tok = self.next()
             blabel = None
@@ -846,7 +854,22 @@ class Parser:
         if self.at_op(".."):
             op = self.next()
             right = self.parse_or()
-            return A.RangeLit(left, right, op.line, op.col)
+            left = A.RangeLit(left, right, op.line, op.col)
+        # Top-500 #72: walrus `name := expr`, looser than every
+        # other operator (PEP 572). The LHS is parsed as a full
+        # or-expression (through the range handling) first, so
+        # `a + b := x` errors; the LHS must be a plain Var
+        # (field/index targets are v2). The RHS is a full
+        # expression, so a nested walrus parses — the checker
+        # rejects it (§3.5).
+        if self.at_op(":="):
+            op = self.next()
+            if not isinstance(left, A.Var):
+                raise ForgeError("walrus target must be a plain name "
+                                 "(field and index targets are not "
+                                 "supported in v1)", op.line, op.col)
+            rhs = self.parse_expr()
+            return A.NamedExpr(left.name, rhs, op.line, op.col)
         return left
 
     def _level(self, sub, ops):

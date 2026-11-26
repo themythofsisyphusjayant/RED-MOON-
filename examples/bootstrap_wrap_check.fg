@@ -1,5 +1,14 @@
 // Bootstrap wrapper: compile selfhost_check.fg as an imported module
 // plus a trivial main, so both compilers see a complete program.
+// Also imports selfhost_infer.fg: Top-500 #74's generator transform
+// (in check.fg) references the G* structs (GGen, GNodeOut, ...),
+// which live in infer.fg — they were moved there by the #74 Fix 1
+// (the codegen emits array-free helpers in struct-registration
+// order with no forward declarations, so a struct defined before
+// Node that holds a Node breaks the build; infer.fg is merged
+// after parse.fg). infer.fg itself imports check.fg, so the
+// transitive closure is the same four files either way.
+import "selfhost_infer.fg";
 import "selfhost_check.fg";
 
 fn main() -> int {

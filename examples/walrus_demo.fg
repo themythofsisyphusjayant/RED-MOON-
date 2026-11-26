@@ -1,0 +1,32 @@
+// Top-500 #72: walrus (`name := expr`) demo.
+// Canonical programs: if-walrus (bind in a condition, use the
+// name after the `if`) and while-walrus (the countdown, and the
+// read-line loop — the `!= ""` spelling, because Qasida
+// conditions must be bool, not truthy).
+fn f() -> int {
+    return 7;
+}
+
+fn main() -> int {
+    // If-walrus: bind `x`, compare, and use it after the `if`.
+    if ((x := f()) > 0) {
+        println(x);
+    }
+    println(x);
+    // While-walrus countdown (p16 shape): the binding is
+    // re-read at the end of every body iteration.
+    let mut n: int = 3;
+    while ((n := n - 1) >= 0) {
+        println(n);
+    }
+    println("done");
+    // While-walrus read-line loop: read until the empty line.
+    // (Qasida conditions must be bool, so the Python
+    // `while (line := readline()):` spelling does not
+    // translate — the `!= ""` comparison is required.)
+    while ((line := read_line()) != "") {
+        println(line);
+    }
+    println("eof");
+    return 0;
+}

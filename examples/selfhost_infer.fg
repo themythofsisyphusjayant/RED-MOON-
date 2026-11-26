@@ -35,6 +35,11 @@ struct HInfer {
     fn_params: [str];
     struct_names: [str];
     struct_fields: [str];
+    // Type params per struct ("T~E" or ""), parallel to
+    // struct_names (Top-500 #74: the infer fix for generic
+    // struct field types — mirrors the enum registry's
+    // enum_tparams and HCodegen's struct_tparams).
+    struct_tparams: [str];
     variant_names: [str];
     variant_enums: [str];
     enum_names: [str];
@@ -103,6 +108,147 @@ struct HInfer {
     fn_uses: [str];
 }
 
+
+// ---------- Top-500 #74: generator-transform structs ----------
+// These belong to the generators desugar in selfhost_check.fg
+// (the g_* helpers there), but they live HERE, in a file merged
+// after selfhost_parse.fg, on purpose: the codegen emits
+// array-free helpers in struct-registration order and emits no
+// forward declarations (the #47 latent bug), so a struct
+// containing a Node must be defined after Node, else the
+// generated C calls forge_Node_array_free before its static
+// definition and the CLI build fails to compile. GState,
+// GNodeOut, GNodesOut and GTransformOut hold Nodes; GGen holds
+// GState, so the whole group moves together, in dependency
+// order (a struct is defined after every struct it holds).
+// GScope: one scope frame, parallel arrays. kinds[i] is "slot"
+// (a lifted generator binding: arrs[i]/idxs[i] is its slot) or
+// "opaque" (an ordinary variable: lambda param, match binding,
+// inline for-loop var). typs[i] is the type, "" when unknown.
+struct GScope {
+    names: [str];
+    kinds: [str];
+    arrs: [str];
+    idxs: [int];
+    typs: [str];
+}
+
+struct GState {
+    stmts: [Node];
+}
+
+// A scope binding: what g_lookup returns.
+struct GBinding {
+    found: bool;
+    kind: str;
+    arr: str;
+    idx: int;
+    typ: str;
+}
+
+// The loop stack, passed by value to the opaque-mode helpers
+// (a lambda gets a FRESH empty stack; match/comptime arms get
+// a copy of the generator's stack).
+struct GLoops {
+    labels: [str];
+    is_split: [bool];
+    brk: [int];
+    cont: [int];
+}
+
+// The transform state, threaded through every helper.
+struct GGen {
+    fn_names: [str];
+    fn_rets: [str];
+    fn_param_typs: [str];
+    fn_type_params: [str];
+    struct_names: [str];
+    struct_field_names: [str];
+    struct_field_typs: [str];
+    struct_type_params: [str];
+    fn_name: str;
+    fn_line: int;
+    fn_col: int;
+    elem: str;
+    kind: int;
+    scopes: [GScope];
+    states: [GState];
+    cur_state: int;
+    end_state: int;
+    int_count: int;
+    str_count: int;
+    bool_count: int;
+    loop_labels: [str];
+    loop_is_split: [bool];
+    loop_brk: [int];
+    loop_cont: [int];
+    kind_counter: int;
+    // Synthetic-position counter (Top-500 #74 fix, 26 Nov):
+    // the hosted infer/codegen type map is keyed by
+    // (fn_idx, line, col) and ASSUMES that key uniquely
+    // identifies a node ("duplicate keys cannot occur for
+    // distinct nodes", infer_set). The transform builds many
+    // nodes at the fn's single (line, col), so they collided
+    // on one map key and the codegen read the wrong type for
+    // most of them (a [int] slot array came out [Generator],
+    // a Generator<int> literal came out Generator<Generator>).
+    // Every node the transform builds gets a FRESH position
+    // from this counter (line kept, col = 100000 + syn — a
+    // col no real source line reaches), so no two built nodes
+    // share a key. Allocated by g_fresh / g_node / the g_*
+    // builders, which thread g through GNodeOut/GPosOut.
+    syn: int;
+    target: str;
+    freestanding: bool;
+}
+
+struct GNodeOut {
+    g: GGen;
+    node: Node;
+}
+
+// A fresh source position for a transform-built node (see the
+// `syn` field on GGen): the line is kept (so an error in
+// generated code still names the right line), the col is a
+// synthetic 100000+syn that no real source line reaches.
+struct GPosOut {
+    g: GGen;
+    line: int;
+    col: int;
+}
+
+struct GNodesOut {
+    g: GGen;
+    nodes: [Node];
+}
+
+struct GStrOut {
+    g: GGen;
+    text: str;
+}
+
+struct GBoolOut {
+    g: GGen;
+    flag: bool;
+}
+
+struct GIntOut {
+    g: GGen;
+    num: int;
+}
+
+struct GSlotOut {
+    g: GGen;
+    arr: str;
+    idx: int;
+}
+
+struct GTransformOut {
+    g: GGen;
+    ctor: Node;
+    step: Node;
+}
+
 fn infer_new() -> HInfer {
     // Pre-fill the map buckets (cap 1024, power of two); -1 marks
     // an empty bucket, since every stored key is >= 0.
@@ -116,7 +262,7 @@ fn infer_new() -> HInfer {
         push(ms, -1);
         i = i + 1;
     }
-    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], map_keys: mk, map_vals: mv, map_seq: ms, map_cap: 1024, map_len: 0, scope_names: [], scope_types: [], scope_marks: [], scope_len: 0, current_ret: "void", in_template: false, current_fn: "", current_fn_idx: -2, unres_names: [], unres_keys: [], cap_boundaries: [], cap_caps: [], cap_keys: [], cap_vals: [], fn_uses: [] };
+    return HInfer { fn_names: [], fn_rets: [], fn_params: [], struct_names: [], struct_fields: [], struct_tparams: [], variant_names: [], variant_enums: [], enum_names: [], enum_tparams: [], payload_keys: [], payload_types: [], trait_names: [], trait_methods: [], map_keys: mk, map_vals: mv, map_seq: ms, map_cap: 1024, map_len: 0, scope_names: [], scope_types: [], scope_marks: [], scope_len: 0, current_ret: "void", in_template: false, current_fn: "", current_fn_idx: -2, unres_names: [], unres_keys: [], cap_boundaries: [], cap_caps: [], cap_keys: [], cap_vals: [], fn_uses: [] };
 }
 
 // First index of needle in hay (needle may be multi-char), or -1.
@@ -756,6 +902,30 @@ fn infer_parse_fields(enc: str) -> [str] {
     return split(enc, "~");
 }
 
+// Substitute type-param bindings into every field type of a
+// "f:t~..." encoding; returns the substituted encoding.
+fn infer_subst_fields(enc: str, names: [str], types: [str]) -> str {
+    if enc == "" {
+        return "";
+    }
+    let parts: [str] = split(enc, "~");
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(parts) {
+        let kv: [str] = split(parts[i], ":");
+        if len(kv) >= 2 {
+            let ft: str = substitute_type(kv[1], names, types);
+            if out == "" {
+                out = kv[0] + ":" + ft;
+            } else {
+                out = out + "~" + kv[0] + ":" + ft;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // Struct field map encoding for a struct name, or "" if unknown.
 // Mangled name first, then the plain name (mirrors infer.py).
 fn infer_struct_fields(h: HInfer, name: str) -> str {
@@ -773,6 +943,33 @@ fn infer_struct_fields(h: HInfer, name: str) -> str {
             return h.struct_fields[i];
         }
         i = i + 1;
+    }
+    // Top-500 #74: a generic instantiation (e.g. Generator<int>)
+    // has no monomorphized entry — the registry stores only the
+    // base template (fields with unsubstituted T), so both
+    // lookups above fail and the caller would default the field
+    // type to "int" (p22: a [str] field indexed as [int]).
+    // Look up the base template, substitute the args into every
+    // field type, and return the substituted encoding (the same
+    // substitution cg_struct_fields_concrete does in codegen).
+    // Still "" when the base is unknown.
+    let args: [str] = generic_args(name);
+    if len(args) > 0 {
+        let base: str = generic_base(name);
+        let mut j: int = 0;
+        while j < len(h.struct_names) {
+            if h.struct_names[j] == base {
+                let mut tp: [str] = split(h.struct_tparams[j], "~");
+                if len(tp) == 1 && tp[0] == "" {
+                    tp = [];
+                }
+                if len(tp) == len(args) {
+                    return infer_subst_fields(h.struct_fields[j], tp, args);
+                }
+                return h.struct_fields[j];
+            }
+            j = j + 1;
+        }
     }
     return "";
 }
@@ -910,6 +1107,10 @@ fn infer_build_tables(h0: HInfer, prog: Node) -> HInfer {
             }
             push(h.struct_names, sp[0]);
             push(h.struct_fields, enc);
+            // Top-500 #74: record the type params so
+            // infer_struct_fields can substitute them for a
+            // generic instantiation (see the fallback there).
+            push(h.struct_tparams, sp[1]);
         }
         if n.kind == 4 {
             // EnumDef: kids are variant Field nodes (kind 44:

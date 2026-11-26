@@ -32,6 +32,9 @@ def escape_str(value):
 def expr_prec(expr):
     if isinstance(expr, A.BinOp):
         return PREC[expr.op]
+    if isinstance(expr, A.NamedExpr):
+        # Top-500 #72: `:=` is the loosest operator.
+        return 0
     return 99
 
 
@@ -88,6 +91,12 @@ def fmt_expr(expr, parent_prec=0):
                 f"({', '.join(fmt_expr(a) for a in expr.args)})")
     if isinstance(expr, A.Try):
         return f"{fmt_expr(expr.expr, 99)}?"
+    if isinstance(expr, A.NamedExpr):
+        # Top-500 #72: `:=` is the loosest operator, so fmt
+        # ALWAYS parenthesises a walrus — load-bearing, not
+        # cosmetic: `x := f() > 0` would re-parse as
+        # `x := (f() > 0)`, a different program.
+        return f"({expr.name} := {fmt_expr(expr.expr)})"
     if isinstance(expr, A.Lambda):
         # Lambda (Top-500 #101): the body formats multi-line,
         # relative to indent 0 — Formatter.emit pads every line
@@ -300,6 +309,10 @@ class Formatter:
                 self.emit(indent, "return;")
             else:
                 self.emit(indent, f"return {fmt_expr(stmt.expr)};")
+            return
+        if isinstance(stmt, A.Yield):
+            # Top-500 #74: `yield <expr>;` — same shape as return.
+            self.emit(indent, f"yield {fmt_expr(stmt.expr)};")
             return
         if isinstance(stmt, A.ExprStmt):
             self.emit(indent, f"{fmt_expr(stmt.expr)};")

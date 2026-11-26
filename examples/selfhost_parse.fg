@@ -19,8 +19,9 @@
 // 30 TupleLit, 31 StructLit, 32 FieldAccess, 33 MethodCall,
 // 34 Var, 35 Call, 36 Index, 37 TupleIndex, 38 RangeLit,
 // 39 Cast, 40 BinOp, 41 UnaryOp, 42 Try, 43 Param, 44 Field,
-// 45 Arm.
-
+// 45 Arm, 46 IndirectCall, 47 Lambda, 48 Pattern,
+// 49 ComptimeIf, 50 Pred, 51 NamedExpr (Top-500 #72),
+// 52 Yield (Top-500 #74).
 import "selfhost_lex.fg";
 
 struct Node {
@@ -129,6 +130,10 @@ fn node_kind_name(k: int) -> str {
     // Top-500 #70: comptime if (conditional compilation).
     if k == 49 { return "ComptimeIf"; }
     if k == 50 { return "Pred"; }
+    // Top-500 #72: walrus (assignment expression).
+    if k == 51 { return "NamedExpr"; }
+    // Top-500 #74: generator yield.
+    if k == 52 { return "Yield"; }
     return "?";
 }
 
@@ -423,6 +428,26 @@ fn parse_expr(p0: HParser) -> POut {
         let mut r: Node = new_node(38, op.line, op.col);
         r.kids = [n, right.n];
         n = r;
+    }
+    // Top-500 #72: walrus `name := expr`, looser than every
+    // other operator (PEP 572). The LHS is parsed as a full
+    // or-expression (through the range handling) first, so
+    // `a + b := x` errors; the LHS must be a plain Var
+    // (field/index targets are v2). The RHS is a full
+    // expression, so a nested walrus parses — the checker
+    // rejects it (§3.5).
+    if at_op(p, ":=") {
+        let op: TOut = expect_op(p, ":=");
+        p = op.p;
+        if n.kind != 34 {
+            fail_at(op.line, op.col, "walrus target must be a plain name (field and index targets are not supported in v1)");
+        }
+        let rhs: POut = parse_expr(p);
+        p = rhs.p;
+        let mut w: Node = new_node(51, op.line, op.col);
+        w.name = n.name;
+        w.kids = [rhs.n];
+        n = w;
     }
     return POut { p: p, n: n };
 }
@@ -1640,6 +1665,19 @@ fn parse_stmt(p0: HParser) -> POut {
         n.kids = kids;
         return POut { p: p, n: n };
     }
+    // Top-500 #74: `yield <expr>;` — a generator statement. The
+    // expression is required (unlike `return`, which may be bare).
+    if at_kw(p, "yield") {
+        let tok: TOut = expect_kw(p, "yield");
+        p = tok.p;
+        let ex: POut = parse_expr(p);
+        p = ex.p;
+        let s: TOut = expect_op(p, ";");
+        p = s.p;
+        let mut n: Node = new_node(52, tok.line, tok.col);
+        n.kids = [ex.n];
+        return POut { p: p, n: n };
+    }
     if at_kw(p, "break") {
         let tok: TOut = expect_kw(p, "break");
         p = tok.p;
@@ -2479,6 +2517,11 @@ fn dump(n: Node) -> str {
             return "(Pred " + n.name + ")";
         }
         return "(Pred " + n.name + " " + n.label + " \"" + dump_escape(n.sval, false) + "\")";
+    }
+    // Top-500 #72: walrus. The name is the binding; the RHS is
+    // the value (also the walrus's value, before the desugar).
+    if k == 51 {
+        return "(NamedExpr " + n.name + " " + dump(n.kids[0]) + ")";
     }
     return "(?" + i2s(k) + ")";
 }

@@ -211,6 +211,13 @@ class Checker:
         # (like loop_depth): a labeled break/continue inside a
         # nested function must not see the outer fn's labels.
         self.label_stack = []
+        # Top-500 #72: (label, has_walrus) for every enclosing
+        # loop, innermost last — parallel to the loop nesting
+        # (while AND for), so a `continue` can tell whether its
+        # target loop is a walrus-while (a `continue` there
+        # would skip the body-end re-read). Reset on fn/lambda
+        # entry, like label_stack.
+        self._loop_info = []
         self.moved = set()
         self.moved_fields = set()
         self.pinned = set()
@@ -1113,6 +1120,15 @@ class Checker:
         self.validate_alias_targets()
         self.validate_newtype_targets()
         self.check_traits()
+        # Top-500 #74: generator desugar (checker-side state machine).
+        # Runs before the walrus/comptime splicing in _check_stmts
+        # and before the original_funcs snapshot below, so the
+        # generated constructor and step function are checked as
+        # ordinary functions. Idempotent: a second pass finds no
+        # Yield nodes and returns the program unchanged.
+        from .generators import resolve_generators
+        resolve_generators(self.program, self.structs, self.struct_params,
+                           self.target, self.freestanding)
         original_funcs = list(self.program.funcs)
         for fn in original_funcs:
             if fn.name in self.funcs:
@@ -1865,7 +1881,7 @@ class Checker:
                  self.loop_depth, self.branch_depth, self.moved, self.unresolved,
                  self.moved_fields, self.loop_vars, self.pinned,
                  self._for_iterables, self._lambda_frames, self.label_stack,
-                 self._loop_var_entries)
+                 self._loop_var_entries, self._loop_info)
         try:
             if fn.name in C_KEYWORDS:
                 raise ForgeError(f"'{fn.name}' is a C keyword and cannot be used as a "
@@ -1874,6 +1890,7 @@ class Checker:
             self.loop_depth = 0
             self.branch_depth = 0
             self.label_stack = []
+            self._loop_info = []
             self.moved = set()
             self.moved_fields = set()
             self.pinned = set()
@@ -1962,7 +1979,7 @@ class Checker:
                 self.loop_depth, self.branch_depth, self.moved, self.unresolved, \
                 self.moved_fields, self.loop_vars, self.pinned, \
                 self._for_iterables, self._lambda_frames, self.label_stack, \
-                self._loop_var_entries = saved
+                self._loop_var_entries, self._loop_info = saved
 
     def lookup(self, name, line, col):
         for scope in reversed(self.scopes):
@@ -2032,6 +2049,146 @@ class Checker:
             return self._resolve_comptime_if(stmt.els.stmts[0])
         return list(stmt.els.stmts)
 
+    # -- Top-500 #72: walrus (`name := expr`) desugar --------
+    # The parser builds NamedExpr nodes; this checker-side
+    # desugar (the #70 precedent) removes every legal one
+    # before check_expr, infer, or any codegen ever sees it:
+    # each walrus in an if/while condition becomes a binding
+    # statement spliced before the statement (Let for a fresh
+    # name, Assign for an existing one), the condition is
+    # rewritten with Var(name), and a while gets its re-read
+    # appended to the body end. No infer/codegen change.
+    def _walrus_kids(self, expr):
+        """Child expressions of `expr` in source order (for the
+        walrus scan/substitution). Lambda bodies are NOT
+        descended into: a walrus inside a lambda binds in the
+        lambda's own scope and is desugared by the lambda's own
+        statement lists."""
+        if isinstance(expr, A.Lambda):
+            return []
+        kids = []
+
+        def add(v):
+            if type(v).__module__ == "forge_lang.ast_nodes":
+                kids.append(v)
+            elif isinstance(v, (list, tuple)):
+                for x in v:
+                    add(x)
+
+        for v in vars(expr).values():
+            add(v)
+        return kids
+
+    def _collect_walruses(self, expr, ctx):
+        """Walrus nodes in `expr` in left-to-right order, raising
+        on illegal positions (Top-500 #72 §3.3/§3.5). ctx is "ok"
+        (every ancestor is the condition root, `!`, a comparison,
+        or the LEFT of `&&`/`||`), "andright" (under the right of
+        `&&`/`||`), "other" (under any other node), or "nested"
+        (inside another walrus's RHS)."""
+        if isinstance(expr, A.NamedExpr):
+            if ctx == "nested":
+                raise ForgeError("walrus cannot appear inside another walrus in v1",
+                                 expr.line, expr.col)
+            if ctx == "andright":
+                raise ForgeError("walrus cannot appear on the right of '&&' or '||' in v1 "
+                                 "(hoisting it would change when the assignment runs; "
+                                 "write the assignment before the if instead)",
+                                 expr.line, expr.col)
+            if ctx != "ok":
+                raise ForgeError("walrus ':=' is only allowed in if/while conditions in v1",
+                                 expr.line, expr.col)
+            # Legal here — but a walrus inside the RHS is nested.
+            self._collect_walruses(expr.expr, "nested")
+            return [expr]
+        if isinstance(expr, A.BinOp):
+            if expr.op in ("&&", "||"):
+                out = self._collect_walruses(expr.left, ctx)
+                out += self._collect_walruses(
+                    expr.right, "andright" if ctx == "ok" else ctx)
+                return out
+            if expr.op in ("==", "!=", "<", "<=", ">", ">="):
+                return (self._collect_walruses(expr.left, ctx)
+                        + self._collect_walruses(expr.right, ctx))
+            nxt = "other" if ctx == "ok" else ctx
+            return (self._collect_walruses(expr.left, nxt)
+                    + self._collect_walruses(expr.right, nxt))
+        if isinstance(expr, A.UnaryOp):
+            if expr.op == "!":
+                return self._collect_walruses(expr.expr, ctx)
+            return self._collect_walruses(
+                expr.expr, "other" if ctx == "ok" else ctx)
+        if isinstance(expr, A.Lambda):
+            return []
+        out = []
+        nxt = "other" if ctx == "ok" else ctx
+        for kid in self._walrus_kids(expr):
+            out += self._collect_walruses(kid, nxt)
+        return out
+
+    def _subst_walrus_value(self, value):
+        if type(value).__module__ == "forge_lang.ast_nodes":
+            return self._subst_walrus_vars(value)
+        if isinstance(value, list):
+            return [self._subst_walrus_value(x) for x in value]
+        if isinstance(value, tuple):
+            return tuple(self._subst_walrus_value(x) for x in value)
+        return value
+
+    def _subst_walrus_vars(self, expr):
+        """Replace every NamedExpr in `expr` with Var(name), in
+        place (the walrus scan already validated positions)."""
+        if isinstance(expr, A.NamedExpr):
+            return A.Var(expr.name, expr.line, expr.col)
+        if isinstance(expr, A.Lambda):
+            return expr
+        for field, value in vars(expr).items():
+            setattr(expr, field, self._subst_walrus_value(value))
+        return expr
+
+    def _rewrite_walrus(self, stmt):
+        """Desugar the walruses in an If/While condition into
+        binding statements spliced before the statement.
+        Returns the replacement statement list: [bindings...,
+        stmt], or [stmt] unchanged when the condition holds no
+        walrus. The condition is rewritten in place (each
+        NamedExpr becomes a Var); a While also gets a re-read of
+        each bound value appended to the body end and
+        has_walrus=True. Idempotent: a second call finds no
+        NamedExpr and returns [stmt] without touching the body.
+        The Let-vs-Assign decision is by outward scope lookup
+        at rewrite time: a name found in any enclosing scope
+        becomes an Assign (whose own validation — immutable,
+        wrong type — fires when it is checked); a fresh name
+        becomes a `let mut`. A second walrus binding the same
+        fresh name in the same condition falls through to the
+        #494 same-scope rebind at check time (same type only)."""
+        if not isinstance(stmt, (A.If, A.While)):
+            return [stmt]
+        walruses = self._collect_walruses(stmt.cond, "ok")
+        if not walruses:
+            return [stmt]
+        out = []
+        for w in walruses:
+            if self._scope_index_for(w.name) is None:
+                out.append(A.Let(w.name, True, None, w.expr, w.line, w.col))
+            else:
+                out.append(A.Assign(w.name, w.expr, w.line, w.col))
+        stmt.cond = self._subst_walrus_vars(stmt.cond)
+        if isinstance(stmt, A.While):
+            stmt.has_walrus = True
+            # The re-read uses a COPY of each RHS: the initial
+            # binding and the re-read must not share one AST
+            # node (a shared node would be checked twice, once
+            # per statement — a lambda in the RHS would be
+            # checked twice, and call-concrete-type stamps
+            # would land twice).
+            for w in walruses:
+                stmt.body.stmts.append(
+                    A.Assign(w.name, copy.deepcopy(w.expr), w.line, w.col))
+        out.append(stmt)
+        return out
+
     def _check_stmts(self, stmts):
         """Check a statement list, splicing each ComptimeIf in place
         (Top-500 #70): the statement is replaced by the taken
@@ -2048,6 +2205,16 @@ class Checker:
             if isinstance(stmt, A.ComptimeIf):
                 stmts[i:i + 1] = self._resolve_comptime_if(stmt)
                 continue
+            if isinstance(stmt, (A.If, A.While)):
+                # Top-500 #72: desugar walruses in the condition
+                # into binding statements spliced before it. Only
+                # splice + re-process when bindings were added;
+                # a second pass finds no NamedExpr and falls
+                # through to check_stmt.
+                rewritten = self._rewrite_walrus(stmt)
+                if len(rewritten) > 1:
+                    stmts[i:i + 1] = rewritten
+                    continue
             self.check_stmt(stmt)
             i += 1
 
@@ -2199,6 +2366,13 @@ class Checker:
         return self.check_expr(expr)
 
     def check_stmt(self, stmt):
+        if isinstance(stmt, A.Yield):
+            # Top-500 #74: unreachable — resolve_generators in
+            # check() desugars every Yield before check_stmt sees
+            # one. A Yield here means a new statement-list walker
+            # was added without going through the transform.
+            raise ForgeError("internal error: unresolved yield",
+                             stmt.line, stmt.col)
         if isinstance(stmt, A.ComptimeIf):
             # Top-500 #70: unreachable — _check_stmts splices
             # every ComptimeIf before check_stmt sees it. A
@@ -2722,12 +2896,17 @@ class Checker:
                 self.label_stack.append(stmt.label)
                 pushed_label = True
             self.loop_depth += 1
+            # Top-500 #72: record this loop for the `continue`
+            # ban (a walrus-while's re-read must not be skipped).
+            self._loop_info.append((getattr(stmt, "label", None),
+                                    getattr(stmt, "has_walrus", False)))
             try:
                 self.check_block(stmt.body)
                 body_moved, body_fields = set(self.moved), set(self.moved_fields)
                 body_pinned = set(self.pinned)
             finally:
                 self.loop_depth -= 1
+                self._loop_info.pop()
                 if pushed_label:
                     self.label_stack.pop()
             # Loop-back edge (Top-500 #40): the condition is
@@ -2783,6 +2962,10 @@ class Checker:
                 pushed_label = True
             self.loop_depth += 1
             self.loop_vars.append(stmt.name)
+            # Top-500 #72: a for loop is never a walrus-while
+            # (recorded so an unlabeled `continue` inside it
+            # does not wrongly hit an outer walrus-while).
+            self._loop_info.append((getattr(stmt, "label", None), False))
             # The iterable's buffer is read again on every
             # iteration (Top-500 #40): record it so a move of
             # it inside the body is rejected in check_call —
@@ -2810,6 +2993,7 @@ class Checker:
                 if pushed_label:
                     self.label_stack.pop()
                 self.loop_vars.pop()
+                self._loop_info.pop()
                 if iter_root is not None:
                     self._for_iterables.pop()
             self._loop_var_entries.discard((id(self.scopes[-1]), stmt.name))
@@ -2836,9 +3020,31 @@ class Checker:
                 if stmt.label not in self.label_stack:
                     raise ForgeError(f"continue label '{stmt.label}' does not "
                                      f"name an enclosing loop", stmt.line, stmt.col)
+                # Top-500 #72: a labeled `continue` targeting a
+                # walrus-while would skip the body-end re-read
+                # (v1 bans it; the innermost loop with that
+                # label wins, like #62 shadowing).
+                for lab, hw in reversed(self._loop_info):
+                    if lab == stmt.label:
+                        if hw:
+                            raise ForgeError("continue cannot target a while loop whose "
+                                             "condition binds a walrus in v1 (it would skip "
+                                             "the re-read of the bound value; restructure "
+                                             "the loop or use break)",
+                                             stmt.line, stmt.col)
+                        break
             elif self.loop_depth == 0:
                 raise ForgeError("continue outside a loop; move it inside "
                                  "a 'while' or 'for' loop", stmt.line, stmt.col)
+            elif self._loop_info and self._loop_info[-1][1]:
+                # Top-500 #72: an unlabeled `continue` targets
+                # the innermost loop — banned when it is a
+                # walrus-while (it would skip the re-read).
+                raise ForgeError("continue cannot target a while loop whose "
+                                 "condition binds a walrus in v1 (it would skip "
+                                 "the re-read of the bound value; restructure "
+                                 "the loop or use break)",
+                                 stmt.line, stmt.col)
             return
         if isinstance(stmt, A.Defer):
             # The deferred call is checked like an expression
@@ -2885,6 +3091,13 @@ class Checker:
                                          stmt.line, stmt.col)
             return
         if isinstance(stmt, A.ExprStmt):
+            if isinstance(stmt.expr, A.NamedExpr):
+                # Top-500 #72: a bare-statement walrus names the
+                # fix (distinct from the position error — the
+                # statement position is not a condition at all).
+                raise ForgeError("walrus cannot be used as a bare statement in v1 "
+                                 "(use 'let mut <name> = ...;' instead)",
+                                 stmt.line, stmt.col)
             if not isinstance(stmt.expr, (A.Call, A.IndirectCall)):
                 raise ForgeError("an expression statement must be a function call",
                                  stmt.line, stmt.col)
@@ -3208,6 +3421,12 @@ class Checker:
         return t
 
     def _check_expr_inner(self, expr):
+        if isinstance(expr, A.NamedExpr):
+            # Top-500 #72: a walrus reaching check_expr was not in
+            # a legal if/while condition position — the desugar
+            # removes every legal one before check_expr sees it.
+            raise ForgeError("walrus ':=' is only allowed in if/while conditions in v1",
+                             expr.line, expr.col)
         if isinstance(expr, A.IntLit):
             return "int"
         if isinstance(expr, A.FloatLit):
@@ -3586,13 +3805,14 @@ class Checker:
         saved = (self.current_ret, self.current_fn, self.loop_depth,
                  self.branch_depth, self.moved, self.moved_fields,
                  self.pinned, self.loop_vars, self._for_iterables,
-                 self.unresolved, self.label_stack)
+                 self.unresolved, self.label_stack, self._loop_info)
         try:
             self.current_ret = expr.ret
             self.current_fn = None
             self.loop_depth = 0
             self.branch_depth = 0
             self.label_stack = []
+            self._loop_info = []
             self.moved = set(self.moved)
             self.moved_fields = set(self.moved_fields)
             self.pinned = set(self.pinned)
@@ -3639,7 +3859,7 @@ class Checker:
             (self.current_ret, self.current_fn, self.loop_depth,
              self.branch_depth, self.moved, self.moved_fields,
              self.pinned, self.loop_vars, self._for_iterables,
-             self.unresolved, self.label_stack) = saved
+             self.unresolved, self.label_stack, self._loop_info) = saved
 
     def _check_indirect_args(self, call, fn_type, what):
         """Check a call's args against a fn type (FN-C2).

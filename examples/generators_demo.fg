@@ -1,0 +1,57 @@
+// Qasida generators demo (Top-500 #74).
+// A generator function is lazy: calling it builds the value
+// without running the body; each `<name>_next(g)` call runs one
+// segment and returns `opt_some(v)` for a yield, or the none
+// literal when the generator is exhausted. The v1 idiom is a
+// manual next() loop — `for x in g` is not supported yet.
+import "generators.fg";
+
+fn count_up(n: int) -> Generator<int> {
+    let i: int = 0;
+    while (i < n) {
+        yield i;
+        i = i + 1;
+    }
+}
+
+fn repeat_word(w: str, n: int) -> Generator<str> {
+    for i in 0..n {
+        yield w;
+    }
+}
+
+fn fib(n: int) -> Generator<int> {
+    let a: int = 0;
+    let b: int = 1;
+    let i: int = 0;
+    while (i < n) {
+        yield a;
+        let t: int = a + b;
+        a = b;
+        b = t;
+        i = i + 1;
+    }
+}
+
+fn main() -> int {
+    let g: Generator<int> = count_up(3);
+    let mut v: Option<int> = count_up_next(g);
+    while (v.present) {
+        println(v.value);
+        v = count_up_next(g);
+    }
+    let w: Generator<str> = repeat_word("hi", 2);
+    let mut x: Option<str> = repeat_word_next(w);
+    while (x.present) {
+        println(x.value);
+        x = repeat_word_next(w);
+    }
+    let f: Generator<int> = fib(6);
+    let mut y: Option<int> = fib_next(f);
+    while (y.present) {
+        println(y.value);
+        y = fib_next(f);
+    }
+    println("done");
+    return 0;
+}

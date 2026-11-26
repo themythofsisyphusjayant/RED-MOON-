@@ -198,6 +198,18 @@ def pred_text(pred, parent_prec=0):
 
 
 @dataclass
+class NamedExpr:
+    """`name := expr` (Top-500 #72, walrus). A first-class
+    expression node at parse time; the checker resolves it by
+    desugaring (only legal in if/while conditions, §3.3) before
+    infer/codegen ever see it."""
+    name: str
+    expr: object
+    line: int
+    col: int
+
+
+@dataclass
 class ComptimeIf:
     """`comptime if <pred> { } else { }` (Top-500 #70). The checker
     resolves it by splicing the taken branch's statements in place
@@ -228,6 +240,10 @@ class While:
     line: int
     col: int
     label: object = None
+    # Top-500 #72: True when the condition binds a walrus
+    # (set by the checker's desugar); `continue` targeting
+    # this loop is an error in v1 (it would skip the re-read).
+    has_walrus: bool = False
 
 
 @dataclass
@@ -283,6 +299,16 @@ class AliasDef:
 class NewtypeDef:
     name: str
     target: str  # the underlying type; the newtype is DISTINCT from it
+    line: int
+    col: int
+
+
+@dataclass
+class Yield:
+    """`yield expr;` (Top-500 #74). A statement in a generator fn;
+    the checker resolves it by desugaring the fn into a state
+    machine before infer/codegen ever see it."""
+    expr: object
     line: int
     col: int
 

@@ -1,6 +1,6 @@
 // Full hosted lexer for Qasida, written IN Qasida.
 // Slice 1 of the self-hosting plan (docs/SELFHOST_PLAN.md).
-// Token set matches forge_lang/lexer.py exactly: keywords (27),
+// Token set matches forge_lang/lexer.py exactly: keywords (28),
 // two-char + one-char operators, INT (decimal/hex/binary/octal,
 // underscores), FLOAT, STR (escapes), // and /* */ comments,
 // EOF, line/col tracking, lexer errors via fail_compile().
@@ -99,11 +99,11 @@ fn has_prefix(src: str, i: int, pat: str) -> bool {
 }
 
 fn is_keyword(text: str) -> bool {
-    return text == "fn" || text == "let" || text == "mut" || text == "if" || text == "else" || text == "while" || text == "for" || text == "in" || text == "return" || text == "true" || text == "false" || text == "import" || text == "as" || text == "struct" || text == "enum" || text == "match" || text == "spawn" || text == "extern" || text == "break" || text == "continue" || text == "trait" || text == "impl" || text == "type" || text == "newtype" || text == "opaque" || text == "readonly" || text == "defer";
+    return text == "fn" || text == "let" || text == "mut" || text == "if" || text == "else" || text == "while" || text == "for" || text == "in" || text == "return" || text == "true" || text == "false" || text == "import" || text == "as" || text == "struct" || text == "enum" || text == "match" || text == "spawn" || text == "extern" || text == "break" || text == "continue" || text == "trait" || text == "impl" || text == "type" || text == "newtype" || text == "opaque" || text == "readonly" || text == "defer" || text == "yield";
 }
 
 fn is_two_op(text: str) -> bool {
-    return text == "==" || text == "!=" || text == "<=" || text == ">=" || text == "&&" || text == "||" || text == "->" || text == "=>" || text == "<<" || text == ">>" || text == "..";
+    return text == "==" || text == "!=" || text == "<=" || text == ">=" || text == "&&" || text == "||" || text == "->" || text == "=>" || text == "<<" || text == ">>" || text == ".." || text == ":=";
 }
 
 fn is_one_op(ch: str) -> bool {

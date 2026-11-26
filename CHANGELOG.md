@@ -8,6 +8,50 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Generator functions / yield (Python), Top-500 #74 (26 Nov 2026,
+  Sprint Day 6, both compilers; Jayant's word 26 Nov: "Build as
+  recommended — Python-style yield, checker desugar"):
+  `yield expr;` inside `fn name(...) -> Generator<T>` (requires
+  `import "generators.fg";`). Checker-side state-machine desugar:
+  the generator fn becomes a CONSTRUCTOR plus a STEP FUNCTION
+  `<name>_next(g: Generator<T>) -> Option<T>`; state in one shared
+  generic struct `Generator<T> { kind: int, cur: T, slots_i: [int],
+  slots_s: [str], slots_b: [bool] }`. Element types v1: int/str/bool
+  only; `yield` in while/if/for-over-range bodies and top level;
+  `for x in g` does NOT work in v1 (manual `next()` loop is the
+  idiom); `return` ends iteration. Own test
+  tests/test_generators_v1.py 57/57 ALL PASS both compilers. ASan
+  program-side 18/18 leak-clean; compiler-side deltas vs the #70
+  table (codegen and cli each +2046B/+102 — but the v72 ASan binary
+  gives the IDENTICAL codegen and check-wrapper numbers, so the delta
+  is PRE-EXISTING (between #70 and #72, not from #74) and #74
+  introduced ZERO compiler-side leak growth). Emit compare
+  75 PASS, 0 FAIL. v1 limits: native only (big32/WASM/freestanding
+  are named check-time errors); no generic generator fns; no `defer`
+  or walrus in a generator body; no `yield` in a match arm,
+  comptime-if branch, scope block, nested lambda, or `for` over an
+  array. Forks for Jayant: the `next()` API is per-generator
+  `<name>_next(g)` (a uniform `next(g)` is a v2 item); `for x in g`
+  is a v2 item.
+
+- Assignment expressions (Python walrus), Top-500 #72 (25 Nov 2026,
+  Sprint Day 5, both compilers; Jayant's word 25 Nov: "Build as
+  recommended — walrus, :=, conditions-only, checker desugar"):
+  `name := expr` in `if`/`while` conditions at hoistable positions
+  (whole condition, under `!`, under a comparison, under the LEFT
+  operand of `&&`/`||`); binding declared in the enclosing block as
+  `let mut`; `while` desugars to an initial binding + a re-read
+  appended to the body end; `continue` targeting a walrus-`while` is
+  a named error in v1; `fmt` always parenthesises a walrus. Own test
+  tests/test_walrus_v1.py 65/65 ALL PASS both compilers. ASan
+  compiler-side == the #70 table (dump-flag 612/36, check 4078/155,
+  codegen 10142/366, cli 10240/372 — zero growth). Emit compare 65
+  PASS, 0 FAIL (case 13 is a documented pre-existing hosted
+  divergence: a `while` inside a nested Block leaks the enclosing
+  fact into the body — the hand-written manual desugar diverges
+  identically with no walrus present; needs a separate codegen
+  slice).
+
 - Comptime if, Top-500 #70 (25 Nov 2026, Sprint Day 5, both
   compilers; Jayant's word 25 Nov: "Build as recommended — comptime
   if, fixed predicates, function-body only"): `comptime if target ==

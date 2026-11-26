@@ -2945,6 +2945,13 @@ fn check_expr(c0: HChecker, n: Node) -> COut {
 
 fn check_expr_inner(c0: HChecker, n: Node) -> COut {
     let mut c: HChecker = c0;
+    // Top-500 #72: a NamedExpr reaching the checker means the
+    // resolve pass did not desugar it (it is outside an
+    // if/while condition, or the pass was bypassed). Fail
+    // loudly, never silently miscompile.
+    if n.kind == 51 {
+        fail_at(n.line, n.col, "walrus ':=' is only allowed in if/while conditions in v1");
+    }
     if n.kind == 25 {
         return COut { c: c, typ: "int" };
     }
@@ -4835,6 +4842,13 @@ fn check_stmt_builtin(c0: HChecker, n: Node) -> HChecker {
 
 fn check_stmt(c0: HChecker, n: Node) -> HChecker {
     let mut c: HChecker = c0;
+    if n.kind == 52 {
+        // Top-500 #74: unreachable — resolve_generators_prog in
+        // check_program desugars every Yield before check_stmt
+        // sees one. A Yield here means a new statement-list
+        // walker was added without going through the transform.
+        fail_at(n.line, n.col, "internal error: unresolved yield");
+    }
     if n.kind == 9 {
         // Bare block statement: a new scope (mirrors Python
         // check_stmt dispatching Block to check_block).
@@ -5648,6 +5662,17 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // statement; use its value").
         if e0.kind == 35 && is_expr_builtin(e0.name) {
             fail_at(n.line, n.col, "'" + e0.name + "' is an expression, not a statement; use its value");
+        }
+        // Top-500 #72: a walrus as a bare statement is a named
+        // error (Python: "walrus cannot be used as a bare
+        // statement in v1 (use 'let mut <name> = ...;' instead)"
+        // — the literal text `<name>`, not the variable name).
+        // The hosted ExprStmt handler otherwise accepts any
+        // expression as a statement, so this needs its own
+        // check — without it the kind-51 guard below would
+        // fire with the (wrong) position error.
+        if e0.kind == 51 {
+            fail_at(n.line, n.col, "walrus cannot be used as a bare statement in v1 (use 'let mut <name> = ...;' instead)");
         }
         let e: COut = check_expr(c, e0);
         return e.c;
@@ -8189,6 +8214,3328 @@ fn resolve_comptime_prog(c: HChecker, prog: Node) -> Node {
     return ct_resolve_node(c, prog);
 }
 
+// ---------- Top-500 #74: generators / yield ----------
+// Checker-side state-machine desugar (the #70/#72 pattern: a
+// deterministic program-level tree-rebuilding pass, run once at
+// check_program entry and once in compile_to_c on the merged
+// program). A generator fn `fn name(...) -> Generator<T>` becomes
+// a CONSTRUCTOR (same name, builds the value, body never runs)
+// plus a STEP FUNCTION `<name>_next(g: Generator<T>) ->
+// Option<T>` (the #75 it_next precedent). The design doc is
+// blackmoon-iso/generators-slice/DESIGN.md; the Python mirror is
+// forge_lang/generators.py. Error strings are identical in both
+// compilers (DESIGN.md §3.5). Order is FORCED (DESIGN.md §3.8):
+// generators -> walrus -> comptime, in both check_program and
+// compile_to_c, so a walrus or a yield inside a comptime branch
+// is a named error here, not silently desugared away.
+// State lives in ONE shared generic struct `Generator<T> {
+// kind: int, cur: T, slots_i: [int], slots_s: [str], slots_b:
+// [bool] }` (forge_lang/stdlib/generators.fg): params/locals are
+// lifted into slot arrays, slots_i[0] is the state, cur is a
+// type witness holding the zero value. The step fn is a `while
+// (true)` dispatch loop over `if (g.slots_i[0] == N)` segments;
+// each segment ends with a yield-return, a return-none, or a
+// state jump. v1 limits (DESIGN.md §7): element/local/param
+// types int/str/bool only; `for x in g` does not work (manual
+// next() loop instead); no yield in match arms, comptime
+// branches, for-over-array, scope blocks, or nested lambdas; no
+// defer and no walrus in a generator body; native only.
+// The transform state is threaded through every helper (the
+// HChecker pattern: take it by value, return the updated copy);
+// helpers that also produce a value return a G*Out wrapper.
+// Arrays are copied on assignment, so every array-field
+// mutation goes through a local copy and assigns back.
+// NOTE: the G* structs live in selfhost_infer.fg, NOT here —
+// the codegen emits array-free helpers in struct-registration
+// order and emits no forward declarations (the #47 latent bug),
+// so a struct containing a Node must be defined in a file
+// merged AFTER selfhost_parse.fg (which defines Node), else the
+// generated C calls forge_Node_array_free before its static
+// definition and the CLI build fails to compile. GState,
+// GNodeOut, GNodesOut and GTransformOut hold Nodes; GGen holds
+// GState, so the whole group moves together, in dependency
+// order.
+
+fn g_new() -> GGen {
+    return GGen { fn_names: [], fn_rets: [], fn_param_typs: [], fn_type_params: [], struct_names: [], struct_field_names: [], struct_field_typs: [], struct_type_params: [], fn_name: "", fn_line: 0, fn_col: 0, elem: "", kind: 0, scopes: [], states: [], cur_state: 0, end_state: 0, int_count: 1, str_count: 0, bool_count: 0, loop_labels: [], loop_is_split: [], loop_brk: [], loop_cont: [], kind_counter: 0, syn: 0, target: "", freestanding: false };
+}
+
+// A fresh source position for a transform-built node (see the
+// `syn` field on GGen): the line is kept, the col is a
+// synthetic 100000+syn that no real source line reaches, so no
+// two built nodes share a (line, col) map key. Returns the
+// updated g (syn incremented) and the fresh position.
+fn g_fresh(g0: GGen, line: int, col: int) -> GPosOut {
+    let mut g: GGen = g0;
+    let c: int = 100000 + g.syn;
+    g.syn = g.syn + 1;
+    return GPosOut { g: g, line: line, col: c };
+}
+
+// Build one node at a fresh synthetic position (see g_fresh).
+// Use for every EXPRESSION node the transform builds; statement
+// nodes keep new_node (their types are never read from the map,
+// and their real position is what backtraces report).
+fn g_node(g0: GGen, kind: int, line: int, col: int) -> GNodeOut {
+    let po: GPosOut = g_fresh(g0, line, col);
+    let nd: Node = new_node(kind, po.line, po.col);
+    return GNodeOut { g: po.g, node: nd };
+}
+
+// Join a string list with a separator ("" for an empty list).
+fn join_strs(parts: [str], sep: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(parts) {
+        if i > 0 {
+            out = out + sep;
+        }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+fn g_is_gen_elem(t: str) -> bool {
+    return t == "int" || t == "str" || t == "bool";
+}
+
+// The element type of a `Generator<T>` return type, or "" when
+// the type is not a Generator instantiation.
+fn g_gen_ret(ret: str) -> str {
+    if generic_base(ret) != "Generator" {
+        return "";
+    }
+    let args: [str] = generic_args(ret);
+    if len(args) != 1 {
+        return "";
+    }
+    return args[0];
+}
+
+// The zero literal of a v1 element type (fresh position: see
+// g_fresh — every built node gets its own (line, col) key).
+fn g_zero(g0: GGen, elem: str, line: int, col: int) -> GNodeOut {
+    if elem == "str" {
+        let o: GNodeOut = g_node(g0, 27, line, col);
+        let mut n: Node = o.node;
+        n.sval = "";
+        return GNodeOut { g: o.g, node: n };
+    }
+    if elem == "bool" {
+        let o: GNodeOut = g_node(g0, 28, line, col);
+        let mut n: Node = o.node;
+        n.bval = false;
+        return GNodeOut { g: o.g, node: n };
+    }
+    let o: GNodeOut = g_node(g0, 25, line, col);
+    let mut n: Node = o.node;
+    n.ival = 0;
+    return GNodeOut { g: o.g, node: n };
+}
+
+fn g_int(g0: GGen, n: int, line: int, col: int) -> GNodeOut {
+    let o: GNodeOut = g_node(g0, 25, line, col);
+    let mut nd: Node = o.node;
+    nd.ival = n;
+    return GNodeOut { g: o.g, node: nd };
+}
+
+fn g_var(g0: GGen, name: str, line: int, col: int) -> GNodeOut {
+    let o: GNodeOut = g_node(g0, 34, line, col);
+    let mut nd: Node = o.node;
+    nd.name = name;
+    return GNodeOut { g: o.g, node: nd };
+}
+
+fn g_str(g0: GGen, s: str, line: int, col: int) -> GNodeOut {
+    let o: GNodeOut = g_node(g0, 27, line, col);
+    let mut nd: Node = o.node;
+    nd.sval = s;
+    return GNodeOut { g: o.g, node: nd };
+}
+
+fn g_bool(g0: GGen, b: bool, line: int, col: int) -> GNodeOut {
+    let o: GNodeOut = g_node(g0, 28, line, col);
+    let mut nd: Node = o.node;
+    nd.bval = b;
+    return GNodeOut { g: o.g, node: nd };
+}
+
+// The type params encoded in a fn/struct name's "<T,U>"
+// suffix, or [] when the name has none.
+fn g_name_type_params(name: str) -> [str] {
+    let lt: int = find_lt(name);
+    if lt < 0 {
+        return [];
+    }
+    if substr(name, len(name) - 1, 1) != ">" {
+        return [];
+    }
+    let inner: str = substr(name, lt + 1, len(name) - lt - 2);
+    if inner == "" {
+        return [];
+    }
+    return split(inner, ",");
+}
+
+// The base name without any "<T,U>" suffix.
+fn g_name_base(name: str) -> str {
+    let lt: int = find_lt(name);
+    if lt < 0 {
+        return name;
+    }
+    return substr(name, 0, lt);
+}
+
+// Build the fn/struct tables by scanning the program's
+// top-level definitions (the transform runs before
+// collect_defs, so it cannot use the checker's tables).
+fn g_build_tables(g0: GGen, prog: Node) -> GGen {
+    let mut g: GGen = g0;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            let mut fnames: [str] = g.fn_names;
+            push(fnames, g_name_base(n.name));
+            g.fn_names = fnames;
+            let mut frets: [str] = g.fn_rets;
+            push(frets, n.sval);
+            g.fn_rets = frets;
+            let mut pts: [str] = [];
+            let mut j: int = 0;
+            while j + 1 < len(n.kids) {
+                push(pts, n.kids[j].sval);
+                j = j + 1;
+            }
+            let mut fpts: [str] = g.fn_param_typs;
+            push(fpts, join_strs(pts, "~"));
+            g.fn_param_typs = fpts;
+            let mut ftp: [str] = g.fn_type_params;
+            push(ftp, join_strs(g_name_type_params(n.name), "~"));
+            g.fn_type_params = ftp;
+        }
+        if n.kind == 3 {
+            let mut snames: [str] = g.struct_names;
+            push(snames, g_name_base(n.name));
+            g.struct_names = snames;
+            let mut fns: [str] = [];
+            let mut fts: [str] = [];
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                push(fns, n.kids[j].name);
+                push(fts, n.kids[j].sval);
+                j = j + 1;
+            }
+            let mut sfn: [str] = g.struct_field_names;
+            push(sfn, join_strs(fns, "~"));
+            g.struct_field_names = sfn;
+            let mut sft: [str] = g.struct_field_typs;
+            push(sft, join_strs(fts, "~"));
+            g.struct_field_typs = sft;
+            let mut stp: [str] = g.struct_type_params;
+            push(stp, join_strs(g_name_type_params(n.name), "~"));
+            g.struct_type_params = stp;
+        }
+        i = i + 1;
+    }
+    return g;
+}
+
+fn g_fn_index(g: GGen, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(g.fn_names) {
+        if g.fn_names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn g_struct_index(g: GGen, name: str) -> int {
+    let mut i: int = 0;
+    while i < len(g.struct_names) {
+        if g.struct_names[i] == name {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// The fields of a (possibly generic-instantiated) struct type
+// as "~"-joined "name:type" pairs, or "" when unknown.
+fn g_struct_fields_of(g: GGen, t: str) -> str {
+    let base: str = generic_base(t);
+    let si: int = g_struct_index(g, base);
+    if si < 0 {
+        return "";
+    }
+    let args: [str] = generic_args(t);
+    let mut params: [str] = split(g.struct_type_params[si], "~");
+    if len(params) == 1 && params[0] == "" {
+        params = [];
+    }
+    if len(args) != len(params) {
+        if len(args) == 0 && len(params) == 0 {
+            // A plain (non-generic) struct: no substitution.
+        } else {
+            return "";
+        }
+    }
+    let names: [str] = split(g.struct_field_names[si], "~");
+    let typs: [str] = split(g.struct_field_typs[si], "~");
+    let mut out: str = "";
+    let mut i: int = 0;
+    while i < len(names) {
+        let ft: str = substitute_type(typs[i], params, args);
+        if out == "" {
+            out = names[i] + ":" + ft;
+        } else {
+            out = out + "~" + names[i] + ":" + ft;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Look up one field's type in a "~"-joined "name:type" list,
+// or "" when absent.
+fn g_field_type(fields: str, name: str) -> str {
+    if fields == "" {
+        return "";
+    }
+    let parts: [str] = split(fields, "~");
+    let mut i: int = 0;
+    while i < len(parts) {
+        let kv: [str] = split(parts[i], ":");
+        if len(kv) == 2 && kv[0] == name {
+            return kv[1];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// True when node `n` contains a Yield anywhere, not
+// crossing a lambda boundary (a yield inside a lambda belongs
+// to the lambda, and the pre-scan rejects it separately).
+fn g_has_yield(n: Node) -> bool {
+    if n.kind == 52 {
+        return true;
+    }
+    if n.kind == 47 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if g_has_yield(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn g_has_yield_stmts(stmts: [Node]) -> bool {
+    let mut i: int = 0;
+    while i < len(stmts) {
+        if g_has_yield(stmts[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// First Defer (kind 23) in the body proper, or a kind-0 node
+// when there is none. Mirrors g_has_yield: does NOT descend
+// into lambdas (kind 47) — a defer inside a lambda is the
+// lambda's own business. The caller (resolve_generators_prog)
+// raises the defer error only when the fn is a generator; the
+// pre-scan itself must not raise it, or ordinary fns with a
+// defer (corpus v23/v24/v27/v89) would fail.
+fn g_find_defer(n: Node) -> Node {
+    if n.kind == 23 {
+        return n;
+    }
+    if n.kind == 47 {
+        return new_node(0, 0, 0);
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        let d: Node = g_find_defer(n.kids[i]);
+        if d.kind == 23 {
+            return d;
+        }
+        i = i + 1;
+    }
+    return new_node(0, 0, 0);
+}
+
+fn g_find_defer_stmts(stmts: [Node]) -> Node {
+    let mut i: int = 0;
+    while i < len(stmts) {
+        let d: Node = g_find_defer(stmts[i]);
+        if d.kind == 23 {
+            return d;
+        }
+        i = i + 1;
+    }
+    return new_node(0, 0, 0);
+}
+
+// Scan a lambda body for a yield: a yield inside a nested
+// function or closure is a v1 error (it belongs to the lambda,
+// which has no state machine). Returns false; the caller's
+// yield does not count.
+fn g_scan_lambda_body(g: GGen, body: Node) -> bool {
+    if g_has_yield_stmts(body.kids) {
+        fail_at(body.line, body.col, "yield cannot appear inside a nested function or closure in v1");
+    }
+    let mut i: int = 0;
+    while i < len(body.kids) {
+        g_scan_stmt(g, body.kids[i], true);
+        i = i + 1;
+    }
+    return false;
+}
+
+// Scan an expression for a yield (only lambdas can contain
+// one; a bare yield is a statement, never an expression).
+fn g_scan_expr(g: GGen, e: Node, in_lambda: bool) -> bool {
+    if e.kind == 47 {
+        return g_scan_lambda_body(g, e.kids[len(e.kids) - 1]);
+    }
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        if g_scan_expr(g, e.kids[i], in_lambda) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Scan one statement; raises the position-specific v1 errors
+// (yield in a match arm / comptime branch / scope block, defer
+// in a generator body). Returns true when a Yield is found.
+fn g_scan_stmt(g: GGen, s: Node, in_lambda: bool) -> bool {
+    if s.kind == 52 {
+        if in_lambda {
+            fail_at(s.line, s.col, "yield cannot appear inside a nested function or closure in v1");
+        }
+        g_scan_expr(g, s.kids[0], in_lambda);
+        return true;
+    }
+    if s.kind == 23 {
+        // Recorded, not raised here (see g_find_defer_stmts):
+        // the pre-scan runs on EVERY fn (to find yields), but a
+        // defer is only an error inside a GENERATOR fn; a
+        // non-generator fn with a defer is fine (the corpus
+        // defer files v23/v24/v27/v89 tripped this). A defer
+        // inside a lambda is the lambda's own business.
+        g_scan_expr(g, s.kids[0], in_lambda);
+        return false;
+    }
+    if s.kind == 20 {
+        let mut i: int = 1;
+        while i < len(s.kids) {
+            if g_has_yield(s.kids[i]) {
+                fail_at(s.line, s.col, "yield cannot appear inside a match arm in v1 (use if/else)");
+            }
+            i = i + 1;
+        }
+        let mut found: bool = false;
+        let mut j: int = 1;
+        while j < len(s.kids) {
+            if g_scan_arm_stmts(g, s.kids[j]) {
+                found = true;
+            }
+            j = j + 1;
+        }
+        if g_scan_expr(g, s.kids[0], in_lambda) {
+            found = true;
+        }
+        return found;
+    }
+    if s.kind == 49 {
+        let mut i: int = 1;
+        while i < len(s.kids) {
+            if g_has_yield(s.kids[i]) {
+                fail_at(s.line, s.col, "yield cannot appear inside a comptime if branch in v1");
+            }
+            i = i + 1;
+        }
+        let mut found: bool = false;
+        let mut j: int = 1;
+        while j < len(s.kids) {
+            if g_scan_stmts(g, s.kids[j].kids, in_lambda) {
+                found = true;
+            }
+            j = j + 1;
+        }
+        return found;
+    }
+    if s.kind == 22 {
+        if g_has_yield(s.kids[0]) {
+            fail_at(s.line, s.col, "yield cannot appear inside a scope block in v1");
+        }
+        return g_scan_stmts(g, s.kids[0].kids, in_lambda);
+    }
+    if s.kind == 9 {
+        return g_scan_stmts(g, s.kids, in_lambda);
+    }
+    if s.kind == 14 {
+        let mut found: bool = g_scan_expr(g, s.kids[0], in_lambda);
+        let mut i: int = 1;
+        while i < len(s.kids) {
+            if g_scan_stmts(g, s.kids[i].kids, in_lambda) {
+                found = true;
+            }
+            i = i + 1;
+        }
+        return found;
+    }
+    if s.kind == 15 {
+        let mut found: bool = g_scan_expr(g, s.kids[0], in_lambda);
+        if g_scan_stmts(g, s.kids[1].kids, in_lambda) {
+            found = true;
+        }
+        return found;
+    }
+    if s.kind == 16 {
+        let mut found: bool = g_scan_expr(g, s.kids[0], in_lambda);
+        if g_scan_stmts(g, s.kids[1].kids, in_lambda) {
+            found = true;
+        }
+        return found;
+    }
+    if s.kind == 10 || s.kind == 11 {
+        return g_scan_expr(g, s.kids[0], in_lambda);
+    }
+    if s.kind == 12 || s.kind == 13 {
+        let mut found: bool = g_scan_expr(g, s.kids[0], in_lambda);
+        if g_scan_expr(g, s.kids[1], in_lambda) {
+            found = true;
+        }
+        return found;
+    }
+    if s.kind == 24 || s.kind == 21 {
+        return g_scan_expr(g, s.kids[0], in_lambda);
+    }
+    if s.kind == 17 {
+        if len(s.kids) > 0 {
+            return g_scan_expr(g, s.kids[0], in_lambda);
+        }
+        return false;
+    }
+    return false;
+}
+
+// Scan a match arm's body statements (the arm's bindings are
+// opaque; a yield inside one is already rejected above).
+fn g_scan_arm_stmts(g: GGen, arm: Node) -> bool {
+    return g_scan_stmts(g, arm.kids[0].kids, false);
+}
+
+fn g_scan_stmts(g: GGen, stmts: [Node], in_lambda: bool) -> bool {
+    // Accumulate and keep scanning: a yield must not hide a
+    // later error (the Python scan behaves the same way).
+    let mut found: bool = false;
+    let mut i: int = 0;
+    while i < len(stmts) {
+        if g_scan_stmt(g, stmts[i], in_lambda) {
+            found = true;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// Scan a whole function body. Returns true when it contains a
+// Yield (outside any lambda). Raises the v1 errors above.
+fn g_scan_body(g: GGen, body: Node) -> bool {
+    return g_scan_stmts(g, body.kids, false);
+}
+
+// Look up a name in the scope stack (innermost first).
+fn g_lookup(g: GGen, name: str) -> GBinding {
+    let mut fi: int = len(g.scopes) - 1;
+    while fi >= 0 {
+        let fr: GScope = g.scopes[fi];
+        let mut i: int = len(fr.names) - 1;
+        while i >= 0 {
+            if fr.names[i] == name {
+                return GBinding { found: true, kind: fr.kinds[i], arr: fr.arrs[i], idx: fr.idxs[i], typ: fr.typs[i] };
+            }
+            i = i - 1;
+        }
+        fi = fi - 1;
+    }
+    return GBinding { found: false, kind: "", arr: "", idx: 0, typ: "" };
+}
+
+fn g_scope_push(g0: GGen) -> GGen {
+    let mut g: GGen = g0;
+    let mut sc: [GScope] = g.scopes;
+    push(sc, GScope { names: [], kinds: [], arrs: [], idxs: [], typs: [] });
+    g.scopes = sc;
+    return g;
+}
+
+fn g_scope_pop(g0: GGen) -> GGen {
+    let mut g: GGen = g0;
+    let mut sc: [GScope] = g.scopes;
+    let mut out: [GScope] = [];
+    let mut i: int = 0;
+    while i + 1 < len(sc) {
+        push(out, sc[i]);
+        i = i + 1;
+    }
+    g.scopes = out;
+    return g;
+}
+
+// Allocate one slot of the given type; returns the array
+// name and index (the counts are part of g).
+fn g_alloc_slot(g0: GGen, typ: str) -> GSlotOut {
+    let mut g: GGen = g0;
+    if typ == "int" {
+        let idx: int = g.int_count;
+        g.int_count = g.int_count + 1;
+        return GSlotOut { g: g, arr: "slots_i", idx: idx };
+    }
+    if typ == "str" {
+        let idx: int = g.str_count;
+        g.str_count = g.str_count + 1;
+        return GSlotOut { g: g, arr: "slots_s", idx: idx };
+    }
+    let idx: int = g.bool_count;
+    g.bool_count = g.bool_count + 1;
+    return GSlotOut { g: g, arr: "slots_b", idx: idx };
+}
+
+// Declare a lifted binding in the innermost frame.
+fn g_declare_slot(g0: GGen, name: str, typ: str) -> GGen {
+    let mut g: GGen = g0;
+    let al: GSlotOut = g_alloc_slot(g, typ);
+    g = al.g;
+    let mut sc: [GScope] = g.scopes;
+    let mut fr: GScope = sc[len(sc) - 1];
+    let mut names: [str] = fr.names;
+    push(names, name);
+    fr.names = names;
+    let mut kinds: [str] = fr.kinds;
+    push(kinds, "slot");
+    fr.kinds = kinds;
+    let mut arrs: [str] = fr.arrs;
+    push(arrs, al.arr);
+    fr.arrs = arrs;
+    let mut idxs: [int] = fr.idxs;
+    push(idxs, al.idx);
+    fr.idxs = idxs;
+    let mut typs: [str] = fr.typs;
+    push(typs, typ);
+    fr.typs = typs;
+    sc[len(sc) - 1] = fr;
+    g.scopes = sc;
+    return g;
+}
+
+// Declare an opaque binding in the innermost frame.
+fn g_declare_opaque(g0: GGen, name: str, typ: str) -> GGen {
+    let mut g: GGen = g0;
+    let mut sc: [GScope] = g.scopes;
+    let mut fr: GScope = sc[len(sc) - 1];
+    let mut names: [str] = fr.names;
+    push(names, name);
+    fr.names = names;
+    let mut kinds: [str] = fr.kinds;
+    push(kinds, "opaque");
+    fr.kinds = kinds;
+    let mut arrs: [str] = fr.arrs;
+    push(arrs, "");
+    fr.arrs = arrs;
+    let mut idxs: [int] = fr.idxs;
+    push(idxs, 0);
+    fr.idxs = idxs;
+    let mut typs: [str] = fr.typs;
+    push(typs, typ);
+    fr.typs = typs;
+    sc[len(sc) - 1] = fr;
+    g.scopes = sc;
+    return g;
+}
+
+// The type prover (best-effort; the checker is the backstop).
+// Returns a type string, or "" when it cannot be proved.
+fn g_prove_type(g: GGen, e: Node) -> str {
+    if e.kind == 25 {
+        return "int";
+    }
+    if e.kind == 26 {
+        return "float";
+    }
+    if e.kind == 27 {
+        return "str";
+    }
+    if e.kind == 28 {
+        return "bool";
+    }
+    if e.kind == 34 {
+        let b: GBinding = g_lookup(g, e.name);
+        if !b.found {
+            return "";
+        }
+        return b.typ;
+    }
+    if e.kind == 40 {
+        let op: str = e.name;
+        if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||" {
+            return "bool";
+        }
+        if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "<<" || op == ">>" || op == "&" || op == "|" || op == "^" {
+            let lt: str = g_prove_type(g, e.kids[0]);
+            let rt: str = g_prove_type(g, e.kids[1]);
+            if op == "+" && (lt == "str" || rt == "str") {
+                return "str";
+            }
+            if lt == "float" || rt == "float" {
+                return "float";
+            }
+            if lt == "int" && rt == "int" {
+                return "int";
+            }
+            return "";
+        }
+        return "";
+    }
+    if e.kind == 41 {
+        if e.name == "!" {
+            return "bool";
+        }
+        return g_prove_type(g, e.kids[0]);
+    }
+    if e.kind == 35 {
+        return g_prove_call(g, e);
+    }
+    if e.kind == 46 {
+        let ct: str = g_prove_type(g, e.kids[0]);
+        if ct != "" && is_fn_type(ct) {
+            return fn_type_ret(ct);
+        }
+        return "";
+    }
+    if e.kind == 36 {
+        let bt: str = g_prove_type(g, e.kids[0]);
+        if bt == "str" {
+            return "str";
+        }
+        if is_array(bt) {
+            return elem_type(bt);
+        }
+        return "";
+    }
+    if e.kind == 37 {
+        let bt: str = g_prove_type(g, e.kids[0]);
+        if bt != "" && is_tuple(bt) {
+            let elems: [str] = tuple_elems(bt);
+            if e.ival >= 0 && e.ival < len(elems) {
+                return elems[e.ival];
+            }
+        }
+        return "";
+    }
+    if e.kind == 32 {
+        let bt: str = g_prove_type(g, e.kids[0]);
+        if bt == "" {
+            return "";
+        }
+        let fields: str = g_struct_fields_of(g, bt);
+        return g_field_type(fields, e.name);
+    }
+    if e.kind == 33 {
+        let bt: str = g_prove_type(g, e.kids[0]);
+        if bt == "range" {
+            if e.name == "len" {
+                return "int";
+            }
+            if e.name == "contains" {
+                return "bool";
+            }
+        }
+        return "";
+    }
+    if e.kind == 31 {
+        return e.name;
+    }
+    if e.kind == 29 {
+        if len(e.kids) == 0 {
+            return "";
+        }
+        let et: str = g_prove_type(g, e.kids[0]);
+        if et == "" {
+            return "";
+        }
+        return "[" + et + "]";
+    }
+    if e.kind == 30 {
+        let mut parts: [str] = [];
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let p: str = g_prove_type(g, e.kids[i]);
+            if p == "" {
+                return "";
+            }
+            push(parts, p);
+            i = i + 1;
+        }
+        return "(" + join_strs(parts, ", ") + ")";
+    }
+    if e.kind == 38 {
+        return "range";
+    }
+    if e.kind == 39 {
+        return e.sval;
+    }
+    if e.kind == 42 {
+        let t: str = g_prove_type(g, e.kids[0]);
+        if t == "" {
+            return "";
+        }
+        let base: str = generic_base(t);
+        if base == "Option" || base == "Result" {
+            let args: [str] = generic_args(t);
+            if len(args) > 0 {
+                return args[0];
+            }
+        }
+        return "";
+    }
+    if e.kind == 47 {
+        let mut params: [str] = [];
+        let mut i: int = 0;
+        while i + 1 < len(e.kids) {
+            push(params, e.kids[i].sval);
+            i = i + 1;
+        }
+        return "fn(" + join_strs(params, ", ") + ") -> " + e.sval;
+    }
+    return "";
+}
+
+// Prove a call's return type: builtin table first, then the
+// fn table (with generic type-param binding from the args).
+fn g_prove_call(g: GGen, e: Node) -> str {
+    let bt: str = g_builtin_ret(e.name);
+    if bt != "" {
+        return bt;
+    }
+    let fi: int = g_fn_index(g, e.name);
+    if fi < 0 {
+        return "";
+    }
+    let tparams: [str] = split(g.fn_type_params[fi], "~");
+    let mut tp: [str] = tparams;
+    if len(tp) == 1 && tp[0] == "" {
+        tp = [];
+    }
+    if len(tp) == 0 {
+        return g.fn_rets[fi];
+    }
+    return g_prove_generic_call(g, fi, e, tp);
+}
+
+// Bind a generic fn's type params from the call args
+// (positional, first-use order) and substitute into its
+// return type. "" when it cannot be bound.
+fn g_prove_generic_call(g: GGen, fi: int, e: Node, tp: [str]) -> str {
+    let pts: [str] = split(g.fn_param_typs[fi], "~");
+    let mut bnames: [str] = [];
+    let mut btypes: [str] = [];
+    let mut i: int = 0;
+    while i < len(pts) && i < len(e.kids) {
+        let pt: str = pts[i];
+        let mut is_tp: bool = false;
+        let mut j: int = 0;
+        while j < len(tp) {
+            if tp[j] == pt {
+                is_tp = true;
+            }
+            j = j + 1;
+        }
+        if is_tp {
+            let mut bound: bool = false;
+            let mut k: int = 0;
+            while k < len(bnames) {
+                if bnames[k] == pt {
+                    bound = true;
+                }
+                k = k + 1;
+            }
+            if !bound {
+                let at: str = g_prove_type(g, e.kids[i]);
+                if at != "" {
+                    push(bnames, pt);
+                    push(btypes, at);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if len(bnames) != len(tp) {
+        return "";
+    }
+    return substitute_type(g.fn_rets[fi], bnames, btypes);
+}
+
+// The builtin return-type table (mirrors the Python
+// _BUILTIN_RET exactly — the two provers must agree, or the
+// yield-type and let-annotation errors would fire in one
+// compiler and not the other). "" when the name is not a builtin.
+fn g_builtin_ret(name: str) -> str {
+    if name == "len" || name == "clock_micros" || name == "panicked_tasks" || name == "last_errno" || name == "parse_int" {
+        return "int";
+    }
+    if name == "parse_float" || name == "sqrt" || name == "exp" || name == "log" || name == "sin" || name == "cos" || name == "tan" || name == "pow" {
+        return "float";
+    }
+    if name == "read_line" || name == "read_file" || name == "substr" || name == "trim" || name == "join" {
+        return "str";
+    }
+    if name == "split" {
+        return "[str]";
+    }
+    if name == "starts_with" || name == "ends_with" || name == "file_exists" {
+        return "bool";
+    }
+    if name == "range" {
+        return "range";
+    }
+    return "";
+}
+
+// The step function's parameter variable.
+fn g_gvar(g0: GGen, line: int, col: int) -> GNodeOut {
+    return g_var(g0, "g", line, col);
+}
+
+fn g_slot_read(g0: GGen, b: GBinding, line: int, col: int) -> GNodeOut {
+    let gv: GNodeOut = g_gvar(g0, line, col);
+    let mut g: GGen = gv.g;
+    let fao: GNodeOut = g_node(g, 32, line, col);
+    g = fao.g;
+    let mut fa: Node = fao.node;
+    fa.name = b.arr;
+    fa.kids = [gv.node];
+    let io: GNodeOut = g_node(g, 36, line, col);
+    g = io.g;
+    let ii: GNodeOut = g_int(g, b.idx, line, col);
+    g = ii.g;
+    let mut ix: Node = io.node;
+    ix.kids = [fa, ii.node];
+    return GNodeOut { g: g, node: ix };
+}
+
+fn g_slot_write(g0: GGen, b: GBinding, rhs: Node, line: int, col: int) -> GNodeOut {
+    let gv: GNodeOut = g_gvar(g0, line, col);
+    let mut g: GGen = gv.g;
+    let fao: GNodeOut = g_node(g, 32, line, col);
+    g = fao.g;
+    let mut fa: Node = fao.node;
+    fa.name = b.arr;
+    fa.kids = [gv.node];
+    let io: GNodeOut = g_node(g, 36, line, col);
+    g = io.g;
+    let ii: GNodeOut = g_int(g, b.idx, line, col);
+    g = ii.g;
+    let mut ix: Node = io.node;
+    ix.kids = [fa, ii.node];
+    let mut n: Node = new_node(12, line, col);
+    n.kids = [ix, rhs];
+    return GNodeOut { g: g, node: n };
+}
+
+fn g_state_write(g0: GGen, target: int, line: int, col: int) -> GNodeOut {
+    let gv: GNodeOut = g_gvar(g0, line, col);
+    let mut g: GGen = gv.g;
+    let fao: GNodeOut = g_node(g, 32, line, col);
+    g = fao.g;
+    let mut fa: Node = fao.node;
+    fa.name = "slots_i";
+    fa.kids = [gv.node];
+    let io: GNodeOut = g_node(g, 36, line, col);
+    g = io.g;
+    let iz: GNodeOut = g_int(g, 0, line, col);
+    g = iz.g;
+    let mut ix: Node = io.node;
+    ix.kids = [fa, iz.node];
+    let it: GNodeOut = g_int(g, target, line, col);
+    g = it.g;
+    let mut n: Node = new_node(12, line, col);
+    n.kids = [ix, it.node];
+    return GNodeOut { g: g, node: n };
+}
+
+// The state read: g.slots_i[0].
+fn g_state_read(g0: GGen, line: int, col: int) -> GNodeOut {
+    let gv: GNodeOut = g_gvar(g0, line, col);
+    let mut g: GGen = gv.g;
+    let fao: GNodeOut = g_node(g, 32, line, col);
+    g = fao.g;
+    let mut fa: Node = fao.node;
+    fa.name = "slots_i";
+    fa.kids = [gv.node];
+    let io: GNodeOut = g_node(g, 36, line, col);
+    g = io.g;
+    let iz: GNodeOut = g_int(g, 0, line, col);
+    g = iz.g;
+    let mut ix: Node = io.node;
+    ix.kids = [fa, iz.node];
+    return GNodeOut { g: g, node: ix };
+}
+
+fn g_has_inline_loop(loops: GLoops) -> bool {
+    let mut i: int = 0;
+    while i < len(loops.is_split) {
+        if !loops.is_split[i] {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// A break/continue jumping to a SPLIT loop's state `tgt`,
+// emitted inside inline (real C) code. It must unwind out of
+// every enclosing inline loop before the dispatch loop can see
+// the new state: an unlabeled `break` exits the innermost
+// inline loop, and the guard after each inline loop cascades
+// the unwind outward. A `continue` here would target the
+// innermost inline loop and spin forever (the s06b
+// labeled-break hang: `break outer` inside an inline while
+// became `state = 2; continue;` inside that while). With no
+// enclosing inline loop the statement is already at segment
+// level, so a plain `continue` targets the dispatch loop.
+fn g_unwind_jump(g0: GGen, tgt: int, line: int, col: int, loops: GLoops) -> GNodesOut {
+    let sw: GNodeOut = g_state_write(g0, tgt, line, col);
+    let mut g: GGen = sw.g;
+    let mut nodes: [Node] = [sw.node];
+    if g_has_inline_loop(loops) {
+        let mut b: Node = new_node(18, line, col);
+        b.label = "";
+        push(nodes, b);
+    } else {
+        let mut c: Node = new_node(19, line, col);
+        c.label = "";
+        push(nodes, c);
+    }
+    return GNodesOut { g: g, nodes: nodes };
+}
+
+// The unwind guard placed after an inline (real C) loop:
+// `if (state != cur_state) { break|continue; }`. A jump
+// inside the loop sets the state and breaks out; the guard
+// sees the changed state and unwinds one more level (`break`
+// when the loop is nested inside another inline loop,
+// `continue` when it sits directly in a segment, where
+// `continue` targets the dispatch loop). With no jump the
+// state is unchanged and the guard is a no-op. Emitted
+// unconditionally: the scan that would prove a loop jump-free
+// is more bug surface than the one-line guard.
+fn g_inline_guard(g0: GGen, line: int, col: int, cur_state: int, enclosing: GLoops) -> GNodeOut {
+    let sr: GNodeOut = g_state_read(g0, line, col);
+    let mut g: GGen = sr.g;
+    let ci: GNodeOut = g_int(g, cur_state, line, col);
+    g = ci.g;
+    let neo: GNodeOut = g_node(g, 40, line, col);
+    g = neo.g;
+    let mut ne: Node = neo.node;
+    ne.name = "!=";
+    ne.kids = [sr.node, ci.node];
+    let mut unwind: Node = new_node(19, line, col);
+    unwind.label = "";
+    if g_has_inline_loop(enclosing) {
+        unwind = new_node(18, line, col);
+        unwind.label = "";
+    }
+    let n: Node = g_if_node(ne, [unwind], [], false, line, col);
+    return GNodeOut { g: g, node: n };
+}
+
+// The none literal: Option { present: false, value: zero }.
+fn g_none_lit(g0: GGen, line: int, col: int) -> GNodeOut {
+    let mut g: GGen = g0;
+    let pvo: GNodeOut = g_node(g, 28, line, col);
+    g = pvo.g;
+    let mut pv: Node = pvo.node;
+    pv.bval = false;
+    let mut pf: Node = new_node(44, line, col);
+    pf.name = "present";
+    pf.kids = [pv];
+    let mut vf: Node = new_node(44, line, col);
+    vf.name = "value";
+    let zo: GNodeOut = g_zero(g, g.elem, line, col);
+    g = zo.g;
+    vf.kids = [zo.node];
+    let no: GNodeOut = g_node(g, 31, line, col);
+    g = no.g;
+    let mut n: Node = no.node;
+    n.name = "Option";
+    n.kids = [pf, vf];
+    return GNodeOut { g: g, node: n };
+}
+
+fn g_opt_some(g0: GGen, expr: Node, line: int, col: int) -> GNodeOut {
+    let o: GNodeOut = g_node(g0, 35, line, col);
+    let mut n: Node = o.node;
+    n.name = "opt_some";
+    n.kids = [expr];
+    return GNodeOut { g: o.g, node: n };
+}
+
+// Append an empty state; returns its id.
+fn g_new_state(g0: GGen) -> GIntOut {
+    let mut g: GGen = g0;
+    let mut sts: [GState] = g.states;
+    push(sts, GState { stmts: [] });
+    g.states = sts;
+    return GIntOut { g: g, num: len(sts) - 1 };
+}
+
+fn g_emit(g0: GGen, stmt: Node) -> GGen {
+    let mut g: GGen = g0;
+    let mut sts: [GState] = g.states;
+    let mut st: GState = sts[g.cur_state];
+    let mut ss: [Node] = st.stmts;
+    push(ss, stmt);
+    st.stmts = ss;
+    sts[g.cur_state] = st;
+    g.states = sts;
+    return g;
+}
+
+// Seal the current state with `state = target; continue;`.
+fn g_jump(g0: GGen, target: int) -> GGen {
+    let mut g: GGen = g0;
+    let line: int = g.fn_line;
+    let col: int = g.fn_col;
+    let sw: GNodeOut = g_state_write(g, target, line, col);
+    g = sw.g;
+    g = g_emit(g, sw.node);
+    let mut c: Node = new_node(19, line, col);
+    c.label = "";
+    g = g_emit(g, c);
+    g.cur_state = target;
+    return g;
+}
+
+// Seal the current state with a bare `continue;` (the state
+// was already set inside the enclosing if).
+fn g_continue_to(g0: GGen, target: int) -> GGen {
+    let mut g: GGen = g0;
+    let line: int = g.fn_line;
+    let col: int = g.fn_col;
+    let mut c: Node = new_node(19, line, col);
+    c.label = "";
+    g = g_emit(g, c);
+    g.cur_state = target;
+    return g;
+}
+
+// Seal the current state with end-of-iteration: any
+// side-effect statements, then `state = -1; return none;`.
+fn g_seal_return(g0: GGen, extra: [Node]) -> GGen {
+    let mut g: GGen = g0;
+    let line: int = g.fn_line;
+    let col: int = g.fn_col;
+    let mut i: int = 0;
+    while i < len(extra) {
+        g = g_emit(g, extra[i]);
+        i = i + 1;
+    }
+    let sw: GNodeOut = g_state_write(g, -1, line, col);
+    g = sw.g;
+    g = g_emit(g, sw.node);
+    let mut r: Node = new_node(17, line, col);
+    let nl: GNodeOut = g_none_lit(g, line, col);
+    g = nl.g;
+    r.kids = [nl.node];
+    g = g_emit(g, r);
+    let ns: GIntOut = g_new_state(g);
+    g = ns.g;
+    g.cur_state = ns.num;
+    return g;
+}
+
+fn g_split_block(g0: GGen, stmts: [Node], cont: int) -> GIntOut {
+    let mut g: GGen = g0;
+    let first: int = g.cur_state;
+    g = g_scope_push(g);
+    g = g_process_stmts(g, stmts);
+    g = g_scope_pop(g);
+    g = g_jump(g, cont);
+    return GIntOut { g: g, num: first };
+}
+
+fn g_split_block_fresh(g0: GGen, stmts: [Node], cont: int) -> GIntOut {
+    let mut g: GGen = g0;
+    let ns: GIntOut = g_new_state(g);
+    g = ns.g;
+    g.cur_state = ns.num;
+    return g_split_block(g, stmts, cont);
+}
+
+fn g_process_stmts(g0: GGen, stmts: [Node]) -> GGen {
+    let mut g: GGen = g0;
+    let mut i: int = 0;
+    while i < len(stmts) {
+        g = g_split_stmt(g, stmts[i]);
+        i = i + 1;
+    }
+    return g;
+}
+
+// Push a loop onto the loop stack.
+fn g_loop_push(g0: GGen, label: str, is_split: bool, brk: int, cont: int) -> GGen {
+    let mut g: GGen = g0;
+    let mut ls: [str] = g.loop_labels;
+    push(ls, label);
+    g.loop_labels = ls;
+    let mut sp: [bool] = g.loop_is_split;
+    push(sp, is_split);
+    g.loop_is_split = sp;
+    let mut bk: [int] = g.loop_brk;
+    push(bk, brk);
+    g.loop_brk = bk;
+    let mut ct: [int] = g.loop_cont;
+    push(ct, cont);
+    g.loop_cont = ct;
+    return g;
+}
+
+fn g_loop_pop(g0: GGen) -> GGen {
+    let mut g: GGen = g0;
+    let mut ls: [str] = [];
+    let mut i: int = 0;
+    while i + 1 < len(g.loop_labels) {
+        push(ls, g.loop_labels[i]);
+        i = i + 1;
+    }
+    g.loop_labels = ls;
+    let mut sp: [bool] = [];
+    i = 0;
+    while i + 1 < len(g.loop_is_split) {
+        push(sp, g.loop_is_split[i]);
+        i = i + 1;
+    }
+    g.loop_is_split = sp;
+    let mut bk: [int] = [];
+    i = 0;
+    while i + 1 < len(g.loop_brk) {
+        push(bk, g.loop_brk[i]);
+        i = i + 1;
+    }
+    g.loop_brk = bk;
+    let mut ct: [int] = [];
+    i = 0;
+    while i + 1 < len(g.loop_cont) {
+        push(ct, g.loop_cont[i]);
+        i = i + 1;
+    }
+    g.loop_cont = ct;
+    return g;
+}
+
+// Declare an already-allocated binding in the innermost frame.
+fn g_declare_binding(g0: GGen, name: str, b: GBinding) -> GGen {
+    let mut g: GGen = g0;
+    let mut sc: [GScope] = g.scopes;
+    let mut fr: GScope = sc[len(sc) - 1];
+    let mut names: [str] = fr.names;
+    push(names, name);
+    fr.names = names;
+    let mut kinds: [str] = fr.kinds;
+    push(kinds, b.kind);
+    fr.kinds = kinds;
+    let mut arrs: [str] = fr.arrs;
+    push(arrs, b.arr);
+    fr.arrs = arrs;
+    let mut idxs: [int] = fr.idxs;
+    push(idxs, b.idx);
+    fr.idxs = idxs;
+    let mut typs: [str] = fr.typs;
+    push(typs, b.typ);
+    fr.typs = typs;
+    sc[len(sc) - 1] = fr;
+    g.scopes = sc;
+    return g;
+}
+
+// The state a break/continue jumps to, or -1 when it targets
+// an inline loop (emit as-is) or no loop at all.
+fn g_loop_target(g: GGen, s: Node) -> int {
+    let is_break: bool = s.kind == 18;
+    if s.label != "" {
+        let mut i: int = len(g.loop_labels) - 1;
+        while i >= 0 {
+            if g.loop_labels[i] == s.label {
+                if !g.loop_is_split[i] {
+                    return -1;
+                }
+                if is_break {
+                    return g.loop_brk[i];
+                }
+                return g.loop_cont[i];
+            }
+            i = i - 1;
+        }
+        return -1;
+    }
+    let mut i: int = len(g.loop_labels) - 1;
+    while i >= 0 {
+        if !g.loop_is_split[i] {
+            return -1;
+        }
+        if is_break {
+            return g.loop_brk[i];
+        }
+        return g.loop_cont[i];
+    }
+    return -1;
+}
+
+// Build an If node with the given condition and branch blocks.
+fn g_if_node(cond: Node, then_stmts: [Node], els_stmts: [Node], has_els: bool, line: int, col: int) -> Node {
+    let mut th: Node = new_node(9, line, col);
+    th.kids = then_stmts;
+    let mut kids: [Node] = [cond, th];
+    if has_els {
+        let mut el: Node = new_node(9, line, col);
+        el.kids = els_stmts;
+        push(kids, el);
+    }
+    let mut n: Node = new_node(14, line, col);
+    n.kids = kids;
+    return n;
+}
+
+fn g_split_let(g0: GGen, s: Node) -> GGen {
+    let mut g: GGen = g0;
+    let mut typ: str = s.sval;
+    if typ == "" {
+        typ = g_prove_type(g, s.kids[0]);
+    }
+    if typ == "" {
+        fail_at(s.line, s.col, "generator local '" + s.name + "' needs a type annotation in v1 (the desugar cannot infer its type from the right-hand side)");
+    }
+    if !g_is_gen_elem(typ) {
+        fail_at(s.line, s.col, "generator local '" + s.name + "' has type " + typ + "; only int, str, and bool locals are supported in v1");
+    }
+    let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+    g = rw.g;
+    g = g_declare_slot(g, s.name, typ);
+    let b: GBinding = g_lookup(g, s.name);
+    let sw: GNodeOut = g_slot_write(g, b, rw.node, s.line, s.col);
+    g = sw.g;
+    g = g_emit(g, sw.node);
+    return g;
+}
+
+fn g_for_source_kind(g: GGen, expr: Node) -> str {
+    if expr.kind == 38 {
+        return "range";
+    }
+    if g_prove_type(g, expr) == "range" {
+        return "range_expr";
+    }
+    return "array";
+}
+
+fn g_split_for(g0: GGen, s: Node) -> GGen {
+    let mut g: GGen = g0;
+    let kind: str = g_for_source_kind(g, s.kids[0]);
+    if kind != "range" {
+        if g_has_yield(s.kids[1]) {
+            if kind == "range_expr" {
+                fail_at(s.line, s.col, "for over a range expression is not supported in v1 (use a literal lo..hi range or a while loop)");
+            }
+            fail_at(s.line, s.col, "for over an array cannot contain yield in v1 (use while, or a for loop over a range)");
+        }
+        // No yield: an ordinary for, inlined.
+        let enclosing: GLoops = g_loops_of(g);
+        let here: int = g.cur_state;
+        g = g_loop_push(g, s.label, false, 0, 0);
+        g = g_scope_push(g);
+        let vt: str = g_prove_type(g, s.kids[0]);
+        if vt == "range" {
+            g = g_declare_opaque(g, s.name, "int");
+        } else if is_array(vt) {
+            g = g_declare_opaque(g, s.name, elem_type(vt));
+        } else {
+            g = g_declare_opaque(g, s.name, "");
+        }
+        let body: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+        g = body.g;
+        g = g_scope_pop(g);
+        g = g_loop_pop(g);
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(16, s.line, s.col);
+        n.name = s.name;
+        n.label = s.label;
+        n.kids = [rw.node, bd];
+        g = g_emit(g, n);
+        let ig: GNodeOut = g_inline_guard(g, s.line, s.col, here, enclosing);
+        g = ig.g;
+        g = g_emit(g, ig.node);
+        return g;
+    }
+    // Range form: the source must be a literal RangeLit.
+    let lo_rw: GNodeOut = g_rewrite_expr(g, s.kids[0].kids[0]);
+    g = lo_rw.g;
+    let hi_rw: GNodeOut = g_rewrite_expr(g, s.kids[0].kids[1]);
+    g = hi_rw.g;
+    // Allocate the loop-var slot directly (no frame entry here):
+    // the binding lives only in the body frame, so the name does
+    // not leak past the loop.
+    let lv_al: GSlotOut = g_alloc_slot(g, "int");
+    g = lv_al.g;
+    let lv_binding: GBinding = GBinding { found: true, kind: "slot", arr: "slots_i", idx: lv_al.idx, typ: "int" };
+    let hi_al: GSlotOut = g_alloc_slot(g, "int");
+    g = hi_al.g;
+    let hi_idx: int = hi_al.idx;
+    let ex_ns: GIntOut = g_new_state(g);
+    g = ex_ns.g;
+    let exit_state: int = ex_ns.num;
+    let hd_ns: GIntOut = g_new_state(g);
+    g = hd_ns.g;
+    let head: int = hd_ns.num;
+    let inc_ns: GIntOut = g_new_state(g);
+    g = inc_ns.g;
+    let inc: int = inc_ns.num;
+    let here: int = g.cur_state;
+    g = g_loop_push(g, s.label, true, exit_state, inc);
+    g = g_scope_push(g);
+    g = g_declare_binding(g, s.name, lv_binding);
+    let bf: GIntOut = g_split_block_fresh(g, s.kids[1].kids, inc);
+    g = bf.g;
+    let body_first: int = bf.num;
+    g = g_scope_pop(g);
+    g = g_loop_pop(g);
+    // Increment state: lv += 1; jump to the header.
+    g.cur_state = inc;
+    let sr: GNodeOut = g_slot_read(g, lv_binding, s.line, s.col);
+    g = sr.g;
+    let one: GNodeOut = g_int(g, 1, s.line, s.col);
+    g = one.g;
+    let po: GNodeOut = g_node(g, 40, s.line, s.col);
+    g = po.g;
+    let mut plus: Node = po.node;
+    plus.name = "+";
+    plus.kids = [sr.node, one.node];
+    let sw: GNodeOut = g_slot_write(g, lv_binding, plus, s.line, s.col);
+    g = sw.g;
+    g = g_emit(g, sw.node);
+    g = g_jump(g, head);
+    // Header state: if (lv < hi) body else exit; continue.
+    g.cur_state = head;
+    let gv: GNodeOut = g_gvar(g, s.line, s.col);
+    g = gv.g;
+    let fao: GNodeOut = g_node(g, 32, s.line, s.col);
+    g = fao.g;
+    let mut hi_fa: Node = fao.node;
+    hi_fa.name = "slots_i";
+    hi_fa.kids = [gv.node];
+    let ixo: GNodeOut = g_node(g, 36, s.line, s.col);
+    g = ixo.g;
+    let hii: GNodeOut = g_int(g, hi_idx, s.line, s.col);
+    g = hii.g;
+    let mut hi_ix: Node = ixo.node;
+    hi_ix.kids = [hi_fa, hii.node];
+    let sro: GNodeOut = g_slot_read(g, lv_binding, s.line, s.col);
+    g = sro.g;
+    let lto: GNodeOut = g_node(g, 40, s.line, s.col);
+    g = lto.g;
+    let mut lt: Node = lto.node;
+    lt.name = "<";
+    lt.kids = [sro.node, hi_ix];
+    let sw1: GNodeOut = g_state_write(g, body_first, s.line, s.col);
+    g = sw1.g;
+    let sw2: GNodeOut = g_state_write(g, exit_state, s.line, s.col);
+    g = sw2.g;
+    let ifn: Node = g_if_node(lt, [sw1.node], [sw2.node], true, s.line, s.col);
+    g = g_emit(g, ifn);
+    g = g_continue_to(g, exit_state);
+    // Entry, in the enclosing segment: lv = lo; hi = hi_expr;
+    // jump to the header.
+    g.cur_state = here;
+    let sw3: GNodeOut = g_slot_write(g, lv_binding, lo_rw.node, s.line, s.col);
+    g = sw3.g;
+    g = g_emit(g, sw3.node);
+    let gv2: GNodeOut = g_gvar(g, s.line, s.col);
+    g = gv2.g;
+    let fao2: GNodeOut = g_node(g, 32, s.line, s.col);
+    g = fao2.g;
+    let mut hi_fa2: Node = fao2.node;
+    hi_fa2.name = "slots_i";
+    hi_fa2.kids = [gv2.node];
+    let ixo2: GNodeOut = g_node(g, 36, s.line, s.col);
+    g = ixo2.g;
+    let hii2: GNodeOut = g_int(g, hi_idx, s.line, s.col);
+    g = hii2.g;
+    let mut hi_ix2: Node = ixo2.node;
+    hi_ix2.kids = [hi_fa2, hii2.node];
+    let mut hi_wr: Node = new_node(12, s.line, s.col);
+    hi_wr.kids = [hi_ix2, hi_rw.node];
+    g = g_emit(g, hi_wr);
+    g = g_jump(g, head);
+    g.cur_state = exit_state;
+    return g;
+}
+
+// Split-mode statement processing (appends to cur_state).
+fn g_split_stmt(g0: GGen, s: Node) -> GGen {
+    let mut g: GGen = g0;
+    if s.kind == 52 {
+        let t: str = g_prove_type(g, s.kids[0]);
+        if t != "" && t != g.elem {
+            fail_at(s.line, s.col, "yield value of type " + t + " does not match generator element type " + g.elem);
+        }
+        let nx_ns: GIntOut = g_new_state(g);
+        g = nx_ns.g;
+        let nxt: int = nx_ns.num;
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let sw: GNodeOut = g_state_write(g, nxt, s.line, s.col);
+        g = sw.g;
+        g = g_emit(g, sw.node);
+        let mut r: Node = new_node(17, s.line, s.col);
+        let os: GNodeOut = g_opt_some(g, rw.node, s.line, s.col);
+        g = os.g;
+        r.kids = [os.node];
+        g = g_emit(g, r);
+        g.cur_state = nxt;
+        return g;
+    }
+    if s.kind == 17 {
+        let mut extra: [Node] = [];
+        if len(s.kids) > 0 {
+            let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+            g = rw.g;
+            let mut es: Node = new_node(24, s.line, s.col);
+            es.kids = [rw.node];
+            push(extra, es);
+        }
+        g = g_seal_return(g, extra);
+        return g;
+    }
+    if s.kind == 18 || s.kind == 19 {
+        let tgt: int = g_loop_target(g, s);
+        if tgt < 0 {
+            g = g_emit(g, s);
+        } else {
+            g = g_jump(g, tgt);
+        }
+        return g;
+    }
+    if s.kind == 10 {
+        return g_split_let(g, s);
+    }
+    if s.kind == 11 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let b: GBinding = g_lookup(g, s.name);
+        if b.found && b.kind == "slot" {
+            let sw: GNodeOut = g_slot_write(g, b, rw.node, s.line, s.col);
+            g = sw.g;
+            g = g_emit(g, sw.node);
+        } else {
+            let mut n: Node = new_node(11, s.line, s.col);
+            n.name = s.name;
+            n.kids = [rw.node];
+            g = g_emit(g, n);
+        }
+        return g;
+    }
+    if s.kind == 12 {
+        let b_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = b_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(12, s.line, s.col);
+        n.kids = [b_rw.node, v_rw.node];
+        g = g_emit(g, n);
+        return g;
+    }
+    if s.kind == 13 {
+        let t_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = t_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(13, s.line, s.col);
+        n.kids = [t_rw.node, v_rw.node];
+        g = g_emit(g, n);
+        return g;
+    }
+    if s.kind == 24 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(24, s.line, s.col);
+        n.kids = [rw.node];
+        g = g_emit(g, n);
+        return g;
+    }
+    if s.kind == 9 {
+        g = g_scope_push(g);
+        g = g_process_stmts(g, s.kids);
+        g = g_scope_pop(g);
+        return g;
+    }
+    if s.kind == 14 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        if g_has_yield(s.kids[1]) || (len(s.kids) > 2 && g_has_yield(s.kids[2])) {
+            let jn_ns: GIntOut = g_new_state(g);
+            g = jn_ns.g;
+            let join: int = jn_ns.num;
+            let here: int = g.cur_state;
+            let th: GIntOut = g_split_block_fresh(g, s.kids[1].kids, join);
+            g = th.g;
+            let then_first: int = th.num;
+            let mut else_first: int = join;
+            if len(s.kids) > 2 {
+                let el: GIntOut = g_split_block_fresh(g, s.kids[2].kids, join);
+                g = el.g;
+                else_first = el.num;
+            }
+            g.cur_state = here;
+            let sw1: GNodeOut = g_state_write(g, then_first, s.line, s.col);
+            g = sw1.g;
+            let sw2: GNodeOut = g_state_write(g, else_first, s.line, s.col);
+            g = sw2.g;
+            let ifn: Node = g_if_node(cond_rw.node, [sw1.node], [sw2.node], true, s.line, s.col);
+            g = g_emit(g, ifn);
+            g = g_continue_to(g, join);
+        } else {
+            g = g_scope_push(g);
+            let th: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+            g = th.g;
+            g = g_scope_pop(g);
+            let mut els_stmts: [Node] = [];
+            let mut has_els: bool = false;
+            if len(s.kids) > 2 {
+                g = g_scope_push(g);
+                let el: GNodesOut = g_inline_stmts(g, s.kids[2].kids);
+                g = el.g;
+                g = g_scope_pop(g);
+                els_stmts = el.nodes;
+                has_els = true;
+            }
+            let ifn: Node = g_if_node(cond_rw.node, th.nodes, els_stmts, has_els, s.line, s.col);
+            g = g_emit(g, ifn);
+        }
+        return g;
+    }
+    if s.kind == 15 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        if g_has_yield(s.kids[1]) {
+            let ex_ns: GIntOut = g_new_state(g);
+            g = ex_ns.g;
+            let exit_state: int = ex_ns.num;
+            let hd_ns: GIntOut = g_new_state(g);
+            g = hd_ns.g;
+            let head: int = hd_ns.num;
+            let here: int = g.cur_state;
+            g = g_loop_push(g, s.label, true, exit_state, head);
+            let bf: GIntOut = g_split_block_fresh(g, s.kids[1].kids, head);
+            g = bf.g;
+            let body_first: int = bf.num;
+            g = g_loop_pop(g);
+            g.cur_state = head;
+            let sw1: GNodeOut = g_state_write(g, body_first, s.line, s.col);
+            g = sw1.g;
+            let sw2: GNodeOut = g_state_write(g, exit_state, s.line, s.col);
+            g = sw2.g;
+            let ifn: Node = g_if_node(cond_rw.node, [sw1.node], [sw2.node], true, s.line, s.col);
+            g = g_emit(g, ifn);
+            g = g_continue_to(g, exit_state);
+            g.cur_state = here;
+            g = g_jump(g, head);
+            g.cur_state = exit_state;
+        } else {
+            let enclosing: GLoops = g_loops_of(g);
+            let here: int = g.cur_state;
+            g = g_loop_push(g, s.label, false, 0, 0);
+            g = g_scope_push(g);
+            let body: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+            g = body.g;
+            g = g_scope_pop(g);
+            g = g_loop_pop(g);
+            let mut bd: Node = new_node(9, s.line, s.col);
+            bd.kids = body.nodes;
+            let mut n: Node = new_node(15, s.line, s.col);
+            n.label = s.label;
+            n.kids = [cond_rw.node, bd];
+            g = g_emit(g, n);
+            let ig: GNodeOut = g_inline_guard(g, s.line, s.col, here, enclosing);
+            g = ig.g;
+            g = g_emit(g, ig.node);
+        }
+        return g;
+    }
+    if s.kind == 16 {
+        return g_split_for(g, s);
+    }
+    if s.kind == 20 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a match arm in v1 (use if/else)");
+        }
+        let m: GNodeOut = g_opaque_match(g, s, false, g_loops_of(g));
+        g = m.g;
+        g = g_emit(g, m.node);
+        return g;
+    }
+    if s.kind == 49 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a comptime if branch in v1");
+        }
+        let m: GNodeOut = g_opaque_comptime(g, s, false, g_loops_of(g));
+        g = m.g;
+        g = g_emit(g, m.node);
+        return g;
+    }
+    if s.kind == 22 {
+        if g_has_yield(s.kids[0]) {
+            fail_at(s.line, s.col, "yield cannot appear inside a scope block in v1");
+        }
+        g = g_scope_push(g);
+        let body: GNodesOut = g_inline_stmts(g, s.kids[0].kids);
+        g = body.g;
+        g = g_scope_pop(g);
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(22, s.line, s.col);
+        n.kids = [bd];
+        g = g_emit(g, n);
+        return g;
+    }
+    if s.kind == 21 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(21, s.line, s.col);
+        n.kids = [rw.node];
+        g = g_emit(g, n);
+        return g;
+    }
+    // Unknown statement shape: rewrite its expressions
+    // generically and emit as-is (the checker decides).
+    let gn: GNodeOut = g_rewrite_stmt_generic(g, s);
+    g = gn.g;
+    g = g_emit(g, gn.node);
+    return g;
+}
+
+// The generator's loop stack as a GLoops value.
+fn g_loops_of(g: GGen) -> GLoops {
+    return GLoops { labels: g.loop_labels, is_split: g.loop_is_split, brk: g.loop_brk, cont: g.loop_cont };
+}
+
+// Inline-mode processing (constructs without yields): returns
+// a new statement list. Lets become slot writes; break/continue
+// targeting a split loop become [state-write, continue];
+// returns become end-of-iteration sequences.
+fn g_inline_stmts(g0: GGen, stmts: [Node]) -> GNodesOut {
+    let mut g: GGen = g0;
+    let mut out: [Node] = [];
+    let mut i: int = 0;
+    while i < len(stmts) {
+        let r: GNodesOut = g_inline_stmt(g, stmts[i]);
+        g = r.g;
+        let mut j: int = 0;
+        while j < len(r.nodes) {
+            push(out, r.nodes[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return GNodesOut { g: g, nodes: out };
+}
+
+fn g_inline_stmt(g0: GGen, s: Node) -> GNodesOut {
+    let mut g: GGen = g0;
+    if s.kind == 52 {
+        fail_at(s.line, s.col, "internal error: unresolved yield");
+    }
+    if s.kind == 17 {
+        let mut extra: [Node] = [];
+        if len(s.kids) > 0 {
+            let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+            g = rw.g;
+            let mut es: Node = new_node(24, s.line, s.col);
+            es.kids = [rw.node];
+            push(extra, es);
+        }
+        let line: int = s.line;
+        let col: int = s.col;
+        let sw: GNodeOut = g_state_write(g, -1, line, col);
+        g = sw.g;
+        push(extra, sw.node);
+        let mut r: Node = new_node(17, line, col);
+        let nl: GNodeOut = g_none_lit(g, line, col);
+        g = nl.g;
+        r.kids = [nl.node];
+        push(extra, r);
+        return GNodesOut { g: g, nodes: extra };
+    }
+    if s.kind == 18 || s.kind == 19 {
+        let tgt: int = g_loop_target(g, s);
+        if tgt < 0 {
+            return GNodesOut { g: g, nodes: [s] };
+        }
+        let uj: GNodesOut = g_unwind_jump(g, tgt, s.line, s.col, g_loops_of(g));
+        return GNodesOut { g: uj.g, nodes: uj.nodes };
+    }
+    if s.kind == 10 {
+        let mut typ: str = s.sval;
+        if typ == "" {
+            typ = g_prove_type(g, s.kids[0]);
+        }
+        if typ == "" {
+            fail_at(s.line, s.col, "generator local '" + s.name + "' needs a type annotation in v1 (the desugar cannot infer its type from the right-hand side)");
+        }
+        if !g_is_gen_elem(typ) {
+            fail_at(s.line, s.col, "generator local '" + s.name + "' has type " + typ + "; only int, str, and bool locals are supported in v1");
+        }
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        g = g_declare_slot(g, s.name, typ);
+        let b: GBinding = g_lookup(g, s.name);
+        let sw: GNodeOut = g_slot_write(g, b, rw.node, s.line, s.col);
+        return GNodesOut { g: sw.g, nodes: [sw.node] };
+    }
+    if s.kind == 11 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let b: GBinding = g_lookup(g, s.name);
+        if b.found && b.kind == "slot" {
+            let sw: GNodeOut = g_slot_write(g, b, rw.node, s.line, s.col);
+            return GNodesOut { g: sw.g, nodes: [sw.node] };
+        }
+        let mut n: Node = new_node(11, s.line, s.col);
+        n.name = s.name;
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 12 {
+        let b_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = b_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(12, s.line, s.col);
+        n.kids = [b_rw.node, v_rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 13 {
+        let t_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = t_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(13, s.line, s.col);
+        n.kids = [t_rw.node, v_rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 24 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(24, s.line, s.col);
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 9 {
+        g = g_scope_push(g);
+        let r: GNodesOut = g_inline_stmts(g, s.kids);
+        g = r.g;
+        g = g_scope_pop(g);
+        let mut n: Node = new_node(9, s.line, s.col);
+        n.kids = r.nodes;
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 14 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        g = g_scope_push(g);
+        let th: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+        g = th.g;
+        g = g_scope_pop(g);
+        let mut els_stmts: [Node] = [];
+        let mut has_els: bool = false;
+        if len(s.kids) > 2 {
+            g = g_scope_push(g);
+            let el: GNodesOut = g_inline_stmts(g, s.kids[2].kids);
+            g = el.g;
+            g = g_scope_pop(g);
+            els_stmts = el.nodes;
+            has_els = true;
+        }
+        let ifn: Node = g_if_node(cond_rw.node, th.nodes, els_stmts, has_els, s.line, s.col);
+        return GNodesOut { g: g, nodes: [ifn] };
+    }
+    if s.kind == 15 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        let enclosing: GLoops = g_loops_of(g);
+        let here: int = g.cur_state;
+        g = g_loop_push(g, s.label, false, 0, 0);
+        g = g_scope_push(g);
+        let body: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+        g = body.g;
+        g = g_scope_pop(g);
+        g = g_loop_pop(g);
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(15, s.line, s.col);
+        n.label = s.label;
+        n.kids = [cond_rw.node, bd];
+        let ig: GNodeOut = g_inline_guard(g, s.line, s.col, here, enclosing);
+        return GNodesOut { g: ig.g, nodes: [n, ig.node] };
+    }
+    if s.kind == 16 {
+        if g_has_yield(s.kids[1]) {
+            fail_at(s.line, s.col, "internal error: unresolved yield");
+        }
+        let enclosing: GLoops = g_loops_of(g);
+        let here: int = g.cur_state;
+        g = g_loop_push(g, s.label, false, 0, 0);
+        g = g_scope_push(g);
+        let vt: str = g_prove_type(g, s.kids[0]);
+        if vt == "range" {
+            g = g_declare_opaque(g, s.name, "int");
+        } else if is_array(vt) {
+            g = g_declare_opaque(g, s.name, elem_type(vt));
+        } else {
+            g = g_declare_opaque(g, s.name, "");
+        }
+        let body: GNodesOut = g_inline_stmts(g, s.kids[1].kids);
+        g = body.g;
+        g = g_scope_pop(g);
+        g = g_loop_pop(g);
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(16, s.line, s.col);
+        n.name = s.name;
+        n.label = s.label;
+        n.kids = [rw.node, bd];
+        let ig: GNodeOut = g_inline_guard(g, s.line, s.col, here, enclosing);
+        return GNodesOut { g: ig.g, nodes: [n, ig.node] };
+    }
+    if s.kind == 20 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a match arm in v1 (use if/else)");
+        }
+        let m: GNodeOut = g_opaque_match(g, s, false, g_loops_of(g));
+        g = m.g;
+        return GNodesOut { g: g, nodes: [m.node] };
+    }
+    if s.kind == 49 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a comptime if branch in v1");
+        }
+        let m: GNodeOut = g_opaque_comptime(g, s, false, g_loops_of(g));
+        g = m.g;
+        return GNodesOut { g: g, nodes: [m.node] };
+    }
+    if s.kind == 22 {
+        if g_has_yield(s.kids[0]) {
+            fail_at(s.line, s.col, "yield cannot appear inside a scope block in v1");
+        }
+        g = g_scope_push(g);
+        let body: GNodesOut = g_inline_stmts(g, s.kids[0].kids);
+        g = body.g;
+        g = g_scope_pop(g);
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(22, s.line, s.col);
+        n.kids = [bd];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 21 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(21, s.line, s.col);
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    let gn: GNodeOut = g_rewrite_stmt_generic(g, s);
+    g = gn.g;
+    return GNodesOut { g: g, nodes: [gn.node] };
+}
+
+// The loop target inside an opaque loop stack (a GLoops
+// value, not the generator's stack): -1 when the target is
+// an inline loop or no loop at all.
+fn g_loop_target_in(loops: GLoops, s: Node) -> int {
+    let is_break: bool = s.kind == 18;
+    if s.label != "" {
+        let mut i: int = len(loops.labels) - 1;
+        while i >= 0 {
+            if loops.labels[i] == s.label {
+                if !loops.is_split[i] {
+                    return -1;
+                }
+                if is_break {
+                    return loops.brk[i];
+                }
+                return loops.cont[i];
+            }
+            i = i - 1;
+        }
+        return -1;
+    }
+    let mut i: int = len(loops.labels) - 1;
+    while i >= 0 {
+        if !loops.is_split[i] {
+            return -1;
+        }
+        if is_break {
+            return loops.brk[i];
+        }
+        return loops.cont[i];
+    }
+    return -1;
+}
+
+// Push one loop onto an opaque loop stack value.
+fn g_loops_push(loops0: GLoops, label: str, is_split: bool, brk: int, cont: int) -> GLoops {
+    let mut loops: GLoops = loops0;
+    let mut ls: [str] = loops.labels;
+    push(ls, label);
+    loops.labels = ls;
+    let mut sp: [bool] = loops.is_split;
+    push(sp, is_split);
+    loops.is_split = sp;
+    let mut bk: [int] = loops.brk;
+    push(bk, brk);
+    loops.brk = bk;
+    let mut ct: [int] = loops.cont;
+    push(ct, cont);
+    loops.cont = ct;
+    return loops;
+}
+
+// Opaque-mode processing (lambda bodies, match arms, comptime
+// branches): lets stay lets; only expressions are rewritten.
+// `in_lambda` selects the lambda rules (its own return, its
+// own loop stack); otherwise returns end the iteration and
+// breaks use the generator's loop stack.
+fn g_opaque_stmts(g0: GGen, stmts: [Node], extra_names: [str], extra_typs: [str], in_lambda: bool, loops: GLoops) -> GNodesOut {
+    let mut g: GGen = g0;
+    g = g_scope_push(g);
+    let mut i: int = 0;
+    while i < len(extra_names) {
+        g = g_declare_opaque(g, extra_names[i], extra_typs[i]);
+        i = i + 1;
+    }
+    let mut out: [Node] = [];
+    i = 0;
+    while i < len(stmts) {
+        let r: GNodesOut = g_opaque_stmt(g, stmts[i], in_lambda, loops);
+        g = r.g;
+        let mut j: int = 0;
+        while j < len(r.nodes) {
+            push(out, r.nodes[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    g = g_scope_pop(g);
+    return GNodesOut { g: g, nodes: out };
+}
+
+fn g_opaque_stmt(g0: GGen, s: Node, in_lambda: bool, loops: GLoops) -> GNodesOut {
+    let mut g: GGen = g0;
+    if s.kind == 52 {
+        if in_lambda {
+            fail_at(s.line, s.col, "yield cannot appear inside a nested function or closure in v1");
+        }
+        fail_at(s.line, s.col, "internal error: unresolved yield");
+    }
+    if s.kind == 17 {
+        if in_lambda {
+            let mut expr: Node = new_node(0, s.line, s.col);
+            let mut has_expr: bool = false;
+            if len(s.kids) > 0 {
+                let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+                g = rw.g;
+                expr = rw.node;
+                has_expr = true;
+            }
+            let mut n: Node = new_node(17, s.line, s.col);
+            if has_expr {
+                n.kids = [expr];
+            } else {
+                let mut ek: [Node] = [];
+                n.kids = ek;
+            }
+            return GNodesOut { g: g, nodes: [n] };
+        }
+        let mut extra: [Node] = [];
+        if len(s.kids) > 0 {
+            let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+            g = rw.g;
+            let mut es: Node = new_node(24, s.line, s.col);
+            es.kids = [rw.node];
+            push(extra, es);
+        }
+        let line: int = s.line;
+        let col: int = s.col;
+        let sw: GNodeOut = g_state_write(g, -1, line, col);
+        g = sw.g;
+        push(extra, sw.node);
+        let mut r: Node = new_node(17, line, col);
+        let nl: GNodeOut = g_none_lit(g, line, col);
+        g = nl.g;
+        r.kids = [nl.node];
+        push(extra, r);
+        return GNodesOut { g: g, nodes: extra };
+    }
+    if s.kind == 18 || s.kind == 19 {
+        let tgt: int = g_loop_target_in(loops, s);
+        if tgt < 0 {
+            return GNodesOut { g: g, nodes: [s] };
+        }
+        let uj: GNodesOut = g_unwind_jump(g, tgt, s.line, s.col, loops);
+        return GNodesOut { g: uj.g, nodes: uj.nodes };
+    }
+    if s.kind == 10 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        g = g_declare_opaque(g, s.name, s.sval);
+        let mut n: Node = new_node(10, s.line, s.col);
+        n.name = s.name;
+        n.bval = s.bval;
+        n.sval = s.sval;
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 11 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let b: GBinding = g_lookup(g, s.name);
+        if b.found && b.kind == "slot" {
+            let sw: GNodeOut = g_slot_write(g, b, rw.node, s.line, s.col);
+            return GNodesOut { g: sw.g, nodes: [sw.node] };
+        }
+        let mut n: Node = new_node(11, s.line, s.col);
+        n.name = s.name;
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 12 {
+        let b_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = b_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(12, s.line, s.col);
+        n.kids = [b_rw.node, v_rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 13 {
+        let t_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = t_rw.g;
+        let v_rw: GNodeOut = g_rewrite_expr(g, s.kids[1]);
+        g = v_rw.g;
+        let mut n: Node = new_node(13, s.line, s.col);
+        n.kids = [t_rw.node, v_rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 24 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(24, s.line, s.col);
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 9 {
+        let r: GNodesOut = g_opaque_stmts(g, s.kids, [], [], in_lambda, loops);
+        g = r.g;
+        let mut n: Node = new_node(9, s.line, s.col);
+        n.kids = r.nodes;
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 14 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        let th: GNodesOut = g_opaque_stmts(g, s.kids[1].kids, [], [], in_lambda, loops);
+        g = th.g;
+        let mut els_stmts: [Node] = [];
+        let mut has_els: bool = false;
+        if len(s.kids) > 2 {
+            let el: GNodesOut = g_opaque_stmts(g, s.kids[2].kids, [], [], in_lambda, loops);
+            g = el.g;
+            els_stmts = el.nodes;
+            has_els = true;
+        }
+        let ifn: Node = g_if_node(cond_rw.node, th.nodes, els_stmts, has_els, s.line, s.col);
+        return GNodesOut { g: g, nodes: [ifn] };
+    }
+    if s.kind == 15 {
+        let cond_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = cond_rw.g;
+        let loops2: GLoops = g_loops_push(loops, s.label, false, 0, 0);
+        let body: GNodesOut = g_opaque_stmts(g, s.kids[1].kids, [], [], in_lambda, loops2);
+        g = body.g;
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(15, s.line, s.col);
+        n.label = s.label;
+        n.kids = [cond_rw.node, bd];
+        // No guard inside a lambda: `g` is out of scope there
+        // (and a lambda's jumps can never target a split loop,
+        // its loop stack is fresh). In a match/comptime arm the
+        // guard unwinds exactly like the inline-mode one.
+        if in_lambda {
+            return GNodesOut { g: g, nodes: [n] };
+        }
+        let ig: GNodeOut = g_inline_guard(g, s.line, s.col, g.cur_state, loops);
+        return GNodesOut { g: ig.g, nodes: [n, ig.node] };
+    }
+    if s.kind == 16 {
+        let loops2: GLoops = g_loops_push(loops, s.label, false, 0, 0);
+        let vt: str = g_prove_type(g, s.kids[0]);
+        let mut extra_names: [str] = [s.name];
+        let mut extra_typs: [str] = [""];
+        if vt == "range" {
+            extra_typs = ["int"];
+        } else if is_array(vt) {
+            extra_typs = [elem_type(vt)];
+        }
+        let body: GNodesOut = g_opaque_stmts(g, s.kids[1].kids, extra_names, extra_typs, in_lambda, loops2);
+        g = body.g;
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(16, s.line, s.col);
+        n.name = s.name;
+        n.label = s.label;
+        n.kids = [rw.node, bd];
+        if in_lambda {
+            return GNodesOut { g: g, nodes: [n] };
+        }
+        let ig: GNodeOut = g_inline_guard(g, s.line, s.col, g.cur_state, loops);
+        return GNodesOut { g: ig.g, nodes: [n, ig.node] };
+    }
+    if s.kind == 20 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a match arm in v1 (use if/else)");
+        }
+        let m: GNodeOut = g_opaque_match_in(g, s, in_lambda, loops);
+        g = m.g;
+        return GNodesOut { g: g, nodes: [m.node] };
+    }
+    if s.kind == 49 {
+        if g_has_yield(s) {
+            fail_at(s.line, s.col, "yield cannot appear inside a comptime if branch in v1");
+        }
+        let m: GNodeOut = g_opaque_comptime_in(g, s, in_lambda, loops);
+        g = m.g;
+        return GNodesOut { g: g, nodes: [m.node] };
+    }
+    if s.kind == 22 {
+        if g_has_yield(s.kids[0]) {
+            fail_at(s.line, s.col, "yield cannot appear inside a scope block in v1");
+        }
+        let body: GNodesOut = g_opaque_stmts(g, s.kids[0].kids, [], [], in_lambda, loops);
+        g = body.g;
+        let mut bd: Node = new_node(9, s.line, s.col);
+        bd.kids = body.nodes;
+        let mut n: Node = new_node(22, s.line, s.col);
+        n.kids = [bd];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    if s.kind == 21 {
+        let rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+        g = rw.g;
+        let mut n: Node = new_node(21, s.line, s.col);
+        n.kids = [rw.node];
+        return GNodesOut { g: g, nodes: [n] };
+    }
+    let gn: GNodeOut = g_rewrite_stmt_generic(g, s);
+    g = gn.g;
+    return GNodesOut { g: g, nodes: [gn.node] };
+}
+
+// The bindings one match arm introduces (the variant binding
+// plus struct-pattern field bindings), as names (types "").
+fn g_match_bindings(arm: Node) -> [str] {
+    let mut out: [str] = [];
+    if arm.sval != "" {
+        push(out, arm.sval);
+    }
+    if arm.label == "struct" {
+        let mut i: int = 0;
+        while i < len(arm.kids) {
+            let fp: Node = arm.kids[i];
+            if fp.label == "binding" {
+                push(out, fp.sval);
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+fn g_opaque_match(g0: GGen, s: Node, in_lambda: bool, loops: GLoops) -> GNodeOut {
+    return g_opaque_match_in(g0, s, in_lambda, loops);
+}
+
+fn g_opaque_match_in(g0: GGen, s: Node, in_lambda: bool, loops: GLoops) -> GNodeOut {
+    let mut g: GGen = g0;
+    let scr_rw: GNodeOut = g_rewrite_expr(g, s.kids[0]);
+    g = scr_rw.g;
+    let mut kids: [Node] = [scr_rw.node];
+    let mut i: int = 1;
+    while i < len(s.kids) {
+        let arm: Node = s.kids[i];
+        let bindings: [str] = g_match_bindings(arm);
+        let mut btyps: [str] = [];
+        let mut j: int = 0;
+        while j < len(bindings) {
+            push(btyps, "");
+            j = j + 1;
+        }
+        let body: GNodesOut = g_opaque_stmts(g, arm.kids[0].kids, bindings, btyps, in_lambda, loops);
+        g = body.g;
+        let mut bd: Node = new_node(9, arm.line, arm.col);
+        bd.kids = body.nodes;
+        let mut na: Node = arm;
+        let mut akids: [Node] = [bd];
+        let mut k: int = 1;
+        while k < len(arm.kids) {
+            push(akids, arm.kids[k]);
+            k = k + 1;
+        }
+        na.kids = akids;
+        push(kids, na);
+        i = i + 1;
+    }
+    let mut n: Node = new_node(20, s.line, s.col);
+    n.kids = kids;
+    return GNodeOut { g: g, node: n };
+}
+
+fn g_opaque_comptime(g0: GGen, s: Node, in_lambda: bool, loops: GLoops) -> GNodeOut {
+    return g_opaque_comptime_in(g0, s, in_lambda, loops);
+}
+
+fn g_opaque_comptime_in(g0: GGen, s: Node, in_lambda: bool, loops: GLoops) -> GNodeOut {
+    let mut g: GGen = g0;
+    let th: GNodesOut = g_opaque_stmts(g, s.kids[1].kids, [], [], in_lambda, loops);
+    g = th.g;
+    let mut thb: Node = new_node(9, s.line, s.col);
+    thb.kids = th.nodes;
+    let mut kids: [Node] = [s.kids[0], thb];
+    if len(s.kids) > 2 {
+        let el: GNodesOut = g_opaque_stmts(g, s.kids[2].kids, [], [], in_lambda, loops);
+        g = el.g;
+        let mut elb: Node = new_node(9, s.line, s.col);
+        elb.kids = el.nodes;
+        push(kids, elb);
+    }
+    let mut n: Node = new_node(49, s.line, s.col);
+    n.kids = kids;
+    return GNodeOut { g: g, node: n };
+}
+
+// Expression rewriter: lifted names become slot reads.
+fn g_rewrite_expr(g0: GGen, e: Node) -> GNodeOut {
+    let mut g: GGen = g0;
+    if e.kind == 34 {
+        let b: GBinding = g_lookup(g, e.name);
+        if b.found && b.kind == "slot" {
+            let sr: GNodeOut = g_slot_read(g, b, e.line, e.col);
+            return GNodeOut { g: sr.g, node: sr.node };
+        }
+        return GNodeOut { g: g, node: e };
+    }
+    if e.kind == 47 {
+        g = g_scope_push(g);
+        let mut i: int = 0;
+        while i + 1 < len(e.kids) {
+            g = g_declare_opaque(g, e.kids[i].name, e.kids[i].sval);
+            i = i + 1;
+        }
+        let body: GNodesOut = g_opaque_stmts(g, e.kids[len(e.kids) - 1].kids, [], [], true, GLoops { labels: [], is_split: [], brk: [], cont: [] });
+        g = body.g;
+        g = g_scope_pop(g);
+        let mut kids: [Node] = [];
+        i = 0;
+        while i + 1 < len(e.kids) {
+            push(kids, e.kids[i]);
+            i = i + 1;
+        }
+        let mut bd: Node = new_node(9, e.line, e.col);
+        bd.kids = body.nodes;
+        push(kids, bd);
+        let mut n: Node = new_node(47, e.line, e.col);
+        n.sval = e.sval;
+        n.kids = kids;
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 40 || e.kind == 36 || e.kind == 38 {
+        let mut kids: [Node] = [];
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let rw: GNodeOut = g_rewrite_expr(g, e.kids[i]);
+            g = rw.g;
+            push(kids, rw.node);
+            i = i + 1;
+        }
+        let mut n: Node = e;
+        n.kids = kids;
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 41 || e.kind == 37 || e.kind == 32 || e.kind == 39 || e.kind == 42 {
+        let rw: GNodeOut = g_rewrite_expr(g, e.kids[0]);
+        g = rw.g;
+        let mut n: Node = e;
+        n.kids = [rw.node];
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 35 || e.kind == 46 || e.kind == 33 {
+        let mut kids: [Node] = [];
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let rw: GNodeOut = g_rewrite_expr(g, e.kids[i]);
+            g = rw.g;
+            push(kids, rw.node);
+            i = i + 1;
+        }
+        let mut n: Node = e;
+        n.kids = kids;
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 31 {
+        let mut fields: [Node] = [];
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let f: Node = e.kids[i];
+            let rw: GNodeOut = g_rewrite_expr(g, f.kids[0]);
+            g = rw.g;
+            let mut nf: Node = f;
+            nf.kids = [rw.node];
+            push(fields, nf);
+            i = i + 1;
+        }
+        let mut n: Node = e;
+        n.kids = fields;
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 29 || e.kind == 30 {
+        let mut kids: [Node] = [];
+        let mut i: int = 0;
+        while i < len(e.kids) {
+            let rw: GNodeOut = g_rewrite_expr(g, e.kids[i]);
+            g = rw.g;
+            push(kids, rw.node);
+            i = i + 1;
+        }
+        let mut n: Node = e;
+        n.kids = kids;
+        return GNodeOut { g: g, node: n };
+    }
+    if e.kind == 51 {
+        fail_at(e.line, e.col, "walrus ':=' is not supported inside a generator function in v1 (write the assignment before the if/while instead)");
+    }
+    return GNodeOut { g: g, node: e };
+}
+
+// Best-effort expression rewrite for statement shapes the
+// splitter does not know: rebuild the node with its expression
+// kids rewritten (the checker decides on the rest).
+fn g_rewrite_stmt_generic(g0: GGen, s: Node) -> GNodeOut {
+    let mut g: GGen = g0;
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(s.kids) {
+        let k: Node = s.kids[i];
+        if k.kind == 9 || k.kind == 10 || k.kind == 11 || k.kind == 12 || k.kind == 13 || k.kind == 14 || k.kind == 15 || k.kind == 16 || k.kind == 17 || k.kind == 18 || k.kind == 19 || k.kind == 20 || k.kind == 21 || k.kind == 22 || k.kind == 23 || k.kind == 24 || k.kind == 49 || k.kind == 52 {
+            push(kids, k);
+        } else {
+            let rw: GNodeOut = g_rewrite_expr(g, k);
+            g = rw.g;
+            push(kids, rw.node);
+        }
+        i = i + 1;
+    }
+    let mut n: Node = s;
+    n.kids = kids;
+    return GNodeOut { g: g, node: n };
+}
+
+// The Generator struct must be the stdlib one (import
+// "generators.fg"); anything else is a named error.
+fn g_check_gen_struct(g: GGen, fn_node: Node) -> bool {
+    let si: int = g_struct_index(g, "Generator");
+    if si < 0 {
+        fail_at(fn_node.line, fn_node.col, "generator functions need import \"generators.fg\" (type '" + fn_node.sval + "' is not defined)");
+    }
+    if g.struct_type_params[si] != "T" {
+        fail_at(fn_node.line, fn_node.col, "Generator<T> must come from import \"generators.fg\" (expected fields kind, cur, slots_i, slots_s, slots_b)");
+    }
+    let names: [str] = split(g.struct_field_names[si], "~");
+    let typs: [str] = split(g.struct_field_typs[si], "~");
+    if len(names) != 5 {
+        fail_at(fn_node.line, fn_node.col, "Generator<T> must come from import \"generators.fg\" (expected fields kind, cur, slots_i, slots_s, slots_b)");
+    }
+    let exp_names: [str] = ["kind", "cur", "slots_i", "slots_s", "slots_b"];
+    let exp_typs: [str] = ["int", "T", "[int]", "[str]", "[bool]"];
+    let mut i: int = 0;
+    while i < 5 {
+        // (field lookup by name, order-insensitive)
+        let mut found: str = "";
+        let mut j: int = 0;
+        while j < len(names) {
+            if names[j] == exp_names[i] {
+                found = typs[j];
+            }
+            j = j + 1;
+        }
+        if found != exp_typs[i] {
+            fail_at(fn_node.line, fn_node.col, "Generator<T> must come from import \"generators.fg\" (expected fields kind, cur, slots_i, slots_s, slots_b)");
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Native only in v1 — big32 / wasm / freestanding are
+// check-time named errors, never backend-internal ones.
+fn g_check_target(g: GGen, fn_node: Node) -> bool {
+    if g.freestanding {
+        fail_at(fn_node.line, fn_node.col, "generators are not supported in freestanding mode in v1 (generators need arrays)");
+    }
+    if g.target == "big32" {
+        fail_at(fn_node.line, fn_node.col, "generators are not supported on big32 in v1 (the Generator struct needs array fields, which big32 structs do not support in v1)");
+    }
+    if g.target == "wasm" {
+        fail_at(fn_node.line, fn_node.col, "generators are not supported on wasm in v1 (wasm v2 does not support struct returns)");
+    }
+    return true;
+}
+
+fn g_transform(g0: GGen, fn_node: Node, elem: str) -> GTransformOut {
+    let mut g: GGen = g0;
+    g.kind_counter = g.kind_counter + 1;
+    g.fn_name = g_name_base(fn_node.name);
+    g.fn_line = fn_node.line;
+    g.fn_col = fn_node.col;
+    g.elem = elem;
+    g.kind = g.kind_counter;
+    g.scopes = [GScope { names: [], kinds: [], arrs: [], idxs: [], typs: [] }];
+    g.int_count = 1;
+    g.str_count = 0;
+    g.bool_count = 0;
+    g.states = [GState { stmts: [] }];
+    g.cur_state = 0;
+    g.end_state = 0;
+    let mut elbl: [str] = [];
+    g.loop_labels = elbl;
+    let mut elsp: [bool] = [];
+    g.loop_is_split = elsp;
+    let mut elbk: [int] = [];
+    g.loop_brk = elbk;
+    let mut elct: [int] = [];
+    g.loop_cont = elct;
+    let step_name: str = g.fn_name + "_next";
+    if g_fn_index(g, step_name) >= 0 {
+        fail_at(fn_node.line, fn_node.col, "generator '" + g.fn_name + "' needs a step function named '" + step_name + "' but one already exists; rename it");
+    }
+    // Seed the scope with the params (slots 1.. for ints).
+    let mut pi: int = 0;
+    while pi + 1 < len(fn_node.kids) {
+        let p: Node = fn_node.kids[pi];
+        if !g_is_gen_elem(p.sval) {
+            fail_at(fn_node.line, fn_node.col, "generator parameter '" + p.name + "' has type " + p.sval + "; only int, str, and bool parameters are supported in v1");
+        }
+        g = g_declare_slot(g, p.name, p.sval);
+        pi = pi + 1;
+    }
+    // Split the body: state 0 is the first segment; the end
+    // state returns none.
+    let es_ns: GIntOut = g_new_state(g);
+    g = es_ns.g;
+    g.end_state = es_ns.num;
+    let body: Node = fn_node.kids[len(fn_node.kids) - 1];
+    let sb: GIntOut = g_split_block(g, body.kids, g.end_state);
+    g = sb.g;
+    let mut sts: [GState] = g.states;
+    let mut end_st: GState = sts[g.end_state];
+    let mut er: Node = new_node(17, fn_node.line, fn_node.col);
+    let ernl: GNodeOut = g_none_lit(g, fn_node.line, fn_node.col);
+    g = ernl.g;
+    er.kids = [ernl.node];
+    end_st.stmts = [er];
+    sts[g.end_state] = end_st;
+    g.states = sts;
+    // The constructor: slot arrays in annotated lets, then the
+    // struct literal. Param slots hold the params; local slots
+    // hold zero.
+    let z0: GNodeOut = g_int(g, 0, fn_node.line, fn_node.col);
+    g = z0.g;
+    let mut si_elems: [Node] = [z0.node];
+    let mut i: int = 1;
+    while i < g.int_count {
+        let zi: GNodeOut = g_int(g, 0, fn_node.line, fn_node.col);
+        g = zi.g;
+        push(si_elems, zi.node);
+        i = i + 1;
+    }
+    let mut ss_elems: [Node] = [];
+    i = 0;
+    while i < g.str_count {
+        let zs: GNodeOut = g_str(g, "", fn_node.line, fn_node.col);
+        g = zs.g;
+        push(ss_elems, zs.node);
+        i = i + 1;
+    }
+    let mut sb_elems: [Node] = [];
+    i = 0;
+    while i < g.bool_count {
+        let zb: GNodeOut = g_bool(g, false, fn_node.line, fn_node.col);
+        g = zb.g;
+        push(sb_elems, zb.node);
+        i = i + 1;
+    }
+    pi = 0;
+    while pi + 1 < len(fn_node.kids) {
+        let p: Node = fn_node.kids[pi];
+        let b: GBinding = g_lookup(g, p.name);
+        let vo: GNodeOut = g_var(g, p.name, fn_node.line, fn_node.col);
+        g = vo.g;
+        let v: Node = vo.node;
+        if b.arr == "slots_i" {
+            si_elems[b.idx] = v;
+        } else if b.arr == "slots_s" {
+            ss_elems[b.idx] = v;
+        } else {
+            sb_elems[b.idx] = v;
+        }
+        pi = pi + 1;
+    }
+    let sia: GNodeOut = g_node(g, 29, fn_node.line, fn_node.col);
+    g = sia.g;
+    let mut si_arr: Node = sia.node;
+    si_arr.kids = si_elems;
+    let mut si_let: Node = new_node(10, fn_node.line, fn_node.col);
+    si_let.name = "si";
+    si_let.bval = false;
+    si_let.sval = "[int]";
+    si_let.kids = [si_arr];
+    let ssa: GNodeOut = g_node(g, 29, fn_node.line, fn_node.col);
+    g = ssa.g;
+    let mut ss_arr: Node = ssa.node;
+    ss_arr.kids = ss_elems;
+    let mut ss_let: Node = new_node(10, fn_node.line, fn_node.col);
+    ss_let.name = "ss";
+    ss_let.bval = false;
+    ss_let.sval = "[str]";
+    ss_let.kids = [ss_arr];
+    let sba: GNodeOut = g_node(g, 29, fn_node.line, fn_node.col);
+    g = sba.g;
+    let mut sb_arr: Node = sba.node;
+    sb_arr.kids = sb_elems;
+    let mut sb_let: Node = new_node(10, fn_node.line, fn_node.col);
+    sb_let.name = "sb";
+    sb_let.bval = false;
+    sb_let.sval = "[bool]";
+    sb_let.kids = [sb_arr];
+    let mut fk: Node = new_node(44, fn_node.line, fn_node.col);
+    fk.name = "kind";
+    let fki: GNodeOut = g_int(g, g.kind, fn_node.line, fn_node.col);
+    g = fki.g;
+    fk.kids = [fki.node];
+    let mut fc: Node = new_node(44, fn_node.line, fn_node.col);
+    fc.name = "cur";
+    let fcz: GNodeOut = g_zero(g, elem, fn_node.line, fn_node.col);
+    g = fcz.g;
+    fc.kids = [fcz.node];
+    let mut fi: Node = new_node(44, fn_node.line, fn_node.col);
+    fi.name = "slots_i";
+    let fiv: GNodeOut = g_var(g, "si", fn_node.line, fn_node.col);
+    g = fiv.g;
+    fi.kids = [fiv.node];
+    let mut fs: Node = new_node(44, fn_node.line, fn_node.col);
+    fs.name = "slots_s";
+    let fsv: GNodeOut = g_var(g, "ss", fn_node.line, fn_node.col);
+    g = fsv.g;
+    fs.kids = [fsv.node];
+    let mut fb: Node = new_node(44, fn_node.line, fn_node.col);
+    fb.name = "slots_b";
+    let fbv: GNodeOut = g_var(g, "sb", fn_node.line, fn_node.col);
+    g = fbv.g;
+    fb.kids = [fbv.node];
+    let lito: GNodeOut = g_node(g, 31, fn_node.line, fn_node.col);
+    g = lito.g;
+    let mut lit: Node = lito.node;
+    lit.name = "Generator";
+    lit.kids = [fk, fc, fi, fs, fb];
+    let mut cret: Node = new_node(17, fn_node.line, fn_node.col);
+    cret.kids = [lit];
+    let mut cbody: Node = new_node(9, fn_node.line, fn_node.col);
+    cbody.kids = [si_let, ss_let, sb_let, cret];
+    let mut ckids: [Node] = [];
+    pi = 0;
+    while pi + 1 < len(fn_node.kids) {
+        push(ckids, fn_node.kids[pi]);
+        pi = pi + 1;
+    }
+    push(ckids, cbody);
+    let mut ctor: Node = new_node(2, fn_node.line, fn_node.col);
+    ctor.name = g.fn_name;
+    ctor.sval = fn_node.sval;
+    ctor.kids = ckids;
+    // The step function: while (true) dispatch over the states,
+    // then a trailing return (definite-return analysis, p13).
+    let mut dispatch: [Node] = [];
+    let mut sid: int = 0;
+    while sid < len(g.states) {
+        let gv: GNodeOut = g_gvar(g, fn_node.line, fn_node.col);
+        g = gv.g;
+        let fao: GNodeOut = g_node(g, 32, fn_node.line, fn_node.col);
+        g = fao.g;
+        let mut fa: Node = fao.node;
+        fa.name = "slots_i";
+        fa.kids = [gv.node];
+        let ixo: GNodeOut = g_node(g, 36, fn_node.line, fn_node.col);
+        g = ixo.g;
+        let iz: GNodeOut = g_int(g, 0, fn_node.line, fn_node.col);
+        g = iz.g;
+        let mut ix: Node = ixo.node;
+        ix.kids = [fa, iz.node];
+        let co: GNodeOut = g_node(g, 40, fn_node.line, fn_node.col);
+        g = co.g;
+        let sidn: GNodeOut = g_int(g, sid, fn_node.line, fn_node.col);
+        g = sidn.g;
+        let mut cond: Node = co.node;
+        cond.name = "==";
+        cond.kids = [ix, sidn.node];
+        let mut th: Node = new_node(9, fn_node.line, fn_node.col);
+        th.kids = g.states[sid].stmts;
+        let mut ifn: Node = new_node(14, fn_node.line, fn_node.col);
+        ifn.kids = [cond, th];
+        push(dispatch, ifn);
+        sid = sid + 1;
+    }
+    let mut dret: Node = new_node(17, fn_node.line, fn_node.col);
+    let drnl: GNodeOut = g_none_lit(g, fn_node.line, fn_node.col);
+    g = drnl.g;
+    dret.kids = [drnl.node];
+    push(dispatch, dret);
+    let mut dblock: Node = new_node(9, fn_node.line, fn_node.col);
+    dblock.kids = dispatch;
+    let wco: GNodeOut = g_node(g, 28, fn_node.line, fn_node.col);
+    g = wco.g;
+    let mut wcond: Node = wco.node;
+    wcond.bval = true;
+    let mut wh: Node = new_node(15, fn_node.line, fn_node.col);
+    wh.label = "";
+    wh.kids = [wcond, dblock];
+    let mut tret: Node = new_node(17, fn_node.line, fn_node.col);
+    let trnl: GNodeOut = g_none_lit(g, fn_node.line, fn_node.col);
+    g = trnl.g;
+    tret.kids = [trnl.node];
+    let mut sbody: Node = new_node(9, fn_node.line, fn_node.col);
+    sbody.kids = [wh, tret];
+    let mut sparam: Node = new_node(43, fn_node.line, fn_node.col);
+    sparam.name = "g";
+    sparam.sval = fn_node.sval;
+    let mut step: Node = new_node(2, fn_node.line, fn_node.col);
+    step.name = step_name;
+    step.sval = "Option<" + elem + ">";
+    step.kids = [sparam, sbody];
+    // Register the step fn in the fn table (the Python mirror
+    // does the same): a later generator body that calls this
+    // step fn must be able to prove its return type, and the
+    // idempotency skip in resolve_generators_prog reads this
+    // table.
+    let mut rnames: [str] = g.fn_names;
+    push(rnames, step_name);
+    g.fn_names = rnames;
+    let mut rrets: [str] = g.fn_rets;
+    push(rrets, "Option<" + elem + ">");
+    g.fn_rets = rrets;
+    let mut rpts: [str] = g.fn_param_typs;
+    push(rpts, fn_node.sval);
+    g.fn_param_typs = rpts;
+    let mut rtp: [str] = g.fn_type_params;
+    push(rtp, "");
+    g.fn_type_params = rtp;
+    return GTransformOut { g: g, ctor: ctor, step: step };
+}
+
+// Program-level generator transform (see the section header).
+// Returns the (possibly rewritten) program; raises (via
+// fail_at) on any v1 violation. A no-op when the program
+// defines no generator.
+fn resolve_generators_prog(c: HChecker, prog: Node) -> Node {
+    let mut g: GGen = g_new();
+    g.target = c.target;
+    g.freestanding = c.freestanding;
+    g = g_build_tables(g, prog);
+    let mut out_funcs: [Node] = [];
+    let mut step_fns: [Node] = [];
+    let mut changed: bool = false;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let fn_node: Node = prog.kids[i];
+        if fn_node.kind != 2 || len(fn_node.kids) == 0 {
+            push(out_funcs, fn_node);
+            i = i + 1;
+            continue;
+        }
+        let body: Node = fn_node.kids[len(fn_node.kids) - 1];
+        if body.kind != 9 {
+            push(out_funcs, fn_node);
+            i = i + 1;
+            continue;
+        }
+        let has_yield: bool = g_scan_body(g, body);
+        let elem: str = g_gen_ret(fn_node.sval);
+        let is_gen: bool = elem != "";
+        // Defer in a generator body is a v1 error — but only
+        // when the fn IS a generator. The pre-scan runs on
+        // every fn, so the check is gated here, not in the
+        // scan (a non-generator fn with a defer is fine).
+        if has_yield || is_gen {
+            let d: Node = g_find_defer_stmts(body.kids);
+            if d.kind == 23 {
+                fail_at(d.line, d.col, "defer is not supported inside a generator function in v1 (it would run when the step function returns, not when the generator closes)");
+            }
+        }
+        if has_yield {
+            if !is_gen {
+                fail_at(fn_node.line, fn_node.col, "yield is only allowed in a function returning Generator<T> in v1");
+            }
+            if !g_is_gen_elem(elem) {
+                fail_at(fn_node.line, fn_node.col, "generator element type must be int, str, or bool in v1, got " + elem);
+            }
+            if len(g_name_type_params(fn_node.name)) > 0 {
+                fail_at(fn_node.line, fn_node.col, "generic generator functions are not supported in v1");
+            }
+            g_check_gen_struct(g, fn_node);
+            g_check_target(g, fn_node);
+            let tr: GTransformOut = g_transform(g, fn_node, elem);
+            g = tr.g;
+            push(out_funcs, tr.ctor);
+            push(step_fns, tr.step);
+            changed = true;
+        } else if is_gen {
+            if !g_is_gen_elem(elem) {
+                fail_at(fn_node.line, fn_node.col, "generator element type must be int, str, or bool in v1, got " + elem);
+            }
+            if len(g_name_type_params(fn_node.name)) > 0 {
+                fail_at(fn_node.line, fn_node.col, "generic generator functions are not supported in v1");
+            }
+            if g_struct_index(g, "Generator") < 0 {
+                push(out_funcs, fn_node);
+                i = i + 1;
+                continue;
+            }
+            // Idempotency: this pass runs twice (check_program,
+            // then compile_to_c on the merged program). A
+            // constructor from the first pass still returns
+            // Generator<T> with no yield, so without this skip the
+            // second pass would re-transform it and trip its own
+            // step fn as a name collision. A fn whose <name>_next
+            // already exists is already a constructor — leave it
+            // alone. (A yield-ful fn whose step fn exists is a REAL
+            // collision and still errors in g_transform; a no-yield
+            // fn whose step fn is user-defined is the same shape
+            // and is likewise left alone — the <name>_next name is
+            // reserved.)
+            if g_fn_index(g, fn_node.name + "_next") >= 0 {
+                push(out_funcs, fn_node);
+                i = i + 1;
+                continue;
+            }
+            g_check_gen_struct(g, fn_node);
+            g_check_target(g, fn_node);
+            let tr: GTransformOut = g_transform(g, fn_node, elem);
+            g = tr.g;
+            push(out_funcs, tr.ctor);
+            push(step_fns, tr.step);
+            changed = true;
+        } else {
+            push(out_funcs, fn_node);
+        }
+        i = i + 1;
+    }
+    if !changed {
+        return prog;
+    }
+    let mut all: [Node] = out_funcs;
+    let mut j: int = 0;
+    while j < len(step_fns) {
+        push(all, step_fns[j]);
+        j = j + 1;
+    }
+    return ct_with_kids(prog, all);
+}
+
+// ---------- Top-500 #72: walrus (`name := expr`) ----------
+// The parser builds NamedExpr nodes (kind 51); this resolve
+// pass (the #70 pattern: a deterministic tree-rebuilding pass,
+// run once at check_program entry and once in compile_to_c on
+// the merged program) desugars every legal one before check,
+// infer, or codegen ever see it. A walrus in an if/while
+// condition becomes a binding statement spliced before the
+// statement (Let for a fresh name, Assign for an existing one),
+// the condition is rewritten with Var(name), and a while gets
+// its re-read appended to the body end. The pass is
+// scope-aware: it tracks the visible variable names (flat
+// [str], passed by value — Qasida arrays are copied on
+// assignment, so each nested block gets its own copy and
+// declarations never leak out of their block, exactly like
+// lexical scoping), plus the enclosing loop stack (labels +
+// walrus flags) for the v1 `continue` ban. With no NamedExpr
+// in the tree the original node is returned untouched, so the
+// bootstrap emit stays byte-identical. No new struct fields
+// anywhere in this slice, so the ASan compiler-side numbers
+// cannot grow through the field-encoding mechanism (#70 §6.4).
+
+// True when the tree contains a NamedExpr (kind 51) anywhere.
+fn w_has_walrus(n: Node) -> bool {
+    if n.kind == 51 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if w_has_walrus(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// True when `e` contains a NamedExpr outside any nested lambda
+// body. A walrus inside a lambda in the RHS belongs to the
+// lambda, not to this walrus.
+fn w_has_walrus_shallow(e: Node) -> bool {
+    if e.kind == 51 {
+        return true;
+    }
+    if e.kind == 47 {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        if w_has_walrus_shallow(e.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Is `name` bound in any enclosing scope (innermost wins, but
+// the rewrite only needs existence)?
+fn w_bound(names: [str], name: str) -> bool {
+    let mut i: int = len(names) - 1;
+    while i >= 0 {
+        if names[i] == name {
+            return true;
+        }
+        i = i - 1;
+    }
+    return false;
+}
+
+// Walrus nodes in expression `e`, in left-to-right order;
+// raises on illegal positions. ctx is "ok" (every ancestor is
+// the condition root, `!`, a comparison, or the LEFT of `&&` /
+// `||`), "andright", "other", or "nested".
+fn w_collect(e: Node, ctx: str) -> [Node] {
+    if e.kind == 51 {
+        if ctx == "nested" {
+            fail_at(e.line, e.col, "walrus cannot appear inside another walrus in v1");
+        }
+        if ctx == "andright" {
+            fail_at(e.line, e.col, "walrus cannot appear on the right of '&&' or '||' in v1 (hoisting it would change when the assignment runs; write the assignment before the if instead)");
+        }
+        if ctx != "ok" {
+            fail_at(e.line, e.col, "walrus ':=' is only allowed in if/while conditions in v1");
+        }
+        // Legal here — but a walrus inside the RHS is nested.
+        if w_has_walrus_shallow(e.kids[0]) {
+            fail_at(e.line, e.col, "walrus cannot appear inside another walrus in v1");
+        }
+        return [e];
+    }
+    if e.kind == 40 {
+        // BinOp: name is the operator.
+        if e.name == "&&" || e.name == "||" {
+            let mut out: [Node] = w_collect(e.kids[0], ctx);
+            let mut right_ctx: str = "andright";
+            if ctx != "ok" {
+                right_ctx = ctx;
+            }
+            let r: [Node] = w_collect(e.kids[1], right_ctx);
+            let mut i: int = 0;
+            while i < len(r) {
+                push(out, r[i]);
+                i = i + 1;
+            }
+            return out;
+        }
+        if e.name == "==" || e.name == "!=" || e.name == "<" || e.name == "<=" || e.name == ">" || e.name == ">=" {
+            let mut out: [Node] = w_collect(e.kids[0], ctx);
+            let r: [Node] = w_collect(e.kids[1], ctx);
+            let mut i: int = 0;
+            while i < len(r) {
+                push(out, r[i]);
+                i = i + 1;
+            }
+            return out;
+        }
+        let mut nxt: str = "other";
+        if ctx != "ok" {
+            nxt = ctx;
+        }
+        let mut out: [Node] = w_collect(e.kids[0], nxt);
+        let r: [Node] = w_collect(e.kids[1], nxt);
+        let mut i: int = 0;
+        while i < len(r) {
+            push(out, r[i]);
+            i = i + 1;
+        }
+        return out;
+    }
+    if e.kind == 41 {
+        // UnaryOp: name is the operator; kids[0] is the operand.
+        if e.name == "!" {
+            return w_collect(e.kids[0], ctx);
+        }
+        let mut nxt: str = "other";
+        if ctx != "ok" {
+            nxt = ctx;
+        }
+        return w_collect(e.kids[0], nxt);
+    }
+    if e.kind == 47 {
+        // Lambda: a walrus inside the body binds in the
+        // lambda's own scope; the lambda's statement lists
+        // desugar it. Do not descend.
+        return [];
+    }
+    // Any other node: children are "other" (or keep ctx).
+    let mut nxt: str = "other";
+    if ctx != "ok" {
+        nxt = ctx;
+    }
+    let mut out: [Node] = [];
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        let sub: [Node] = w_collect(e.kids[i], nxt);
+        let mut j: int = 0;
+        while j < len(sub) {
+            push(out, sub[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Replace every NamedExpr in `e` with Var(name); rebuilds the
+// tree (the alias pattern). Lambda bodies are not descended
+// into (their walruses belong to the lambda).
+fn w_subst_vars(e: Node) -> Node {
+    if e.kind == 51 {
+        let mut v: Node = new_node(34, e.line, e.col);
+        v.name = e.name;
+        return v;
+    }
+    if e.kind == 47 {
+        return e;
+    }
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        push(kids, w_subst_vars(e.kids[i]));
+        i = i + 1;
+    }
+    return ct_with_kids(e, kids);
+}
+
+// A deep copy of an expression tree (a new node object at every
+// level). The re-read in a walrus-while needs its own copy of
+// the RHS: the Python desugar uses copy.deepcopy, and the Fix 1
+// loop-proof marks BinOp nodes PLAIN by node identity — if the
+// re-read shared the pre-loop binding's node, the plain marking
+// would leak into the re-read and the two compilers would emit
+// different C (plain `-` vs checked `forge_sub`). The initial
+// binding keeps the original node (Python does the same); only
+// the re-read is deep-copied.
+//
+// The copy also NEUTRALIZES the source position (line/col 0,0):
+// the hosted tagger (`fix1_tag_node`) keys its plain/covered
+// lookups by bare (line, col), NOT by node identity (Python's
+// `_fix1_plain` is a set of node ids), so a copy that kept the
+// original (line, col) would be re-tagged plain at its new
+// position. Line/col 0,0 never occurs in real source (lines
+// are 1-based), so the lookup can never collide. The backtrace
+// still names the walrus's line: it reads the Assign
+// statement's line, which is set to the walrus's position, not
+// the copied expression's. `has_nul` is cleared ONLY on BinOp
+// (40) and UnaryOp (41), where it means the loop-proof plain
+// tag; on StrLit it is the NUL sentinel and must be preserved.
+fn w_deepcopy(e: Node) -> Node {
+    let mut kids: [Node] = [];
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        push(kids, w_deepcopy(e.kids[i]));
+        i = i + 1;
+    }
+    let mut c: Node = ct_with_kids(e, kids);
+    c.line = 0;
+    c.col = 0;
+    if e.kind == 40 || e.kind == 41 {
+        c.has_nul = false;
+    }
+    return c;
+}
+
+// Resolve one node: rebuild it with every walrus desugared.
+// Statement lists are only ever inside Block nodes (kind 9),
+// so If/While always go through w_rewrite_stmts; the generic
+// case below only rebuilds kids (a walrus surviving there is
+// caught by the checker's guard, loudly, never silently).
+fn w_resolve_node(n: Node, names: [str], loop_labels: [str], loop_walrus: [bool]) -> Node {
+    if n.kind == 9 {
+        // Block: the only place statement lists live.
+        return ct_with_kids(n, w_rewrite_stmts(n.kids, names, loop_labels, loop_walrus));
+    }
+    if n.kind == 2 || n.kind == 47 {
+        // FuncDef/Lambda: params are in scope for the body;
+        // the loop stack resets (a function/lambda is a loop
+        // boundary). The body is the Block kid (an extern fn
+        // has no body).
+        let mut names2: [str] = names;
+        let mut kids2: [Node] = [];
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let k: Node = n.kids[i];
+            if k.kind == 43 {
+                push(names2, k.name);
+                push(kids2, k);
+            } else if k.kind == 9 {
+                let empty_ll: [str] = [];
+                let empty_lw: [bool] = [];
+                push(kids2, w_resolve_node(k, names2, empty_ll, empty_lw));
+            } else {
+                push(kids2, k);
+            }
+            i = i + 1;
+        }
+        return ct_with_kids(n, kids2);
+    }
+    if n.kind == 20 {
+        // Match: the scrutinee is an expression; each arm's
+        // bindings (arm.sval, plus struct-pattern field
+        // bindings) are in scope for that arm's body only.
+        let scr: Node = w_resolve_node(n.kids[0], names, loop_labels, loop_walrus);
+        let mut kids2: [Node] = [scr];
+        let mut a: int = 1;
+        while a < len(n.kids) {
+            let arm: Node = n.kids[a];
+            let mut names2: [str] = names;
+            if arm.sval != "" {
+                push(names2, arm.sval);
+            }
+            let mut fi: int = 1;
+            while fi < len(arm.kids) {
+                let fp: Node = arm.kids[fi];
+                if fp.label == "binding" {
+                    push(names2, fp.sval);
+                }
+                fi = fi + 1;
+            }
+            let body2: Node = w_resolve_node(arm.kids[0], names2, loop_labels, loop_walrus);
+            let mut akids: [Node] = [body2];
+            let mut f: int = 1;
+            while f < len(arm.kids) {
+                push(akids, arm.kids[f]);
+                f = f + 1;
+            }
+            push(kids2, ct_with_kids(arm, akids));
+            a = a + 1;
+        }
+        return ct_with_kids(n, kids2);
+    }
+    if n.kind == 16 {
+        // For: the loop variable is in scope for the body
+        // only; the loop pushes itself (never a walrus loop).
+        let expr2: Node = w_resolve_node(n.kids[0], names, loop_labels, loop_walrus);
+        let mut names2: [str] = names;
+        push(names2, n.name);
+        let mut ll2: [str] = loop_labels;
+        let mut lw2: [bool] = loop_walrus;
+        push(ll2, n.label);
+        push(lw2, false);
+        let body2: Node = w_resolve_node(n.kids[1], names2, ll2, lw2);
+        return ct_with_kids(n, [expr2, body2]);
+    }
+    // Generic: rebuild every kid in place.
+    let mut kids2: [Node] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        push(kids2, w_resolve_node(n.kids[i], names, loop_labels, loop_walrus));
+        i = i + 1;
+    }
+    return ct_with_kids(n, kids2);
+}
+
+// Rewrite one statement list with the walrus desugar. `names`
+// is the flat list of variable names visible at the head of
+// this list (accumulates Lets and walrus bindings in order;
+// the caller's copy is untouched — pass-by-copy — so
+// declarations in this list never leak out of it).
+// `loop_labels`/`loop_walrus` are the enclosing loop stack
+// (parallel arrays; the innermost loop is last).
+fn w_rewrite_stmts(stmts: [Node], names: [str], loop_labels: [str], loop_walrus: [bool]) -> [Node] {
+    let mut out: [Node] = [];
+    let mut i: int = 0;
+    while i < len(stmts) {
+        let n: Node = stmts[i];
+        if n.kind == 14 || n.kind == 15 {
+            // If/While: desugar walruses in the condition.
+            let is_while: bool = n.kind == 15;
+            let walruses: [Node] = w_collect(n.kids[0], "ok");
+            // Bindings, in left-to-right order.
+            let mut j: int = 0;
+            while j < len(walruses) {
+                let w: Node = walruses[j];
+                if w_bound(names, w.name) {
+                    // Existing name: Assign (the checker
+                    // validates mutability and type when it
+                    // checks it).
+                    let mut a: Node = new_node(11, w.line, w.col);
+                    a.name = w.name;
+                    a.kids = [w.kids[0]];
+                    push(out, a);
+                } else {
+                    // Fresh name: `let mut` with no
+                    // annotation; the type is inferred by the
+                    // normal Let path. Visible to later
+                    // statements in this list and to the
+                    // branches below.
+                    let mut l: Node = new_node(10, w.line, w.col);
+                    l.name = w.name;
+                    l.bval = true;
+                    l.sval = "";
+                    l.kids = [w.kids[0]];
+                    push(out, l);
+                    push(names, w.name);
+                }
+                j = j + 1;
+            }
+            // The rewritten condition (NamedExpr -> Var).
+            let cond2: Node = w_subst_vars(n.kids[0]);
+            // The loop stack for the sub-blocks: a While
+            // pushes itself (walrus-ness = this statement
+            // binds one); an If does not push.
+            let mut ll2: [str] = loop_labels;
+            let mut lw2: [bool] = loop_walrus;
+            if is_while {
+                push(ll2, n.label);
+                push(lw2, len(walruses) > 0);
+            }
+            if n.kind == 14 {
+                let then2: Node = w_resolve_node(n.kids[1], names, ll2, lw2);
+                let mut kids2: [Node] = [cond2, then2];
+                if len(n.kids) > 2 {
+                    push(kids2, w_resolve_node(n.kids[2], names, ll2, lw2));
+                }
+                push(out, ct_with_kids(n, kids2));
+            } else {
+                let body2: Node = w_resolve_node(n.kids[1], names, ll2, lw2);
+                // Append the re-read(s) to the body end. Each
+                // re-read gets a DEEP COPY of the RHS (Python
+                // uses copy.deepcopy): sharing the pre-loop
+                // binding's node would leak the Fix 1 plain
+                // marking into the re-read by node identity.
+                let mut bkids: [Node] = body2.kids;
+                let mut k: int = 0;
+                while k < len(walruses) {
+                    let w: Node = walruses[k];
+                    let mut a: Node = new_node(11, w.line, w.col);
+                    a.name = w.name;
+                    a.kids = [w_deepcopy(w.kids[0])];
+                    push(bkids, a);
+                    k = k + 1;
+                }
+                push(out, ct_with_kids(n, [cond2, ct_with_kids(body2, bkids)]));
+            }
+        } else if n.kind == 19 {
+            // Continue: the v1 ban on targeting a
+            // walrus-while. The checker validates labels and
+            // loop membership itself; the rewrite only bans
+            // the walrus case.
+            if n.label != "" {
+                // Innermost loop with this label wins (#62).
+                let mut idx: int = len(loop_labels) - 1;
+                while idx >= 0 {
+                    if loop_labels[idx] == n.label {
+                        if loop_walrus[idx] {
+                            fail_at(n.line, n.col, "continue cannot target a while loop whose condition binds a walrus in v1 (it would skip the re-read of the bound value; restructure the loop or use break)");
+                        }
+                        break;
+                    }
+                    idx = idx - 1;
+                }
+            } else {
+                if len(loop_walrus) > 0 && loop_walrus[len(loop_walrus) - 1] {
+                    fail_at(n.line, n.col, "continue cannot target a while loop whose condition binds a walrus in v1 (it would skip the re-read of the bound value; restructure the loop or use break)");
+                }
+            }
+            push(out, n);
+        } else if n.kind == 10 {
+            // Let: declare the name for later statements in
+            // this list (the RHS may contain a lambda whose
+            // body holds walruses — resolved by the recursion).
+            push(out, w_resolve_node(n, names, loop_labels, loop_walrus));
+            push(names, n.name);
+        } else {
+            push(out, w_resolve_node(n, names, loop_labels, loop_walrus));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The entry point: the program with every walrus desugared, or
+// the original node untouched when there is nothing to do.
+fn resolve_walrus_prog(prog: Node) -> Node {
+    if !w_has_walrus(prog) {
+        return prog;
+    }
+    let names: [str] = [];
+    let ll: [str] = [];
+    let lw: [bool] = [];
+    return w_resolve_node(prog, names, ll, lw);
+}
+
 // Set a checker's Target fields from the CLI facts, validating
 // the target name (mirrors forge_lang/checker.py make_target).
 fn ct_set_target(c0: HChecker, target: str, mode: str, debug: bool) -> HChecker {
@@ -8219,6 +11566,18 @@ fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_set
     // `comptime if` against (the hosted driver evaluates native
     // only; non-native targets are Python-only).
     c = ct_set_target(c, target, mode, debug);
+    // Top-500 #74: desugar generators (`yield`) before checking,
+    // so the checker/infer/codegen see only the constructor and
+    // step function (DESIGN.md §3.8: generators -> walrus ->
+    // comptime, in both check_program and compile_to_c, so a
+    // walrus or a yield inside a comptime branch is a named
+    // error here, not silently desugared away).
+    p = resolve_generators_prog(c, p);
+    // Top-500 #72: desugar walrus (`name := expr`) before
+    // checking, so the checker/infer/codegen see only ordinary
+    // Let/Assign/Var nodes. (compile_to_c resolves it on the
+    // merged program too, so run_infer/codegen see it as well.)
+    p = resolve_walrus_prog(p);
     // Top-500 #70: resolve `comptime if` before checking, so the
     // checker sees resolved code (the same resolved program is
     // what compile_to_c hands to run_infer/codegen_program).

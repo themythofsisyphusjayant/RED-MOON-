@@ -906,12 +906,22 @@ fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool
     let mut merged_box: [Node] = [parse_src("")];
     let fn_files: [str] = load_merged(path, fp_box, freestanding, mode, no_bounds_checks, no_overflow_checks, debug, merged_box);
     let mut merged: Node = merged_box[0];
-    // Top-500 #70: resolve `comptime if` once, here — check_program,
-    // run_infer and codegen_program all see the same resolved
-    // program (the hosted driver's one-mutated-program rule).
+    // Top-500 #74: desugar generators (`yield`) once, here —
+    // check_program, run_infer and codegen_program all see the
+    // same resolved program (the hosted driver's
+    // one-mutated-program rule). Order is FORCED (DESIGN.md
+    // §3.8): generators -> walrus -> comptime.
     let mut c0: HChecker = new_checker();
     c0.freestanding = freestanding;
     c0 = ct_set_target(c0, target, mode, debug);
+    merged = resolve_generators_prog(c0, merged);
+    // Top-500 #72: desugar walrus (`name := expr`) once, here,
+    // for the same reason (run_infer/codegen must see the
+    // desugared program, not NamedExpr nodes).
+    merged = resolve_walrus_prog(merged);
+    // Top-500 #70: resolve `comptime if` once, here — check_program,
+    // run_infer and codegen_program all see the same resolved
+    // program (the hosted driver's one-mutated-program rule).
     merged = resolve_comptime_prog(c0, merged);
     let ok: bool = check_program(merged, freestanding, fn_files, dump_error_sets, target, mode, debug);
     if !ok {

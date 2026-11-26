@@ -1,0 +1,49 @@
+// Qasida — generator functions (Top-500 #74).
+// Import with: import "generators.fg";
+//   fn count_up(n: int) -> Generator<int> {
+//       let mut i: int = 0;
+//       while (i < n) {
+//           yield i;
+//           i = i + 1;
+//       }
+//   }
+//   let g: Generator<int> = count_up(3);
+//   let mut done: bool = false;
+//   while (!done) {
+//       let o: Option<int> = count_up_next(g);
+//       if (o.present) {
+//           println(o.value);
+//       } else {
+//           done = true;
+//       }
+//   }
+// A generator is a lazy state machine: calling the function builds
+// the value without running the body; each `<name>_next(g)` call
+// runs one segment and returns `opt_some(v)` for a yield, or the
+// none literal when the generator is exhausted. The body runs
+// only inside `next()`, one segment at a time; two generators from
+// the same function have independent state.
+// v1 limits: element type int/str/bool; locals and parameters
+// int/str/bool; `for x in g` is not supported (use the manual
+// next() loop above); `yield` is not allowed in match arms,
+// comptime-if branches, `for` over arrays, or nested lambdas;
+// no `defer` and no walrus inside a generator body; a `return`
+// (bare or valued) ends iteration and its value is discarded.
+// Native only: big32, wasm, and freestanding are rejected at
+// check time with a named error.
+// Layout (the checker's desugar owns it; do not hand-edit a
+// Generator value): `kind` is the per-function index (the hook
+// for a future uniform `next(g)`); `cur` is a type witness
+// holding the zero value of T — the yielded value travels
+// through `Option<T>`, not `cur`; `slots_i[0]` is the state
+// machine's state and the remaining slots hold the lifted
+// locals and parameters by type.
+import "option.fg";
+
+struct Generator<T> {
+    kind: int;
+    cur: T;
+    slots_i: [int];
+    slots_s: [str];
+    slots_b: [bool];
+}
