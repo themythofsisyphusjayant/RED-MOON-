@@ -7694,6 +7694,195 @@ fn cg_emit_loop_exit(g0: HCodegen, target: int, ret_type: str) -> HCodegen {
     return g;
 }
 
+// ---------- tail-call temp split (Top-500 #78) ----------
+// A `return <call>;` whose call is a direct call to a
+// non-extern user function normally emits the call, then frees
+// the owned locals, then returns — and the frees after the call
+// keep gcc from sibling-calling the callee (the frame must stay
+// alive for them). The split reorders it: bind each argument
+// into a temp first (the arg code already copies non-fresh
+// strings, incs array refs, and owns struct fields, so the temps
+// hold independent values), free the owned locals, then call
+// with the temps and return the result immediately, with no frees
+// after the call — the sibling-call-friendly shape (DESIGN
+// §3.2). The temps are plain C locals (emitted, never registered
+// in owned_names), so cg_emit_free_owned ignores them and the
+// callee owns the values it receives. Mirrors Python codegen.py
+// _tc_can_split_return / _tc_emit_split_return (TC-S1–TC-S4).
+
+// Resolve the call the way cg_gen_call's fallthrough does: a
+// generic template call resolves to its mangled instantiation
+// (with substituted param types); a plain call keeps its name
+// and the params from cg_fn_lookup. Returns ["1", call_name,
+// param0, param1, ...] on success (params are "name:type"
+// entries, as infer_parse_params returns them), ["0"] when the
+// call cannot be resolved here (the caller falls back to the
+// normal path — the normal path then fails with its own error if
+// the call is genuinely bad). Pure: takes g by value and returns
+// no g, so calling it speculatively changes nothing.
+fn cg_tc_resolve_call(g: HCodegen, e: Node) -> [str] {
+    let found: [str] = cg_fn_lookup(g, e.name);
+    if found[0] == "1" {
+        let mut out: [str] = ["1", e.name];
+        let params: [str] = infer_parse_params(found[2]);
+        let mut i: int = 0;
+        while i < len(params) {
+            push(out, params[i]);
+            i = i + 1;
+        }
+        return out;
+    }
+    let tf: [str] = cg_template_lookup(g, e.name);
+    if tf[0] == "1" {
+        let b: CGBind = cg_generic_bindings(g, tf, e.name, e);
+        if !b.ok {
+            return ["0"];
+        }
+        let reg: [str] = cg_inst_lookup(g, b.mangled);
+        if reg[0] == "0" {
+            return ["0"];
+        }
+        let raw_params: [str] = infer_parse_params(tf[2]);
+        let mut out: [str] = ["1", b.mangled];
+        let mut pi: int = 0;
+        while pi < len(raw_params) {
+            let kv: [str] = infer_split_param(raw_params[pi]);
+            if len(kv) >= 2 {
+                push(out, kv[0] + ":" + substitute_type(kv[1], b.names, b.types));
+            } else {
+                push(out, raw_params[pi]);
+            }
+            pi = pi + 1;
+        }
+        return out;
+    }
+    return ["0"];
+}
+
+fn cg_tc_can_split_return(g: HCodegen, e: Node, ret_type: str) -> bool {
+    // e is the Return's expression node (must be a Call, kind 35).
+    if e.kind != 35 {
+        return false;
+    }
+    if cg_fn_is_extern(g, e.name) {
+        return false;
+    }
+    if g.debug {
+        return false;
+    }
+    if ret_type == "void" {
+        return false;
+    }
+    let resolved: [str] = cg_tc_resolve_call(g, e);
+    if resolved[0] != "1" {
+        return false;
+    }
+    // Params are resolved[2..]; arity must match (a checker bug
+    // otherwise — the normal path, not the split, owns that).
+    if len(e.kids) != len(resolved) - 2 {
+        return false;
+    }
+    // Owned locals in scope (owned_names holds exactly the live
+    // frames' names — cg_pop_owned_frame truncates on pop). When
+    // there are none, the plain path already sibling-calls.
+    if len(g.owned_names) == 0 {
+        return false;
+    }
+    if cg_expr_type(g, e) == "never" {
+        return false;
+    }
+    if cg_is_opaque_type(ret_type) {
+        return false;
+    }
+    if is_union_type(ret_type) && cg_str_in(cg_expr_type(g, e), union_members(ret_type)) {
+        return false;
+    }
+    if ret_type == "str" && !cg_is_fresh_str(g, e) {
+        return false;
+    }
+    if cg_is_array_type(g, ret_type) && !cg_is_fresh_array(g, e) {
+        return false;
+    }
+    if cg_is_struct_type(g, ret_type) && !cg_is_fresh_struct(g, e) {
+        return false;
+    }
+    if infer_is_tuple_type(ret_type) && !cg_is_fresh_tuple(g, e) {
+        return false;
+    }
+    if is_fn_type(ret_type) && !cg_is_fresh_fn(g, e) {
+        return false;
+    }
+    if is_union_type(ret_type) && cg_expr_type(g, e) == ret_type && !cg_is_fresh_union(g, e) {
+        return false;
+    }
+    if cg_is_enum_type(g, ret_type) && cg_expr_type(g, e) == ret_type && !cg_is_fresh_enum(g, e) {
+        return false;
+    }
+    return true;
+}
+
+fn cg_tc_emit_split_return(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
+    let mut g: HCodegen = g0;
+    let e: Node = st.kids[0];
+    let resolved: [str] = cg_tc_resolve_call(g, e);
+    let call_name: str = resolved[1];
+    // Argument codes, exactly as cg_gen_call's fallthrough builds
+    // them (gen_expr per arg, cg_convert_owned per declared param
+    // type). TWO PHASES, matching the Python emitter: phase 1
+    // computes ALL arg codes first (consuming the inner
+    // __forge_arg counter values in arg order), phase 2 binds
+    // each to a __forge_tcarg temp. Interleaving gen+bind per arg
+    // would number the temps differently from Python (the cli
+    // bootstrap caught this: hosted emitted tcarg550/551/553
+    // where Python emitted tcarg551/552/553 for the same call).
+    let mut arg_pts: [str] = [];
+    let mut arg_codes: [str] = [];
+    let mut i: int = 0;
+    while i < len(e.kids) {
+        let a: Node = e.kids[i];
+        let aout: CGExpr = cg_gen_expr(g, a);
+        g = aout.g;
+        let mut code: str = aout.code;
+        let mut pt: str = "";
+        if i + 2 < len(resolved) {
+            let kv: [str] = infer_split_param(resolved[i + 2]);
+            if len(kv) >= 2 {
+                pt = kv[1];
+                let conv: CGExpr = cg_convert_owned(g, code, cg_expr_type(g, a), pt, a, false);
+                g = conv.g;
+                code = conv.code;
+            }
+        }
+        push(arg_pts, pt);
+        push(arg_codes, code);
+        i = i + 1;
+    }
+    let mut temp_names: [str] = [];
+    let mut j: int = 0;
+    while j < len(arg_codes) {
+        g.assign_counter = g.assign_counter + 1;
+        let n: int = g.assign_counter;
+        let temp: str = "__forge_tcarg" + itoa(n);
+        g = cg_emit(g, cg_c_type(g, arg_pts[j]) + " " + temp + " = " + arg_codes[j] + ";");
+        push(temp_names, temp);
+        j = j + 1;
+    }
+    g = cg_emit_free_owned(g);
+    let call_code: str = call_name + "(" + join(temp_names, ", ") + ")";
+    // Top-500 #70: a second Return in this block reuses the
+    // declaration above (assigns); the first one declares it.
+    if len(g.ret_declared) > 0 && g.ret_declared[len(g.ret_declared) - 1] == 1 {
+        g = cg_emit(g, "__forge_ret = " + call_code + ";");
+    } else {
+        g = cg_emit(g, cg_c_type(g, ret_type) + " __forge_ret = " + call_code + ";");
+        if len(g.ret_declared) > 0 {
+            g.ret_declared[len(g.ret_declared) - 1] = 1;
+        }
+    }
+    g = cg_emit(g, "return __forge_ret;");
+    return g;
+}
+
 fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
     let mut g: HCodegen = g0;
     // Duplicate checks live within one statement only: every
@@ -8817,6 +9006,15 @@ fn cg_gen_stmt(g0: HCodegen, st: Node, ret_type: str) -> HCodegen {
             return g;
         }
         let e: Node = st.kids[0];
+        // Top-500 #78: tail-call temp split (TC-S1). When the
+        // return expression is a direct call to a non-extern user
+        // function and the frame holds owned locals, bind the
+        // arguments into temps, free the locals, then call — so
+        // gcc can sibling-call the callee. Anything else takes the
+        // normal path below.
+        if cg_tc_can_split_return(g, e, ret_type) {
+            return cg_tc_emit_split_return(g, st, ret_type);
+        }
         let eout: CGExpr = cg_gen_expr(g, e);
         g = eout.g;
         let mut ret_code: str = eout.code;

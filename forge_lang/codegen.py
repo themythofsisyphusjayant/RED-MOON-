@@ -2212,6 +2212,99 @@ class Codegen:
         for name, typ in self.owned_all():
             self._emit_free_one(name, typ)
 
+    # Top-500 #78: tail-call temp split (TC-S1–TC-S4).
+    #
+    # A `return <call>;` whose call is a direct call to a
+    # non-extern user function normally emits the call, then
+    # frees the owned locals, then returns — and the frees after
+    # the call keep gcc from sibling-calling the callee (the
+    # frame must stay alive for them). The split reorders it:
+    # bind each argument into a temp first (the arg code already
+    # copies non-fresh strings, incs array refs, and owns struct
+    # fields, so the temps hold independent values), free the
+    # owned locals, then call with the temps and return the
+    # result immediately, with no frees after the call — the
+    # sibling-call-friendly shape (DESIGN §3.2). The temps are
+    # plain C locals (emitted, never registered in owned_stack),
+    # so emit_free_owned ignores them and the callee owns the
+    # values it receives.
+    def _tc_can_split_return(self, stmt, ret_type):
+        """True when a `return <call>;` can take the temp split:
+        the call is a direct call to a non-extern user function,
+        the frame holds owned locals (otherwise the plain path is
+        already sibling-call-friendly), the build is not a debug
+        build (the frame pop must run after the call), and the
+        normal path would emit NO post-call code at all for the
+        result (every is_fresh_* fixup is a no-op for a user-fn
+        call result, and no wrap fires). Anything else takes the
+        normal path — correct, just without the guarantee."""
+        from .fntypes import is_fn_type
+        expr = stmt.expr
+        if not isinstance(expr, A.Call):
+            return False
+        if expr.name not in self.func_params:
+            return False  # builtin / enum variant / indirect (fn_type)
+        if self.func_is_extern.get(expr.name):
+            return False
+        if self.debug:
+            return False
+        if ret_type == "void":
+            return False
+        if len(expr.args) != len(self.func_params[expr.name]):
+            return False  # arity mismatch: a checker bug, not a split
+        if not self.owned_all():
+            return False  # nothing to free: plain path already TCOs
+        if self.expr_type(expr) == "never":
+            return False
+        if is_opaque_type(ret_type):
+            return False  # opaque_convert would run after the call
+        if is_union_type(ret_type) and self.expr_type(expr) in union_members(ret_type):
+            return False  # union_wrap would run after the call
+        if ret_type == "str" and not self.is_fresh_str(expr):
+            return False
+        if self.is_array_type(ret_type) and not self.is_fresh_array(expr):
+            return False
+        if self.is_struct_type(ret_type) and not self.is_fresh_struct(expr):
+            return False
+        if is_tuple_type(ret_type) and not self.is_fresh_tuple(expr):
+            return False
+        if is_fn_type(ret_type) and not self.is_fresh_fn(expr):
+            return False
+        if is_union_type(ret_type) and self.expr_type(expr) == ret_type \
+                and not self.is_fresh_union(expr):
+            return False
+        if self.is_enum_type(ret_type) and self.expr_type(expr) == ret_type \
+                and not self.is_fresh_enum(expr):
+            return False
+        return True
+
+    def _tc_emit_split_return(self, stmt, ret_type):
+        """Emit the temp split for `return <call>;` (see above).
+        Defers and scope joins already ran (gen_stmt emits them
+        before the return expression), so the only frees left are
+        the owned locals, which move before the call here."""
+        expr = stmt.expr
+        params = self.func_params[expr.name]
+        arg_codes = self._call_arg_codes(expr, params)
+        temp_names = []
+        for (_pn, pt), code in zip(params, arg_codes):
+            self.assign_counter += 1
+            n = self.assign_counter
+            temp = f"__forge_tcarg{n}"
+            self.emit(f"{c_type(pt)} {temp} = {code};")
+            temp_names.append(temp)
+        self.emit_free_owned()
+        call_code = f"{expr.name}({', '.join(temp_names)})"
+        # Top-500 #70: a second Return in this block reuses the
+        # declaration above (assigns); the first one declares it.
+        if self._ret_declared_stack and self._ret_declared_stack[-1]:
+            self.emit(f"__forge_ret = {call_code};")
+        else:
+            self.emit(f"{c_type(ret_type)} __forge_ret = {call_code};")
+            if self._ret_declared_stack:
+                self._ret_declared_stack[-1] = True
+        self.emit("return __forge_ret;")
+
     def emit_free_frame(self):
         # Free only the current (innermost) ownership frame: the
         # variables declared inside one block / loop body / if arm.
@@ -5102,6 +5195,16 @@ class Codegen:
                     self.emit("forge_bt_pop();")
                 self.emit("return 0;" if self.current_fn == "main" else "return;")
             else:
+                # Top-500 #78: tail-call temp split (TC-S1). When the
+                # return expression is a direct call to a non-extern
+                # user function and the frame holds owned locals, bind
+                # the arguments into temps, free the locals, then call
+                # — so gcc can sibling-call the callee instead of
+                # keeping this frame alive for the frees. Anything
+                # else takes the normal path below.
+                if self._tc_can_split_return(stmt, ret_type):
+                    self._tc_emit_split_return(stmt, ret_type)
+                    return
                 ret_code = self.gen_expr(stmt.expr)
                 if self.expr_type(stmt.expr) == "never":
                     ret_code = self.never_wrap(ret_code, ret_type)

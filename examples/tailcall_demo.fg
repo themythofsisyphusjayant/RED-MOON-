@@ -1,0 +1,54 @@
+// #78 tail-call guarantee demo.
+// A small state machine in tail-recursive form: three states
+// tail-call each other, one step per call, and the accumulator
+// version counts down in constant stack space. The guarantee
+// (Top-500 #78, v1) is native-only: every call in tail position
+// runs flat-stack, so a state machine can run 10,000,000 steps on
+// a 64 KB stack. big32/WASM check clean and run, but the stack
+// grows there — use the fsm.fg library loop (#79) on big32.
+enum State { Idle, Work, Done }
+
+fn idle(steps: int) -> int {
+    if steps <= 0 {
+        return 0;
+    }
+    return work(steps - 1);
+}
+
+fn work(steps: int) -> int {
+    if steps <= 0 {
+        return 1;
+    }
+    return done(steps - 1);
+}
+
+fn done(steps: int) -> int {
+    if steps <= 0 {
+        return 2;
+    }
+    return idle(steps - 1);
+}
+
+fn count(n: int, acc: int) -> int {
+    if n <= 0 {
+        return acc;
+    }
+    // A fresh string local per frame: the v78 codegen binds the
+    // call arguments first, frees this local, and only then calls
+    // — the free must happen BEFORE the call, or gcc cannot turn
+    // the call into a jump.
+    let s: str = "abc";
+    return count(n - 1, acc + len(s));
+}
+
+fn main() -> int {
+    let argv: [str] = args();
+    if len(argv) == 0 {
+        println("usage: depth");
+        return 1;
+    }
+    let n: int = parse_int(argv[0]);
+    println(idle(n));
+    println(count(n, 0));
+    return 0;
+}

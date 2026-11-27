@@ -38,6 +38,36 @@ without a major version bump (see docs/STABILITY.md).
   element writes — single-site fix in the `IndexAssign` Var-base
   branch of `check_stmt`.
 
+- Tail-call guarantee, Top-500 #78 (27 Nov 2026, Sprint Day 7, both
+  compilers; Jayant's word 27 Nov: "Build as recommended — all A"):
+  tail recursion runs without stack growth on native,
+  CHECKER-VERIFIED. `qasida check --dump-tail-calls` prints every
+  classified tail call (`tail call: fn <fn> <line>:<col> <callee>`) —
+  return calls, void last-statement calls, if/else branches, blocks,
+  and match arms in tail position. Always-on, no new syntax, no
+  annotation, no keyword. Codegen pins the guarantee with a
+  Return-branch TEMP SPLIT: when the return expr is a direct call to
+  a non-extern user fn and the frame holds owned locals, the args are
+  bound into `__forge_tcarg` temps, the owned locals are freed
+  BEFORE the call, then `__forge_ret = callee(temps); return
+  __forge_ret;` — so gcc's sibling-call optimisation is never
+  blocked by a post-call free. F6-A: the `forge.py run` 64 MB stack
+  leak is fixed — the shim passes the pre-raise soft limit to the
+  hosted driver as a hidden `--orig-stack-kb` flag and `cmd_run`
+  prefixes the run command with `ulimit -s <kb>; exec <prog>`. Own
+  test tests/test_tailcall_v1.py 66/66 ALL PASS both compilers
+  (incl. 10M-depth runs on a 64 KB stack as built binaries, the
+  segfault negative control, and the F6 assertion). ASan
+  program-side 28/28 leak-clean; compiler-side 4/4 == the #77 table
+  EXACTLY, ZERO growth (dump-flag 612/36, check-wrapper 7384/293,
+  codegen 12188/468, cli 12286/474). Emit compare 119 PASS, 0 FAIL.
+  v1 limits: NATIVE ONLY (big32/WASM check clean and run, stack
+  grows — use fsm.fg #79 instead); void tail calls in functions /
+  blocks holding owned string/array locals NOT guaranteed; MethodCall
+  tail returns NOT guaranteed (Q-14); debug builds NOT guaranteed;
+  indirect tail calls through a local fn var NOT split; `?`, defer,
+  comptime-if branches, match guards OUT.
+
 - Generator functions / yield (Python), Top-500 #74 (26 Nov 2026,
   Sprint Day 6, both compilers; Jayant's word 26 Nov: "Build as
   recommended — Python-style yield, checker desugar"):

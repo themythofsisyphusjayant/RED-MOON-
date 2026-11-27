@@ -185,26 +185,36 @@ def _raise_hosted_stack():
     by the hard limit; any failure is silently ignored and the
     execv still proceeds. Size via QASIDA_HOSTED_STACK_MB
     (default 64).
+
+    Top-500 #78 (F6-A): returns the ORIGINAL soft limit in KB when
+    this function actually raised it, else None. The caller passes
+    it to the hosted driver as the hidden flag --orig-stack-kb so
+    `run` can reset the program's soft limit to the value the
+    shell had (the raise used to leak into user programs, giving
+    them a 64 MB stack). "Unlimited" or "already big enough"
+    returns None (nothing leaked, no flag needed).
     """
     try:
         want_mb = int(os.environ.get("QASIDA_HOSTED_STACK_MB", "64"))
     except ValueError:
         want_mb = 64
     if want_mb <= 0:
-        return
+        return None
     try:
         import resource
         want = want_mb * 1024 * 1024
         soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
         if soft == resource.RLIM_INFINITY or soft >= want:
-            return
+            return None
         new_soft = want if hard == resource.RLIM_INFINITY \
             else min(want, hard)
         if new_soft > soft:
             resource.setrlimit(resource.RLIMIT_STACK,
                                (new_soft, hard))
+            return soft // 1024 if soft > 0 else None
     except (ValueError, OSError):
-        pass
+        return None
+    return None
 
 
 def main():
@@ -228,7 +238,17 @@ def main():
               "using Python fallback" % hosted, file=sys.stderr)
         _log_dispatch("python", "hosted binary missing", argv)
         return _run_python(argv, "hosted binary missing")
-    _raise_hosted_stack()
+    orig_kb = _raise_hosted_stack()
+    # Top-500 #78 (F6-A): when the raise above actually raised the
+    # soft limit, `run` must reset the user program's limit to the
+    # value the shell had — pass the original soft limit as the
+    # hidden flag --orig-stack-kb (after `run`, before the file, so
+    # the hosted driver's flag parser consumes it and it never
+    # reaches the program's args). Only for `run`, only when a
+    # raise happened; direct invocation of the hosted binary (no
+    # flag) keeps the old behaviour.
+    if argv and argv[0] == "run" and orig_kb is not None:
+        argv = [argv[0], "--orig-stack-kb", str(orig_kb)] + argv[1:]
     os.execv(hosted, [hosted] + argv)
     return 1  # execv only returns on failure
 

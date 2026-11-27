@@ -8077,6 +8077,210 @@ fn es_dump(c0: HChecker, prog: Node) -> HChecker {
     return c;
 }
 
+// ---------- tail-call classification (Top-500 #78) ----------
+// A call is in tail position when it is the last thing its
+// function does before returning (or, for a void fn, before
+// falling off the end). The classifier walks already-checked
+// bodies — after es_infer, so the def tables are live — and
+// prints every user call in tail position (TC-C1–TC-C7, the
+// Python checker.py mirror, same shape in both). It classifies
+// only: it never rewrites anything, and the native codegen shape
+// (DESIGN §3.2) is pinned by the own test's objdump assertion.
+// Tail position (TC-C1): the whole return expression; a void
+// fn's last statement; either branch of an if/else in tail
+// position; a block whose last statement is in tail position; a
+// match arm whose body ends in tail position; a lambda body is
+// its own tail context. Loop bodies are NEVER tail position
+// (TC-C2). Defer bodies are skipped (TC-C3). Calls under `?`
+// (TC-C4), in let/assign/argument/condition/scrutinee position,
+// or inside an operator are NOT tail calls. Builtins and
+// enum-variant constructions are NOT classified (TC-C5).
+// MethodCall positions are classified (TC-C6) but the v1
+// guarantee does not cover them (the Q-14 copy wrap runs after
+// the call). Dump format (TC-C7): one line per tail call, in
+// program order: `tail call: fn <fn> <line>:<col> <callee>` — no
+// file (avoids the Python-absolute vs hosted-relative
+// path-spelling divergence). IndirectCall prints `<indirect>`.
+// The walker takes c by value and returns it unchanged (it only
+// reads the enum tables); it runs only when the dump flag is set,
+// so the copies cost nothing on ordinary checks.
+
+// True when the Call node names a user function (TC-C5): not a
+// builtin and not an enum-variant construction.
+fn tc_is_user_call(c: HChecker, n: Node) -> bool {
+    if is_stmt_builtin(n.name) || is_expr_builtin(n.name) {
+        return false;
+    }
+    if enum_of_variant(c, n.name) != "" {
+        return false;
+    }
+    return true;
+}
+
+fn tc_walk_expr(c0: HChecker, n: Node, tail: bool, fn_name: str) -> HChecker {
+    let mut c: HChecker = c0;
+    if n.kind == 35 {
+        if tail && tc_is_user_call(c, n) {
+            eprintln("tail call: fn " + fn_name + " " + itoa(n.line) + ":" + itoa(n.col) + " " + n.name);
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            c = tc_walk_expr(c, n.kids[i], false, fn_name);
+            i = i + 1;
+        }
+        return c;
+    }
+    if n.kind == 46 {
+        if tail {
+            eprintln("tail call: fn " + fn_name + " " + itoa(n.line) + ":" + itoa(n.col) + " <indirect>");
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            c = tc_walk_expr(c, n.kids[i], false, fn_name);
+            i = i + 1;
+        }
+        return c;
+    }
+    if n.kind == 33 {
+        if tail {
+            eprintln("tail call: fn " + fn_name + " " + itoa(n.line) + ":" + itoa(n.col) + " " + n.name);
+        }
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            c = tc_walk_expr(c, n.kids[i], false, fn_name);
+            i = i + 1;
+        }
+        return c;
+    }
+    if n.kind == 47 {
+        // Lambda: the body is the last kid; its own tail context.
+        let body: Node = n.kids[len(n.kids) - 1];
+        return tc_walk_block(c, body, true, fn_name);
+    }
+    if n.kind == 42 {
+        return tc_walk_expr(c, n.kids[0], false, fn_name);
+    }
+    // Every other expression kind (Var, literals, BinOp 40,
+    // UnaryOp 41, Index 36, TupleIndex 37, RangeLit 38, Cast 39,
+    // StructLit 31, FieldAccess 32, ArrayLit 29, TupleLit 30):
+    // walk the kids with tail=false (a call inside one is never
+    // in tail position).
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        c = tc_walk_expr(c, n.kids[i], false, fn_name);
+        i = i + 1;
+    }
+    return c;
+}
+
+fn tc_walk_block(c0: HChecker, block: Node, tail_ctx: bool, fn_name: str) -> HChecker {
+    let mut c: HChecker = c0;
+    let mut i: int = 0;
+    while i < len(block.kids) {
+        let n: Node = block.kids[i];
+        let last: bool = i == len(block.kids) - 1;
+        c = tc_walk_stmt(c, n, tail_ctx && last, fn_name);
+        i = i + 1;
+    }
+    return c;
+}
+
+fn tc_walk_stmt(c0: HChecker, n: Node, tail_ctx: bool, fn_name: str) -> HChecker {
+    let mut c: HChecker = c0;
+    if n.kind == 9 {
+        return tc_walk_block(c, n, tail_ctx, fn_name);
+    }
+    if n.kind == 17 {
+        if len(n.kids) > 0 {
+            return tc_walk_expr(c, n.kids[0], true, fn_name);
+        }
+        return c;
+    }
+    if n.kind == 24 {
+        return tc_walk_expr(c, n.kids[0], tail_ctx, fn_name);
+    }
+    if n.kind == 14 {
+        c = tc_walk_expr(c, n.kids[0], false, fn_name);
+        c = tc_walk_block(c, n.kids[1], tail_ctx, fn_name);
+        if len(n.kids) > 2 {
+            c = tc_walk_block(c, n.kids[2], tail_ctx, fn_name);
+        }
+        return c;
+    }
+    if n.kind == 15 {
+        c = tc_walk_expr(c, n.kids[0], false, fn_name);
+        return tc_walk_block(c, n.kids[1], false, fn_name);
+    }
+    if n.kind == 16 {
+        c = tc_walk_expr(c, n.kids[0], false, fn_name);
+        return tc_walk_block(c, n.kids[1], false, fn_name);
+    }
+    if n.kind == 20 {
+        c = tc_walk_expr(c, n.kids[0], false, fn_name);
+        let mut a: int = 1;
+        while a < len(n.kids) {
+            let arm: Node = n.kids[a];
+            c = tc_walk_block(c, arm.kids[0], tail_ctx, fn_name);
+            a = a + 1;
+        }
+        return c;
+    }
+    if n.kind == 22 {
+        return tc_walk_block(c, n.kids[0], false, fn_name);
+    }
+    if n.kind == 10 {
+        return tc_walk_expr(c, n.kids[0], false, fn_name);
+    }
+    if n.kind == 11 {
+        return tc_walk_expr(c, n.kids[0], false, fn_name);
+    }
+    if n.kind == 12 || n.kind == 13 {
+        c = tc_walk_expr(c, n.kids[0], false, fn_name);
+        return tc_walk_expr(c, n.kids[1], false, fn_name);
+    }
+    if n.kind == 21 {
+        return tc_walk_expr(c, n.kids[0], false, fn_name);
+    }
+    if n.kind == 23 {
+        return tc_walk_expr(c, n.kids[0], false, fn_name);
+    }
+    return c;
+}
+
+// Walk every walkable function (the es_infer collection:
+// concrete FuncDefs with a body, and ImplDef methods with a body;
+// externs and generic templates skipped) and print its tail
+// calls, in program order. Called from check_program after
+// es_infer, only when the dump flag is set.
+fn tc_dump(c0: HChecker, prog: Node) -> HChecker {
+    let mut c: HChecker = c0;
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            let sp: [str] = split_tparams(n.name);
+            if sp[1] == "" && !n.bval && len(n.kids) > 0 && n.kids[len(n.kids) - 1].kind == 9 {
+                let body: Node = n.kids[len(n.kids) - 1];
+                c = tc_walk_block(c, body, true, sp[0]);
+            }
+        }
+        if n.kind == 6 {
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                let m: Node = n.kids[j];
+                let msp: [str] = split_tparams(m.name);
+                if msp[1] == "" && !m.bval && len(m.kids) > 0 && m.kids[len(m.kids) - 1].kind == 9 {
+                    let body: Node = m.kids[len(m.kids) - 1];
+                    c = tc_walk_block(c, body, true, n.name + "__" + msp[0]);
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
 // ---------- program entry ----------
 // Returns true if the program checks clean; fails otherwise.
 
@@ -11892,7 +12096,7 @@ fn ct_set_target(c0: HChecker, target: str, mode: str, debug: bool) -> HChecker 
     return c;
 }
 
-fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_sets: bool, target: str, mode: str, debug: bool) -> bool {
+fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_sets: bool, dump_tail_calls: bool, target: str, mode: str, debug: bool) -> bool {
     let mut p: Node = expand_aliases_prog(prog);
     let mut c: HChecker = new_checker();
     c.freestanding = freestanding;
@@ -11953,5 +12157,12 @@ fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_set
     // verdicts fire here, after the fixpoint, and the dump
     // prints before codegen.
     c = es_infer(c, p, dump_error_sets);
+    // Top-500 #78: tail-call classification (TC-C1–TC-C7).
+    // Prints every user call in tail position to stderr when
+    // the dump flag is set; runs only then (no cost on
+    // ordinary checks).
+    if dump_tail_calls {
+        c = tc_dump(c, p);
+    }
     return true;
 }

@@ -64,6 +64,9 @@ def main(argv=None):
             # Top-500 #50: print inferred error sets to stderr.
             p.add_argument("--dump-error-sets", action="store_true",
                            help="print inferred error sets to stderr after checking")
+            # Top-500 #78: print tail calls to stderr.
+            p.add_argument("--dump-tail-calls", action="store_true",
+                           help="print tail calls to stderr after checking")
             # Top-500 #70: the target `comptime if` resolves
             # against (default native, like `build`).
             p.add_argument("--target", choices=["native", "big32", "wasm"],
@@ -180,6 +183,7 @@ def main(argv=None):
         if args.cmd == "check":
             compile_file(args.file, mode=args.mode, freestanding=args.freestanding,
                          dump_error_sets=args.dump_error_sets,
+                         dump_tail_calls=args.dump_tail_calls,
                          target=args.target)
             print("ok: no errors")
             return 0

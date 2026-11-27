@@ -168,10 +168,14 @@ def make_target(target, mode="safe", debug=False, freestanding=False):
 
 class Checker:
     def __init__(self, program, freestanding=False, dump_error_sets=False,
-                 target=None):
+                 target=None, dump_tail_calls=False):
         self.program = program
         self.freestanding = freestanding
         self.dump_error_sets = dump_error_sets  # Top-500 #50: print
+        self.dump_tail_calls = dump_tail_calls  # Top-500 #78: print
+        # tail calls in tail position to stderr after checking
+        # (qasida check --dump-tail-calls).
+        self.tail_calls = []  # Top-500 #78: (fn name, line, col, callee)
         # Top-500 #70: the build target this check resolves
         # `comptime if` against (default: native, from the flags).
         self.target = (target if target is not None
@@ -1160,6 +1164,10 @@ class Checker:
         # and error-sets by a worklist fixpoint, then issues the deferred
         # match-exhaustiveness verdicts (ES-C5).
         self._infer_error_sets()
+        # Top-500 #78: tail-call classification (TC-C1–TC-C7).
+        # Walks already-checked bodies and, when the dump flag is
+        # set, prints every user call in tail position to stderr.
+        self._analyze_tail_calls()
         return self.program
 
     # ------------------------------------------------------------------
@@ -1807,6 +1815,157 @@ class Checker:
                 sys.stderr.write(
                     f"fn {fn.name} -> {fn.ret}: "
                     f"{self._es_format_set(enum, members)}\n")
+
+    # ------------------------------------------------------------------
+    # Top-500 #78: tail-call classification (TC-C1–TC-C7).
+    #
+    # A call is in tail position when it is the last thing its
+    # function does before returning (or, for a void fn, before
+    # falling off the end). The classifier walks already-checked
+    # bodies — after _infer_error_sets, so generic instantiations
+    # and method specs are in program.funcs — and records every
+    # user call in tail position. It classifies only: it never
+    # rewrites anything, and the native codegen shape (DESIGN §3.2)
+    # is pinned by the own test's objdump assertion.
+    #
+    # Tail position (TC-C1): the whole return expression; a void
+    # fn's last statement; either branch of an if/else in tail
+    # position; a block whose last statement is in tail position;
+    # a match arm whose body ends in tail position; a lambda body
+    # is its own tail context (its returns are tail calls of the
+    # lambda). Loop bodies are NEVER tail position (TC-C2: the
+    # loop repeats, so a call there is not the last thing the fn
+    # does). Defer bodies are skipped (TC-C3: the defer runs after
+    # the call). Calls under `?` (TC-C4), in let/assign/argument/
+    # condition/scrutinee position, or inside an operator are NOT
+    # tail calls. Builtins and enum-variant constructions are NOT
+    # classified (TC-C5: leaf operations, not the recursive step).
+    # MethodCall positions are classified (TC-C6) but the v1
+    # guarantee does not cover them (the Q-14 copy wrap runs
+    # after the call). Dump format (TC-C7): one line per tail
+    # call, in program order: `tail call: fn <fn> <line>:<col>
+    # <callee>` — no file (avoids the Python-absolute vs
+    # hosted-relative path-spelling divergence). IndirectCall
+    # prints `<indirect>`.
+    def _tc_is_user_call(self, expr):
+        return (expr.name not in BUILTINS
+                and expr.name not in self.enum_variants)
+
+    def _tc_walk_expr(self, expr, tail, fn_name):
+        if isinstance(expr, A.Call):
+            if tail and self._tc_is_user_call(expr):
+                self.tail_calls.append(
+                    (fn_name, expr.line, expr.col, expr.name))
+            for arg in expr.args:
+                self._tc_walk_expr(arg, False, fn_name)
+        elif isinstance(expr, A.IndirectCall):
+            if tail:
+                self.tail_calls.append(
+                    (fn_name, expr.line, expr.col, "<indirect>"))
+            self._tc_walk_expr(expr.callee, False, fn_name)
+            for arg in expr.args:
+                self._tc_walk_expr(arg, False, fn_name)
+        elif isinstance(expr, A.MethodCall):
+            if tail:
+                self.tail_calls.append(
+                    (fn_name, expr.line, expr.col, expr.method))
+            self._tc_walk_expr(expr.base, False, fn_name)
+            for arg in expr.args:
+                self._tc_walk_expr(arg, False, fn_name)
+        elif isinstance(expr, A.Lambda):
+            self._tc_walk_stmts(expr.body.stmts, True, fn_name)
+        elif isinstance(expr, A.Try):
+            self._tc_walk_expr(expr.expr, False, fn_name)
+        elif isinstance(expr, A.BinOp):
+            self._tc_walk_expr(expr.left, False, fn_name)
+            self._tc_walk_expr(expr.right, False, fn_name)
+        elif isinstance(expr, A.UnaryOp):
+            self._tc_walk_expr(expr.expr, False, fn_name)
+        elif isinstance(expr, A.Index):
+            self._tc_walk_expr(expr.base, False, fn_name)
+            self._tc_walk_expr(expr.index, False, fn_name)
+        elif isinstance(expr, A.TupleIndex):
+            self._tc_walk_expr(expr.base, False, fn_name)
+        elif isinstance(expr, A.FieldAccess):
+            self._tc_walk_expr(expr.base, False, fn_name)
+        elif isinstance(expr, A.Cast):
+            self._tc_walk_expr(expr.expr, False, fn_name)
+        elif isinstance(expr, A.StructLit):
+            for _field, value in expr.fields:
+                self._tc_walk_expr(value, False, fn_name)
+        elif isinstance(expr, (A.ArrayLit, A.TupleLit)):
+            for item in expr.elems:
+                self._tc_walk_expr(item, False, fn_name)
+        elif isinstance(expr, A.RangeLit):
+            self._tc_walk_expr(expr.start, False, fn_name)
+            self._tc_walk_expr(expr.end, False, fn_name)
+        # Var / literals / enum-variant names: leaves, nothing to walk.
+
+    def _tc_walk_stmts(self, stmts, tail_ctx, fn_name):
+        for i, stmt in enumerate(stmts):
+            last = (i == len(stmts) - 1)
+            if isinstance(stmt, A.Return):
+                if stmt.expr is not None:
+                    self._tc_walk_expr(stmt.expr, True, fn_name)
+            elif isinstance(stmt, A.ExprStmt):
+                self._tc_walk_expr(stmt.expr, tail_ctx and last, fn_name)
+            elif isinstance(stmt, A.If):
+                self._tc_walk_expr(stmt.cond, False, fn_name)
+                self._tc_walk_stmts(stmt.then.stmts, tail_ctx and last,
+                                    fn_name)
+                if stmt.els is not None:
+                    self._tc_walk_stmts(stmt.els.stmts, tail_ctx and last,
+                                        fn_name)
+            elif isinstance(stmt, A.While):
+                self._tc_walk_expr(stmt.cond, False, fn_name)
+                self._tc_walk_stmts(stmt.body.stmts, False, fn_name)
+            elif isinstance(stmt, A.For):
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+                self._tc_walk_stmts(stmt.body.stmts, False, fn_name)
+            elif isinstance(stmt, A.Match):
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+                for _pat, arm_body in stmt.arms:
+                    self._tc_walk_stmts(arm_body.stmts, tail_ctx and last,
+                                        fn_name)
+            elif isinstance(stmt, A.Block):
+                self._tc_walk_stmts(stmt.stmts, tail_ctx and last, fn_name)
+            elif isinstance(stmt, A.Scope):
+                self._tc_walk_stmts(stmt.body.stmts, False, fn_name)
+            elif isinstance(stmt, A.Let):
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+            elif isinstance(stmt, A.Assign):
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+            elif isinstance(stmt, A.IndexAssign):
+                self._tc_walk_expr(stmt.base, False, fn_name)
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+            elif isinstance(stmt, A.FieldAssign):
+                self._tc_walk_expr(stmt.target, False, fn_name)
+                self._tc_walk_expr(stmt.expr, False, fn_name)
+            elif isinstance(stmt, A.Spawn):
+                self._tc_walk_expr(stmt.call, False, fn_name)
+            elif isinstance(stmt, A.Defer):
+                self._tc_walk_expr(stmt.call, False, fn_name)
+            # Break / Continue: nothing to walk. NestedFn / ComptimeIf /
+            # Yield / NamedExpr are resolved during checking and are
+            # gone by the time this pass runs.
+
+    def _analyze_tail_calls(self):
+        """Walk every walkable function (the _infer_error_sets
+        filter: body present, not extern, not a generic template)
+        and record its tail calls in program order; print them to
+        stderr when the dump flag is set."""
+        self.tail_calls = []
+        for fn in self.program.funcs:
+            if fn.body is None or fn.is_extern:
+                continue
+            if getattr(fn, "type_params", None):
+                continue  # generic template: checked only on instantiation
+            self._tc_walk_stmts(fn.body.stmts, True, fn.name)
+        if self.dump_tail_calls:
+            import sys
+            for fn_name, line, col, callee in self.tail_calls:
+                sys.stderr.write(
+                    f"tail call: fn {fn_name} {line}:{col} {callee}\n")
 
     def instantiate_func(self, fn, bindings, call_line, call_col):
         """Check a concrete copy of a generic function; return it."""
@@ -4961,7 +5120,8 @@ class Checker:
 
 
 def check(program, require_main=True, freestanding=False, dump_error_sets=False,
-          target=None):
+          target=None, dump_tail_calls=False):
     Checker(program, freestanding,
             dump_error_sets=dump_error_sets,
-            target=target).check(require_main=require_main)
+            target=target,
+            dump_tail_calls=dump_tail_calls).check(require_main=require_main)
