@@ -1,0 +1,17 @@
+// Top-500 #77 demo: nested function definitions.
+// `fn name(params) -> Ret { body }` as a statement inside a function
+// body. The binding lives in the enclosing block, is visible after
+// its declaration line, captures by value (read-only, like closures),
+// and may be passed or returned like any closure. v1: no recursion,
+// no shadowing a top-level fn or a parameter, not generic, not in
+// match arms or comptime-if branches; native only (big32/WASM keep
+// their named Lambda rejections; freestanding keeps the named
+// lambda error).
+fn main() -> int {
+    let base: int = 10;
+    fn helper(y: int) -> int { return y + base; }
+    fn dbl(y: int) -> int { return y * 2; }
+    println(helper(5));
+    println(dbl(21));
+    return 0;
+}

@@ -49,6 +49,26 @@ class FuncDef:
 
 
 @dataclass
+class NestedFn:
+    # A nested function definition (Top-500 #77): `fn name(params)
+    # -> Ret { body }` as a STATEMENT inside a function body.
+    # The parser produces it; the checker desugars it in place
+    # to `let name = fn(params) -> Ret { body };` (an ordinary
+    # Lambda binding) before the statement is checked, so infer
+    # and all three codegens never see one. `-> Ret` is required
+    # (a missing return type is a parse error). type_params is
+    # non-empty only for a generic nested fn, which the checker
+    # rejects with a named error in v1 (F5A).
+    name: str
+    params: list
+    ret: str
+    body: object
+    line: int
+    col: int
+    type_params: list = None
+
+
+@dataclass
 class Pattern:
     """One match-arm pattern (Top-500 #69: value patterns).
 

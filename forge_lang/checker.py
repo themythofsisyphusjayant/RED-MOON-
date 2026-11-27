@@ -2189,6 +2189,180 @@ class Checker:
         out.append(stmt)
         return out
 
+    # -- Top-500 #77: nested function definitions --------
+    # The parser builds NestedFn statement nodes; this
+    # checker-side desugar (the #70/#72/#74 precedent) rewrites
+    # each one in place to `let name = fn(params) -> Ret {
+    # body };` in _check_stmts, before the statement is
+    # checked — infer and all three codegens see an ordinary
+    # Lambda binding and need no change.
+    def _check_nestedfn_decl(self, stmt):
+        """Validate a nested-fn declaration before it is
+        desugared (Top-500 #77, DESIGN §3.5): generic (F5A),
+        shadowing a top-level fn or a parameter (F3A), and
+        self-reference (F2A, via the scope-tracking scan)."""
+        if stmt.type_params:
+            raise ForgeError("generic nested functions are not supported in v1",
+                             stmt.line, stmt.col)
+        if stmt.name in self.funcs:
+            raise ForgeError(f"nested function '{stmt.name}' shadows top-level function '{stmt.name}'",
+                             stmt.line, stmt.col)
+        # Enclosing parameters: the outermost function's param
+        # scope (scopes[0]) plus every enclosing lambda frame's
+        # param scope (at the frame's boundary index).
+        params = set(self.scopes[0].keys()) if self.scopes else set()
+        for frame in self._lambda_frames:
+            b = frame["boundary"]
+            if b < len(self.scopes):
+                params |= set(self.scopes[b].keys())
+        if stmt.name in params:
+            raise ForgeError(f"nested function '{stmt.name}' shadows parameter '{stmt.name}'",
+                             stmt.line, stmt.col)
+        self._nestedfn_scan(stmt.body, stmt.name, [set()])
+
+    def _nestedfn_scan(self, node, name, scopes):
+        """Self-reference scan for one nested fn (Top-500 #77,
+        F2A): raise the named v1 error when `name` is referenced
+        (call, value use, or assignment target) inside its own
+        body. `scopes` is a stack of name sets for the body
+        itself: a reference counts only when no enclosing scope
+        in the body rebinds the name (an inner `let fact`
+        shadows it). Lambda and nested-fn bodies are descended
+        into with their parameter scopes — a nested lambda
+        calling the outer fn is indirect recursion, also v1.
+        Enum variants and builtins of the same name are not
+        references to the binding."""
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                self._nestedfn_scan(x, name, scopes)
+            return
+        if not hasattr(node, "__dataclass_fields__"):
+            return
+        if isinstance(node, A.Block):
+            scopes.append(set())
+            try:
+                for s in node.stmts:
+                    self._nestedfn_scan(s, name, scopes)
+            finally:
+                scopes.pop()
+            return
+        if isinstance(node, A.Let):
+            self._nestedfn_scan(node.expr, name, scopes)
+            scopes[-1].add(node.name)
+            return
+        if isinstance(node, A.Assign):
+            if (node.name == name and not any(name in s for s in scopes)
+                    and name not in self.enum_variants
+                    and name not in BUILTINS):
+                raise ForgeError(
+                    f"nested function '{name}' cannot call itself in v1 "
+                    f"(use a top-level function or a loop)",
+                    node.line, node.col)
+            self._nestedfn_scan(node.expr, name, scopes)
+            return
+        if isinstance(node, A.Call):
+            if (node.name == name and not any(name in s for s in scopes)
+                    and name not in self.enum_variants
+                    and name not in BUILTINS):
+                raise ForgeError(
+                    f"nested function '{name}' cannot call itself in v1 "
+                    f"(use a top-level function or a loop)",
+                    node.line, node.col)
+            for a in node.args:
+                self._nestedfn_scan(a, name, scopes)
+            return
+        if isinstance(node, A.Var):
+            if (node.name == name and not any(name in s for s in scopes)
+                    and name not in self.enum_variants
+                    and name not in BUILTINS):
+                raise ForgeError(
+                    f"nested function '{name}' cannot call itself in v1 "
+                    f"(use a top-level function or a loop)",
+                    node.line, node.col)
+            return
+        if isinstance(node, A.Lambda):
+            scopes.append({pn for pn, _pt in node.params})
+            try:
+                self._nestedfn_scan(node.body, name, scopes)
+            finally:
+                scopes.pop()
+            return
+        if isinstance(node, A.NestedFn):
+            # A nested fn inside the body: its own desugar scans
+            # it for ITS name; a reference to the OUTER name here
+            # is an outer self-reference (the inner binding is
+            # not in scope yet when the inner body is checked),
+            # so descend with only the inner params in scope.
+            scopes.append({pn for pn, _pt in node.params})
+            try:
+                self._nestedfn_scan(node.body, name, scopes)
+            finally:
+                scopes.pop()
+            return
+        if isinstance(node, A.For):
+            self._nestedfn_scan(node.expr, name, scopes)
+            scopes.append({node.name})
+            try:
+                self._nestedfn_scan(node.body, name, scopes)
+            finally:
+                scopes.pop()
+            return
+        if isinstance(node, A.Match):
+            self._nestedfn_scan(node.expr, name, scopes)
+            for pat, body in node.arms:
+                scopes.append(set())
+                try:
+                    if pat.binding:
+                        scopes[-1].add(pat.binding)
+                    for _fname, fp in (pat.fields or []):
+                        if fp.kind == "binding":
+                            scopes[-1].add(fp.value)
+                    self._nestedfn_scan(body, name, scopes)
+                finally:
+                    scopes.pop()
+            return
+        # Generic: recurse into every dataclass/list/tuple field
+        # (If/While/ComptimeIf branches, Return/ExprStmt/Defer/
+        # Spawn/Scope, IndexAssign/FieldAssign targets, and all
+        # expression children — a NestedFn cannot appear inside
+        # an expression except in a Lambda body, handled above).
+        for f in node.__dataclass_fields__:
+            self._nestedfn_scan(getattr(node, f), name, scopes)
+
+    def _nestedfn_forbidden_scan(self, stmts, where):
+        """Raise when a NestedFn statement appears in a forbidden
+        context (Top-500 #77, F4A): match arms or comptime-if
+        branches. Walks statement lists only — a NestedFn inside
+        a lambda body is a new function context and is checked by
+        the lambda's own statement lists, so Lambda bodies are
+        not descended into."""
+        for stmt in stmts:
+            if isinstance(stmt, A.NestedFn):
+                raise ForgeError(
+                    f"nested functions are not allowed in {where} in v1",
+                    stmt.line, stmt.col)
+            if isinstance(stmt, A.Block):
+                self._nestedfn_forbidden_scan(stmt.stmts, where)
+            elif isinstance(stmt, A.If):
+                self._nestedfn_forbidden_scan(stmt.then.stmts, where)
+                if stmt.els is not None:
+                    self._nestedfn_forbidden_scan(stmt.els.stmts, where)
+            elif isinstance(stmt, A.While):
+                self._nestedfn_forbidden_scan(stmt.body.stmts, where)
+            elif isinstance(stmt, A.For):
+                self._nestedfn_forbidden_scan(stmt.body.stmts, where)
+            elif isinstance(stmt, A.Match):
+                for _pat, body in stmt.arms:
+                    self._nestedfn_forbidden_scan(body.stmts, where)
+            elif isinstance(stmt, A.ComptimeIf):
+                self._nestedfn_forbidden_scan(stmt.then.stmts, where)
+                if stmt.els is not None:
+                    self._nestedfn_forbidden_scan(stmt.els.stmts, where)
+            elif isinstance(stmt, A.Scope):
+                self._nestedfn_forbidden_scan(stmt.body.stmts, where)
+
     def _check_stmts(self, stmts):
         """Check a statement list, splicing each ComptimeIf in place
         (Top-500 #70): the statement is replaced by the taken
@@ -2199,12 +2373,45 @@ class Checker:
         satisfies the enclosing checks. The splice mutates the
         list object, so infer/codegen (which walk the same
         program) see resolved code and never meet a ComptimeIf."""
+        # Top-500 #77: nested-fn names already declared in THIS
+        # statement list — a second nested fn of the same name
+        # in one block is a named error (each block gets its own
+        # set: nested blocks call _check_stmts recursively).
+        nestedfn_names = set()
         i = 0
         while i < len(stmts):
             stmt = stmts[i]
             if isinstance(stmt, A.ComptimeIf):
+                # Top-500 #77 (F4A): a nested fn in a comptime-if
+                # branch is a named error — scan BOTH branches
+                # here, before resolving: the discarded branch
+                # is parsed only, so scanning only the taken
+                # branch (in _resolve_comptime_if) would miss
+                # it, and the hosted resolve pass (which runs
+                # before comptime resolution) flags both.
+                self._nestedfn_forbidden_scan(stmt.then.stmts, "comptime-if branches")
+                if stmt.els is not None:
+                    self._nestedfn_forbidden_scan(stmt.els.stmts, "comptime-if branches")
                 stmts[i:i + 1] = self._resolve_comptime_if(stmt)
                 continue
+            if isinstance(stmt, A.NestedFn):
+                # Top-500 #77: checker-side desugar (the
+                # #70/#72/#74 precedent) — rewrite in place to
+                # `let name = fn(params) -> Ret { body };` and
+                # check the Let. The validations raise before
+                # the rewrite, so no invalid nested fn is ever
+                # desugared.
+                if stmt.name in nestedfn_names:
+                    raise ForgeError(
+                        f"nested function '{stmt.name}' is already defined in this block",
+                        stmt.line, stmt.col)
+                nestedfn_names.add(stmt.name)
+                self._check_nestedfn_decl(stmt)
+                stmt = A.Let(stmt.name, False, None,
+                             A.Lambda(stmt.params, stmt.ret, stmt.body,
+                                      stmt.line, stmt.col),
+                             stmt.line, stmt.col)
+                stmts[i] = stmt
             if isinstance(stmt, (A.If, A.While)):
                 # Top-500 #72: desugar walruses in the condition
                 # into binding statements spliced before it. Only
@@ -2372,6 +2579,13 @@ class Checker:
             # one. A Yield here means a new statement-list walker
             # was added without going through the transform.
             raise ForgeError("internal error: unresolved yield",
+                             stmt.line, stmt.col)
+        if isinstance(stmt, A.NestedFn):
+            # Top-500 #77: unreachable — _check_stmts desugars
+            # every NestedFn before check_stmt sees one. A
+            # NestedFn here means a new statement-list walker
+            # was added without going through _check_stmts.
+            raise ForgeError("internal error: unresolved nested function",
                              stmt.line, stmt.col)
         if isinstance(stmt, A.ComptimeIf):
             # Top-500 #70: unreachable — _check_stmts splices
@@ -2595,6 +2809,13 @@ class Checker:
                     raise ForgeError(f"use of moved value '{base.name}'",
                                      stmt.line, stmt.col)
                 vt, _mutable = self.lookup(base.name, stmt.line, stmt.col)
+                # Top-500 #77 (p6 fix): a write-only captured
+                # array element never runs through the Var
+                # branch of check_expr, so record the capture
+                # here — otherwise the lambda's env has no slot
+                # for the array and the C compile fails with
+                # `'buf' undeclared` in the lambda.
+                self._record_capture(base.name)
                 et = elem_type(vt)
             elif isinstance(base, A.FieldAccess):
                 # e.g. m.vals[i] = v — array contents, not a rebinding,
@@ -2643,6 +2864,11 @@ class Checker:
                                  stmt.line, stmt.col)
             return
         if isinstance(stmt, A.Match):
+            # Top-500 #77 (F4A): a nested fn in a match arm is a
+            # named error, not silently desugared when the arm
+            # body is checked below.
+            for _pat, _body in stmt.arms:
+                self._nestedfn_forbidden_scan(_body.stmts, "match arms")
             et = self.check_expr(stmt.expr)
             match_before_moved, match_before_fields = set(self.moved), set(self.moved_fields)
             match_before_pinned = set(self.pinned)

@@ -4849,6 +4849,14 @@ fn check_stmt(c0: HChecker, n: Node) -> HChecker {
         // walker was added without going through the transform.
         fail_at(n.line, n.col, "internal error: unresolved yield");
     }
+    if n.kind == 53 {
+        // Top-500 #77: unreachable — resolve_nestedfn_prog in
+        // check_program desugars every NestedFn before
+        // check_stmt sees one. A NestedFn here means a new
+        // statement-list walker was added without going through
+        // the transform.
+        fail_at(n.line, n.col, "internal error: unresolved nested function");
+    }
     if n.kind == 9 {
         // Bare block statement: a new scope (mirrors Python
         // check_stmt dispatching Block to check_block).
@@ -11536,6 +11544,332 @@ fn resolve_walrus_prog(prog: Node) -> Node {
     return w_resolve_node(prog, names, ll, lw);
 }
 
+// ---------- Top-500 #77: nested function definitions ----------
+// Checker-side desugar (the #70/#72/#74 precedent: a
+// deterministic program-level tree-rebuilding pass, run once at
+// check_program entry and once in compile_to_c on the merged
+// program). A nested fn `fn name(params) -> Ret { body }` (kind
+// 53) becomes `let name = fn(params) -> Ret { body };` (a Let
+// node holding a Lambda, kind 47) before checking, so infer and
+// all three codegens see an ordinary closure binding. Order is
+// FORCED: generators -> walrus -> nestedfn -> comptime, in both
+// check_program and compile_to_c — the pass must run BEFORE
+// comptime resolution (a nested fn inside a comptime branch is
+// a named error, and the branch context is gone after the
+// splice). Idempotent: a second pass finds no kind-53 node and
+// returns the program untouched (the desugared form is a plain
+// Let+Lambda, indistinguishable from a user-written one).
+// Error strings are identical in both compilers (DESIGN.md §3.5).
+
+// True when the tree contains a NestedFn (kind 53) anywhere.
+fn nf_has_nestedfn(n: Node) -> bool {
+    if n.kind == 53 {
+        return true;
+    }
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        if nf_has_nestedfn(n.kids[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Scan one statement list in order, threading the shadowed
+// count through it (a Let in the list declares its name for
+// the statements that follow). Returns the shadowed count
+// after the list.
+fn nf_scan_stmts(stmts: [Node], name: str, shadowed: int, enum_vars: [str], builtins: [str]) -> int {
+    let mut s: int = shadowed;
+    let mut i: int = 0;
+    while i < len(stmts) {
+        s = nf_scan_node(stmts[i], name, s, enum_vars, builtins);
+        i = i + 1;
+    }
+    return s;
+}
+
+// Self-reference scan (F2A): fail when `name` is referenced
+// (call, value use, or assignment target) inside its own body.
+// `shadowed` counts the enclosing scopes in the body that
+// rebind `name` (only declarations of the target name matter —
+// every other binding is irrelevant to whether a reference
+// resolves to the nested fn). Enum variants and builtins of the
+// same name are not references to the binding. Returns the
+// shadowed count after the node.
+fn nf_scan_node(n: Node, name: str, shadowed: int, enum_vars: [str], builtins: [str]) -> int {
+    if n.kind == 9 {
+        // Block: declarations inside do not leak out.
+        nf_scan_stmts(n.kids, name, shadowed, enum_vars, builtins);
+        return shadowed;
+    }
+    if n.kind == 10 {
+        // Let: the RHS is checked before the binding exists,
+        // so scan it first, then declare the name.
+        nf_scan_node(n.kids[0], name, shadowed, enum_vars, builtins);
+        if n.name == name {
+            return shadowed + 1;
+        }
+        return shadowed;
+    }
+    if n.kind == 11 {
+        // Assign: the target name itself is a reference.
+        if n.name == name && shadowed == 0 && !w_bound(enum_vars, n.name) && !w_bound(builtins, n.name) {
+            fail_at(n.line, n.col, "nested function '" + name + "' cannot call itself in v1 (use a top-level function or a loop)");
+        }
+        nf_scan_node(n.kids[0], name, shadowed, enum_vars, builtins);
+        return shadowed;
+    }
+    if n.kind == 34 {
+        // Var: a value use of the name.
+        if n.name == name && shadowed == 0 && !w_bound(enum_vars, n.name) && !w_bound(builtins, n.name) {
+            fail_at(n.line, n.col, "nested function '" + name + "' cannot call itself in v1 (use a top-level function or a loop)");
+        }
+        return shadowed;
+    }
+    if n.kind == 35 {
+        // Call: check the callee name, then scan the args.
+        if n.name == name && shadowed == 0 && !w_bound(enum_vars, n.name) && !w_bound(builtins, n.name) {
+            fail_at(n.line, n.col, "nested function '" + name + "' cannot call itself in v1 (use a top-level function or a loop)");
+        }
+        let mut s: int = shadowed;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            s = nf_scan_node(n.kids[i], name, s, enum_vars, builtins);
+            i = i + 1;
+        }
+        return s;
+    }
+    if n.kind == 47 || n.kind == 53 || n.kind == 2 {
+        // Lambda / nested fn / fn: a new function context —
+        // the params shadow the name for the body only.
+        let mut s: int = shadowed;
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let k: Node = n.kids[i];
+            if k.kind == 43 && k.name == name {
+                s = s + 1;
+            } else if k.kind == 9 {
+                nf_scan_node(k, name, s, enum_vars, builtins);
+            }
+            i = i + 1;
+        }
+        return shadowed;
+    }
+    if n.kind == 16 {
+        // For: the iterable is scanned in the current scope;
+        // the loop variable shadows the name in the body only.
+        nf_scan_node(n.kids[0], name, shadowed, enum_vars, builtins);
+        let mut s: int = shadowed;
+        if n.name == name {
+            s = s + 1;
+        }
+        nf_scan_node(n.kids[1], name, s, enum_vars, builtins);
+        return shadowed;
+    }
+    if n.kind == 20 {
+        // Match: the scrutinee in the current scope; each arm
+        // body with its bindings shadowing the name.
+        nf_scan_node(n.kids[0], name, shadowed, enum_vars, builtins);
+        let mut a: int = 1;
+        while a < len(n.kids) {
+            let arm: Node = n.kids[a];
+            let mut s: int = shadowed;
+            if arm.sval == name {
+                s = s + 1;
+            }
+            let mut fi: int = 1;
+            while fi < len(arm.kids) {
+                let fp: Node = arm.kids[fi];
+                if fp.label == "binding" && fp.sval == name {
+                    s = s + 1;
+                }
+                fi = fi + 1;
+            }
+            nf_scan_node(arm.kids[0], name, s, enum_vars, builtins);
+            a = a + 1;
+        }
+        return shadowed;
+    }
+    // Generic: scan every kid in order, threading the count.
+    let mut s: int = shadowed;
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        s = nf_scan_node(n.kids[i], name, s, enum_vars, builtins);
+        i = i + 1;
+    }
+    return s;
+}
+
+// Rewrite one statement list with the nested-fn desugar.
+// `params` is the flat list of enclosing function/lambda
+// parameter names (for the F3A shadow check); `top_fns` the
+// base names of top-level fns; `in_match`/`in_comptime` the
+// forbidden contexts (reset to false inside a function/lambda
+// body — a new function context). Returns the new statement
+// list.
+fn nf_rewrite_stmts(stmts: [Node], top_fns: [str], params: [str], in_match: bool, in_comptime: bool, enum_vars: [str], builtins: [str]) -> [Node] {
+    let mut out: [Node] = [];
+    let mut seen: [str] = [];
+    let mut i: int = 0;
+    while i < len(stmts) {
+        let n: Node = stmts[i];
+        if n.kind == 53 {
+            // NestedFn: validate, then desugar to Let+Lambda.
+            if in_match {
+                fail_at(n.line, n.col, "nested functions are not allowed in match arms in v1");
+            }
+            if in_comptime {
+                fail_at(n.line, n.col, "nested functions are not allowed in comptime-if branches in v1");
+            }
+            let sp: [str] = split_tparams(n.name);
+            let base: str = sp[0];
+            if sp[1] != "" {
+                fail_at(n.line, n.col, "generic nested functions are not supported in v1");
+            }
+            if w_bound(top_fns, base) {
+                fail_at(n.line, n.col, "nested function '" + base + "' shadows top-level function '" + base + "'");
+            }
+            if w_bound(params, base) {
+                fail_at(n.line, n.col, "nested function '" + base + "' shadows parameter '" + base + "'");
+            }
+            if w_bound(seen, base) {
+                fail_at(n.line, n.col, "nested function '" + base + "' is already defined in this block");
+            }
+            push(seen, base);
+            // F2A: self-reference scan of the body (the body
+            // Block's own statement list, shadowed starts at 0).
+            let body: Node = n.kids[len(n.kids) - 1];
+            nf_scan_stmts(body.kids, base, 0, enum_vars, builtins);
+            // Desugar: `let name = fn(params) -> Ret { body };`
+            // — an immutable Let holding a Lambda built from
+            // the NestedFn's own Param kids and body Block.
+            let mut lam: Node = new_node(47, n.line, n.col);
+            lam.sval = n.sval;
+            lam.kids = n.kids;
+            let mut l: Node = new_node(10, n.line, n.col);
+            l.name = base;
+            l.bval = false;
+            l.sval = "";
+            l.kids = [lam];
+            push(out, l);
+        } else {
+            push(out, nf_resolve_node(n, top_fns, params, in_match, in_comptime, enum_vars, builtins));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn nf_resolve_node(n: Node, top_fns: [str], params: [str], in_match: bool, in_comptime: bool, enum_vars: [str], builtins: [str]) -> Node {
+    if n.kind == 9 {
+        // Block: the only place statement lists live.
+        return ct_with_kids(n, nf_rewrite_stmts(n.kids, top_fns, params, in_match, in_comptime, enum_vars, builtins));
+    }
+    if n.kind == 2 || n.kind == 47 {
+        // FuncDef/Lambda: a new function context — the
+        // forbidden contexts reset, and the params join the
+        // enclosing parameter list for the body.
+        let mut params2: [str] = params;
+        let mut kids2: [Node] = [];
+        let mut i: int = 0;
+        while i < len(n.kids) {
+            let k: Node = n.kids[i];
+            if k.kind == 43 {
+                push(params2, k.name);
+                push(kids2, k);
+            } else if k.kind == 9 {
+                push(kids2, nf_resolve_node(k, top_fns, params2, false, false, enum_vars, builtins));
+            } else {
+                push(kids2, k);
+            }
+            i = i + 1;
+        }
+        return ct_with_kids(n, kids2);
+    }
+    if n.kind == 20 {
+        // Match: the scrutinee keeps the current context; each
+        // arm body is a match-arm context.
+        let scr: Node = nf_resolve_node(n.kids[0], top_fns, params, in_match, in_comptime, enum_vars, builtins);
+        let mut kids2: [Node] = [scr];
+        let mut a: int = 1;
+        while a < len(n.kids) {
+            let arm: Node = n.kids[a];
+            let body2: Node = nf_resolve_node(arm.kids[0], top_fns, params, true, in_comptime, enum_vars, builtins);
+            let mut akids: [Node] = [body2];
+            let mut f: int = 1;
+            while f < len(arm.kids) {
+                push(akids, arm.kids[f]);
+                f = f + 1;
+            }
+            push(kids2, ct_with_kids(arm, akids));
+            a = a + 1;
+        }
+        return ct_with_kids(n, kids2);
+    }
+    if n.kind == 49 {
+        // ComptimeIf: both branches are comptime contexts (the
+        // taken branch is chosen later, by the comptime
+        // resolve — a nested fn in EITHER branch is the named
+        // error, matching the Python checker, which scans both
+        // branches before resolving).
+        let mut kids2: [Node] = [n.kids[0]];
+        let mut i: int = 1;
+        while i < len(n.kids) {
+            push(kids2, nf_resolve_node(n.kids[i], top_fns, params, in_match, true, enum_vars, builtins));
+            i = i + 1;
+        }
+        return ct_with_kids(n, kids2);
+    }
+    if n.kind == 16 {
+        // For: the loop variable is in scope for the body only;
+        // it is not a parameter (a nested fn named like it is
+        // the plain-let shadowing shape, unprobed in v1).
+        let expr2: Node = nf_resolve_node(n.kids[0], top_fns, params, in_match, in_comptime, enum_vars, builtins);
+        let body2: Node = nf_resolve_node(n.kids[1], top_fns, params, in_match, in_comptime, enum_vars, builtins);
+        return ct_with_kids(n, [expr2, body2]);
+    }
+    // Generic: rebuild every kid in place.
+    let mut kids2: [Node] = [];
+    let mut i: int = 0;
+    while i < len(n.kids) {
+        push(kids2, nf_resolve_node(n.kids[i], top_fns, params, in_match, in_comptime, enum_vars, builtins));
+        i = i + 1;
+    }
+    return ct_with_kids(n, kids2);
+}
+
+// The entry point: the program with every nested fn desugared,
+// or the original node untouched when there is nothing to do.
+fn resolve_nestedfn_prog(prog: Node) -> Node {
+    if !nf_has_nestedfn(prog) {
+        return prog;
+    }
+    // Top-level fn base names (F3A) and enum variant names
+    // (self-reference scan exclusions) from the program kids.
+    let mut top_fns: [str] = [];
+    let mut enum_vars: [str] = [];
+    let mut i: int = 0;
+    while i < len(prog.kids) {
+        let n: Node = prog.kids[i];
+        if n.kind == 2 {
+            let sp: [str] = split_tparams(n.name);
+            push(top_fns, sp[0]);
+        }
+        if n.kind == 4 {
+            let mut j: int = 0;
+            while j < len(n.kids) {
+                push(enum_vars, n.kids[j].name);
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    let params: [str] = [];
+    return nf_resolve_node(prog, top_fns, params, false, false, enum_vars, builtin_names());
+}
+
 // Set a checker's Target fields from the CLI facts, validating
 // the target name (mirrors forge_lang/checker.py make_target).
 fn ct_set_target(c0: HChecker, target: str, mode: str, debug: bool) -> HChecker {
@@ -11578,6 +11912,12 @@ fn check_program(prog: Node, freestanding: bool, fn_files: [str], dump_error_set
     // Let/Assign/Var nodes. (compile_to_c resolves it on the
     // merged program too, so run_infer/codegen see it as well.)
     p = resolve_walrus_prog(p);
+    // Top-500 #77: desugar nested fns (`fn name(...) -> Ret`)
+    // before checking, so the checker/infer/codegen see only
+    // ordinary Let+Lambda nodes. Runs AFTER walrus and BEFORE
+    // comptime (the comptime branch context must still be in
+    // the tree for the F4A named error).
+    p = resolve_nestedfn_prog(p);
     // Top-500 #70: resolve `comptime if` before checking, so the
     // checker sees resolved code (the same resolved program is
     // what compile_to_c hands to run_infer/codegen_program).

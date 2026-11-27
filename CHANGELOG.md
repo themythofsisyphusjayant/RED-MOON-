@@ -8,6 +8,36 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Nested function definitions, Top-500 #77 (27 Nov 2026,
+  Sprint Day 7, both compilers; Jayant's word 27 Nov: "Build #77 as
+  recommended" — all recommended options F1A–F6A):
+  `fn name(params) -> Ret { body }` as a STATEMENT inside a function
+  body (Python `def` shape), `-> Ret` required (missing return type
+  is a parse error). Checker-side desugar rewrites it in place to
+  `let name = fn(params) -> Ret { body };` BEFORE the body's
+  statements are checked (Python `_check_stmts`, hosted
+  program-level `resolve_nestedfn_prog` in selfhost_check.fg,
+  running AFTER walrus and BEFORE comptime); no infer change, no
+  codegen change. Binding lives in the ENCLOSING BLOCK, visible
+  AFTER its declaration line, dies at block end, NOT hoisted
+  (use-before-def is the existing `undefined function` error).
+  Capture by value, read-only, exactly like closures (#101). Own
+  test tests/test_nestedfn_v1.py 65/65 ALL PASS both compilers.
+  ASan program-side 36/36 leak-clean; compiler-side 4/4 == the #74
+  table EXACTLY, ZERO growth (dump-flag 612/36, check-wrapper
+  7384/293, codegen 12188/468, cli 12286/474). Emit compare 106
+  PASS, 0 FAIL. v1 limits: NO recursion (named error); may NOT
+  shadow a top-level fn name or a parameter name (named check-time
+  errors); NOT in match arms or comptime-if branches in v1 (named
+  errors); a nested fn itself is NOT generic (named error); NATIVE
+  ONLY in v1 — big32/WASM codegen reject Lambda outright (the plain
+  fn-literal form fails identically, so this is a pre-existing
+  closure limit, not a #77 gap); freestanding keeps the existing
+  named lambda error. In-slice fix (p6, pre-existing Python-only
+  bug): the capture collector missed write-only captured array
+  element writes — single-site fix in the `IndexAssign` Var-base
+  branch of `check_stmt`.
+
 - Generator functions / yield (Python), Top-500 #74 (26 Nov 2026,
   Sprint Day 6, both compilers; Jayant's word 26 Nov: "Build as
   recommended — Python-style yield, checker desugar"):

@@ -314,6 +314,18 @@ class Formatter:
             # Top-500 #74: `yield <expr>;` — same shape as return.
             self.emit(indent, f"yield {fmt_expr(stmt.expr)};")
             return
+        if isinstance(stmt, A.NestedFn):
+            # Top-500 #77: `fn name(params) -> Ret { ... }` — the
+            # return type ALWAYS prints, even `-> void`: the
+            # parser requires `-> Ret` on a nested fn, so
+            # dropping it would not re-parse (unlike top-level
+            # fns, where `-> void` is optional).
+            params = ", ".join(f"{n}: {t}" for n, t in stmt.params)
+            tp = f"<{', '.join(stmt.type_params)}>" if getattr(stmt, "type_params", None) else ""
+            self.emit(indent, f"fn {stmt.name}{tp}({params}) -> {stmt.ret} {{")
+            self.fmt_block(stmt.body, indent + 1)
+            self.emit(indent, "}")
+            return
         if isinstance(stmt, A.ExprStmt):
             self.emit(indent, f"{fmt_expr(stmt.expr)};")
             return

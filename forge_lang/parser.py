@@ -702,6 +702,28 @@ class Parser:
                 else:
                     els = self.parse_block()
             return A.ComptimeIf(pred, then, els, kw.line, kw.col)
+        if self.at_kw("fn") and self.peek(1).kind == "IDENT":
+            # Top-500 #77: nested function definition as a
+            # statement: `fn name(params) -> Ret { body }`
+            # (Python `def` shape). Only claimed when a name
+            # follows `fn`; `fn(...)` is still a lambda
+            # expression statement, parsed by the general case
+            # below. `-> Ret` is required — a missing return
+            # type is a parse error.
+            kw = self.next()
+            name = self.expect_ident()
+            type_params = self.parse_type_params()
+            params = self.parse_param_list()
+            if not self.at_op("->"):
+                raise ForgeError(
+                    f"nested function '{name.value}' must declare a "
+                    f"return type (-> Ret)",
+                    name.line, name.col)
+            self.next()
+            ret = self.parse_type()
+            body = self.parse_block()
+            return A.NestedFn(name.value, params, ret, body, kw.line,
+                              kw.col, type_params=type_params)
         if self.at_kw("let"):
             kw = self.next()
             mutable = False

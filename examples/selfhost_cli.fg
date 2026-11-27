@@ -919,6 +919,11 @@ fn compile_to_c(path: str, freestanding: bool, mode: str, no_bounds_checks: bool
     // for the same reason (run_infer/codegen must see the
     // desugared program, not NamedExpr nodes).
     merged = resolve_walrus_prog(merged);
+    // Top-500 #77: desugar nested fns once, here, for the same
+    // reason — AFTER walrus, BEFORE comptime (the comptime
+    // branch context must still be in the tree for the F4A
+    // named error).
+    merged = resolve_nestedfn_prog(merged);
     // Top-500 #70: resolve `comptime if` once, here — check_program,
     // run_infer and codegen_program all see the same resolved
     // program (the hosted driver's one-mutated-program rule).
