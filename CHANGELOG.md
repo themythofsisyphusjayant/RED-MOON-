@@ -8,6 +8,27 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Single-threaded event loops (Node), Top-500 #80 (27 Nov 2026,
+  Sprint Day 7, LIBRARY slice, both compilers; no design word from
+  Jayant — forks F1–F7 recorded for his pick): `forge_lang/stdlib/
+  eventloop.fg` — `EvTask { kind: int; due_us: int; interval_us:
+  int; cb: fn() -> int }`, `EventLoop { tasks: [EvTask]; outbox:
+  [EvTask]; out_n: [int]; ran: int; stopped: bool }`; `el_new()` /
+  `el_new_cap(cap)`, `el_post`, `el_after`, `el_every` (explicit-now
+  posting), `el_post_now` / `el_post_at` / `el_post_every` (re-entrant
+  posting from callbacks via a pre-allocated outbox), `el_tick`
+  (due order, ties in posting order, at most once per tick),
+  `el_run` (live driver on `clock_micros()`), `el_pending` /
+  `el_ran` / `el_stopped`. Callback return 0 = continue, 1 = stop
+  the loop at once. Own test tests/test_eventloop_v1.py 43/43 ALL
+  PASS both compilers. ASan program-side 34/34 leak-clean;
+  compiler-side 4/4 == the #78 table EXACTLY, ZERO growth
+  (dump-flag 612/36, check-wrapper 7384/293, codegen 12188/468,
+  cli 12286/474 — re-measured by the pipeline run after two SIGKILLs).
+  v1 limits: NATIVE ONLY; no sleep
+  (`el_run` busy-waits); no real I/O readiness (#278); outbox
+  fixed-capacity (default 64). Demo examples/eventloop_demo.fg.
+
 - Nested function definitions, Top-500 #77 (27 Nov 2026,
   Sprint Day 7, both compilers; Jayant's word 27 Nov: "Build #77 as
   recommended" — all recommended options F1A–F6A):

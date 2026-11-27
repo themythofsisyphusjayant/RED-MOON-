@@ -1,0 +1,221 @@
+// Qasida — single-threaded event loops (Top-500 #80).
+// Import with: import "eventloop.fg";
+// A loop shape for servers without threads (Node-style): tasks are
+// posted, timers fire when due, callbacks run to completion one at
+// a time, and the loop runs until there is nothing left to do (or a
+// callback stops it). el_tick(l, now_us) drives the loop on a
+// caller-supplied clock (exact, deterministic); el_run(l) is the
+// live driver on clock_micros(). Callbacks are fn() -> int closures
+// over a caller-owned shared [int] buffer (closures capture by
+// value; captured scalars are read-only in v1 — the loopelse/fsm
+// pattern). Callback return code: 0 = continue, 1 = stop the loop
+// (other codes are treated as continue).
+//
+// Re-entrant posting: a callback posts with el_post_now /
+// el_post_at / el_post_every, which write into a pre-allocated
+// outbox (default 64 slots) shared with the loop — push on a
+// captured array copy-on-writes (probe p4), so callbacks MUST NOT
+// call the value API el_post/el_after/el_every (the post would be
+// lost in a discarded copy). A post past outbox capacity returns -1
+// and is dropped.
+// v1 limits: NATIVE ONLY (big32 rejects the fn-typed struct field,
+// WASM rejects the lambda, freestanding rejects the array literal);
+// no sleep — el_run busy-waits on clock_micros() between due times,
+// so long waits belong to el_tick with a caller-supplied clock; no
+// real I/O readiness (#278) — callbacks can poll non-blocking
+// sources, but the loop does not wake on them; done one-shot slots
+// are never compacted; intervals are clamped to >= 1us at creation;
+// a repeating timer fires at most once per el_tick call (no
+// catch-up when the virtual clock jumps ahead); re-arm is at due +
+// interval (fixed-rate).
+// Verified 27 Nov 2026 (Sprint Day 7).
+
+struct EvTask {
+    kind: int;
+    due_us: int;
+    interval_us: int;
+    cb: fn() -> int;
+}
+
+struct EventLoop {
+    tasks: [EvTask];
+    outbox: [EvTask];
+    out_n: [int];
+    ran: int;
+    stopped: bool;
+}
+
+fn el_noop() -> int {
+    return 0;
+}
+
+fn el_now_us() -> int {
+    return clock_micros();
+}
+
+fn el_new_cap(cap: int) -> EventLoop {
+    let mut ob: [EvTask] = [];
+    let mut i: int = 0;
+    while i < cap {
+        push(ob, EvTask { kind: 0, due_us: 0, interval_us: 0, cb: el_noop });
+        i = i + 1;
+    }
+    return EventLoop { tasks: [], outbox: ob, out_n: [0], ran: 0, stopped: false };
+}
+
+fn el_new() -> EventLoop {
+    return el_new_cap(64);
+}
+
+fn el_post(l: EventLoop, cb: fn() -> int) -> EventLoop {
+    let mut n: EventLoop = l;
+    push(n.tasks, EvTask { kind: 1, due_us: 0, interval_us: 0, cb: cb });
+    return n;
+}
+
+fn el_after(l: EventLoop, now_us: int, delay_us: int, cb: fn() -> int) -> EventLoop {
+    let mut n: EventLoop = l;
+    push(n.tasks, EvTask { kind: 1, due_us: now_us + delay_us, interval_us: 0, cb: cb });
+    return n;
+}
+
+fn el_every(l: EventLoop, now_us: int, interval_us: int, cb: fn() -> int) -> EventLoop {
+    let mut n: EventLoop = l;
+    let mut iv: int = interval_us;
+    if iv < 1 {
+        iv = 1;
+    }
+    push(n.tasks, EvTask { kind: 2, due_us: now_us + iv, interval_us: iv, cb: cb });
+    return n;
+}
+
+fn el_post_out(l: EventLoop, kind: int, due_us: int, interval_us: int, cb: fn() -> int) -> int {
+    let mut n: EventLoop = l;
+    let idx: int = n.out_n[0];
+    if idx >= len(n.outbox) {
+        return -1;
+    }
+    n.outbox[idx] = EvTask { kind: kind, due_us: due_us, interval_us: interval_us, cb: cb };
+    n.out_n[0] = n.out_n[0] + 1;
+    return 0;
+}
+
+fn el_post_now(l: EventLoop, cb: fn() -> int) -> int {
+    return el_post_out(l, 1, 0, 0, cb);
+}
+
+fn el_post_at(l: EventLoop, due_us: int, cb: fn() -> int) -> int {
+    return el_post_out(l, 1, due_us, 0, cb);
+}
+
+fn el_post_every(l: EventLoop, first_due_us: int, interval_us: int, cb: fn() -> int) -> int {
+    let mut iv: int = interval_us;
+    if iv < 1 {
+        iv = 1;
+    }
+    return el_post_out(l, 2, first_due_us, iv, cb);
+}
+
+fn el_pending(l: EventLoop) -> int {
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(l.tasks) {
+        if l.tasks[i].kind != 0 {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c + l.out_n[0];
+}
+
+fn el_ran(l: EventLoop) -> int {
+    return l.ran;
+}
+
+fn el_stopped(l: EventLoop) -> bool {
+    return l.stopped;
+}
+
+fn el_tick(l: EventLoop, now_us: int) -> EventLoop {
+    let mut n: EventLoop = l;
+    while true {
+        let mut order: [int] = [];
+        let mut seen: [bool] = [];
+        let mut k: int = 0;
+        while k < len(n.tasks) {
+            push(seen, false);
+            k = k + 1;
+        }
+        while true {
+            let mut best: int = -1;
+            let mut i: int = 0;
+            while i < len(n.tasks) {
+                let t: EvTask = n.tasks[i];
+                if t.kind != 0 && !seen[i] && t.due_us <= now_us {
+                    if best < 0 {
+                        best = i;
+                    } else {
+                        let bt: EvTask = n.tasks[best];
+                        if t.due_us < bt.due_us {
+                            best = i;
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+            if best < 0 {
+                break;
+            }
+            seen[best] = true;
+            push(order, best);
+        }
+        let mut oi: int = 0;
+        while oi < len(order) {
+            let idx: int = order[oi];
+            let t: EvTask = n.tasks[idx];
+            let f: fn() -> int = t.cb;
+            let code: int = f();
+            n.ran = n.ran + 1;
+            if code == 1 {
+                n.tasks[idx] = EvTask { kind: 0, due_us: 0, interval_us: 0, cb: el_noop };
+                n.stopped = true;
+                break;
+            }
+            if t.kind == 1 {
+                n.tasks[idx] = EvTask { kind: 0, due_us: 0, interval_us: 0, cb: el_noop };
+            } else {
+                n.tasks[idx] = EvTask { kind: 2, due_us: t.due_us + t.interval_us, interval_us: t.interval_us, cb: t.cb };
+            }
+            oi = oi + 1;
+        }
+        let mut j: int = 0;
+        let mut drained: int = 0;
+        while j < n.out_n[0] {
+            let ot: EvTask = n.outbox[j];
+            if ot.kind != 0 {
+                push(n.tasks, ot);
+                drained = drained + 1;
+            }
+            j = j + 1;
+        }
+        n.out_n[0] = 0;
+        if n.stopped {
+            return n;
+        }
+        if drained == 0 {
+            return n;
+        }
+    }
+    return n;
+}
+
+fn el_run(l: EventLoop) -> EventLoop {
+    let mut n: EventLoop = l;
+    while !n.stopped {
+        if el_pending(n) == 0 {
+            return n;
+        }
+        n = el_tick(n, el_now_us());
+    }
+    return n;
+}

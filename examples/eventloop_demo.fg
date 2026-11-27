@@ -1,0 +1,41 @@
+import "eventloop.fg";
+
+fn six() -> int {
+    println(6);
+    return 0;
+}
+
+fn main() -> int {
+    let buf: [int] = [0];
+    let mut l: EventLoop = el_new();
+    let immediate = fn() -> int {
+        println(1);
+        el_post_now(l, six);
+        return 0;
+    };
+    let tick = fn() -> int {
+        buf[0] = buf[0] + 1;
+        println(buf[0] + 2);
+        if buf[0] >= 3 {
+            return 1;
+        }
+        return 0;
+    };
+    let once = fn() -> int {
+        println(2);
+        return 0;
+    };
+    let now: int = el_now_us();
+    l = el_post(l, immediate);
+    l = el_after(l, now, 250000, once);
+    l = el_every(l, now, 100000, tick);
+    l = el_run(l);
+    println(el_ran(l));
+    println(el_pending(l));
+    if el_stopped(l) {
+        println(1);
+    } else {
+        println(0);
+    }
+    return 0;
+}
