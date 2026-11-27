@@ -2,7 +2,7 @@
 
 A statically typed language that compiles to native code — and compiles itself.
 
-[![Qasida v2.3.0](https://img.shields.io/badge/Qasida-v2.3.0-blue)](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0)
+[![Qasida v2.4.0](https://img.shields.io/badge/Qasida-v2.4.0-blue)](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.4.0)
 [![PyPI](https://img.shields.io/pypi/v/qasida.svg)](https://pypi.org/project/qasida/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -31,22 +31,22 @@ What Qasida is **not**: a Rust or Go replacement, a kernel language, a browser l
 
 | Measure | Value |
 |---|---|
-| Language version | 2.3.0 (16 Nov 2026) |
+| Language version | 2.4.0 (27 Nov 2026) |
 | Compiler | Self-hosted — the Qasida compiler compiles itself, and is the default since 11 Nov 2026 (Python fallback: `forge.py --python`, or `QASIDA_COMPILER=python`) |
 | Install | `pip install qasida` (PyPI, live since 16 Nov 2026) |
-| Qasida code in repo | 793 `.fg` files, ~54,000 lines (counted 21 Nov 2026) |
-| Standard library | 269 modules in `forge_lang/stdlib/` |
+| Qasida code in repo | 1,406 `.fg` files, ~97,000 lines (counted 27 Nov 2026) |
+| Standard library | 552 modules in `forge_lang/stdlib/` |
 | Registry packages | 30 in `packages/` |
-| Library program | 71 complete / 62 partial / 367 to build of 500 (recount, 11 Nov 2026) |
+| Library program | 398 complete / 9 partial / 93 to build of 500 (79.6%, 27 Nov 2026) |
 | License | MIT |
 
-## What's new in 2.3.0
+## What's new in 2.4.0
 
-Released 16 Nov 2026 — [v2.3.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0) · `pip install qasida`
+Released 27 Nov 2026 — [v2.4.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.4.0) · `pip install qasida`
 
-- **Quant latency, complete.** Three fixes, each verified to the full bar (bootstrap 7/7 byte-identical, corpus 99/99, regression 62/62, fuzz 86/86 both modes, parity 96/96, suite PASS both modes): bounds-check hoisting and overflow narrowing, loop-guard placement, and `-march=native` as the safe-mode default, with `--portable` reproducing the old `-O2` behaviour exactly. Measured results are in [Performance](#performance) below.
-- **Trig builtins.** `sin`, `cos`, `tan` lower directly to libm, plus a Box–Muller Monte Carlo they unblock. The trig demo is byte-identical to its C reference.
-- **40 new standard-library modules**, added 13–16 Nov 2026 and verified under both compilers, including async, channels, datetime, huffman, tarball, unittest, worker pools, bandits, clustering, and lightweight ML framework shims (xgboost-lite, lightgbm-lite, keras-lite, transformers-lite, detection-lite, segmentation-lite, agents-lite, ppo-lite).
+- **Top-500 sprint week: 398 of 500 (79.6%).** Since 2.3.0 the count climbed from 373 to 398: inferred error sets (#50), crash dumps (#60), labeled break/continue (#62), range syntax and wildcard match arms (#67, #76), value patterns in match (#69), comptime if (#70), walrus assignment expressions (#72), generator functions (#74), nested function definitions (#77), a checker-verified tail-call guarantee (#78), and single-threaded event loops (#80). Each landed to the full bar (bootstrap 7/7 byte-identical, full suite PASS under both compilers).
+- **Real decoders and a public registry.** PNG decoder v2 (pure Qasida, 51 checks byte-exact), JPEG decoder 30/30 against PIL, and the public package registry live on GitHub Pages (30 packages).
+- **Sprint library batches.** The Day 3 error-cluster libraries, Day 4 control-flow libraries, and Day 5 ergonomics (trailing commas, shadowing, underscore bindings) — all verified under both compilers.
 
 ## Quickstart
 
@@ -54,7 +54,7 @@ Requirements: Python 3 and a C compiler (`cc` / `gcc`).
 
 ```sh
 pip install qasida
-qasida --version       # Qasida 2.3.0
+qasida --version       # Qasida 2.4.0
 ```
 
 On systems with externally managed Python (Debian/Ubuntu), install into a virtual environment instead:
@@ -369,10 +369,10 @@ flowchart TD
 
 | Track | State |
 |---|---|
-| Language 2.3.0 | Released 16 Nov 2026, on PyPI; self-hosted compiler is the default |
+| Language 2.4.0 | Released 27 Nov 2026, on PyPI; self-hosted compiler is the default |
 | Quant latency (Fixes 1–3) | Complete and verified to the full bar; re-measured 20 Nov, held within noise |
 | Compile speed (Steps 2–6) | Done at 2.2.0, but the 20 Nov re-test shows the codegen case regressed 34% and Python now beats hosted on large emits — under investigation, not yet fixed |
-| Standard library | 269 modules; 40 added 13–16 Nov; Top-500 at 71/500 complete |
+| Standard library | 552 modules; Top-500 at 398/500 complete (79.6%, 27 Nov 2026) |
 | big32 backend | Verified programs run identically on x86, Python model, and Verilog; freestanding track in progress toward a bootable kernel |
 | MOON-OS | Separate repo; OS work continues there, in Qasida |
 | VS Code extension | Complete, unpublished (needs a publisher account) |
@@ -385,7 +385,7 @@ Qasida is production-oriented, not a finished Rust/Go/Mojo rival. The public reg
 ## Links
 
 - **PyPI:** [pypi.org/project/qasida](https://pypi.org/project/qasida/) — `pip install qasida`
-- **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest: [v2.3.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.3.0)
+- **Releases:** [github.com/themythofsisyphusjayant/RED-MOON-/releases](https://github.com/themythofsisyphusjayant/RED-MOON-/releases) — latest: [v2.4.0](https://github.com/themythofsisyphusjayant/RED-MOON-/releases/tag/v2.4.0)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 - **Docs:** [docs/HIGH_SCHOOL_GUIDE.md](docs/HIGH_SCHOOL_GUIDE.md) (start here) · [docs/TOUR.md](docs/TOUR.md) · [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) · [docs/FREESTANDING.md](docs/FREESTANDING.md) · [docs/STABILITY.md](docs/STABILITY.md) · [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
 - **OS track:** [MOON-OS](https://github.com/themythofsisyphusjayant/MOON-OS) · **CPU track:** [BIG-32](https://github.com/themythofsisyphusjayant/BIG-32)

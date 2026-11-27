@@ -8,6 +8,8 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+## 2.4.0 — 27 Nov 2026
+
 - Single-threaded event loops (Node), Top-500 #80 (27 Nov 2026,
   Sprint Day 7, LIBRARY slice, both compilers; no design word from
   Jayant — forks F1–F7 recorded for his pick): `forge_lang/stdlib/
