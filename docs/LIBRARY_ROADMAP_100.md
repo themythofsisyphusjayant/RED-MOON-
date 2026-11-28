@@ -472,3 +472,33 @@ mbox, dma, crc, temp. Full-suite log: forge_suite_daily_20261102_*.log.
   xhover.fg (cross-language hover tables), lto.fg
   (cross-module dead/inline analysis), allocfree.fg
   (alloc-free loop analysis). HAVE 330 -> 345 (69% of 500).
+
+- Daily batch — 28 Nov 2026 (first day after the sprint week, normal
+  10+10 rule; verified by qasida run demos + per-item _v1 tests, both
+  compilers, fmt-clean, ASan-clean on demos):
+  DONE now (new): lu (#2, LU decomposition w/ partial pivoting),
+  rat (#7, exact rational; note: fractions.fg already existed with a
+  partial Frac API — rat is the specified Rat/rat_* API),
+  polyfit (#11, least-squares fit + Horner eval + max residual),
+  huff (#58, Huffman-lite, canonical codes; note: huffman.fg is a
+  fixed 4-symbol toy — huff is the frequency-built item),
+  md5 (#61, RFC 1321 vectors incl. 55/56-byte boundary),
+  cliparse (#54, flags/subcommands; note: cli.fg already existed
+  with a raw-[str] 3-arg cli_opt — cliparse is the struct-based
+  successor; do not import both),
+  retry (#75, backoff + jitter; note: retry-backoff.fg already
+  existed with a different 0-based API — retry.fg is the specified
+  struct-based API),
+  knn (#92, kNN classifier + proba + accuracy),
+  emailparse (#118, parse only; imports pre-existing strutils.fg),
+  randchoice (#5, choice + shuffle + sample over a seeded LCG;
+  tuple API, so native-only — big32/WASM reject; do not import
+  alongside rand.fg, whose int-returning rand_next shadows it).
+  OS apps (MOON-OS): chgrp, pgrep, pidof, killall, w, finger,
+  logger, iostat, lscpu, blkid (tests/test_daily_20261128_os.py,
+  40 checks, 0 failures, both compilers).
+  NOTE (formatter behaviour, confirmed again today): `forge.py fmt`
+  strips ALL `//` comments from .fg files, so library headers live
+  here in the roadmap note, not in the files (per the 10 Nov 2026
+  precedent); OS app files keep their headers restored byte-identical
+  after fmt (code is fmt-canonical, headers intact).

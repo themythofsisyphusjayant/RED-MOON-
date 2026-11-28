@@ -1,0 +1,32 @@
+import "huff.fg";
+
+fn arr_eq(a: [int], b: [int]) -> bool {
+    if len(a) != len(b) {
+        return false;
+    }
+    let mut i: int = 0;
+    while i < len(a) {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn main() {
+    let d1: [int] = [97, 97, 97, 97, 97, 98, 98, 98, 99, 99];
+    println(huff_compressed_len(d1));
+    println(arr_eq(huff_decompress(huff_compress(d1)), d1));
+    let d2: [int] = [97, 97, 98, 98, 99, 99, 100, 100];
+    println(huff_compressed_len(d2));
+    println(arr_eq(huff_decompress(huff_compress(d2)), d2));
+    let d3: [int] = [122, 122, 122, 122, 122, 122];
+    println(huff_compressed_len(d3));
+    println(arr_eq(huff_decompress(huff_compress(d3)), d3));
+    let d4: [int] = [];
+    println(huff_compressed_len(d4));
+    println(arr_eq(huff_decompress(huff_compress(d4)), d4));
+    println(huff_code_len(d1, 97));
+    println(huff_code_len(d1, 99));
+}

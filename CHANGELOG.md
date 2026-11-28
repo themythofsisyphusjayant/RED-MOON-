@@ -8,6 +8,37 @@ without a major version bump (see docs/STABILITY.md).
 
 ## Unreleased
 
+- Daily-ten 28 Nov 2026 (first day after the libs-only sprint week;
+  normal 10+10 rule resumed): 10 libraries + 10 native OS apps, all
+  verified under both compilers, fmt-clean, ASan-clean on demos.
+  Libraries (roadmap items; pure .fg): `lu.fg` (LU decomposition
+  with partial pivoting: lu_solve / lu_det / lu_factor; tests/
+  test_lu_v1.py 19/19), `rat.fg` (exact rational arithmetic: Rat,
+  rat_new/add/sub/mul/div/eq/cmp/to_string/to_float; test_rat_v1.py
+  14/14), `polyfit.fg` (least-squares polynomial fit: polyfit /
+  poly_eval / poly_fit_err; test_polyfit_v1.py 15/15), `huff.fg`
+  (Huffman-lite: huff_compress/decompress, canonical codes,
+  huff_code_len; test_huff_v1.py 14/14), `md5.fg` (MD5, RFC 1321
+  vectors incl. the 55/56-byte padding boundary; test_md5_v1.py
+  13/13), `cliparse.fg` (CLI flags/subcommands: cli_parse /
+  cli_flag / cli_opt / cli_pos / cli_sub / cli_opt_or;
+  test_cliparse_v1.py 14/14), `retry.fg` (retry with backoff +
+  jitter: RetryPolicy, retry_delay / retry_jitter /
+  retry_should_retry / retry_delays; test_retry_v1.py 15/15),
+  `knn.fg` (k-nearest neighbours: knn_dist / knn_predict /
+  knn_predict_proba / knn_accuracy; test_knn_v1.py 15/15),
+  `emailparse.fg` (email header/body parse, folded headers,
+  case-insensitive names; test_emailparse_v1.py 14/14),
+  `randchoice.fg` (seeded choice/shuffle/sample over an LCG:
+  rand_seed / rand_next / rand_choice / rand_shuffle / rand_sample;
+  test_randchoice_v1.py 24/24, incl. big32/WASM tuple gates).
+  OS apps (MOON-OS, tests/test_daily_20261128_os.py 40 checks,
+  0 failures, both compilers): chgrp, pgrep, pidof, killall, w,
+  finger, logger, iostat, lscpu, blkid. Top-500 unchanged at HAVE
+  398/500 (no catalog GAP maps to this batch). Lifetime allocator
+  v2 adoption into the unified kernel still BLOCKED (adopted kernel
+  4319 words > 4096-word model imem; unified alone 3825 words).
+
 ## 2.4.0 — 27 Nov 2026
 
 - Single-threaded event loops (Node), Top-500 #80 (27 Nov 2026,

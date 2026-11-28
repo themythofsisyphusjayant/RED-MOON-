@@ -1,0 +1,8 @@
+import "md5.fg";
+
+fn main() {
+    println(md5_hex(""));
+    println(md5_hex("abc"));
+    println(md5_hex("The quick brown fox jumps over the lazy dog"));
+    println(md5_hex("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123"));
+}

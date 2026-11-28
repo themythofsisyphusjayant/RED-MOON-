@@ -1,0 +1,103 @@
+import "strutils.fg";
+
+struct Email {
+    from: str;
+    to: str;
+    subject: str;
+    date: str;
+    body: str;
+}
+
+struct EmailHdrs {
+    names: [str];
+    vals: [str];
+}
+
+fn email_find_colon(line: str) -> int {
+    let mut i: int = 0;
+    while i < len(line) {
+        if substr(line, i, 1) == ":" {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn email_parse_headers(raw: str) -> EmailHdrs {
+    let mut names: [str] = [];
+    let mut vals: [str] = [];
+    let lines: [str] = split(raw, "\n");
+    let mut i: int = 0;
+    while i < len(lines) {
+        let ln: str = lines[i];
+        if len(trim(ln)) == 0 {
+            break;
+        }
+        if starts_with(ln, " ") || starts_with(ln, "\t") {
+            if len(vals) > 0 {
+                let last: int = len(vals) - 1;
+                vals[last] = vals[last] + " " + trim(ln);
+            }
+        } else {
+            let c: int = email_find_colon(ln);
+            if c >= 0 {
+                push(names, str_lower(trim(substr(ln, 0, c))));
+                push(vals, trim(substr(ln, c + 1, len(ln) - c - 1)));
+            }
+        }
+        i = i + 1;
+    }
+    return EmailHdrs { names: names, vals: vals };
+}
+
+fn email_header(raw: str, name: str) -> str {
+    let h: EmailHdrs = email_parse_headers(raw);
+    let want: str = str_lower(name);
+    let mut i: int = 0;
+    while i < len(h.names) {
+        if h.names[i] == want {
+            return h.vals[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn email_has_header(raw: str, name: str) -> bool {
+    let h: EmailHdrs = email_parse_headers(raw);
+    let want: str = str_lower(name);
+    let mut i: int = 0;
+    while i < len(h.names) {
+        if h.names[i] == want {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn email_body(raw: str) -> str {
+    let lines: [str] = split(raw, "\n");
+    let mut i: int = 0;
+    while i < len(lines) {
+        if len(trim(lines[i])) == 0 {
+            let mut out: str = "";
+            let mut j: int = i + 1;
+            while j < len(lines) {
+                if j > i + 1 {
+                    out = out + "\n";
+                }
+                out = out + lines[j];
+                j = j + 1;
+            }
+            return out;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn email_parse(raw: str) -> Email {
+    return Email { from: email_header(raw, "From"), to: email_header(raw, "To"), subject: email_header(raw, "Subject"), date: email_header(raw, "Date"), body: email_body(raw) };
+}

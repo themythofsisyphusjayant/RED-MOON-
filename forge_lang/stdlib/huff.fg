@@ -1,0 +1,339 @@
+fn huff_pow2(i: int) -> int {
+    let mut p: int = 1;
+    let mut k: int = 0;
+    while k < i {
+        p = p * 2;
+        k = k + 1;
+    }
+    return p;
+}
+
+fn huff_lengths(data: [int]) -> [int] {
+    let mut freq: [int] = [];
+    let mut i: int = 0;
+    while i < 256 {
+        push(freq, 0);
+        i = i + 1;
+    }
+    for b in data {
+        freq[b] = freq[b] + 1;
+    }
+    let mut n: int = 0;
+    let mut s: int = 0;
+    while s < 256 {
+        if freq[s] > 0 {
+            n = n + 1;
+        }
+        s = s + 1;
+    }
+    let mut lens: [int] = [];
+    i = 0;
+    while i < 256 {
+        push(lens, 0);
+        i = i + 1;
+    }
+    if n == 0 {
+        return lens;
+    }
+    if n == 1 {
+        s = 0;
+        while s < 256 {
+            if freq[s] > 0 {
+                lens[s] = 1;
+            }
+            s = s + 1;
+        }
+        return lens;
+    }
+    let mut w: [int] = [];
+    let mut lf: [int] = [];
+    let mut rt: [int] = [];
+    let mut sy: [int] = [];
+    let mut pa: [int] = [];
+    let mut al: [int] = [];
+    s = 0;
+    while s < 256 {
+        if freq[s] > 0 {
+            push(w, freq[s]);
+            push(lf, -1);
+            push(rt, -1);
+            push(sy, s);
+            push(pa, -1);
+            push(al, 1);
+        }
+        s = s + 1;
+    }
+    let mut nlive: int = n;
+    while nlive > 1 {
+        let mut a: int = -1;
+        let mut b: int = -1;
+        let mut k: int = 0;
+        while k < len(w) {
+            if al[k] == 1 {
+                if a == -1 {
+                    a = k;
+                } else if b == -1 {
+                    if w[k] < w[a] || w[k] == w[a] && k < a {
+                        b = a;
+                        a = k;
+                    } else {
+                        b = k;
+                    }
+                } else if w[k] < w[a] || w[k] == w[a] && k < a {
+                    b = a;
+                    a = k;
+                } else if w[k] < w[b] || w[k] == w[b] && k < b {
+                    b = k;
+                }
+            }
+            k = k + 1;
+        }
+        al[a] = 0;
+        al[b] = 0;
+        push(w, w[a] + w[b]);
+        push(lf, a);
+        push(rt, b);
+        push(sy, -1);
+        push(pa, -1);
+        push(al, 1);
+        let ni: int = len(w) - 1;
+        pa[a] = ni;
+        pa[b] = ni;
+        nlive = nlive - 1;
+    }
+    let mut li: int = 0;
+    while li < n {
+        let mut d: int = 0;
+        let mut cur: int = li;
+        while pa[cur] != -1 {
+            d = d + 1;
+            cur = pa[cur];
+        }
+        lens[sy[li]] = d;
+        li = li + 1;
+    }
+    return lens;
+}
+
+fn huff_canonical(lens: [int]) -> [int] {
+    let mut code: [int] = [];
+    let mut i: int = 0;
+    while i < 256 {
+        push(code, 0);
+        i = i + 1;
+    }
+    let mut syms: [int] = [];
+    let mut s: int = 0;
+    while s < 256 {
+        if lens[s] > 0 {
+            push(syms, s);
+        }
+        s = s + 1;
+    }
+    if len(syms) == 0 {
+        return code;
+    }
+    let mut a: int = 0;
+    while a < len(syms) {
+        let mut best: int = a;
+        let mut b: int = a + 1;
+        while b < len(syms) {
+            let sb: int = syms[b];
+            let so: int = syms[best];
+            if lens[sb] < lens[so] || lens[sb] == lens[so] && sb < so {
+                best = b;
+            }
+            b = b + 1;
+        }
+        let tmp: int = syms[a];
+        syms[a] = syms[best];
+        syms[best] = tmp;
+        a = a + 1;
+    }
+    let mut cur: int = 0;
+    let mut prev: int = lens[syms[0]];
+    let mut j: int = 0;
+    while j < len(syms) {
+        let sj: int = syms[j];
+        cur = cur << lens[sj] - prev;
+        code[sj] = cur;
+        cur = cur + 1;
+        prev = lens[sj];
+        j = j + 1;
+    }
+    return code;
+}
+
+fn huff_compress(data: [int]) -> [int] {
+    let lens: [int] = huff_lengths(data);
+    let code: [int] = huff_canonical(lens);
+    let mut n: int = 0;
+    let mut s: int = 0;
+    while s < 256 {
+        if lens[s] > 0 {
+            n = n + 1;
+        }
+        s = s + 1;
+    }
+    let mut out: [int] = [];
+    push(out, n >> 8);
+    push(out, n & 255);
+    s = 0;
+    while s < 256 {
+        if lens[s] > 0 {
+            push(out, s);
+            push(out, lens[s]);
+        }
+        s = s + 1;
+    }
+    let ln: int = len(data);
+    push(out, ln >> 24 & 255);
+    push(out, ln >> 16 & 255);
+    push(out, ln >> 8 & 255);
+    push(out, ln & 255);
+    let mut acc: int = 0;
+    let mut nb: int = 0;
+    for b in data {
+        let c: int = code[b];
+        let l: int = lens[b];
+        let mut k: int = l - 1;
+        while k >= 0 {
+            acc = acc * 2 + (c >> k & 1);
+            nb = nb + 1;
+            if nb == 8 {
+                push(out, acc);
+                acc = 0;
+                nb = 0;
+            }
+            k = k - 1;
+        }
+    }
+    if nb > 0 {
+        push(out, acc << 8 - nb);
+    }
+    return out;
+}
+
+fn huff_decompress(comp: [int]) -> [int] {
+    if len(comp) < 6 {
+        fail("huff_decompress: stream too short");
+    }
+    let n: int = comp[0] << 8 | comp[1];
+    if n > 256 {
+        fail("huff_decompress: bad symbol count");
+    }
+    let hlen: int = 2 + 2 * n + 4;
+    if len(comp) < hlen {
+        fail("huff_decompress: truncated header");
+    }
+    let mut lens: [int] = [];
+    let mut i: int = 0;
+    while i < 256 {
+        push(lens, 0);
+        i = i + 1;
+    }
+    let mut p: int = 2;
+    let mut k: int = 0;
+    let mut maxlen: int = 0;
+    while k < n {
+        let s: int = comp[p];
+        let l: int = comp[p + 1];
+        if l < 1 || l > 30 {
+            fail("huff_decompress: bad code length");
+        }
+        if lens[s] != 0 {
+            fail("huff_decompress: duplicate symbol");
+        }
+        lens[s] = l;
+        if l > maxlen {
+            maxlen = l;
+        }
+        p = p + 2;
+        k = k + 1;
+    }
+    let olen: int = comp[p] << 24 | comp[p + 1] << 16 | comp[p + 2] << 8 | comp[p + 3];
+    p = p + 4;
+    if n == 0 {
+        if olen != 0 {
+            fail("huff_decompress: empty stream with nonzero length");
+        }
+        if len(comp) != hlen {
+            fail("huff_decompress: trailing bytes");
+        }
+        return [];
+    }
+    if n == 1 {
+        if maxlen != 1 {
+            fail("huff_decompress: single-symbol code length is not 1");
+        }
+    } else {
+        let mut kraft: int = 0;
+        let mut s2: int = 0;
+        while s2 < 256 {
+            if lens[s2] > 0 {
+                kraft = kraft + huff_pow2(maxlen - lens[s2]);
+            }
+            s2 = s2 + 1;
+        }
+        if kraft != huff_pow2(maxlen) {
+            fail("huff_decompress: code table is not a complete prefix code");
+        }
+    }
+    let code: [int] = huff_canonical(lens);
+    let mut out: [int] = [];
+    let mut cur: int = 0;
+    let mut cl: int = 0;
+    let mut bitpos: int = 0;
+    let total_bits: int = (len(comp) - p) * 8;
+    while len(out) < olen {
+        if bitpos >= total_bits {
+            fail("huff_decompress: truncated bitstream");
+        }
+        let byte: int = comp[p + bitpos / 8];
+        let bit: int = byte >> 7 - bitpos % 8 & 1;
+        bitpos = bitpos + 1;
+        cur = cur << 1 | bit;
+        cl = cl + 1;
+        if cl > maxlen {
+            fail("huff_decompress: no code matches");
+        }
+        let mut found: int = -1;
+        let mut s3: int = 0;
+        while s3 < 256 {
+            if lens[s3] == cl && code[s3] == cur {
+                found = s3;
+            }
+            s3 = s3 + 1;
+        }
+        if found != -1 {
+            push(out, found);
+            cur = 0;
+            cl = 0;
+        }
+    }
+    let used_bytes: int = (bitpos + 7) / 8;
+    if len(comp) != p + used_bytes {
+        fail("huff_decompress: trailing bytes");
+    }
+    while bitpos % 8 != 0 {
+        let byte2: int = comp[p + bitpos / 8];
+        let bit2: int = byte2 >> 7 - bitpos % 8 & 1;
+        if bit2 != 0 {
+            fail("huff_decompress: nonzero padding");
+        }
+        bitpos = bitpos + 1;
+    }
+    return out;
+}
+
+fn huff_code_len(data: [int], sym: int) -> int {
+    if sym < 0 || sym > 255 {
+        return 0;
+    }
+    let lens: [int] = huff_lengths(data);
+    return lens[sym];
+}
+
+fn huff_compressed_len(data: [int]) -> int {
+    return len(huff_compress(data));
+}

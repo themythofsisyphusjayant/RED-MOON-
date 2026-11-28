@@ -1,0 +1,25 @@
+import "randchoice.fg";
+
+fn main() {
+    let items: [int] = [10, 20, 30, 40, 50];
+    let mut s: int = rand_seed(42);
+    let c = rand_choice(s, items);
+    println(c.0);
+    s = c.1;
+    let nums: [int] = [1, 2, 3, 4, 5];
+    let sh = rand_shuffle(s, nums);
+    let shuffled: [int] = sh.0;
+    s = sh.1;
+    let mut i = 0;
+    while i < len(shuffled) {
+        println(shuffled[i]);
+        i = i + 1;
+    }
+    let sm = rand_sample(s, items, 3);
+    let sample: [int] = sm.0;
+    let mut j = 0;
+    while j < len(sample) {
+        println(sample[j]);
+        j = j + 1;
+    }
+}

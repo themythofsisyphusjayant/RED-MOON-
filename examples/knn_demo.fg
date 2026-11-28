@@ -1,0 +1,15 @@
+import "knn.fg";
+
+fn main() {
+    let train_x: [[float]] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [5.0, 5.0], [6.0, 5.0], [5.0, 6.0], [6.0, 6.0]];
+    let train_y: [int] = [0, 0, 0, 0, 1, 1, 1, 1];
+    let k: int = 3;
+    println("dist (0,0)-(3,4) =", knn_dist([0.0, 0.0], [3.0, 4.0]));
+    println("pred (0.5,0.5) =", knn_predict(train_x, train_y, [0.5, 0.5], k));
+    println("pred (5.5,5.5) =", knn_predict(train_x, train_y, [5.5, 5.5], k));
+    println("pred (3,3) =", knn_predict(train_x, train_y, [3.0, 3.0], k));
+    println("proba (3,3) =", knn_predict_proba(train_x, train_y, [3.0, 3.0], k));
+    let test_x: [[float]] = [[0.0, 0.0], [6.0, 6.0], [3.0, 3.0], [4.0, 4.0]];
+    let test_y: [int] = [0, 1, 0, 0];
+    println("accuracy =", knn_accuracy(train_x, train_y, test_x, test_y, k));
+}

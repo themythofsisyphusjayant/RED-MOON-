@@ -1,0 +1,107 @@
+struct Rat {
+    num: int;
+    den: int;
+}
+
+fn rat_gcd(a: int, b: int) -> int {
+    let mut x: int = a;
+    if x < 0 {
+        x = 0 - x;
+    }
+    let mut y: int = b;
+    if y < 0 {
+        y = 0 - y;
+    }
+    while y != 0 {
+        let t: int = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn rat_int_str(n: int) -> str {
+    if n == 0 {
+        return "0";
+    }
+    let mut neg: bool = false;
+    let mut x: int = n;
+    if x < 0 {
+        neg = true;
+        x = 0 - x;
+    }
+    let digits: str = "0123456789";
+    let mut out: str = "";
+    while x > 0 {
+        out = substr(digits, x % 10, 1) + out;
+        x = x / 10;
+    }
+    if neg {
+        return "-" + out;
+    }
+    return out;
+}
+
+fn rat_new(n: int, d: int) -> Rat {
+    if d == 0 {
+        fail("rat_new: zero denominator");
+    }
+    let mut num: int = n;
+    let mut den: int = d;
+    if den < 0 {
+        num = 0 - num;
+        den = 0 - den;
+    }
+    let g: int = rat_gcd(num, den);
+    if g > 1 {
+        num = num / g;
+        den = den / g;
+    }
+    return Rat { num: num, den: den };
+}
+
+fn rat_add(a: Rat, b: Rat) -> Rat {
+    return rat_new(a.num * b.den + b.num * a.den, a.den * b.den);
+}
+
+fn rat_sub(a: Rat, b: Rat) -> Rat {
+    return rat_new(a.num * b.den - b.num * a.den, a.den * b.den);
+}
+
+fn rat_mul(a: Rat, b: Rat) -> Rat {
+    return rat_new(a.num * b.num, a.den * b.den);
+}
+
+fn rat_div(a: Rat, b: Rat) -> Rat {
+    if b.num == 0 {
+        fail("rat_div: division by zero");
+    }
+    return rat_new(a.num * b.den, a.den * b.num);
+}
+
+fn rat_eq(a: Rat, b: Rat) -> bool {
+    return a.num == b.num && a.den == b.den;
+}
+
+fn rat_cmp(a: Rat, b: Rat) -> int {
+    let left: int = a.num * b.den;
+    let right: int = b.num * a.den;
+    if left < right {
+        return -1;
+    }
+    if left > right {
+        return 1;
+    }
+    return 0;
+}
+
+fn rat_to_string(r: Rat) -> str {
+    if r.den == 1 {
+        return rat_int_str(r.num);
+    }
+    return rat_int_str(r.num) + "/" + rat_int_str(r.den);
+}
+
+fn rat_to_float(r: Rat) -> float {
+    return r.num as float / r.den as float;
+}

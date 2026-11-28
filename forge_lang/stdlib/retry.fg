@@ -1,0 +1,77 @@
+struct RetryPolicy {
+    max_attempts: int;
+    base_ms: int;
+    factor: int;
+    max_ms: int;
+    jitter_ms: int;
+}
+
+fn retry_policy(max_attempts: int, base_ms: int, factor: int, max_ms: int, jitter_ms: int) -> RetryPolicy {
+    if max_attempts < 1 {
+        fail("retry_policy: max_attempts must be >= 1");
+    }
+    if base_ms < 0 {
+        fail("retry_policy: base_ms must be >= 0");
+    }
+    if factor < 1 {
+        fail("retry_policy: factor must be >= 1");
+    }
+    if max_ms < base_ms {
+        fail("retry_policy: max_ms must be >= base_ms");
+    }
+    if jitter_ms < 0 {
+        fail("retry_policy: jitter_ms must be >= 0");
+    }
+    let p: RetryPolicy = RetryPolicy { max_attempts: max_attempts, base_ms: base_ms, factor: factor, max_ms: max_ms, jitter_ms: jitter_ms };
+    return p;
+}
+
+fn retry_delay(p: RetryPolicy, attempt: int) -> int {
+    if attempt < 1 {
+        fail("retry_delay: attempt must be >= 1");
+    }
+    if attempt >= p.max_attempts {
+        return 0;
+    }
+    let mut d: int = p.base_ms;
+    let mut i: int = 1;
+    while i < attempt {
+        d = d * p.factor;
+        if d > p.max_ms {
+            d = p.max_ms;
+        }
+        i = i + 1;
+    }
+    return d;
+}
+
+fn retry_jitter(seed: int, delay: int, jitter_ms: int) -> int {
+    if jitter_ms < 0 {
+        fail("retry_jitter: jitter_ms must be >= 0");
+    }
+    let mut state: int = seed * 1103515245 + 12345;
+    if state < 0 {
+        state = 0 - state;
+    }
+    let chunk: int = state / 65536 % (2 * jitter_ms + 1);
+    let offset: int = chunk - jitter_ms;
+    let mut out: int = delay + offset;
+    if out < 0 {
+        out = 0;
+    }
+    return out;
+}
+
+fn retry_should_retry(p: RetryPolicy, attempt: int) -> bool {
+    return attempt < p.max_attempts;
+}
+
+fn retry_delays(p: RetryPolicy) -> [int] {
+    let mut out: [int] = [];
+    let mut attempt: int = 1;
+    while attempt < p.max_attempts {
+        push(out, retry_delay(p, attempt));
+        attempt = attempt + 1;
+    }
+    return out;
+}

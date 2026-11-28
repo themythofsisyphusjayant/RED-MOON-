@@ -1,0 +1,195 @@
+fn md5_rotl(x: int, n: int) -> int {
+    return (x << n | x >> 32 - n) & 4294967295;
+}
+
+fn md5_f(b: int, c: int, d: int) -> int {
+    return (b & c | 4294967295 - b & d) & 4294967295;
+}
+
+fn md5_g(b: int, c: int, d: int) -> int {
+    return (b & d | c & 4294967295 - d) & 4294967295;
+}
+
+fn md5_h(b: int, c: int, d: int) -> int {
+    return (b ^ c ^ d) & 4294967295;
+}
+
+fn md5_i(b: int, c: int, d: int) -> int {
+    return (c ^ (b | 4294967295 - d)) & 4294967295;
+}
+
+fn md5_hex_digit(d: int) -> str {
+    if d == 0 {
+        return "0";
+    }
+    if d == 1 {
+        return "1";
+    }
+    if d == 2 {
+        return "2";
+    }
+    if d == 3 {
+        return "3";
+    }
+    if d == 4 {
+        return "4";
+    }
+    if d == 5 {
+        return "5";
+    }
+    if d == 6 {
+        return "6";
+    }
+    if d == 7 {
+        return "7";
+    }
+    if d == 8 {
+        return "8";
+    }
+    if d == 9 {
+        return "9";
+    }
+    if d == 10 {
+        return "a";
+    }
+    if d == 11 {
+        return "b";
+    }
+    if d == 12 {
+        return "c";
+    }
+    if d == 13 {
+        return "d";
+    }
+    if d == 14 {
+        return "e";
+    }
+    return "f";
+}
+
+fn md5_char_code(c: str) -> int {
+    if c == "\n" {
+        return 10;
+    }
+    let t: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut j: int = 0;
+    while j < len(t) {
+        if substr(t, j, 1) == c {
+            return j + 32;
+        }
+        j = j + 1;
+    }
+    return 63;
+}
+
+fn md5_bytes(data: [int]) -> [int] {
+    let k: [int] = [3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313, 1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329, 4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448, 568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562, 4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656, 681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645, 4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497, 1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745];
+    let s: [int] = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+    let mut h0: int = 1732584193;
+    let mut h1: int = 4023233417;
+    let mut h2: int = 2562383102;
+    let mut h3: int = 271733878;
+    let bitlen: int = len(data) * 8;
+    let len_lo: int = bitlen & 4294967295;
+    let len_hi: int = bitlen >> 32;
+    let mut total: int = len(data) + 9;
+    while total % 64 != 0 {
+        total = total + 1;
+    }
+    let mut msg: [int] = [];
+    let mut di: int = 0;
+    while di < len(data) {
+        push(msg, data[di]);
+        di = di + 1;
+    }
+    push(msg, 128);
+    while len(msg) < total - 8 {
+        push(msg, 0);
+    }
+    push(msg, len_lo & 255);
+    push(msg, len_lo >> 8 & 255);
+    push(msg, len_lo >> 16 & 255);
+    push(msg, len_lo >> 24 & 255);
+    push(msg, len_hi & 255);
+    push(msg, len_hi >> 8 & 255);
+    push(msg, len_hi >> 16 & 255);
+    push(msg, len_hi >> 24 & 255);
+    let mut block: int = 0;
+    while block < total / 64 {
+        let mut m: [int] = [];
+        let mut wi: int = 0;
+        while wi < 16 {
+            push(m, 0);
+            wi = wi + 1;
+        }
+        let mut j: int = 0;
+        while j < 16 {
+            let base: int = block * 64 + j * 4;
+            m[j] = (msg[base] | msg[base + 1] << 8 | msg[base + 2] << 16 | msg[base + 3] << 24) & 4294967295;
+            j = j + 1;
+        }
+        let mut a: int = h0;
+        let mut b: int = h1;
+        let mut c: int = h2;
+        let mut d: int = h3;
+        let mut r: int = 0;
+        while r < 64 {
+            let mut f: int = 0;
+            let mut g: int = 0;
+            if r < 16 {
+                f = md5_f(b, c, d);
+                g = r;
+            } else if r < 32 {
+                f = md5_g(b, c, d);
+                g = (5 * r + 1) % 16;
+            } else if r < 48 {
+                f = md5_h(b, c, d);
+                g = (3 * r + 5) % 16;
+            } else {
+                f = md5_i(b, c, d);
+                g = 7 * r % 16;
+            }
+            let mut tmp: int = ((f + a & 4294967295) + k[r] & 4294967295) + m[g];
+            tmp = tmp & 4294967295;
+            let old_b: int = b;
+            b = old_b + md5_rotl(tmp, s[r]) & 4294967295;
+            a = d;
+            d = c;
+            c = old_b;
+            r = r + 1;
+        }
+        h0 = h0 + a & 4294967295;
+        h1 = h1 + b & 4294967295;
+        h2 = h2 + c & 4294967295;
+        h3 = h3 + d & 4294967295;
+        block = block + 1;
+    }
+    let mut out: [int] = [];
+    let hs: [int] = [h0, h1, h2, h3];
+    let mut hi: int = 0;
+    while hi < 4 {
+        push(out, hs[hi] & 255);
+        push(out, hs[hi] >> 8 & 255);
+        push(out, hs[hi] >> 16 & 255);
+        push(out, hs[hi] >> 24 & 255);
+        hi = hi + 1;
+    }
+    return out;
+}
+
+fn md5_hex(msg: str) -> str {
+    let mut data: [int] = [];
+    let mut i: int = 0;
+    while i < len(msg) {
+        push(data, md5_char_code(substr(msg, i, 1)));
+        i = i + 1;
+    }
+    let digest: [int] = md5_bytes(data);
+    let mut out: str = "";
+    let mut j: int = 0;
+    while j < len(digest) {
+        out = out + md5_hex_digit(digest[j] >> 4) + md5_hex_digit(digest[j] & 15);
+        j = j + 1;
+    }
+    return out;
+}

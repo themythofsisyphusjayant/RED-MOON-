@@ -1,0 +1,136 @@
+fn pf_abs(f: float) -> float {
+    if f < 0.0 {
+        return 0.0 - f;
+    }
+    return f;
+}
+
+fn polyfit(xs: [float], ys: [float], deg: int) -> [float] {
+    let n: int = len(xs);
+    if len(xs) != len(ys) {
+        fail("polyfit: xs and ys lengths differ");
+    }
+    if deg < 0 {
+        fail("polyfit: deg must be >= 0");
+    }
+    if n < deg + 1 {
+        fail("polyfit: need deg+1 points");
+    }
+    let m: int = deg + 1;
+    let mut a: [[float]] = [];
+    let mut b: [float] = [];
+    let mut i: int = 0;
+    while i < m {
+        let mut row: [float] = [];
+        let mut j: int = 0;
+        while j < m {
+            push(row, 0.0);
+            j = j + 1;
+        }
+        push(a, row);
+        push(b, 0.0);
+        i = i + 1;
+    }
+    let mut k: int = 0;
+    while k < n {
+        let mut p: [float] = [];
+        push(p, 1.0);
+        let mut e: int = 1;
+        while e <= 2 * deg {
+            push(p, p[e - 1] * xs[k]);
+            e = e + 1;
+        }
+        let mut i2: int = 0;
+        while i2 < m {
+            let mut j2: int = 0;
+            while j2 < m {
+                a[i2][j2] = a[i2][j2] + p[i2 + j2];
+                j2 = j2 + 1;
+            }
+            b[i2] = b[i2] + ys[k] * p[i2];
+            i2 = i2 + 1;
+        }
+        k = k + 1;
+    }
+    let mut col: int = 0;
+    while col < m {
+        let mut piv: int = col;
+        let mut best: float = pf_abs(a[col][col]);
+        let mut r: int = col + 1;
+        while r < m {
+            let v: float = pf_abs(a[r][col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            fail("polyfit: singular normal equations");
+        }
+        if piv != col {
+            let t: [float] = a[col];
+            a[col] = a[piv];
+            a[piv] = t;
+            let tb: float = b[col];
+            b[col] = b[piv];
+            b[piv] = tb;
+        }
+        let mut r2: int = col + 1;
+        while r2 < m {
+            let f: float = a[r2][col] / a[col][col];
+            let mut j: int = col + 1;
+            while j < m {
+                a[r2][j] = a[r2][j] - f * a[col][j];
+                j = j + 1;
+            }
+            b[r2] = b[r2] - f * b[col];
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut out: [float] = [];
+    let mut i3: int = 0;
+    while i3 < m {
+        push(out, 0.0);
+        i3 = i3 + 1;
+    }
+    let mut row: int = m - 1;
+    while row >= 0 {
+        let mut s: float = b[row];
+        let mut j2: int = row + 1;
+        while j2 < m {
+            s = s - a[row][j2] * out[j2];
+            j2 = j2 + 1;
+        }
+        out[row] = s / a[row][row];
+        row = row - 1;
+    }
+    return out;
+}
+
+fn poly_eval(coeffs: [float], x: float) -> float {
+    let mut r: float = 0.0;
+    let mut i: int = len(coeffs) - 1;
+    while i >= 0 {
+        r = r * x + coeffs[i];
+        i = i - 1;
+    }
+    return r;
+}
+
+fn poly_fit_err(xs: [float], ys: [float], coeffs: [float]) -> float {
+    if len(xs) != len(ys) {
+        fail("poly_fit_err: xs and ys lengths differ");
+    }
+    let mut worst: float = 0.0;
+    let mut i: int = 0;
+    while i < len(xs) {
+        let d: float = pf_abs(ys[i] - poly_eval(coeffs, xs[i]));
+        if d > worst {
+            worst = d;
+        }
+        i = i + 1;
+    }
+    return worst;
+}

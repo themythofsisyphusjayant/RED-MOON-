@@ -1,0 +1,189 @@
+fn lu_abs(f: float) -> float {
+    if f < 0.0 {
+        return 0.0 - f;
+    }
+    return f;
+}
+
+fn lu_copy(a: [[float]]) -> [[float]] {
+    let mut out: [[float]] = [];
+    let mut i: int = 0;
+    while i < len(a) {
+        let mut row: [float] = [];
+        let mut j: int = 0;
+        while j < len(a[i]) {
+            push(row, a[i][j]);
+            j = j + 1;
+        }
+        push(out, row);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn lu_check_square(a: [[float]]) -> int {
+    let n: int = len(a);
+    if n == 0 {
+        fail("lu: empty matrix");
+    }
+    let mut i: int = 0;
+    while i < n {
+        if len(a[i]) != n {
+            fail("lu: matrix must be square");
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn lu_solve(a: [[float]], b: [float]) -> [float] {
+    let n: int = lu_check_square(a);
+    if len(b) != n {
+        fail("lu_solve: b has wrong length");
+    }
+    let mut m: [[float]] = lu_copy(a);
+    let mut x: [float] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(x, b[i]);
+        i = i + 1;
+    }
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = lu_abs(m[col][col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = lu_abs(m[r][col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            fail("lu_solve: singular matrix");
+        }
+        if piv != col {
+            let t: [float] = m[col];
+            m[col] = m[piv];
+            m[piv] = t;
+            let tb: float = x[col];
+            x[col] = x[piv];
+            x[piv] = tb;
+        }
+        let mut r2: int = col + 1;
+        while r2 < n {
+            let f: float = m[r2][col] / m[col][col];
+            m[r2][col] = f;
+            let mut j: int = col + 1;
+            while j < n {
+                m[r2][j] = m[r2][j] - f * m[col][j];
+                j = j + 1;
+            }
+            x[r2] = x[r2] - f * x[col];
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut out: [float] = [];
+    let mut i2: int = 0;
+    while i2 < n {
+        push(out, 0.0);
+        i2 = i2 + 1;
+    }
+    let mut row: int = n - 1;
+    while row >= 0 {
+        let mut s: float = x[row];
+        let mut j2: int = row + 1;
+        while j2 < n {
+            s = s - m[row][j2] * out[j2];
+            j2 = j2 + 1;
+        }
+        out[row] = s / m[row][row];
+        row = row - 1;
+    }
+    return out;
+}
+
+fn lu_det(a: [[float]]) -> float {
+    let n: int = lu_check_square(a);
+    let mut m: [[float]] = lu_copy(a);
+    let mut det: float = 1.0;
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = lu_abs(m[col][col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = lu_abs(m[r][col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            return 0.0;
+        }
+        if piv != col {
+            let t: [float] = m[col];
+            m[col] = m[piv];
+            m[piv] = t;
+            det = 0.0 - det;
+        }
+        det = det * m[col][col];
+        let mut r2: int = col + 1;
+        while r2 < n {
+            let f: float = m[r2][col] / m[col][col];
+            let mut j: int = col + 1;
+            while j < n {
+                m[r2][j] = m[r2][j] - f * m[col][j];
+                j = j + 1;
+            }
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    return det;
+}
+
+fn lu_factor(a: [[float]]) -> [[float]] {
+    let n: int = lu_check_square(a);
+    let mut m: [[float]] = lu_copy(a);
+    let mut col: int = 0;
+    while col < n {
+        let mut piv: int = col;
+        let mut best: float = lu_abs(m[col][col]);
+        let mut r: int = col + 1;
+        while r < n {
+            let v: float = lu_abs(m[r][col]);
+            if v > best {
+                best = v;
+                piv = r;
+            }
+            r = r + 1;
+        }
+        if best == 0.0 {
+            fail("lu_factor: singular matrix");
+        }
+        if piv != col {
+            let t: [float] = m[col];
+            m[col] = m[piv];
+            m[piv] = t;
+        }
+        let mut r2: int = col + 1;
+        while r2 < n {
+            let f: float = m[r2][col] / m[col][col];
+            m[r2][col] = f;
+            let mut j: int = col + 1;
+            while j < n {
+                m[r2][j] = m[r2][j] - f * m[col][j];
+                j = j + 1;
+            }
+            r2 = r2 + 1;
+        }
+        col = col + 1;
+    }
+    return m;
+}

@@ -1,0 +1,138 @@
+fn knn_dist(a: [float], b: [float]) -> float {
+    if len(a) != len(b) {
+        fail("knn_dist: length mismatch");
+    }
+    let mut s: float = 0.0;
+    let mut i: int = 0;
+    while i < len(a) {
+        let d: float = a[i] - b[i];
+        s = s + d * d;
+        i = i + 1;
+    }
+    return sqrt(s);
+}
+
+fn knn_check(train_x: [[float]], train_y: [int], x: [float], k: int) -> int {
+    let n: int = len(train_x);
+    if n == 0 {
+        fail("knn: empty training set");
+    }
+    if len(train_y) != n {
+        fail("knn: label count mismatch");
+    }
+    if k < 1 {
+        fail("knn: k < 1");
+    }
+    if k > n {
+        fail("knn: k larger than training set");
+    }
+    let mut i: int = 0;
+    while i < n {
+        if len(train_x[i]) != len(x) {
+            fail("knn: dimension mismatch");
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn knn_k_labels(train_x: [[float]], train_y: [int], x: [float], k: int) -> [int] {
+    let n: int = knn_check(train_x, train_y, x, k);
+    let mut dists: [float] = [];
+    let mut idx: [int] = [];
+    let mut i: int = 0;
+    while i < n {
+        push(dists, knn_dist(train_x[i], x));
+        push(idx, i);
+        i = i + 1;
+    }
+    let mut s: int = 0;
+    while s < n {
+        let mut m: int = s;
+        let mut j: int = s + 1;
+        while j < n {
+            if dists[idx[j]] < dists[idx[m]] {
+                m = j;
+            } else if dists[idx[j]] == dists[idx[m]] {
+                if train_y[idx[j]] < train_y[idx[m]] {
+                    m = j;
+                }
+            }
+            j = j + 1;
+        }
+        let t: int = idx[s];
+        idx[s] = idx[m];
+        idx[m] = t;
+        s = s + 1;
+    }
+    let mut out: [int] = [];
+    let mut c: int = 0;
+    while c < k {
+        push(out, train_y[idx[c]]);
+        c = c + 1;
+    }
+    return out;
+}
+
+fn knn_vote(labs: [int]) -> int {
+    let mut best: int = labs[0];
+    let mut bestc: int = 0;
+    let mut i: int = 0;
+    while i < len(labs) {
+        let mut c: int = 0;
+        let mut j: int = 0;
+        while j < len(labs) {
+            if labs[j] == labs[i] {
+                c = c + 1;
+            }
+            j = j + 1;
+        }
+        if c > bestc {
+            bestc = c;
+            best = labs[i];
+        } else if c == bestc {
+            if labs[i] < best {
+                best = labs[i];
+            }
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn knn_predict(train_x: [[float]], train_y: [int], x: [float], k: int) -> int {
+    let labs: [int] = knn_k_labels(train_x, train_y, x, k);
+    return knn_vote(labs);
+}
+
+fn knn_predict_proba(train_x: [[float]], train_y: [int], x: [float], k: int) -> float {
+    let labs: [int] = knn_k_labels(train_x, train_y, x, k);
+    let p: int = knn_vote(labs);
+    let mut c: int = 0;
+    let mut i: int = 0;
+    while i < len(labs) {
+        if labs[i] == p {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c as float / k as float;
+}
+
+fn knn_accuracy(train_x: [[float]], train_y: [int], test_x: [[float]], test_y: [int], k: int) -> float {
+    if len(test_x) != len(test_y) {
+        fail("knn_accuracy: length mismatch");
+    }
+    if len(test_x) == 0 {
+        fail("knn_accuracy: empty test set");
+    }
+    let mut ok: int = 0;
+    let mut i: int = 0;
+    while i < len(test_x) {
+        if knn_predict(train_x, train_y, test_x[i], k) == test_y[i] {
+            ok = ok + 1;
+        }
+        i = i + 1;
+    }
+    return ok as float / len(test_x) as float;
+}

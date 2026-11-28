@@ -1,0 +1,19 @@
+import "cliparse.fg";
+
+fn main() {
+    let c: Cli = cli_parse(["build", "--release", "--jobs", "4", "-v", "src/main.fg"]);
+    print("subcommand: ");
+    println(cli_sub(c));
+    print("release: ");
+    println(cli_flag(c, "release"));
+    print("jobs: ");
+    println(cli_opt(c, "jobs"));
+    print("verbose: ");
+    println(cli_flag(c, "v"));
+    print("pos_count: ");
+    println(cli_pos_count(c));
+    print("pos0: ");
+    println(cli_pos(c, 0));
+    print("output: ");
+    println(cli_opt_or(c, "output", "out.bin"));
+}

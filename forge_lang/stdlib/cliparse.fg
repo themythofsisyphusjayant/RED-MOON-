@@ -1,0 +1,204 @@
+struct Cli {
+    args: [str];
+}
+
+fn cli_parse(args: [str]) -> Cli {
+    return Cli { args: args };
+}
+
+fn cli_is_dash(a: str) -> bool {
+    if len(a) <= 1 {
+        return false;
+    }
+    return substr(a, 0, 1) == "-";
+}
+
+fn cli_is_long(a: str) -> bool {
+    if len(a) <= 2 {
+        return false;
+    }
+    return starts_with(a, "--");
+}
+
+fn cli_long_has_eq(a: str) -> bool {
+    let mut i: int = 2;
+    while i < len(a) {
+        if substr(a, i, 1) == "=" {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cli_long_name(a: str) -> str {
+    let mut out: str = "";
+    let mut i: int = 2;
+    while i < len(a) {
+        let ch: str = substr(a, i, 1);
+        if ch == "=" {
+            return out;
+        }
+        out = out + ch;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cli_long_value(a: str) -> str {
+    let mut i: int = 2;
+    while i < len(a) {
+        if substr(a, i, 1) == "=" {
+            return substr(a, i + 1, len(a) - i - 1);
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn cli_positionals(c: Cli) -> [str] {
+    let mut out: [str] = [];
+    let mut after_dd: bool = false;
+    let mut i: int = 0;
+    while i < len(c.args) {
+        let a: str = c.args[i];
+        if after_dd {
+            push(out, a);
+        } else if a == "--" {
+            after_dd = true;
+        } else if cli_is_long(a) {
+            if !cli_long_has_eq(a) && i + 1 < len(c.args) {
+                let nxt: str = c.args[i + 1];
+                if !cli_is_dash(nxt) && nxt != "--" {
+                    i = i + 1;
+                }
+            }
+        } else if !cli_is_dash(a) {
+            push(out, a);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn cli_flag(c: Cli, name: str) -> bool {
+    let mut after_dd: bool = false;
+    let mut i: int = 0;
+    while i < len(c.args) {
+        let a: str = c.args[i];
+        if !after_dd {
+            if a == "--" {
+                after_dd = true;
+            } else if cli_is_long(a) {
+                if cli_long_name(a) == name {
+                    return true;
+                }
+            } else if cli_is_dash(a) {
+                if len(name) == 1 {
+                    let mut j: int = 1;
+                    while j < len(a) {
+                        if substr(a, j, 1) == name {
+                            return true;
+                        }
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cli_opt(c: Cli, name: str) -> str {
+    let mut after_dd: bool = false;
+    let mut i: int = 0;
+    while i < len(c.args) {
+        let a: str = c.args[i];
+        if !after_dd {
+            if a == "--" {
+                after_dd = true;
+            } else if cli_is_long(a) {
+                if cli_long_name(a) == name {
+                    if cli_long_has_eq(a) {
+                        return cli_long_value(a);
+                    }
+                    if i + 1 < len(c.args) {
+                        let nxt: str = c.args[i + 1];
+                        if !cli_is_dash(nxt) && nxt != "--" {
+                            return nxt;
+                        }
+                    }
+                    return "";
+                }
+            } else if cli_is_dash(a) {
+                if len(name) == 1 && a == "-" + name {
+                    if i + 1 < len(c.args) {
+                        let nxt: str = c.args[i + 1];
+                        if !cli_is_dash(nxt) && nxt != "--" {
+                            return nxt;
+                        }
+                    }
+                    return "";
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn cli_has_opt(c: Cli, name: str) -> bool {
+    let mut after_dd: bool = false;
+    let mut i: int = 0;
+    while i < len(c.args) {
+        let a: str = c.args[i];
+        if !after_dd {
+            if a == "--" {
+                after_dd = true;
+            } else if cli_is_long(a) {
+                if cli_long_name(a) == name {
+                    return true;
+                }
+            } else if cli_is_dash(a) {
+                if len(name) == 1 {
+                    let mut j: int = 1;
+                    while j < len(a) {
+                        if substr(a, j, 1) == name {
+                            return true;
+                        }
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn cli_pos(c: Cli, i: int) -> str {
+    let pos: [str] = cli_positionals(c);
+    if i < 0 {
+        return "";
+    }
+    if i >= len(pos) {
+        return "";
+    }
+    return pos[i];
+}
+
+fn cli_pos_count(c: Cli) -> int {
+    return len(cli_positionals(c));
+}
+
+fn cli_sub(c: Cli) -> str {
+    return cli_pos(c, 0);
+}
+
+fn cli_opt_or(c: Cli, name: str, def: str) -> str {
+    if cli_has_opt(c, name) {
+        return cli_opt(c, name);
+    }
+    return def;
+}

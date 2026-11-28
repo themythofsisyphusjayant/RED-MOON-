@@ -1,0 +1,13 @@
+import "emailparse.fg";
+
+fn main() {
+    let lines: [str] = ["From: Ada Lovelace <ada@example.com>", "To: charles@example.com", "Subject: Planning the", " second meeting", "Date: Fri, 28 Nov 2026 09:00:00 +0530", "X-Custom: test", "", "Hello Charles,", "See you soon."];
+    let raw: str = join(lines, "\n");
+    let e: Email = email_parse(raw);
+    println("from: " + e.from);
+    println("to: " + e.to);
+    println("subject: " + e.subject);
+    println("date: " + e.date);
+    println("body:");
+    println(e.body);
+}

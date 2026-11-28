@@ -1,0 +1,18 @@
+import "retry.fg";
+
+fn main() {
+    let p: RetryPolicy = retry_policy(4, 100, 2, 1000, 0);
+    let ds: [int] = retry_delays(p);
+    for d in ds {
+        println(d);
+    }
+    println(retry_delay(p, 1));
+    println(retry_delay(p, 2));
+    println(retry_delay(p, 3));
+    println(retry_delay(p, 4));
+    println(retry_should_retry(p, 1));
+    println(retry_should_retry(p, 3));
+    println(retry_should_retry(p, 4));
+    println(retry_jitter(42, 100, 10));
+    println(retry_jitter(7, 200, 25));
+}

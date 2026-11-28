@@ -1,0 +1,16 @@
+import "polyfit.fg";
+
+fn main() {
+    let c1: [float] = polyfit([0.0, 1.0, 2.0], [1.0, 3.0, 5.0], 1);
+    println(c1[0]);
+    println(c1[1]);
+    let c2: [float] = polyfit([0.0, 1.0, 2.0], [1.0, 4.0, 9.0], 2);
+    println(c2[0]);
+    println(c2[1]);
+    println(c2[2]);
+    let c3: [float] = polyfit([-2.0, -1.0, 0.0, 1.0, 2.0], [12.0, 3.0, 0.0, 3.0, 12.0], 2);
+    println(c3[0]);
+    println(c3[1]);
+    println(c3[2]);
+    println(poly_fit_err([-2.0, -1.0, 0.0, 1.0, 2.0], [12.0, 3.0, 0.0, 3.0, 12.0], c3));
+}

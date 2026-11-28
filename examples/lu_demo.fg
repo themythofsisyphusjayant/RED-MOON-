@@ -1,0 +1,20 @@
+import "lu.fg";
+
+fn main() {
+    let a2: [[float]] = [[2.0, 1.0], [1.0, 3.0]];
+    let x2: [float] = lu_solve(a2, [5.0, 10.0]);
+    println(x2[0]);
+    println(x2[1]);
+    let a3: [[float]] = [[2.0, 1.0, -1.0], [-3.0, -1.0, 2.0], [-2.0, 1.0, 2.0]];
+    let x3: [float] = lu_solve(a3, [8.0, -11.0, -3.0]);
+    println(x3[0]);
+    println(x3[1]);
+    println(x3[2]);
+    println(lu_det(a2));
+    println(lu_det(a3));
+    let f: [[float]] = lu_factor(a2);
+    println(f[0][0]);
+    println(f[0][1]);
+    println(f[1][0]);
+    println(f[1][1]);
+}
